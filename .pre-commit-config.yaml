@@ -1,0 +1,32 @@
+# Copyright (c) 2025 Evolveum and contributors
+#
+# Licensed under the EUPL-1.2 or later.
+repos:
+  - repo: local
+    hooks:
+      - id: smart-integration-typecheck
+        name: smart-integration-typecheck
+        entry: bash -c "uv --directory=wp1-micro-service run poe typecheck"
+        language: system
+        types: [python]
+  - repo: local
+    hooks:
+      - id: smart-integration-lint
+        name: smart-integration-lint
+        entry: bash -c "uv --directory=wp1-micro-service run poe lint"
+        language: system
+        types: [python]
+  - repo: local
+    hooks:
+      - id: smart-integration-stylecheck
+        name: smart-integration-stylecheck
+        entry: bash -c "uv --directory=wp1-micro-service run poe stylecheck"
+        language: system
+        types: [python]
+  - repo: local
+    hooks:
+      - id: smart-integration-unit-tests
+        name: smart-integration-unit-tests
+        entry: bash -c "uv --directory=wp1-micro-service run poe test test/unit"
+        language: system
+        types: [python]

@@ -1,0 +1,783 @@
+# Copyright (c) 2025 Evolveum and contributors
+#
+# Licensed under the EUPL-1.2 or later.
+
+"""
+Digester endpoints for V2 API (session-centric).
+All digester operations are nested under sessions.
+"""
+
+from typing import Any, Dict, Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Body, HTTPException, Path, Query, status
+
+from ...common.chunk_filter.filter import filter_documentation_items
+from ...common.chunk_filter.schema import ChunkFilterCriteria
+from ...common.enums import JobStatus
+from ...common.jobs import get_job_status, schedule_coroutine_job
+from ...common.schema import JobCreateResponse, JobStatusMultiDocResponse
+from ...common.session.router import get_session_documentation
+from ...common.session.session import SessionManager
+from . import service
+from .schema import (
+    AuthResponse,
+    EndpointsResponse,
+    InfoResponse,
+    ObjectClassesResponse,
+    ObjectClassSchemaResponse,
+    RelationsResponse,
+)
+
+router = APIRouter()
+
+DEFAULT_CRITERIA = ChunkFilterCriteria(  # Apply static category filter to documentation items
+    min_length=None,
+    min_endpoints_num=None,
+    allowed_categories=[
+        "spec_yaml",
+        "spec_json",
+        "reference_api",
+    ],
+)
+
+AUTH_CRITERIA = ChunkFilterCriteria(
+    min_length=None,
+    min_endpoints_num=None,
+    allowed_categories=[
+        "spec_yaml",
+        "spec_json",
+        "overview",
+    ],
+    allowed_tags=[
+        "authentication",
+        "auth",
+        "authorization",
+    ],
+)
+
+ENDPOINT_CRITERIA = ChunkFilterCriteria(
+    min_length=None,
+    min_endpoints_num=1,
+    allowed_categories=[
+        "spec_yaml",
+        "spec_json",
+        "reference_api",
+    ],
+)
+
+
+# Helper Functions
+def _build_typed_job_status_response(job_id: UUID, model_cls) -> JobStatusMultiDocResponse:
+    """Helper to normalize building a JobStatusMultiDocResponse and parsing the result into a given model."""
+    status = get_job_status(job_id)
+    result_payload = None
+    raw_status = status.get("status", JobStatus.not_found.value)
+    if raw_status == JobStatus.finished.value and isinstance(status.get("result"), dict):
+        try:
+            result_dict = status["result"]
+            # Handle new format with chunks metadata
+            if "result" in result_dict and isinstance(result_dict["result"], dict):
+                actual_result = result_dict["result"]
+            else:
+                actual_result = result_dict
+
+            # Special handling for ObjectClassesResponse to ensure proper model validation
+            if model_cls == ObjectClassesResponse:
+                # Ensure objectClasses is a list and each item has the required fields
+                if "objectClasses" in actual_result and isinstance(actual_result["objectClasses"], list):
+                    for obj_class in actual_result["objectClasses"]:
+                        # Ensure relevant_chunks exists and is a list
+                        if "relevant_chunks" not in obj_class:
+                            obj_class["relevant_chunks"] = []
+                        elif not isinstance(obj_class["relevant_chunks"], list):
+                            obj_class["relevant_chunks"] = []
+
+            if hasattr(model_cls, "model_validate"):
+                result_payload = model_cls.model_validate(actual_result)
+            else:
+                result_payload = model_cls(**actual_result)
+        except Exception as e:
+            return JobStatusMultiDocResponse(
+                jobId=status.get("jobId", job_id),
+                status=JobStatus.failed,
+                errors=[f"Corrupted result payload: {str(e)}"],
+            )
+    enum_status = JobStatus(raw_status)
+
+    return JobStatusMultiDocResponse(
+        jobId=status.get("jobId", job_id),
+        status=enum_status,
+        createdAt=status.get("createdAt"),
+        startedAt=status.get("startedAt"),
+        updatedAt=status.get("updatedAt"),
+        progress=status.get("progress"),
+        result=result_payload,
+        errors=status.get("errors"),
+    )
+
+
+# Digester Operations - Object Classes
+@router.post(
+    "/{session_id}/classes",
+    response_model=JobCreateResponse,
+    summary="Extract object classes from documentation",
+)
+async def extract_object_classes(
+    session_id: UUID = Path(..., description="Session ID"),
+    filter_relevancy: bool = Query(True, description="Filter object classes by relevancy"),
+    min_relevancy_level: str = Query("high", description="Minimum relevancy level (low/medium/high)"),
+):
+    """
+    Extract object classes from documentation stored in or uploaded to the session.
+    Optionally filter documentation items based on provided criteria.
+    Returns jobId to poll for results.
+    """
+    # Apply static category filter to documentation items
+    try:
+        doc_items = filter_documentation_items(DEFAULT_CRITERIA, session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
+    total_length = sum(len(item["content"]) for item in doc_items)
+
+    job_id = schedule_coroutine_job(
+        job_type="digester.getObjectClass",
+        input_payload={"documentationItems": doc_items},
+        worker=service.extract_object_classes,
+        worker_args=(doc_items,),
+        worker_kwargs={
+            "filter_relevancy": filter_relevancy,
+            "min_relevancy_level": min_relevancy_level,
+        },
+        initial_stage="chunking",
+        initial_message="Preparing and splitting documentation",
+        session_id=session_id,
+        session_result_key="objectClassesOutput",
+    )
+
+    SessionManager.update_session(
+        session_id,
+        {
+            "objectClassesJobId": str(job_id),
+            "objectClassesInput": {
+                "documentationItemsCount": len(doc_items),
+                "totalLength": total_length,
+            },
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/classes",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get object classes extraction status",
+)
+async def get_object_classes_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional, will use session's job if not provided)"),
+):
+    """
+    Get the status of object classes extraction job.
+    If jobId is not provided, retrieves the job from session.
+    Returns the current session data (which may include endpoints added after job completion).
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    if not jobId:
+        jobId = SessionManager.get_session_data(session_id, "objectClassesJobId")
+        if not jobId:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"No object classes job found in session {session_id}"
+            )
+
+    response = _build_typed_job_status_response(jobId, ObjectClassesResponse)
+
+    if response.status == JobStatus.finished:
+        object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
+        if object_classes_output:
+            try:
+                # Validate and parse the session data
+                response.result = ObjectClassesResponse.model_validate(object_classes_output)
+            except Exception:
+                # If validation fails, keep the original job result
+                pass
+
+    return response
+
+
+@router.get(
+    "/{session_id}/classes/{object_class}",
+    response_model=Dict[str, Any],
+    summary="Get a specific object class",
+)
+async def get_specific_object_class(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_class: str = Path(..., description="Object class name"),
+):
+    """
+    Get a specific object class by name from the session.
+    Returns the object class with all its data including endpoints and attributes.
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    # Get object classes from session
+    object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
+    if not object_classes_output or not isinstance(object_classes_output, dict):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No object classes found in session {session_id}. Please run /classes endpoint first.",
+        )
+
+    object_classes = object_classes_output.get("objectClasses", [])
+    if not isinstance(object_classes, list):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Invalid object classes data in session {session_id}",
+        )
+
+    # Find the specific object class (case-insensitive)
+    normalized_name = object_class.strip().lower()
+    for obj_cls in object_classes:
+        if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
+            # Return just this one object class
+            return obj_cls
+
+    # If not found, raise 404
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Object class '{object_class}' not found in session {session_id}",
+    )
+
+
+# Digester Operations - Object Class Attributes
+@router.post(
+    "/{session_id}/classes/{object_class}/attributes",
+    response_model=JobCreateResponse,
+    summary="Extract attributes for object class",
+)
+async def extract_class_attributes(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_class: str = Path(..., description="Object class name (e.g., 'User', 'Group')"),
+):
+    """
+    Extract attributes schema for a specific object class.
+    Only processes chunks that are relevant to the object class (from relevantChunks).
+    Updates both {object_class}AttributesOutput and the attributes field in the specific object class.
+    """
+    # Get the object class data to find relevant chunks
+    object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
+    if not object_classes_output or not isinstance(object_classes_output, dict):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No object classes found in session {session_id}. Please run /classes endpoint first.",
+        )
+
+    # Find the specific object class (case-insensitive)
+    object_classes = object_classes_output.get("objectClasses", [])
+    normalized_name = object_class.strip().lower()
+    target_object_class = None
+    for obj_cls in object_classes:
+        if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
+            target_object_class = obj_cls
+            break
+
+    if not target_object_class:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Object class '{object_class}' not found in session {session_id}.",
+        )
+
+    relevant_chunks = target_object_class.get("relevantChunks", [])
+    if not relevant_chunks:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No relevant chunks found for object class '{object_class}'. Cannot extract attributes.",
+        )
+
+    # Get full documentation to extract relevant chunks
+    doc_items = await get_session_documentation(session_id)
+
+    total_chunks = len(relevant_chunks)
+    job_id = schedule_coroutine_job(
+        job_type="digester.getObjectClassSchema",
+        input_payload={
+            "documentation_items": doc_items,
+            "objectClass": object_class,
+            "relevantChunks": relevant_chunks,
+        },
+        worker=service.extract_attributes,
+        worker_args=(doc_items, object_class, session_id, relevant_chunks),
+        initial_stage="chunking",
+        initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
+        session_id=session_id,
+        session_result_key=f"{object_class}AttributesOutput",
+    )
+
+    SessionManager.update_session(
+        session_id,
+        {
+            f"{object_class}AttributesJobId": str(job_id),
+            f"{object_class}AttributesInput": {
+                "objectClass": object_class,
+                "documentationItemsCount": len(doc_items),
+                "relevantChunksCount": total_chunks,
+            },
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/classes/{object_class}/attributes",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get attributes extraction status",
+)
+async def get_class_attributes_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_class: str = Path(..., description="Object class name"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+):
+    """
+    Get the status of attributes extraction job for the specified object class.
+    Returns the current session data (which may have been updated after job completion).
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    if not jobId:
+        jobId = SessionManager.get_session_data(session_id, f"{object_class}AttributesJobId")
+        if not jobId:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No attributes job found for {object_class} in session {session_id}",
+            )
+
+    # Get job status but override result with current session data
+    response = _build_typed_job_status_response(jobId, ObjectClassSchemaResponse)
+
+    # If job is finished, replace result with current session data (which may have been updated)
+    if response.status == JobStatus.finished:
+        attributes_output = SessionManager.get_session_data(session_id, f"{object_class}AttributesOutput")
+        if attributes_output:
+            try:
+                # Validate and parse the session data
+                response.result = ObjectClassSchemaResponse.model_validate(attributes_output)
+            except Exception:
+                # If validation fails, keep the original job result
+                pass
+
+    return response
+
+
+@router.put(
+    "/{session_id}/classes/{object_class}/attributes",
+    summary="Override attributes for object class",
+)
+async def override_class_attributes(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_class: str = Path(..., description="Object class name"),
+    attributes: Dict[str, Any] = Body(..., description="Attributes schema as JSON"),
+):
+    """
+    Manually override the attributes for an object class.
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    SessionManager.update_session(session_id, {f"{object_class}AttributesOutput": attributes})
+
+    return {
+        "message": f"Attributes for {object_class} overridden successfully",
+        "sessionId": session_id,
+        "objectClass": object_class,
+    }
+
+
+# Digester Operations - Object Class Endpoints
+@router.post(
+    "/{session_id}/classes/{object_class}/endpoints",
+    response_model=JobCreateResponse,
+    summary="Extract endpoints for object class",
+)
+async def extract_class_endpoints(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_class: str = Path(..., description="Object class name"),
+):
+    """
+    Extract API endpoints for a specific object class.
+    Automatically loads base API URL from session metadata if available.
+    Updates both {object_class}EndpointsOutput and the endpoints field in the specific object class.
+    Only processes chunks that are relevant to the object class (from relevantChunks).
+    """
+    # Get the object class data to find relevant chunks
+    object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
+    if not object_classes_output or not isinstance(object_classes_output, dict):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No object classes found in session {session_id}. Please run /classes endpoint first.",
+        )
+
+    # Find the specific object class (case-insensitive)
+    object_classes = object_classes_output.get("objectClasses", [])
+    normalized_name = object_class.strip().lower()
+    target_object_class = None
+    for obj_cls in object_classes:
+        if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
+            target_object_class = obj_cls
+            break
+
+    if not target_object_class:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Object class '{object_class}' not found in session {session_id}.",
+        )
+
+    # relevant_chunks = target_object_class.get("relevantChunks", [])
+    relevant_chunks_from_object_class = target_object_class.get("relevantChunks", [])
+    criteria = ENDPOINT_CRITERIA.model_copy()
+    criteria.allowed_tags = [object_class.lower().strip()]
+    relevant_chunks_full = filter_documentation_items(criteria, session_id)
+    # TODO: This is idiotic, docUuid and chunkIndex are deprecated with the new architecture
+    # But for now (until office days) I will not refactor this because it is a lot of code to change
+    relevant_chunks = [
+        {"docUuid": chunk["uuid"], "chunkIndex": 0}
+        for chunk in relevant_chunks_full
+        if chunk["uuid"] in {rc["docUuid"] for rc in relevant_chunks_from_object_class}
+    ]
+    # relevant_chunks = [{"docUuid": rc["uuid"], "chunkIndex": 0} for rc in relevant_chunks_full]
+    if not relevant_chunks:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No relevant chunks found for object class '{object_class}'. Cannot extract endpoints.",
+        )
+
+    # Get full documentation to extract relevant chunks
+    doc_items = await get_session_documentation(session_id)
+
+    # Load base API URL from session metadata
+    base_api_url = ""
+    metadata = SessionManager.get_session_data(session_id, "metadataOutput")
+    if metadata and isinstance(metadata, dict):
+        info_about_schema = metadata.get("infoAboutSchema", {})
+        base_api_endpoints = info_about_schema.get("baseApiEndpoint", [])
+        if base_api_endpoints and isinstance(base_api_endpoints, list) and len(base_api_endpoints) > 0:
+            base_api_url = base_api_endpoints[0].get("uri", "")
+
+    total_chunks = len(relevant_chunks)
+    job_id = schedule_coroutine_job(
+        job_type="digester.getEndpoints",
+        input_payload={
+            "documentationItems": doc_items,
+            "objectClass": object_class,
+            "baseApiUrl": base_api_url,
+            "relevantChunks": relevant_chunks,
+        },
+        worker=service.extract_endpoints,
+        worker_args=(doc_items, object_class, session_id, relevant_chunks),
+        worker_kwargs={"base_api_url": base_api_url},
+        initial_stage="chunking",
+        initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
+        session_id=session_id,
+        session_result_key=f"{object_class}EndpointsOutput",
+    )
+
+    SessionManager.update_session(
+        session_id,
+        {
+            f"{object_class}EndpointsJobId": str(job_id),
+            f"{object_class}EndpointsInput": {
+                "objectClass": object_class,
+                "documentationItemsCount": len(doc_items),
+                "relevantChunksCount": total_chunks,
+                "baseApiUrl": base_api_url,
+            },
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/classes/{object_class}/endpoints",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get endpoints extraction status",
+)
+async def get_class_endpoints_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_class: str = Path(..., description="Object class name"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+):
+    """
+    Get the status of endpoints extraction job for the specified object class.
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    if not jobId:
+        jobId = SessionManager.get_session_data(session_id, f"{object_class}EndpointsJobId")
+        if not jobId:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No endpoints job found for {object_class} in session {session_id}",
+            )
+
+    return _build_typed_job_status_response(jobId, EndpointsResponse)
+
+
+@router.put(
+    "/{session_id}/classes/{object_class}/endpoints",
+    summary="Override endpoints for object class",
+)
+async def override_class_endpoints(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_class: str = Path(..., description="Object class name"),
+    endpoints: Dict[str, Any] = Body(..., description="Endpoints data as JSON"),
+):
+    """
+    Manually override the endpoints for an object class.
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    SessionManager.update_session(session_id, {f"{object_class}EndpointsOutput": endpoints})
+
+    return {
+        "message": f"Endpoints for {object_class} overridden successfully",
+        "sessionId": session_id,
+        "objectClass": object_class,
+    }
+
+
+# Digester Operations - Relations
+@router.post(
+    "/{session_id}/relations",
+    response_model=JobCreateResponse,
+    summary="Extract relations between object classes",
+)
+async def extract_relations(
+    session_id: UUID = Path(..., description="Session ID"),
+):
+    """
+    Extract relations between object classes from documentation.
+    Loads relevant object classes from session (where relevant=true).
+    """
+    try:
+        doc_items = filter_documentation_items(DEFAULT_CRITERIA, session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
+    total_length = sum(len(item["content"]) for item in doc_items)
+
+    # Load object_classes from session
+    relevant = SessionManager.get_session_data(session_id, "objectClassesOutput")
+    if not relevant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No object classes found in session. Please run /classes endpoint first.",
+        )
+
+    job_id = schedule_coroutine_job(
+        job_type="digester.getRelations",
+        input_payload={"documentationItems": doc_items, "relevantObjectClasses": relevant},
+        worker=service.extract_relations,
+        worker_args=(doc_items, relevant),
+        initial_stage="chunking",
+        initial_message="Preparing and splitting documentation",
+        session_id=session_id,
+        session_result_key="relationsOutput",
+    )
+
+    SessionManager.update_session(
+        session_id,
+        {
+            "relationsJobId": str(job_id),
+            "relationsInput": {
+                "relevantObjectClasses": relevant,
+                "documentationItemsCount": len(doc_items),
+                "totalLength": total_length,
+            },
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/relations",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get relations extraction status",
+)
+async def get_relations_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+):
+    """
+    Get the status of relations extraction job.
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    if not jobId:
+        jobId = SessionManager.get_session_data(session_id, "relationsJobId")
+        if not jobId:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"No relations job found in session {session_id}"
+            )
+
+    return _build_typed_job_status_response(jobId, RelationsResponse)
+
+
+@router.put(
+    "/{session_id}/relations",
+    summary="Override relations data",
+)
+async def override_relations(
+    session_id: UUID = Path(..., description="Session ID"),
+    relations: Dict[str, Any] = Body(..., description="Relations data as JSON"),
+):
+    """
+    Manually override the relations data.
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    SessionManager.update_session(session_id, {"relationsOutput": relations})
+
+    return {"message": "Relations overridden successfully", "sessionId": session_id}
+
+
+# Digester Operations - Auth & Metadata
+@router.post(
+    "/{session_id}/auth",
+    response_model=JobCreateResponse,
+    summary="Extract authentication information",
+)
+async def extract_auth(
+    session_id: UUID = Path(..., description="Session ID"),
+):
+    """
+    Extract authentication information from documentation.
+    """
+    # Apply static category filter to documentation items
+    try:
+        doc_items = filter_documentation_items(AUTH_CRITERIA, session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
+    total_length = sum(len(item["content"]) for item in doc_items)
+
+    job_id = schedule_coroutine_job(
+        job_type="digester.getAuth",
+        input_payload={"documentationItems": doc_items},
+        worker=service.extract_auth,
+        worker_args=(doc_items,),
+        worker_kwargs={},
+        initial_stage="chunking",
+        initial_message="Preparing and splitting documentation",
+        session_id=session_id,
+        session_result_key="authOutput",
+    )
+
+    SessionManager.update_session(
+        session_id,
+        {
+            "authJobId": str(job_id),
+            "authInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/auth",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get auth extraction status",
+)
+async def get_auth_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+):
+    """
+    Get the status of auth extraction job.
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    if not jobId:
+        jobId = SessionManager.get_session_data(session_id, "authJobId")
+        if not jobId:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"No auth job found in session {session_id}"
+            )
+
+    return _build_typed_job_status_response(jobId, AuthResponse)
+
+
+@router.post(
+    "/{session_id}/metadata",
+    response_model=JobCreateResponse,
+    summary="Extract metadata information",
+)
+async def extract_metadata(
+    session_id: UUID = Path(..., description="Session ID"),
+):
+    """
+    Extract API metadata from documentation.
+    """
+
+    try:
+        doc_items = filter_documentation_items(DEFAULT_CRITERIA, session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
+    total_length = sum(len(item["content"]) for item in doc_items)
+
+    job_id = schedule_coroutine_job(
+        job_type="digester.getInfoMetadata",
+        input_payload={"documentationItems": doc_items},
+        worker=service.extract_info_metadata,
+        worker_args=(doc_items,),
+        worker_kwargs={},
+        initial_stage="chunking",
+        initial_message="Preparing and splitting documentation",
+        session_id=session_id,
+        session_result_key="metadataOutput",
+    )
+
+    SessionManager.update_session(
+        session_id,
+        {
+            "metadataJobId": str(job_id),
+            "metadataInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/metadata",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get metadata extraction status",
+)
+async def get_metadata_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+):
+    """
+    Get the status of metadata extraction job.
+    """
+    if not SessionManager.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    if not jobId:
+        jobId = SessionManager.get_session_data(session_id, "metadataJobId")
+        if not jobId:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"No metadata job found in session {session_id}"
+            )
+
+    return _build_typed_job_status_response(jobId, InfoResponse)

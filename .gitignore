@@ -1,0 +1,45 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# VSCode / JetBrains IDEs
+.vscode/
+.idea/
+
+# files
+.DS_Store
+
+# Test and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.cache/
+
+# Sessions and Jobs
+jobs/
+sessions/
+
+# Scraper metadata files, TODO: remove completely
+crawl_all.json
+
+# Irrelevatn link debug files
+debug_irrelevant_*
+
+# Uvicorn logs or runtime files
+*.log
+
+# Local dev secrets or configs (optional, only if you have them)
+.env
+.env.*
+!.env.test-example
+
+
+# FIXME: not sure why is this directory being created, has something to do with [build-system]
+smart_integration_ms.egg-info

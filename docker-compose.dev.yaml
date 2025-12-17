@@ -1,0 +1,48 @@
+# Copyright (c) 2025 Evolveum and contributors
+#
+# Licensed under the EUPL-1.2 or later.
+services:
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama:/root/.ollama
+  #   # Start the server, wait until it's ready, pull the embedding model once, then keep serving
+  #   entrypoint: []
+  #   command:
+  #     - /bin/sh
+  #     - -lc
+  #     - |
+  #       ollama serve & pid=$$!;
+  #       for i in $$(seq 1 60); do
+  #         ollama list >/dev/null 2>&1 && break
+  #         sleep 1
+  #       done
+  #       ollama pull nomic-embed-text || true
+  #       wait $$pid
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 15
+  #   restart: unless-stopped
+
+  wp1-fastapi-ms:
+    build: .
+    container_name: wp1-fastapi-ms
+    # depends_on:
+    #   ollama:
+    #     condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      LOGGING__LEVEL: info
+      # OLLAMA_HOST: ollama:11434
+    ports:
+      - "${HOST_PORT:-8090}:8090"
+
+# volumes:
+#   ollama:
+
