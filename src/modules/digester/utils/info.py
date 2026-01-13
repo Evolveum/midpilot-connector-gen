@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import logging
 from typing import Any, List, Tuple
@@ -43,8 +43,6 @@ async def extract_info_metadata(
     update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
-        current_doc_processed_chunks=0,
-        current_doc_total_chunks=total_chunks,
         message="Processing chunks for document",
     )
 
@@ -105,10 +103,7 @@ async def extract_info_metadata(
             if doc_id:
                 error_msg = f"{error_msg} (Doc: {doc_id})"
             append_job_error(job_id, error_msg)
-        finally:
-            update_job_progress(job_id, stage=JobStage.processing_chunks)
 
-    logger.info("[Digester:InfoMetadata] Extraction complete")
-    update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
+    logger.info("[Digester:InfoMetadata] Chunk extraction complete for document")
 
     return aggregated, sorted(relevant_indices)

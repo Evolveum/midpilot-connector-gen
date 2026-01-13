@@ -1,10 +1,10 @@
-# Copyright (c) 2025 Evolveum and contributors
-#
-# Licensed under the EUPL-1.2 or later.
-
 """
 Service module to generate a relevant web search query, execute it, and return the relevant links for the scraper.
 """
+
+#  Copyright (C) 2010-2026 Evolveum and contributors
+#
+#  Licensed under the EUPL-1.2 or later.
 
 from __future__ import annotations
 
@@ -295,8 +295,8 @@ def fetch_candidate_links_simplified(
     return response, parsed_response, search_output, eval_output, None
 
 
-def _run_discovery_blocking(app_data: CandidateLinksInput, job_id: UUID) -> CandidateLinksOutput:
-    """Run the discovery pipeline using blocking libraries. Intended for running in a thread."""
+async def _run_discovery_async(app_data: CandidateLinksInput, job_id: UUID) -> CandidateLinksOutput:
+    """Run the discovery pipeline. Async wrapper to handle progress updates properly."""
     discovery_main_model = get_default_llm_small1()
     discovery_eval_model = get_default_llm_small2()
     discovery_parser_model = get_default_llm_small2()
@@ -308,26 +308,26 @@ def _run_discovery_blocking(app_data: CandidateLinksInput, job_id: UUID) -> Cand
     system_prompt_fetch = get_discovery_fetch_sys_prompt(1)
     system_prompt_eval = get_discovery_eval_sys_prompt()
 
-    if job_id:
-        try:
-            update_job_progress(job_id, stage=JobStage.running, message="starting discovery")
-        except Exception as exc:
-            logger.info("update_job_progress failed (start): %s", exc)
+    try:
+        update_job_progress(job_id, stage=JobStage.processing, message="Discovering candidate links")
+    except Exception as exc:
+        logger.info("update_job_progress failed (start): %s", exc)
 
-    model_output, output_message, tool_output_raw, eval_output, parsed = fetch_candidate_links_simplified(
-        model=discovery_main_model,
-        eval_model=discovery_eval_model,
-        parser_model=discovery_parser_model,
-        user_prompt=user_prompt_fetch,
-        user_prompt_eval=user_prompt_eval,
-        system_prompt=system_prompt_fetch,
-        system_prompt_eval=system_prompt_eval,
-        resource=[app_data.application_name, app_data.application_version or ""],
-        pydantic_class_template=PyScrapeFetchReferences,
-        llm_generated_search_query=app_data.llm_generated_search_query,
-    )
+    def tasks():
+        return fetch_candidate_links_simplified(
+            model=discovery_main_model,
+            eval_model=discovery_eval_model,
+            parser_model=discovery_parser_model,
+            user_prompt=user_prompt_fetch,
+            user_prompt_eval=user_prompt_eval,
+            system_prompt=system_prompt_fetch,
+            system_prompt_eval=system_prompt_eval,
+            resource=[app_data.application_name, app_data.application_version or ""],
+            pydantic_class_template=PyScrapeFetchReferences,
+            llm_generated_search_query=app_data.llm_generated_search_query,
+        )
 
-    update_job_progress(job_id, message="parsed evaluator output")
+    model_output, output_message, tool_output_raw, eval_output, parsed = await asyncio.to_thread(tasks)
 
     parsed_ref = cast(Optional[PyScrapeFetchReferences], parsed)
     if not parsed_ref:
@@ -356,14 +356,11 @@ def _run_discovery_blocking(app_data: CandidateLinksInput, job_id: UUID) -> Cand
             output_enriched = []
 
     logger.info("End of the discovery script.")
-    update_job_progress(job_id, stage=JobStage.finished, message="discovery finished")
-
     return CandidateLinksOutput(candidate_links=output, candidate_links_enriched=output_enriched)
 
 
 async def fetch_candidate_links(app_data: CandidateLinksInput, job_id: UUID) -> CandidateLinksOutput:
     """
     Generate a search query, execute it, and select the most relevant result using LLM.
-    Offloads the blocking discovery logic to a thread to avoid blocking the event loop.
     """
-    return await asyncio.to_thread(_run_discovery_blocking, app_data, job_id)
+    return await _run_discovery_async(app_data, job_id)

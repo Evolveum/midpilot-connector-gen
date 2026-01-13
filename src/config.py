@@ -1,11 +1,11 @@
-# Copyright (c) 2010-2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,7 +54,7 @@ class LLMSettings(BaseModel):
     """
 
     openai_api_key: str = ""
-    openai_api_base: str = "https://openrouter.ai/api/v1"  
+    openai_api_base: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-oss-20b"
     request_timeout: int = 120
 
@@ -70,7 +70,7 @@ class LLMSmall1Settings(BaseModel):
     """
 
     openai_api_key: str = ""
-    openai_api_base: str = "https://openrouter.ai/api/v1"  
+    openai_api_base: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-oss-20b"
     request_timeout: int = 120
 
@@ -86,7 +86,7 @@ class LLMSmall2Settings(BaseModel):
     """
 
     openai_api_key: str = ""
-    openai_api_base: str = "https://openrouter.ai/api/v1"  
+    openai_api_base: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-oss-20b"
     request_timeout: int = 120
 
@@ -103,7 +103,7 @@ class LLMSmall2Settings(BaseModel):
 #     """
 #
 #     openai_api_key: str = ""
-#     openai_api_base: str = "http://localhost:11434"  
+#     openai_api_base: str = "http://localhost:11434"
 #     model_name: str = "nomic-ai/nomic-embed-text-v1.5"
 
 
@@ -213,6 +213,42 @@ class ScrapeAndProcessSettings(BaseModel):
     )
 
 
+class DatabaseSettings(BaseModel):
+    """
+    Configuration for PostgreSQL database connection.
+
+    :param url: Full database connection URL (used by SQLAlchemy)
+    :param host: Database host address
+    :param port: Database port
+    :param name: Database name
+    :param user: Database username
+    :param password: Database password
+    :param pool_size: Connection pool size
+    :param max_overflow: Maximum overflow connections
+    :param echo: Enable SQL query logging (for debugging)
+    """
+
+    url: Optional[str] = Field(
+        default=None,
+        description="Database URL",
+    )
+    host: str = ""
+    port: int = 5432
+    name: str = ""
+    user: str = ""
+    password: str = ""
+    pool_size: int = 10
+    max_overflow: int = 20
+    echo: bool = False
+
+    @model_validator(mode="after")
+    def assemble_db_url(self) -> "DatabaseSettings":
+        """Construct the database URL from components if not provided or contains placeholders."""
+        if not self.url or "${" in self.url:
+            self.url = f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        return self
+
+
 class AppSettings(BaseModel):
     """
     Core application settings for the API service.
@@ -263,9 +299,16 @@ class Settings(BaseSettings):
     Uses nested environment variables with '__' delimiter.
 
     Example: LOGGING__LEVEL=error
+             DATABASE__HOST=localhost
+             DATABASE__PORT=5432
     """
 
-    model_config = SettingsConfigDict(env_nested_delimiter="__")
+    model_config = SettingsConfigDict(
+        env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app: AppSettings = AppSettings()
     logging: LoggingSettings = LoggingSettings()
@@ -277,6 +320,7 @@ class Settings(BaseSettings):
     search: SearchSettings = SearchSettings()
     scrape_and_process: ScrapeAndProcessSettings = ScrapeAndProcessSettings()
     brave: BraveSettings = BraveSettings()
+    database: DatabaseSettings = DatabaseSettings()
 
 
 config = Settings()

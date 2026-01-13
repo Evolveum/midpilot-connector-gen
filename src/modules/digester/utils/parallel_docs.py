@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import asyncio
 import logging
@@ -38,22 +38,20 @@ async def process_documents_in_parallel(
         List of tuples: (result, relevant_indices, doc_uuid) for each document
     """
     total_docs = len(doc_items)
-
-    update_job_progress(job_id, total_documents=total_docs, processed_documents=0, message="Processing documents")
+    update_job_progress(job_id, total_processing=total_docs, message="Processing documents")
 
     async def _process_single_doc(doc_item: dict, idx: int) -> Tuple[T, List[int], UUID]:
         """Process a single document and return its results."""
         doc_uuid = UUID(doc_item["uuid"])
         doc_content = doc_item["content"]
 
-        logger.info(f"[{logger_scope}] Processing document {idx}/{total_docs} (UUID: {doc_uuid})")
+        logger.info(f"[{logger_scope}] Processing chunks {idx}/{total_docs} (UUID: {doc_uuid})")
 
         result, relevant_indices = await extractor(doc_content, job_id, doc_uuid)
 
         logger.info(f"[{logger_scope}] Document {doc_uuid}: completed with {len(relevant_indices)} relevant chunks")
 
-        # Mark this document as complete
-        increment_processed_documents(job_id, delta=1)
+        await increment_processed_documents(job_id, delta=1)
 
         return result, relevant_indices, doc_uuid
 
@@ -90,8 +88,8 @@ async def process_grouped_chunks_in_parallel(
     """
     update_job_progress(
         job_id,
-        total_documents=total_documents,
-        processed_documents=0,
+        total_processing=total_documents,
+        processing_completed=0,
         message="Processing selected chunks",
     )
 
@@ -99,14 +97,11 @@ async def process_grouped_chunks_in_parallel(
         doc_uuid: UUID, doc_chunks: List[Tuple[int, int, str]], doc_index: int
     ) -> Tuple[T, List[Dict[str, Any]]]:
         """Process chunks from a single document and return results."""
-        num_chunks = len(doc_chunks)
-        logger.info(
-            f"[{logger_scope}] Processing document {doc_index}/{total_documents} (UUID: {doc_uuid}, {num_chunks} chunks)"
-        )
+        logger.info(f"[{logger_scope}] Processing chunks {doc_index}/{total_documents} (UUID: {doc_uuid})")
 
         result, relevant_chunks = await extractor(doc_uuid, doc_chunks, doc_index)
 
-        increment_processed_documents(job_id, delta=1)
+        await increment_processed_documents(job_id, delta=1)
 
         return result, relevant_chunks
 

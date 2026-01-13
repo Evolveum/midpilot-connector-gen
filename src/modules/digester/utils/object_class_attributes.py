@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import asyncio
 import json
@@ -83,7 +83,7 @@ async def _extract_from_single_chunk(
         { attribute_name: attribute_info_dict }
     """
     try:
-        logger.info("[Digester:Attributes] LLM call for chunk %s", chunk_index + 1)
+        logger.info("[Digester:Attributes] LLM call for document %s", doc_id)
 
         # Extract summary and tags from doc metadata
         summary, tags = extract_summary_and_tags(doc_metadata)
@@ -120,8 +120,6 @@ async def _extract_from_single_chunk(
             msg = f"{msg} (Doc: {doc_id})"
         append_job_error(job_id, msg)
         return {}
-    finally:
-        update_job_progress(job_id, stage=JobStage.processing_chunks)
 
 
 async def _extract_attributes_for_doc(
@@ -140,8 +138,6 @@ async def _extract_attributes_for_doc(
     update_job_progress(
         job_id,
         stage="processing_chunks",
-        current_doc_processed_chunks=0,
-        current_doc_total_chunks=total_chunks,
         message="Processing chunks for document",
     )
 
@@ -160,9 +156,9 @@ async def _extract_attributes_for_doc(
         )
         for i, chunk_text in enumerate(doc_chunks)
     ]
-    results = await asyncio.gather(*tasks)
+    results = list(await asyncio.gather(*tasks))
 
-    logger.info("[Digester:Attributes] Extraction completed for %s chunks in doc %s", total_chunks, doc_id)
+    logger.info("[Digester:Attributes] Extraction completed for document %s", doc_id)
     return results
 
 
@@ -289,8 +285,8 @@ async def extract_attributes(
 
     update_job_progress(
         job_id,
-        total_documents=total_documents,
-        processed_documents=0,
+        total_processing=total_documents,
+        processing_completed=0,
         message="Processing selected chunks",
     )
 
@@ -301,11 +297,10 @@ async def extract_attributes(
         doc_uuid: UUID, doc_chunks: List[Tuple[int, int, str]], doc_index: int
     ) -> Tuple[List[Dict[str, Dict[str, Any]]], List[Dict[str, Any]]]:
         """Extract attributes from chunks of a single document."""
-        num_chunks = len(doc_chunks)
         update_job_progress(
             job_id,
             stage=JobStage.processing_chunks,
-            message=(f"Processing {num_chunks} chunks from document {doc_index}/{total_documents} for {object_class}"),
+            message="Processing chunks and try to extract relevant information",
         )
 
         # Get metadata for this document
@@ -326,11 +321,13 @@ async def extract_attributes(
         # stitch back to global order and record relevant ones
         doc_per_chunk = []
         doc_relevant_chunks = []
+        doc_has_results = False
         for in_doc_idx, partial in enumerate(per_chunk_for_doc):
             array_idx, original_idx, _ = doc_chunks[in_doc_idx]
             doc_per_chunk.append(partial)
-            if partial:
-                doc_relevant_chunks.append({"docUuid": doc_uuid, "chunkIndex": original_idx})
+            if partial and not doc_has_results:
+                doc_relevant_chunks.append({"docUuid": str(doc_uuid)})
+                doc_has_results = True
 
         return doc_per_chunk, doc_relevant_chunks
 

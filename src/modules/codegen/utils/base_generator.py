@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import logging
 from abc import ABC, abstractmethod
@@ -229,7 +229,7 @@ class BaseGroovyGenerator(ABC):
             return self.config.default_scaffold
 
         # Step 2: Initialize progress
-        self._initialize_progress(job_id, chunks, per_doc_counts, docs_included)
+        self._initialize_progress(job_id, chunks, docs_included)
 
         # Step 3: Prepare input data and LLM chain
         input_data = self.prepare_input_data(**operation_specific_kwargs)
@@ -280,29 +280,19 @@ class BaseGroovyGenerator(ABC):
         self,
         job_id: UUID,
         chunks: List[str],
-        per_doc_counts: Dict[str, int],
         docs_included: List[str],
     ):
         """Initialize job progress tracking."""
         total_chunks = len(chunks)
         logger.info("%s Processing %d chunks", self.config.logger_prefix, total_chunks)
 
-        if per_doc_counts and docs_included:
-            update_job_progress(
-                job_id,
-                stage=JobStage.processing_chunks,
-                total_documents=len(docs_included),
-                processed_documents=0,
-                message="Processing chunks for document",
-            )
-        else:
-            update_job_progress(
-                job_id,
-                stage=JobStage.processing_chunks,
-                current_doc_processed_chunks=0,
-                current_doc_total_chunks=total_chunks,
-                message="Processing chunks for document",
-            )
+        update_job_progress(
+            job_id,
+            stage=JobStage.processing_chunks,
+            total_processing=len(docs_included),
+            processing_completed=0,
+            message="Processing chunks for document",
+        )
 
     def _build_llm_chain(self, total_chunks: int):
         """Build the LangChain chain for LLM invocation."""
@@ -373,13 +363,10 @@ class BaseGroovyGenerator(ABC):
                 continue
 
             finally:
-                # Update progress
-                update_job_progress(job_id, stage=JobStage.processing_chunks)
-
                 if per_doc_counts and docs_included and isinstance(doc_uuid, str):
                     current_doc_chunks_remaining = max(0, current_doc_chunks_remaining - 1)
                     if current_doc_chunks_remaining == 0:
-                        increment_processed_documents(job_id, 1)
+                        await increment_processed_documents(job_id, 1)
 
         return result
 

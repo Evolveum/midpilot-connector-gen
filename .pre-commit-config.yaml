@@ -6,27 +6,27 @@ repos:
     hooks:
       - id: smart-integration-typecheck
         name: smart-integration-typecheck
-        entry: bash -c "uv --directory=wp1-micro-service run poe typecheck"
+        entry: bash -c "uv --directory=src run poe typecheck"
         language: system
         types: [python]
   - repo: local
     hooks:
       - id: smart-integration-lint
         name: smart-integration-lint
-        entry: bash -c "uv --directory=wp1-micro-service run poe lint"
+        entry: bash -c "uv --directory=src run poe lint"
         language: system
         types: [python]
   - repo: local
     hooks:
       - id: smart-integration-stylecheck
         name: smart-integration-stylecheck
-        entry: bash -c "uv --directory=wp1-micro-service run poe stylecheck"
+        entry: bash -c "uv --directory=src run poe stylecheck"
         language: system
         types: [python]
   - repo: local
     hooks:
       - id: smart-integration-unit-tests
         name: smart-integration-unit-tests
-        entry: bash -c "uv --directory=wp1-micro-service run poe test test/unit"
+        entry: bash -c "uv --directory=src run poe test test/unit"
         language: system
         types: [python]

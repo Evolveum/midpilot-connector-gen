@@ -1,13 +1,14 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import logging
 from importlib import resources
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union, cast
 from uuid import UUID
 
-from ...common.session.session import SessionManager
+from ...common.database.config import async_session_maker
+from ...common.database.repositories.session_repository import SessionRepository
 from ..digester.schema import EndpointsResponse, ObjectClassSchemaResponse, RelationsResponse
 from .prompts.connIDPrompts import get_connID_system_prompt, get_connID_user_prompt
 from .prompts.nativeSchemaPrompts import get_native_schema_system_prompt, get_native_schema_user_prompt
@@ -169,7 +170,10 @@ async def create_search(
     relevant_indices: Optional[List[int]] = None
     relevant_pairs: Optional[List[Dict[str, Any]]] = None
 
-    relevant_map = SessionManager.get_session_data(session_id, "relevantChunks")
+    async with async_session_maker() as db:
+        repo = SessionRepository(db)
+        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+
     if relevant_map:
         key_endpoints = f"{object_class}EndpointsOutput"
         key_attributes = f"{object_class}AttributesOutput"
@@ -229,7 +233,10 @@ async def create_create(
     relevant_indices: Optional[List[int]] = None
     relevant_pairs: Optional[List[Dict[str, Any]]] = None
 
-    relevant_map = SessionManager.get_session_data(session_id, "relevantChunks")
+    async with async_session_maker() as db:
+        repo = SessionRepository(db)
+        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+
     if relevant_map:
         key_endpoints = f"{object_class}EndpointsOutput"
         key_attributes = f"{object_class}AttributesOutput"
@@ -283,7 +290,10 @@ async def create_update(
     relevant_indices: Optional[List[int]] = None
     relevant_pairs: Optional[List[Dict[str, Any]]] = None
 
-    relevant_map = SessionManager.get_session_data(session_id, "relevantChunks")
+    async with async_session_maker() as db:
+        repo = SessionRepository(db)
+        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+
     if relevant_map:
         key_endpoints = f"{object_class}EndpointsOutput"
         key_attributes = f"{object_class}AttributesOutput"
@@ -337,7 +347,10 @@ async def create_delete(
     relevant_indices: Optional[List[int]] = None
     relevant_pairs: Optional[List[Dict[str, Any]]] = None
 
-    relevant_map = SessionManager.get_session_data(session_id, "relevantChunks")
+    async with async_session_maker() as db:
+        repo = SessionRepository(db)
+        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+
     if relevant_map:
         key_endpoints = f"{object_class}EndpointsOutput"
         key_attributes = f"{object_class}AttributesOutput"
@@ -387,7 +400,10 @@ async def create_relation(
     relevant_indices: Optional[List[int]] = None
     relevant_pairs: Optional[List[Dict[str, Any]]] = None
 
-    relevant_map = SessionManager.get_session_data(session_id, "relevantChunks")
+    async with async_session_maker() as db:
+        repo = SessionRepository(db)
+        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+
     if relevant_map:
         raw = relevant_map.get("relationsOutput")
         pairs = _collect_pairs(raw)

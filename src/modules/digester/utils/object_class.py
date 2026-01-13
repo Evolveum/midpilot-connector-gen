@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import json
 import logging
@@ -68,13 +68,10 @@ async def extract_object_classes_raw(
         chunk_metadata=doc_metadata,
     )
 
-    # Populate relevant_chunks for each object class based on the chunk it was extracted from
+    # Populate relevant_chunks for each object class - just store the document UUID
     for obj_class in extracted:
-        if hasattr(obj_class, "_chunk_index"):
-            chunk_idx = obj_class._chunk_index
-            obj_class.relevant_chunks = [{"docUuid": doc_id, "chunkIndex": chunk_idx}]
-            # Clean up temporary attribute
-            delattr(obj_class, "_chunk_index")
+        if doc_id:
+            obj_class.relevant_chunks = [{"docUuid": str(doc_id)}]
 
     logger.info("[Digester:ObjectClasses] Raw extraction complete from document. Count: %d", len(extracted))
     return extracted, relevant_indices
@@ -115,18 +112,16 @@ async def deduplicate_and_sort_object_classes(
         if key not in by_name:
             # If we have chunk information for this class, set it
             if class_to_chunks and key in class_to_chunks:
-                # Remove duplicate chunks (same docUuid and chunkIndex)
+                # Remove duplicate documents (same docUuid)
                 unique_chunks: List[Dict[str, Any]] = []
-                seen: set[tuple[str, int]] = set()
+                seen: set[str] = set()
                 for chunk in class_to_chunks[key]:
-                    chunk_key = (str(chunk["docUuid"]), int(chunk["chunkIndex"]))
-                    if chunk_key not in seen:
-                        seen.add(chunk_key)
+                    doc_uuid = str(chunk["docUuid"])
+                    if doc_uuid not in seen:
+                        seen.add(doc_uuid)
                         unique_chunks.append(chunk)
-                # Sort chunks by docUuid and chunkIndex
-                obj_class.relevant_chunks = sorted(
-                    unique_chunks, key=lambda x: (str(x["docUuid"]), int(x["chunkIndex"]))
-                )
+                # Sort chunks by docUuid
+                obj_class.relevant_chunks = sorted(unique_chunks, key=lambda x: str(x["docUuid"]))
             by_name[key] = obj_class
             continue
 
@@ -142,15 +137,13 @@ async def deduplicate_and_sort_object_classes(
             current.description = obj_class.description
         # Merge relevant chunks if available
         if class_to_chunks and key in class_to_chunks:
-            # Convert to set of tuples to remove duplicates
-            current_chunks = set((chunk["docUuid"], chunk["chunkIndex"]) for chunk in (current.relevant_chunks or []))
-            # Add new chunks
+            # Convert to set of docUuids to remove duplicates
+            current_doc_uuids = set(chunk["docUuid"] for chunk in (current.relevant_chunks or []))
+            # Add new document UUIDs
             for chunk in class_to_chunks[key]:
-                current_chunks.add((chunk["docUuid"], chunk["chunkIndex"]))
+                current_doc_uuids.add(chunk["docUuid"])
             # Convert back to list of dicts and sort
-            current.relevant_chunks = [
-                {"docUuid": doc_uuid, "chunkIndex": chunk_idx} for doc_uuid, chunk_idx in sorted(current_chunks)
-            ]
+            current.relevant_chunks = [{"docUuid": doc_uuid} for doc_uuid in sorted(current_doc_uuids)]
 
     # Remove duplicates with whitespace-only differences (preferring no-space versions)
     for key in list(by_name.keys()):
@@ -165,6 +158,7 @@ async def deduplicate_and_sort_object_classes(
     dedup_list.sort(key=lambda x: x.name.lower())
 
     if filter_relevancy:
+        # Filters object classes by relevancy using LLM
         try:
             update_job_progress(
                 job_id,
@@ -177,18 +171,14 @@ async def deduplicate_and_sort_object_classes(
                 min_relevancy_level,
             )
 
-            # items_json = json.dumps([oc.model_dump(mode="json") for oc in dedup_list])
             items_for_filtering = [
                 {
                     "name": oc.name,
                     "description": oc.description,
                     "superclass": oc.superclass,
                     "abstract": oc.abstract,
-                    # "embedded": oc.embedded,
-                    "relevant_chunks": [
-                        {"docUuid": str(chunk["docUuid"]), "chunkIndex": chunk["chunkIndex"]}
-                        for chunk in (oc.relevant_chunks or [])
-                    ],
+                    "embedded": oc.embedded,
+                    "relevant_chunks": [{"docUuid": str(chunk["docUuid"])} for chunk in (oc.relevant_chunks or [])],
                 }
                 for oc in dedup_list
             ]

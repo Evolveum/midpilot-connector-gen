@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import asyncio
 import logging
@@ -84,8 +84,8 @@ async def extract_endpoints(
     # Initialize document-level progress tracking
     update_job_progress(
         job_id,
-        total_documents=total_documents,
-        processed_documents=0,
+        total_processing=total_documents,
+        processing_completed=0,
         message="Processing selected chunks",
     )
 
@@ -112,18 +112,11 @@ async def extract_endpoints(
         doc_uuid: UUID, doc_chunks: List[Tuple[int, int, str]], doc_idx: int
     ) -> Tuple[List[EndpointInfo], List[Dict[str, Any]]]:
         """Extract endpoints from chunks of a single document."""
-        num_chunks_in_doc = len(doc_chunks)
         update_job_progress(
             job_id,
             stage=JobStage.processing_chunks,
-            message=f"Processing {num_chunks_in_doc} chunks from document {doc_idx}/{total_documents} for {object_class}",
+            message="Processing chunks and try to extract relevant information",
         )
-
-        # Disable for now metadata in endpoints extraction
-        # Get metadata for this document
-        # doc_metadata = None
-        # if doc_metadata_map:
-        #     doc_metadata = doc_metadata_map.get(str(doc_uuid))
 
         doc_relevant_chunks: List[Dict[str, Any]] = []
 
@@ -154,9 +147,11 @@ async def extract_endpoints(
                 if not result or not result.endpoints:
                     return []
 
-                # Mark this chunk as relevant if we got endpoints
-                if result.endpoints:
-                    doc_relevant_chunks.append({"docUuid": doc_uuid, "chunkIndex": original_idx})
+                # Mark this document as relevant if we got endpoints
+                if result.endpoints and doc_uuid:
+                    # Only add once per document
+                    if not doc_relevant_chunks or doc_relevant_chunks[0]["docUuid"] != str(doc_uuid):
+                        doc_relevant_chunks.append({"docUuid": str(doc_uuid)})
 
                 return result.endpoints
 

@@ -1,13 +1,13 @@
-# Copyright (c) 2025 Evolveum and contributors
-#
-# Licensed under the EUPL-1.2 or later.
-
 """
 Concrete generator implementations for different Groovy operations.
 
 This module contains specialized generators for search, create, update, delete, and relation
 operations. Each generator extends BaseGroovyGenerator and implements operation-specific logic.
 """
+
+#  Copyright (C) 2010-2026 Evolveum and contributors
+#
+#  Licensed under the EUPL-1.2 or later.
 
 import json
 import logging
