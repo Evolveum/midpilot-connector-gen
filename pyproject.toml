@@ -17,7 +17,7 @@ dependencies = [
     "types-pyyaml>=6.0.12.20250809",
     "ddgs==9.2.3",
     "crawl4ai==0.7.4",
-    "langchain-community==0.3.24",
+    "langchain-community==0.3.27",
     "langchain-chroma>=0.2.4",
     "langchain-ollama>=0.3.3",
     "markdownify>=1.2.0",
