@@ -98,7 +98,12 @@ get_endpoints_system_prompt = textwrap.dedent("""
     """)
 
 get_endpoints_user_prompt = textwrap.dedent("""
+Summary about documentation: {summary}
+
+Doc's tags: {tags}
+
 Object class: {object_class}
+
 Base API URL: {base_api_url}
 
 Text from documentation:
@@ -118,7 +123,3 @@ Remember:
 - Include brief descriptions and content types when explicitly stated.
 - If nothing relevant is found in this chunk, return an empty list.
 """)
-
-# Summary: {summary}
-
-# Tags: {tags}

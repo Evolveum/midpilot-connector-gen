@@ -23,6 +23,7 @@ from ..prompts.endpointsPrompts import (
     get_endpoints_user_prompt,
 )
 from ..schema import EndpointInfo, EndpointsResponse
+from .metadata_helper import extract_summary_and_tags
 from .parallel_docs import process_grouped_chunks_in_parallel
 
 logger = logging.getLogger(__name__)
@@ -70,9 +71,7 @@ async def extract_endpoints(
     # Group chunks by document
     doc_to_chunks: Dict[str, List[Tuple[int, int, str]]] = {}
     for idx, (original_idx, doc_uuid) in enumerate(chunk_details):
-        if doc_uuid not in doc_to_chunks:
-            doc_to_chunks[doc_uuid] = []
-        doc_to_chunks[doc_uuid].append((idx, original_idx, chunks[idx]))
+        doc_to_chunks.setdefault(doc_uuid, []).append((idx, original_idx, chunks[idx]))
 
     total_documents = len(doc_to_chunks)
     logger.info(
@@ -86,7 +85,7 @@ async def extract_endpoints(
         job_id,
         total_processing=total_documents,
         processing_completed=0,
-        message="Processing selected chunks",
+        message="Processing chunks and try to extract relevant information",
     )
 
     # Prepare prompts
@@ -109,7 +108,7 @@ async def extract_endpoints(
     relevant_chunk_info: List[Dict[str, Any]] = []
 
     async def _extract_for_doc(
-        doc_uuid: UUID, doc_chunks: List[Tuple[int, int, str]], doc_idx: int
+        doc_uuid: UUID, doc_chunks: List[Tuple[int, int, str]], doc_index: int
     ) -> Tuple[List[EndpointInfo], List[Dict[str, Any]]]:
         """Extract endpoints from chunks of a single document."""
         update_job_progress(
@@ -118,11 +117,14 @@ async def extract_endpoints(
             message="Processing chunks and try to extract relevant information",
         )
 
+        # Get metadata for this document
+        doc_metadata = None
+        if doc_metadata_map:
+            doc_metadata = doc_metadata_map.get(str(doc_uuid))
+
         doc_relevant_chunks: List[Dict[str, Any]] = []
 
-        async def _process_chunk(
-            array_idx: int, chunk: str, original_idx: int, doc_uuid: UUID, doc_metadata: Dict[str, Any] | None = None
-        ) -> List[EndpointInfo]:
+        async def _process_chunk(array_idx: int, chunk_text: str, original_idx: int) -> List[EndpointInfo]:
             one_based = array_idx + 1
             try:
                 logger.info(
@@ -134,12 +136,12 @@ async def extract_endpoints(
                 )
 
                 # Extract summary and tags from doc metadata
-                # summary, tags = extract_summary_and_tags(doc_metadata)
+                summary, tags = extract_summary_and_tags(doc_metadata)
 
                 result = cast(
                     EndpointsResponse,
                     await chain.ainvoke(
-                        {"chunk": chunk},  # , "summary": summary, "tags": tags
+                        {"chunk": chunk_text, "summary": summary, "tags": tags},
                         config=RunnableConfig(callbacks=[langfuse_handler]),
                     ),
                 )
@@ -162,8 +164,7 @@ async def extract_endpoints(
 
         # Process all chunks in this document in parallel
         tasks = [
-            _process_chunk(array_idx, chunk_text, original_idx, doc_uuid, None)  # doc_metadata
-            for array_idx, original_idx, chunk_text in doc_chunks
+            _process_chunk(array_idx, chunk_text, original_idx) for array_idx, original_idx, chunk_text in doc_chunks
         ]
         results = await asyncio.gather(*tasks)
 

@@ -277,10 +277,6 @@ async def process_documentation_worker(
             )
 
             await job_repo.increment_processed_documents(job_id, 1)
-
-            # optional: update message as well (purely cosmetic)
-            # await job_repo.update_job_progress(job_id, message=f"Processed another chunk")
-
             await db_chunk.commit()
 
         return DocumentationItem(
