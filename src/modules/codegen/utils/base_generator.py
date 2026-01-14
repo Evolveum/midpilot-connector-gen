@@ -291,7 +291,7 @@ class BaseGroovyGenerator(ABC):
             stage=JobStage.processing_chunks,
             total_processing=len(docs_included),
             processing_completed=0,
-            message="Processing chunks for document",
+            message="Processing chunks and try to extract relevant information",
         )
 
     def _build_llm_chain(self, total_chunks: int):

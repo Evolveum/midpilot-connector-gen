@@ -137,8 +137,8 @@ async def _extract_attributes_for_doc(
     total_chunks = len(doc_chunks)
     update_job_progress(
         job_id,
-        stage="processing_chunks",
-        message="Processing chunks for document",
+        stage=JobStage.processing_chunks,
+        message="Processing chunks and try to extract relevant information",
     )
 
     chain = _build_attribute_chain(total_chunks)

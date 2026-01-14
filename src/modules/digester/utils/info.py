@@ -43,7 +43,7 @@ async def extract_info_metadata(
     update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
-        message="Processing chunks for document",
+        message="Processing chunks and try to extract relevant information",
     )
 
     parser: PydanticOutputParser[InfoResponse] = PydanticOutputParser(pydantic_object=InfoResponse)

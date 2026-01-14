@@ -226,7 +226,7 @@ async def extract_relations(
     update_job_progress(
         job_id,
         stage="processing_chunks",
-        message="Processing chunks for document",
+        message="Processing chunks and try to extract relevant information",
     )
 
     parser: PydanticOutputParser[RelationsResponse] = PydanticOutputParser(pydantic_object=RelationsResponse)
