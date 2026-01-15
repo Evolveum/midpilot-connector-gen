@@ -278,6 +278,10 @@ async def extract_class_attributes(
     Updates both {object_class}AttributesOutput and the attributes field in the specific object class.
     """
     repo = SessionRepository(db)
+
+    if not await repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
     # Get the object class data to find relevant chunks
     object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
     if not object_classes_output or not isinstance(object_classes_output, dict):
@@ -430,6 +434,9 @@ async def extract_class_endpoints(
     Only processes chunks that are relevant to the object class (from relevantChunks).
     """
     repo = SessionRepository(db)
+    if not await repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
     # Get the object class data to find relevant chunks
     object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
     if not object_classes_output or not isinstance(object_classes_output, dict):

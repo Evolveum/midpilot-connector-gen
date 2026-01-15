@@ -2,7 +2,7 @@
 #
 #  Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_serializer
@@ -79,12 +79,13 @@ class ObjectClass(BaseModel):
             "Include key characteristics and usage context. Keep it concise (1-2 sentences)."
         ),
     )
-    relevant_chunks: List[Dict[str, Union[UUID, int]]] = Field(
+    relevant_chunks: List[Dict[str, UUID]] = Field(
         default_factory=list,
         validation_alias="relevantChunks",
         serialization_alias="relevantChunks",
         description=(
-            "List of chunks that contain relevant information about this object class. Each entry contains 'docUuid'."
+            "List of chunks that contain relevant information about this object class. "
+            "Each entry contains only 'docUuid' (the document UUID is the chunk identifier)."
         ),
     )
     # These fields will be excluded from JSON when None
@@ -101,27 +102,18 @@ class ObjectClass(BaseModel):
 
     @field_validator("relevant_chunks", mode="before")
     @classmethod
-    def validate_relevant_chunks(cls, v: Any) -> List[Dict[str, Union[UUID, int]]]:
+    def validate_relevant_chunks(cls, v: Any) -> List[Dict[str, UUID]]:
         if not isinstance(v, list):
             return []
 
-        validated_chunks: List[Dict[str, Union[UUID, int]]] = []
+        validated_chunks: List[Dict[str, UUID]] = []
         for chunk in v:
             if not isinstance(chunk, dict):
                 continue
 
-            validated: Dict[str, Union[UUID, int]] = {}
+            # Only extract docUuid, no chunkIndex
             if "docUuid" in chunk:
-                validated["docUuid"] = chunk["docUuid"]
-            if "chunkIndex" in chunk:
-                # Ensure chunkIndex is an integer
-                try:
-                    validated["chunkIndex"] = int(chunk["chunkIndex"])
-                except (TypeError, ValueError):
-                    continue
-
-            if validated:
-                validated_chunks.append(validated)
+                validated_chunks.append({"docUuid": chunk["docUuid"]})
 
         return validated_chunks
 
