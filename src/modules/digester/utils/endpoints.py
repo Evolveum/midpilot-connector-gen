@@ -1,9 +1,10 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import asyncio
 import logging
+import re
 from typing import Any, Dict, List, Tuple, cast
 from uuid import UUID
 
@@ -11,6 +12,7 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
+from ....common.chunks import get_neighboring_tokens
 from ....common.enums import JobStage
 from ....common.jobs import (
     append_job_error,
@@ -19,10 +21,13 @@ from ....common.jobs import (
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
 from ..prompts.endpointsPrompts import (
+    check_endpoint_params_system_prompt,
+    check_endpoint_params_user_prompt,
     get_endpoints_system_prompt,
     get_endpoints_user_prompt,
 )
-from ..schema import EndpointInfo, EndpointsResponse
+from ..schema import EndpointInfo, EndpointParamInfo, EndpointsResponse
+from ..utils.metadata_helper import extract_summary_and_tags
 from .parallel_docs import process_grouped_chunks_in_parallel
 
 logger = logging.getLogger(__name__)
@@ -84,8 +89,8 @@ async def extract_endpoints(
     # Initialize document-level progress tracking
     update_job_progress(
         job_id,
-        total_documents=total_documents,
-        processed_documents=0,
+        total_processing=total_documents,
+        processing_completed=0,
         message="Processing selected chunks",
     )
 
@@ -104,6 +109,14 @@ async def extract_endpoints(
     ).partial(total=total_chunks, format_instructions=parser.get_format_instructions())
     chain = make_basic_chain(prompt, llm, parser)
 
+    param_parser: PydanticOutputParser[EndpointParamInfo] = PydanticOutputParser(pydantic_object=EndpointParamInfo)
+    param_system_prompt = check_endpoint_params_system_prompt.replace("{object_class}", object_class)
+    param_user_prompt = check_endpoint_params_user_prompt.replace("{object_class}", object_class)
+    param_prompt = ChatPromptTemplate.from_messages(
+        [("system", param_system_prompt + "\n\n{format_instructions}"), ("human", param_user_prompt)]
+    ).partial(format_instructions=param_parser.get_format_instructions())
+    param_chain = make_basic_chain(param_prompt, llm, param_parser)
+
     # Process each chunk
     extracted_endpoints: List[EndpointInfo] = []
     relevant_chunk_info: List[Dict[str, Any]] = []
@@ -112,18 +125,17 @@ async def extract_endpoints(
         doc_uuid: UUID, doc_chunks: List[Tuple[int, int, str]], doc_idx: int
     ) -> Tuple[List[EndpointInfo], List[Dict[str, Any]]]:
         """Extract endpoints from chunks of a single document."""
-        num_chunks_in_doc = len(doc_chunks)
         update_job_progress(
             job_id,
             stage=JobStage.processing_chunks,
-            message=f"Processing {num_chunks_in_doc} chunks from document {doc_idx}/{total_documents} for {object_class}",
+            message="Processing chunks and try to extract relevant information",
         )
 
         # Disable for now metadata in endpoints extraction
         # Get metadata for this document
-        # doc_metadata = None
-        # if doc_metadata_map:
-        #     doc_metadata = doc_metadata_map.get(str(doc_uuid))
+        doc_metadata = None
+        if doc_metadata_map:
+            doc_metadata = doc_metadata_map.get(str(doc_uuid))
 
         doc_relevant_chunks: List[Dict[str, Any]] = []
 
@@ -141,12 +153,12 @@ async def extract_endpoints(
                 )
 
                 # Extract summary and tags from doc metadata
-                # summary, tags = extract_summary_and_tags(doc_metadata)
+                summary, tags = extract_summary_and_tags(doc_metadata)
 
                 result = cast(
                     EndpointsResponse,
                     await chain.ainvoke(
-                        {"chunk": chunk},  # , "summary": summary, "tags": tags
+                        {"chunk": chunk, "summary": summary, "tags": tags},  # , "summary": summary, "tags": tags
                         config=RunnableConfig(callbacks=[langfuse_handler]),
                     ),
                 )
@@ -154,11 +166,59 @@ async def extract_endpoints(
                 if not result or not result.endpoints:
                     return []
 
-                # Mark this chunk as relevant if we got endpoints
-                if result.endpoints:
-                    doc_relevant_chunks.append({"docUuid": doc_uuid, "chunkIndex": original_idx})
+                valid_endpoints: List[EndpointInfo] = []
 
-                return result.endpoints
+                # Mark this document as relevant if we got endpoints
+                if result.endpoints and doc_uuid:
+                    for endpoint in result.endpoints:
+                        if endpoint.path:
+                            if re.search(re.escape(endpoint.path) + r'[\s\n\t.,;:!?\-\)\]\}"\']', chunk, re.IGNORECASE):
+                                valid_endpoints.append(endpoint)
+                            else:
+                                logger.info(
+                                    "[Digester:Endpoints] Extracted path '%s' not found in chunk %d, deleting path",
+                                    endpoint.path,
+                                    one_based,
+                                )
+
+                if valid_endpoints:
+                    # Only add once per document
+                    if not doc_relevant_chunks or doc_relevant_chunks[0]["docUuid"] != str(doc_uuid):
+                        doc_relevant_chunks.append({"docUuid": str(doc_uuid)})
+
+                logger.info(
+                    "[Digester:Endpoints] got endpoint %s from chunk %d/%d (original chunk index: %d, doc_uuid: %s)",
+                    [ep.path for ep in valid_endpoints],
+                    one_based,
+                    total_chunks,
+                    original_idx,
+                    doc_uuid,
+                )
+
+                # In this step, we are validating parameters of the extracted endpoints
+                # we choose 1000 tokens around the found endpoint in text and run the llm on it
+                for endpoint in valid_endpoints:
+                    context_snippet = get_neighboring_tokens(
+                        search_phrase=endpoint.path or "",
+                        text=chunk,
+                        context_token_count_before=150,
+                        context_token_count_after=1000,
+                    )
+                    checked_result = cast(
+                        EndpointParamInfo,
+                        await param_chain.ainvoke(
+                            {
+                                "endpoint": endpoint.model_dump(by_alias=True),
+                                "chunk": context_snippet,
+                            },
+                            config=RunnableConfig(callbacks=[langfuse_handler]),
+                        ),
+                    )
+                    if checked_result:
+                        for field_name, value in checked_result.model_dump().items():
+                            setattr(endpoint, field_name, value)
+
+                return valid_endpoints
 
             except Exception as e:
                 logger.warning("[Digester:Endpoints] Error processing chunk %d: %s", one_based, str(e))
@@ -167,7 +227,7 @@ async def extract_endpoints(
 
         # Process all chunks in this document in parallel
         tasks = [
-            _process_chunk(array_idx, chunk_text, original_idx, doc_uuid, None)  # doc_metadata
+            _process_chunk(array_idx, chunk_text, original_idx, doc_uuid, doc_metadata)  # doc_metadata
             for array_idx, original_idx, chunk_text in doc_chunks
         ]
         results = await asyncio.gather(*tasks)

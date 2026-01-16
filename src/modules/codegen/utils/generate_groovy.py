@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import json
 import logging
@@ -56,6 +56,3 @@ async def generate_groovy(
     except Exception as exc:
         append_job_error(job_id, f"[Codegen:{logger_prefix}] Generation failed: {exc}")
         return f'objectClass("{object_class}") {{}}'
-
-    finally:
-        update_job_progress(job_id, stage=JobStage.generating)

@@ -1,36 +1,54 @@
-# Copyright (c) 2025 Evolveum and contributors
-#
-# Licensed under the EUPL-1.2 or later.
-
 """
 This module provides functionality to filter chunks based on specific criteria.
 It is designed to be used by digestor and codegen services.
 """
 
+#  Copyright (C) 2010-2026 Evolveum and contributors
+#
+#  Licensed under the EUPL-1.2 or later.
+
 from typing import Any, Dict, List
 from uuid import UUID
 
-from ..session.session import SessionManager
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..database.repositories.session_repository import SessionRepository
 from .schema import ChunkFilterCriteria
 
 
-def filter_documentation_items(criteria: ChunkFilterCriteria, session_id: UUID) -> List[Dict[str, Any]]:
+async def filter_documentation_items(
+    criteria: ChunkFilterCriteria, session_id: UUID, db: AsyncSession | None = None
+) -> List[Dict[str, Any]]:
     """
     Filters documentation items based on the provided criteria.
     Works directly with documentationItems without reconstructing PageChunk objects.
 
     input: criteria - ChunkFilterCriteria object defining the filtering conditions
            session_id - session ID to retrieve documentation items from
+           db - optional SQLAlchemy AsyncSession
     output: list of documentationItem dicts that meet the criteria
     """
-    if not SessionManager.session_exists(session_id):
+    if db is None:
+        from ..database.config import async_session_maker
+
+        async with async_session_maker() as session:
+            return await _filter_documentation_items_impl(criteria, session_id, session)
+    else:
+        return await _filter_documentation_items_impl(criteria, session_id, db)
+
+
+async def _filter_documentation_items_impl(
+    criteria: ChunkFilterCriteria, session_id: UUID, db: AsyncSession
+) -> List[Dict[str, Any]]:
+    repo = SessionRepository(db)
+    if not await repo.session_exists(session_id):
         raise ValueError(f"Session with ID {session_id} does not exist.")
 
     # Get documentation items which now contain the chunk data
-    doc_items = SessionManager.get_session_data(session_id, "documentationItems")
+    doc_items = await repo.get_session_data(session_id, "documentationItems")
     if doc_items is None:
         raise ValueError(
-            f"Session with ID {session_id} has no documentation items, the session data might be corrupted or the path is wrong."
+            f"Session with ID {session_id} has no documentation items, the session data might be corrupted."
         )
 
     # Filter documentation items based on criteria
@@ -65,7 +83,9 @@ def filter_documentation_items(criteria: ChunkFilterCriteria, session_id: UUID) 
         if criteria.excluded_categories is not None and category in criteria.excluded_categories:
             continue
         if criteria.allowed_tags is not None:
-            if tags is None or not any(tag.lower().strip() in criteria.allowed_tags for tag in tags):
+            if tags is None or not all(
+                any(tag.lower().strip() in allowed_group for tag in tags) for allowed_group in criteria.allowed_tags
+            ):
                 continue
         if criteria.excluded_tags is not None:
             if tags is not None and any(tag.lower().strip() in criteria.excluded_tags for tag in tags):

@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
@@ -84,8 +84,7 @@ class ObjectClass(BaseModel):
         validation_alias="relevantChunks",
         serialization_alias="relevantChunks",
         description=(
-            "List of chunks that contain relevant information about this object class. "
-            "Each entry contains 'docUuid' and 'chunkIndex'."
+            "List of chunks that contain relevant information about this object class. Each entry contains 'docUuid'."
         ),
     )
     # These fields will be excluded from JSON when None
@@ -407,6 +406,40 @@ class EndpointInfo(BaseModel):
         ...,
         description="HTTP method in uppercase (e.g., GET, POST, PUT, PATCH, DELETE).",
     )
+    description: str = Field(
+        ...,
+        description=(
+            "Short summary of what this method does for the object class (e.g., 'Get user by ID', "
+            "'Add user to group', 'Disable user')."
+        ),
+    )
+    response_content_type: Optional[str] = Field(
+        default=None,
+        validation_alias="responseContentType",
+        serialization_alias="responseContentType",
+        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json').",
+    )
+    request_content_type: Optional[str] = Field(
+        default=None,
+        validation_alias="requestContentType",
+        serialization_alias="requestContentType",
+        description="Primary request media type if specified (often for POST/PUT/PATCH).",
+    )
+    suggested_use: List[str] = Field(
+        default_factory=list,
+        validation_alias="suggestedUse",
+        serialization_alias="suggestedUse",
+        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+    )
+
+
+class EndpointParamInfo(BaseModel):
+    """
+    EndpointInfo without path and method, so the LLM can only modify other fields.
+    """
+
+    model_config = {"populate_by_name": True}
+
     description: str = Field(
         ...,
         description=(

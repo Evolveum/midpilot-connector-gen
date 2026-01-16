@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import asyncio
 import json
@@ -167,8 +167,6 @@ async def _extract_from_chunk(
             error_msg = f"{error_msg} (Doc: {doc_id})"
         append_job_error(job_id, error_msg)
         return []
-    finally:
-        update_job_progress(job_id, stage="processing_chunks")
 
 
 async def extract_relations(
@@ -228,9 +226,7 @@ async def extract_relations(
     update_job_progress(
         job_id,
         stage="processing_chunks",
-        current_doc_processed_chunks=0,
-        current_doc_total_chunks=total_chunks,
-        message="Processing chunks for document",
+        message="Processing chunks and try to extract relevant information",
     )
 
     parser: PydanticOutputParser[RelationsResponse] = PydanticOutputParser(pydantic_object=RelationsResponse)
@@ -260,11 +256,11 @@ async def extract_relations(
     )
     logger.info("[Digester:Relations] Parallel extraction completed for all chunks")
 
-    update_job_progress(
-        job_id,
-        stage="merging",
-        message="Merging and deduplicating relations",
-    )
+    # update_job_progress(
+    #     job_id,
+    #     stage="merging",
+    #     message="Merging and deduplicating relations",
+    # )
 
     merged_relations: List[RelationRecord] = []
     relevant_indices: List[int] = []
@@ -298,6 +294,6 @@ async def extract_relations(
         "[Digester:Relations] Extraction process completed successfully with %d final relations", len(final_relations)
     )
 
-    update_job_progress(job_id, stage="relations_ready", message="Relation extraction complete")
+    # update_job_progress(job_id, stage=JobStage.finished, message="Relation extraction complete")
 
     return RelationsResponse(relations=final_relations), sorted(relevant_indices)

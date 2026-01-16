@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 from typing import List, Literal
 
@@ -27,9 +27,13 @@ class ChunkFilterCriteria(BaseModel):
         default=None,
         description="List of excluded categories for chunk filtering, in a case of conflict with allowed_categories, exclusion takes precedence",
     )
-    allowed_tags: List[str] | None = Field(
+    allowed_tags: List[List[str]] | None = Field(
         default=None,
-        description="List of allowed tags for chunk filtering, if None, all tags that are not excluded are allowed",
+        description="""
+        List of lists of allowed tags for chunk filtering, if None, all tags that are not excluded are allowed
+        Inner list represents `or` condition, i.e. at least one tag from the inner list must be present.
+        Lists in the outer list represent `and` condition, i.e. all inner lists `or` conditions must be satisfied.
+        """,
     )
     excluded_tags: List[str] | None = Field(
         default=None,

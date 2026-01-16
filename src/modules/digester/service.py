@@ -1,14 +1,15 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import logging
 from typing import Any, Callable, Dict, Iterable, List, Tuple, cast
 from uuid import UUID
 
 from ...common.chunks import normalize_to_text, split_text_with_token_overlap
+from ...common.database.config import async_session_maker
+from ...common.database.repositories.session_repository import SessionRepository
 from ...common.jobs import increment_processed_documents, update_job_progress
-from ...common.session.session import SessionManager
 from .utils.auth import deduplicate_and_sort_auth, extract_auth_raw
 from .utils.endpoints import extract_endpoints as _extract_endpoints
 from .utils.info import extract_info_metadata as _extract_info_metadata
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def _collect_relevant_chunks(doc_uuid: UUID, indices: Iterable[int]) -> List[Dict[str, Any]]:
-    return [{"docUuid": doc_uuid, "chunkIndex": idx} for idx in indices]
+    return [{"docUuid": str(doc_uuid), "chunkIndex": idx} for idx in indices]
 
 
 async def _process_over_documents(
@@ -134,7 +135,7 @@ async def extract_object_classes(doc_items: List[dict], filter_relevancy: bool, 
             else:
                 # Fallback: add all relevant chunks (old behavior)
                 for chunk_idx in relevant_indices:
-                    class_to_chunks[class_name].append({"docUuid": doc_uuid, "chunkIndex": chunk_idx})
+                    class_to_chunks[class_name].append({"docUuid": str(doc_uuid), "chunkIndex": chunk_idx})
 
         all_object_classes.extend(raw_classes)
         all_relevant_chunks.extend(_collect_relevant_chunks(doc_uuid, relevant_indices))
@@ -219,7 +220,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     all_relevant_chunks: List[Dict[str, Any]] = []
     total_docs = len(doc_items)
 
-    update_job_progress(job_id, total_documents=total_docs, processed_documents=0, message="Processing documents")
+    update_job_progress(job_id, total_processing=total_docs, processing_completed=0, message="Processing documents")
 
     aggregated_result: Any = None
 
@@ -243,7 +244,11 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
 
         all_relevant_chunks.extend(_collect_relevant_chunks(doc_uuid, relevant_indices))
 
-        increment_processed_documents(job_id, delta=1)
+        await increment_processed_documents(job_id, delta=1)
+
+    # All documents processed, now finalizing
+    logger.info("[Digester:InfoMetadata] All documents processed. Finalizing aggregated result.")
+    update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
 
     if hasattr(aggregated_result, "model_dump"):
         merged_result: Dict[str, Any] = cast(Dict[str, Any], aggregated_result.model_dump(by_alias=True))
@@ -304,54 +309,60 @@ async def extract_attributes(
 
     try:
         logger.info(f"[Digester:Attributes] Attempting to update object class '{object_class}' with attributes")
-        object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
 
-        if not object_classes_output:
-            logger.warning(f"[Digester:Attributes] No objectClassesOutput found in session {session_id}")
-            return result
+        async with async_session_maker() as db:
+            repo = SessionRepository(db)
+            object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
 
-        if not isinstance(object_classes_output, dict):
-            logger.warning(f"[Digester:Attributes] objectClassesOutput is not a dict: {type(object_classes_output)}")
-            return result
+            if not object_classes_output:
+                logger.warning(f"[Digester:Attributes] No objectClassesOutput found in session {session_id}")
+                return result
 
-        object_classes = object_classes_output.get("objectClasses", [])
-        if not isinstance(object_classes, list):
-            logger.warning(f"[Digester:Attributes] objectClasses is not a list: {type(object_classes)}")
-            return result
-
-        # Find the matching object class (case-insensitive)
-        normalized_name = object_class.strip().lower()
-        found = False
-
-        for obj_class in object_classes:
-            if isinstance(obj_class, dict) and obj_class.get("name", "").strip().lower() == normalized_name:
-                found = True
-                # Update the attributes field
-                attributes_dict = {}
-                if result and isinstance(result, dict):
-                    result_data = result.get("result", result)
-                    attributes_dict = result_data.get("attributes", {})
-
-                    logger.info(f"[Digester:Attributes] Found {len(attributes_dict)} attributes in result")
-
-                obj_class["attributes"] = attributes_dict
-                logger.info(
-                    f"[Digester:Attributes] Updated object class '{obj_class.get('name')}' with {len(attributes_dict)} attributes"
+            if not isinstance(object_classes_output, dict):
+                logger.warning(
+                    f"[Digester:Attributes] objectClassesOutput is not a dict: {type(object_classes_output)}"
                 )
-                break
+                return result
 
-        if not found:
-            logger.warning(
-                f"[Digester:Attributes] Object class '{object_class}' (normalized: '{normalized_name}') not found in objectClasses"
-            )
-            available_classes = [oc.get("name", "?") for oc in object_classes if isinstance(oc, dict)]
-            logger.info(f"[Digester:Attributes] Available classes: {available_classes}")
-            return result
+            object_classes = object_classes_output.get("objectClasses", [])
+            if not isinstance(object_classes, list):
+                logger.warning(f"[Digester:Attributes] objectClasses is not a list: {type(object_classes)}")
+                return result
 
-        # Save back to session
-        logger.info("[Digester:Attributes] Saving updated attributes back to session")
-        SessionManager.update_session(session_id, {"objectClassesOutput": object_classes_output})
-        logger.info("[Digester:Attributes] Successfully saved attributes to session")
+            # Find the matching object class (case-insensitive)
+            normalized_name = object_class.strip().lower()
+            found = False
+
+            for obj_class in object_classes:
+                if isinstance(obj_class, dict) and obj_class.get("name", "").strip().lower() == normalized_name:
+                    found = True
+                    # Update the attributes field
+                    attributes_dict = {}
+                    if result and isinstance(result, dict):
+                        result_data = result.get("result", result)
+                        attributes_dict = result_data.get("attributes", {})
+
+                        logger.info(f"[Digester:Attributes] Found {len(attributes_dict)} attributes in result")
+
+                    obj_class["attributes"] = attributes_dict
+                    logger.info(
+                        f"[Digester:Attributes] Updated object class '{obj_class.get('name')}' with {len(attributes_dict)} attributes"
+                    )
+                    break
+
+            if not found:
+                logger.warning(
+                    f"[Digester:Attributes] Object class '{object_class}' (normalized: '{normalized_name}') not found in objectClasses"
+                )
+                available_classes = [oc.get("name", "?") for oc in object_classes if isinstance(oc, dict)]
+                logger.info(f"[Digester:Attributes] Available classes: {available_classes}")
+                return result
+
+            # Save back to session
+            logger.info("[Digester:Attributes] Saving updated attributes back to session")
+            await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
+            await db.commit()
+            logger.info("[Digester:Attributes] Successfully saved attributes to session")
 
     except Exception as e:
         logger.exception(f"[Digester:Attributes] Exception while updating object class with attributes: {e}")
@@ -412,35 +423,40 @@ async def extract_endpoints(
 
     # Now update the specific object class in objectClassesOutput
     try:
-        object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
-        if object_classes_output and isinstance(object_classes_output, dict):
-            object_classes = object_classes_output.get("objectClasses", [])
-            if isinstance(object_classes, list):
-                # Find the matching object class (case-insensitive)
-                normalized_name = object_class.strip().lower()
-                for obj_class in object_classes:
-                    if isinstance(obj_class, dict) and obj_class.get("name", "").strip().lower() == normalized_name:
-                        # Update the endpoint field - convert Pydantic models to dicts
-                        endpoints_list = []
-                        if result and isinstance(result, dict):
-                            result_data = result.get("result", result)
-                            raw_endpoints = result_data.get("endpoints", [])
+        # Use database session to access session data
+        async with async_session_maker() as db:
+            repo = SessionRepository(db)
+            object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
 
-                            # Convert each endpoint to dict (handle both Pydantic models and dicts)
-                            for ep in raw_endpoints:
-                                if hasattr(ep, "model_dump"):
-                                    endpoints_list.append(ep.model_dump(by_alias=True))
-                                elif isinstance(ep, dict):
-                                    endpoints_list.append(ep)
+            if object_classes_output and isinstance(object_classes_output, dict):
+                object_classes = object_classes_output.get("objectClasses", [])
+                if isinstance(object_classes, list):
+                    # Find the matching object class (case-insensitive)
+                    normalized_name = object_class.strip().lower()
+                    for obj_class in object_classes:
+                        if isinstance(obj_class, dict) and obj_class.get("name", "").strip().lower() == normalized_name:
+                            # Update the endpoint field - convert Pydantic models to dicts
+                            endpoints_list = []
+                            if result and isinstance(result, dict):
+                                result_data = result.get("result", result)
+                                raw_endpoints = result_data.get("endpoints", [])
 
-                        obj_class["endpoints"] = endpoints_list
-                        logger.info(
-                            f"[Digester:Endpoints] Updated object class '{obj_class.get('name')}' with {len(endpoints_list)} endpoints"
-                        )
-                        break
+                                # Convert each endpoint to dict (handle both Pydantic models and dicts)
+                                for ep in raw_endpoints:
+                                    if hasattr(ep, "model_dump"):
+                                        endpoints_list.append(ep.model_dump(by_alias=True))
+                                    elif isinstance(ep, dict):
+                                        endpoints_list.append(ep)
 
-                # Save back to session
-                SessionManager.update_session(session_id, {"objectClassesOutput": object_classes_output})
+                            obj_class["endpoints"] = endpoints_list
+                            logger.info(
+                                f"[Digester:Endpoints] Updated object class '{obj_class.get('name')}' with {len(endpoints_list)} endpoints"
+                            )
+                            break
+
+                    # Save back to session
+                    await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
+                    await db.commit()
     except Exception as e:
         logger.warning(f"[Digester:Endpoints] Failed to update object class with endpoints: {e}")
 
@@ -451,8 +467,7 @@ def _extract_specific_chunks(
     doc_items: List[dict], relevant_chunks: List[Dict[str, Any]], log_prefix: str = "Digester"
 ) -> Tuple[List[str], List[Tuple[int, str]]]:
     """
-    Extract the exact chunks specified by relevant_chunks from doc_items.
-    Does NOT re-chunk - returns the original chunks at the specified indices.
+    Extract the exact chunks specified by relevant_chunks from documentation_items.
 
     Args:
         doc_items: Original documentation items with full content
@@ -465,57 +480,62 @@ def _extract_specific_chunks(
         - List of (original_chunk_index, doc_uuid) for logging
     """
 
-    # Group chunks by document UUID and maintain order
-    chunks_by_doc: Dict[str, List[int]] = {}
-    ordered_doc_uuids: List[str] = []
+    # Build set of document UUIDs to process from relevant_chunks
+    # For attributes/endpoints, relevant_chunks contains {"docUuid": ...} without chunkIndex
+    # We need to process ALL chunks from these documents
+    doc_uuids_to_process = set()
 
     for chunk_info in relevant_chunks:
         doc_uuid = str(chunk_info.get("docUuid", ""))
-        chunk_idx = int(chunk_info.get("chunkIndex", -1))
-        if doc_uuid and chunk_idx >= 0:
-            if doc_uuid not in chunks_by_doc:
-                chunks_by_doc[doc_uuid] = []
-                ordered_doc_uuids.append(doc_uuid)
-            chunks_by_doc[doc_uuid].append(chunk_idx)
+        if doc_uuid:
+            doc_uuids_to_process.add(doc_uuid)
 
-    # Sort chunk indices for each document
-    for doc_uuid in chunks_by_doc:
-        chunks_by_doc[doc_uuid].sort()
+    logger.info(
+        "[%s] Found %d unique documents in relevant_chunks: %s",
+        log_prefix,
+        len(doc_uuids_to_process),
+        list(doc_uuids_to_process),
+    )
 
-    # Extract the specific chunks
+    # Log available doc_items UUIDs for debugging
+    available_doc_uuids = [str(doc.get("uuid", "")) for doc in doc_items]
+    logger.info(
+        "[%s] Available doc_items UUIDs (%d total): %s",
+        log_prefix,
+        len(available_doc_uuids),
+        available_doc_uuids,
+    )
+
+    # Extract ALL chunks from the relevant documents
     selected_chunks: List[str] = []
     chunk_details: List[Tuple[int, str]] = []
 
     for doc_item in doc_items:
-        doc_uuid = doc_item.get("uuid", "")
-        if doc_uuid not in chunks_by_doc:
+        doc_uuid = str(doc_item.get("uuid", ""))
+
+        if doc_uuid not in doc_uuids_to_process:
             continue
 
         # Split the document into chunks
         text = normalize_to_text(doc_item.get("content", ""))
         all_chunks: List[tuple[str, int]] = split_text_with_token_overlap(text)
 
-        # Get only the relevant chunk indices for this document
-        selected_indices = chunks_by_doc[doc_uuid]
-
         logger.info(
-            "[%s] Doc %s -> %d total chunks, selected indices: %s",
+            "[%s] Doc %s -> processing ALL %d chunks",
             log_prefix,
             doc_uuid,
             len(all_chunks),
-            selected_indices,
         )
 
-        # Collect the exact chunks at specified indices
-        for idx in selected_indices:
-            if 0 <= idx < len(all_chunks):
-                selected_chunks.append(all_chunks[idx][0])
-                chunk_details.append((idx, doc_uuid))
+        # Collect ALL chunks from this document
+        for idx, (chunk_text, _) in enumerate(all_chunks):
+            selected_chunks.append(chunk_text)
+            chunk_details.append((idx, doc_uuid))
 
     total_selected = len(selected_chunks)
-    total_docs = len(chunks_by_doc)
+    total_docs = len(doc_uuids_to_process)
     logger.info(
-        "[%s] Extracted %d chunks from %d documents (indices preserved)",
+        "[%s] Extracted %d chunks from %d documents",
         log_prefix,
         total_selected,
         total_docs,

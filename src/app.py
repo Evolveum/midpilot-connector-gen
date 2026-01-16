@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 from contextlib import asynccontextmanager
 
@@ -13,19 +13,11 @@ from .router import root_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: best-effort recovery of stale running jobs
     try:
-        recover_stale_running_jobs()  # sync function; call directly
-        # If this were async: `await recover_stale_running_jobs()`
+        await recover_stale_running_jobs()
     except Exception:
-        # Best-effort recovery; do not block startup
         pass
-
-    # Hand control to the app
     yield
-
-    # (Optional) Shutdown logic goes here
-    # e.g., close connections, flush metrics, etc.
 
 
 def create_api() -> FastAPI:

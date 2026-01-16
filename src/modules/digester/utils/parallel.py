@@ -1,6 +1,6 @@
-# Copyright (c) 2025 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
 #
-# Licensed under the EUPL-1.2 or later.
+#  Licensed under the EUPL-1.2 or later.
 
 import asyncio
 import json
@@ -63,9 +63,7 @@ async def run_extraction_parallel(
     update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
-        current_doc_processed_chunks=0,
-        current_doc_total_chunks=total_chunks,
-        message="Processing chunks for document",
+        message="Processing chunks and try to extract relevant information",
     )
 
     parser: BaseOutputParser = PydanticOutputParser(pydantic_object=pydantic_model)
@@ -84,7 +82,7 @@ async def run_extraction_parallel(
             if hasattr(result, "model_dump_json"):
                 raw = result.model_dump_json()  # pydantic v2
             elif hasattr(result, "model_dump"):
-                raw = json.dumps(result.model_dump(by_alias=True))
+                raw = json.dumps(result.model_dump(by_alias=True, mode="json"))
             else:
                 raw = getattr(result, "content", None) or repr(result)
         except Exception:
@@ -93,9 +91,8 @@ async def run_extraction_parallel(
         return raw if len(raw) <= limit else raw[:limit] + "...(truncated)"
 
     async def _process_chunk(idx: int, chunk: str) -> List[Any]:
-        one_based = idx + 1
         try:
-            logger.info("%sCalling LLM. Chunk idx: %s", logger_prefix, one_based)
+            logger.info("%sCalling LLM.", logger_prefix)
 
             # Extract summary and tags from chunk metadata if available
             summary, tags = extract_summary_and_tags(chunk_metadata)
@@ -110,8 +107,8 @@ async def run_extraction_parallel(
             logger.debug("%sLLM result: %r", logger_prefix, (result or ""))
 
             if not result:
-                logger.warning("%sEmpty LLM response. Chunk idx: %s", logger_prefix, one_based)
-                error_msg = f"{logger_prefix}Empty LLM response. Chunk {one_based}/{total_chunks}"
+                logger.warning("%sEmpty LLM response. Chunk idx: %s", logger_prefix)
+                error_msg = f"{logger_prefix}Empty LLM response."
                 if doc_id:
                     error_msg = f"{error_msg} (Doc: {doc_id})"
                 append_job_error(job_id, error_msg)
@@ -121,11 +118,9 @@ async def run_extraction_parallel(
             try:
                 items = parse_fn(result)
             except (ValidationError, ValueError, json.JSONDecodeError) as e:
-                logger.info("%sJSON parse failed; chunk %s. Error: %s", logger_prefix, one_based, e)
+                logger.info("%sJSON parse failed. Error: %s", logger_prefix, e)
                 snippet = _result_snippet(result)
-                error_msg = (
-                    f"{logger_prefix}Parse failed for chunk {one_based}/{total_chunks}: {e}. LLM output: {snippet}"
-                )
+                error_msg = f"{logger_prefix}Parse failed: {e}. LLM output: {snippet}"
                 if doc_id:
                     error_msg = f"{error_msg} (Doc: {doc_id})"
                 append_job_error(job_id, error_msg)
@@ -142,25 +137,22 @@ async def run_extraction_parallel(
             return items
 
         except Exception as e:
-            logger.error("%sChunk processing failed. Chunk_idx: %s, error: %s", logger_prefix, one_based, e)
-            error_msg = f"{logger_prefix}Chunk {one_based}/{total_chunks} call failed: {e}"
+            logger.error("%sChunk processing failed. Error: %s", logger_prefix, e)
+            error_msg = f"{logger_prefix}Chunk call failed: {e}"
             if doc_id:
                 error_msg = f"{error_msg} (Doc: {doc_id})"
             append_job_error(job_id, error_msg)
             return []
-        finally:
-            update_job_progress(job_id, stage="processing_chunks")
 
     # Run all chunks
     results = await asyncio.gather(*(_process_chunk(i, ch[0]) for i, ch in enumerate(chunks)))
     all_items = [item for sub in results for item in sub]
 
     logger.info(
-        "%sExtraction complete. Total items: %d, Relevant chunks: %d/%d",
+        "%sExtraction complete. Total items: %d, relevant_chunk=%s",
         logger_prefix,
         len(all_items),
-        len(relevant_chunk_indices),
-        total_chunks,
+        bool(all_items),
     )
 
     return all_items, sorted(relevant_chunk_indices)
