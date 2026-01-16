@@ -4,6 +4,7 @@
 
 import json
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -129,7 +130,7 @@ async def test_fetch_candidate_links(mock_llm, mock_llm_eval, mock_search_web, m
             application_name="test-app", application_version="1.0.0", llm_generated_search_query=True
         )
 
-        result = await service.fetch_candidate_links(input_data, "test-job-id")
+        result = await service.fetch_candidate_links(input_data, uuid4())
 
         assert len(result.candidate_links) > 0
         assert "https://example.com/1" in result.candidate_links
