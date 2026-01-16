@@ -114,10 +114,6 @@ Object class: {object_class}
 Base API URL: {base_api_url}
 
 Text from documentation:
-                                            
-# Summary: {summary}
-
-# Tags: {tags}
 
 <docs>
 
