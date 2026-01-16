@@ -14,6 +14,8 @@ from .enums import JobStage
 
 logger = logging.getLogger(__name__)
 
+_job_futures: Dict[UUID, asyncio.Future] = {}
+
 
 def update_job_progress(
     job_id: UUID,
@@ -93,7 +95,12 @@ async def set_finished(job_id: UUID, result: Dict[str, Any]) -> Dict[str, Any]:
             repo = JobRepository(db)
             data = await repo.set_finished(job_id, result)
             await db.commit()
-            return data
+
+        future = _job_futures.pop(job_id, None)
+        if future and not future.done():
+            future.set_result(None)
+
+        return data
     except Exception as e:
         logger.error("Set job to finished failed.", exc_info=e)
         raise
@@ -106,7 +113,12 @@ async def set_failed(job_id: UUID, error: str) -> Dict[str, Any]:
             repo = JobRepository(db)
             data = await repo.set_failed(job_id, error)
             await db.commit()
-            return data
+
+        future = _job_futures.pop(job_id, None)
+        if future and not future.done():
+            future.set_result(None)
+
+        return data
     except Exception as e:
         logger.error("Set job to failed failed.", exc_info=e)
         raise
@@ -127,6 +139,8 @@ async def schedule_coroutine_job(
     *,
     job_type: str,
     input_payload: Dict[str, Any],
+    dynamic_input_enabled: bool = False,
+    dynamic_input_provider: Optional[Callable[..., Awaitable[Any]]] = None,
     worker: Callable[..., Awaitable[Any]],
     worker_args: Optional[Tuple[Any, ...]] = None,
     worker_kwargs: Optional[Dict[str, Any]] = None,
@@ -134,6 +148,8 @@ async def schedule_coroutine_job(
     initial_message: Optional[str] = None,
     session_id: UUID,
     session_result_key: Optional[str] = None,
+    await_documentation: bool = False,
+    await_documentation_timeout: Optional[float] = None,
 ) -> UUID:
     """
     Create a job record and schedule `worker` coroutine to process it in background.
@@ -147,14 +163,47 @@ async def schedule_coroutine_job(
 
     # Create job in database
     job_id = await create_job(input_payload, job_type, session_id)
+
     if initial_stage or initial_message:
         update_job_progress(job_id, stage=initial_stage, message=initial_message)
 
+    future = asyncio.get_event_loop().create_future()
+    _job_futures[job_id] = future
+
     async def _runner() -> None:
         try:
-            await set_running(job_id)
+            if await_documentation:
+                update_job_progress(job_id, stage="queue", message="Waiting for documentation processing to complete.")
+                async with async_session_maker() as db:
+                    repo_doc = JobRepository(db)
+                    not_finished_jobs_ids = await repo_doc.get_not_finished_documentation_jobs_ids(session_id)
+                    if not_finished_jobs_ids:
+                        futures = [_job_futures[jid] for jid in not_finished_jobs_ids if jid in _job_futures]
+                        if futures:
+                            try:
+                                await asyncio.wait_for(asyncio.gather(*futures), timeout=await_documentation_timeout)
+                            except asyncio.TimeoutError:
+                                logger.warning(f"Job {job_id} timed out waiting for documentation jobs to complete")
 
+            dynamic_input = {}
+            if dynamic_input_enabled and dynamic_input_provider:
+                async with async_session_maker() as db:
+                    dynamic_input = await dynamic_input_provider(session_id=session_id, db=db)
+                    # Update Job input in Jobs table
+                    input_payload.update(dynamic_input.get("jobInput", {}))
+                    repo_job = JobRepository(db)
+                    await repo_job.update_job_input(job_id, input_payload)
+                    # Update operation input in Sessions table
+                    repo_session = SessionRepository(db)
+                    await repo_session.update_session(session_id, dynamic_input.get("sessionInput", {}))
+                    await db.commit()
+
+            await set_running(job_id)
             args = tuple(worker_args or ())
+
+            if dynamic_input_enabled and dynamic_input_provider:
+                args += dynamic_input.get("args", ())
+
             kwargs = dict(worker_kwargs or {})
 
             # Prefer explicit kwarg if caller wants to pass it

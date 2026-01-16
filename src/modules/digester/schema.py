@@ -425,6 +425,40 @@ class EndpointInfo(BaseModel):
     )
 
 
+class EndpointParamInfo(BaseModel):
+    """
+    EndpointInfo without path and method, so the LLM can only modify other fields.
+    """
+
+    model_config = {"populate_by_name": True}
+
+    description: str = Field(
+        ...,
+        description=(
+            "Short summary of what this method does for the object class (e.g., 'Get user by ID', "
+            "'Add user to group', 'Disable user')."
+        ),
+    )
+    response_content_type: Optional[str] = Field(
+        default=None,
+        validation_alias="responseContentType",
+        serialization_alias="responseContentType",
+        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json').",
+    )
+    request_content_type: Optional[str] = Field(
+        default=None,
+        validation_alias="requestContentType",
+        serialization_alias="requestContentType",
+        description="Primary request media type if specified (often for POST/PUT/PATCH).",
+    )
+    suggested_use: List[str] = Field(
+        default_factory=list,
+        validation_alias="suggestedUse",
+        serialization_alias="suggestedUse",
+        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+    )
+
+
 class EndpointsResponse(BaseModel):
     """
     Container for endpoints discovered for a given object class. Return an empty list when none.

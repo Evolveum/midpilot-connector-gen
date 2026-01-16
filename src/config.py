@@ -145,7 +145,7 @@ class ScrapeAndProcessSettings(BaseModel):
 
     # Scraper controls
     max_scraper_iterations: int = Field(
-        3,
+        4,
         description="Max outer iterations of the scraper loop",
     )
     max_iterations_filter_irrelevant: int = Field(

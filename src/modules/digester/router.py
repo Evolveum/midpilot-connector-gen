@@ -52,9 +52,11 @@ AUTH_CRITERIA = ChunkFilterCriteria(
         "overview",
     ],
     allowed_tags=[
-        "authentication",
-        "auth",
-        "authorization",
+        [
+            "authentication",
+            "auth",
+            "authorization",
+        ]
     ],
 )
 
@@ -119,6 +121,34 @@ async def _build_typed_job_status_response(job_id: UUID, model_cls) -> JobStatus
     )
 
 
+async def object_classes_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
+    """
+    Dynamic input provider for object classes extraction job.
+    It is important to wait for the documentation to be ready before starting the job.
+    input:
+        session_id - session ID to retrieve documentation items from
+        db - SQLAlchemy AsyncSession
+    output:
+        dict with:
+            sessionInput - dict with documentationItemsCount and totalLength - used for input in session field
+            jobInput - dict for job input field
+            args - tuple with documentation items
+    """
+    # Apply static category filter to documentation items
+    doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
+    total_length = sum(len(item["content"]) for item in doc_items)
+    return {
+        "sessionInput": {
+            "documentationItemsCount": len(doc_items),
+            "totalLength": total_length,
+        },
+        "jobInput": {
+            "documentationItems": doc_items,
+        },
+        "args": (doc_items,),
+    }
+
+
 # Digester Operations - Object Classes
 @router.post(
     "/{session_id}/classes",
@@ -137,18 +167,15 @@ async def extract_object_classes(
     Returns jobId to poll for results.
     """
     repo = SessionRepository(db)
-    # Apply static category filter to documentation items
-    try:
-        doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    total_length = sum(len(item["content"]) for item in doc_items)
+    if not await repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
-        input_payload={"documentationItems": doc_items},
+        input_payload={},
+        dynamic_input_enabled=True,
+        dynamic_input_provider=object_classes_input,
         worker=service.extract_object_classes,
-        worker_args=(doc_items,),
         worker_kwargs={
             "filter_relevancy": filter_relevancy,
             "min_relevancy_level": min_relevancy_level,
@@ -157,6 +184,8 @@ async def extract_object_classes(
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
         session_result_key="objectClassesOutput",
+        await_documentation=True,
+        await_documentation_timeout=750,
     )
 
     await repo.update_session(
@@ -164,8 +193,8 @@ async def extract_object_classes(
         {
             "objectClassesJobId": str(job_id),
             "objectClassesInput": {
-                "documentationItemsCount": len(doc_items),
-                "totalLength": total_length,
+                # "documentationItemsCount": len(doc_items),
+                # "totalLength": total_length,
             },
         },
     )
@@ -276,6 +305,8 @@ async def extract_class_attributes(
     Extract attributes schema for a specific object class.
     Only processes chunks that are relevant to the object class (from relevantChunks).
     Updates both {object_class}AttributesOutput and the attributes field in the specific object class.
+
+    NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
     repo = SessionRepository(db)
 
@@ -432,6 +463,8 @@ async def extract_class_endpoints(
     Automatically loads base API URL from session metadata if available.
     Updates both {object_class}EndpointsOutput and the endpoints field in the specific object class.
     Only processes chunks that are relevant to the object class (from relevantChunks).
+
+    NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
     repo = SessionRepository(db)
     if not await repo.session_exists(session_id):
@@ -461,9 +494,9 @@ async def extract_class_endpoints(
         )
 
     # relevant_chunks = target_object_class.get("relevantChunks", [])
-    relevant_chunks_from_object_class = target_object_class.get("relevantChunks", [])
+    # relevant_chunks_from_object_class = target_object_class.get("relevantChunks", [])
     criteria = ENDPOINT_CRITERIA.model_copy()
-    criteria.allowed_tags = [object_class.lower().strip()]
+    criteria.allowed_tags = [[object_class.lower().strip()], ["endpoint", "endpoints"]]
     relevant_chunks_full = await filter_documentation_items(criteria, session_id, db=db)
 
     # If we dont have relevant chunks with ENDPOINT_CRITERIA, try to find relevant chunks with DEFAULT_CRITERIA
@@ -474,7 +507,7 @@ async def extract_class_endpoints(
     relevant_chunks = [
         {"docUuid": chunk["uuid"]}
         for chunk in relevant_chunks_full
-        if chunk["uuid"] in {rc["docUuid"] for rc in relevant_chunks_from_object_class}
+        # if chunk["uuid"] in {rc["docUuid"] for rc in relevant_chunks_from_object_class}
     ]
     if not relevant_chunks:
         raise HTTPException(
@@ -593,6 +626,8 @@ async def extract_relations(session_id: UUID = Path(..., description="Session ID
     """
     Extract relations between object classes from documentation.
     Loads relevant object classes from session (where relevant=true).
+
+    NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
     repo = SessionRepository(db)
     try:
@@ -683,6 +718,34 @@ async def override_relations(
     return {"message": "Relations overridden successfully", "sessionId": session_id}
 
 
+async def auth_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
+    """
+    Dynamic input provider for auth extraction job.
+    It is important to wait for the documentation to be ready before starting the job.
+    input:
+        session_id - session ID to retrieve documentation items from
+        db - SQLAlchemy AsyncSession
+    output:
+        dict with:
+            args - tuple of documentation items
+            sessionInput - dict with documentationItemsCount and totalLength - used for input in session field
+            jobInput - dict for job input field
+    """
+    # Apply static category filter to documentation items
+    doc_items = await filter_documentation_items(AUTH_CRITERIA, session_id, db=db)
+    total_length = sum(len(item["content"]) for item in doc_items)
+    return {
+        "sessionInput": {
+            "documentationItemsCount": len(doc_items),
+            "totalLength": total_length,
+        },
+        "jobInput": {
+            "documentationItems": doc_items,
+        },
+        "args": (doc_items,),
+    }
+
+
 # Digester Operations - Auth & Metadata
 @router.post(
     "/{session_id}/auth",
@@ -697,30 +760,30 @@ async def extract_auth(
     Extract authentication information from documentation.
     """
     repo = SessionRepository(db)
-    # Apply static category filter to documentation items
-    try:
-        doc_items = await filter_documentation_items(AUTH_CRITERIA, session_id, db=db)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    total_length = sum(len(item["content"]) for item in doc_items)
+
+    if not await repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getAuth",
-        input_payload={"documentationItems": doc_items},
+        input_payload={},
+        dynamic_input_enabled=True,
+        dynamic_input_provider=auth_input,
         worker=service.extract_auth,
-        worker_args=(doc_items,),
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
         session_result_key="authOutput",
+        await_documentation=True,
+        await_documentation_timeout=750,
     )
 
     await repo.update_session(
         session_id,
         {
             "authJobId": str(job_id),
-            "authInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
+            # "authInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
         },
     )
 
@@ -754,6 +817,33 @@ async def get_auth_status(
     return await _build_typed_job_status_response(jobId, AuthResponse)
 
 
+async def metadata_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
+    """
+    Dynamic input provider for metadata extraction job.
+    It is important to wait for the documentation to be ready before starting the job.
+    input:
+        session_id - session ID to retrieve documentation items from
+        db - SQLAlchemy AsyncSession
+    output:
+        dict with:
+            'args' key containing tuple of documentation items,
+            'sessionInput' key with metadata for input in session field,
+            'jobInput' key with metadata for input in job field
+    """
+    doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
+    total_length = sum(len(item["content"]) for item in doc_items)
+    return {
+        "sessionInput": {
+            "documentationItemsCount": len(doc_items),
+            "totalLength": total_length,
+        },
+        "jobInput": {
+            "documentationItems": doc_items,
+        },
+        "args": (doc_items,),
+    }
+
+
 @router.post(
     "/{session_id}/metadata",
     response_model=JobCreateResponse,
@@ -767,29 +857,29 @@ async def extract_metadata(
     Extract API metadata from documentation.
     """
     repo = SessionRepository(db)
-    try:
-        doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    total_length = sum(len(item["content"]) for item in doc_items)
+    if not await repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getInfoMetadata",
-        input_payload={"documentationItems": doc_items},
+        input_payload={},
+        dynamic_input_enabled=True,
+        dynamic_input_provider=metadata_input,
         worker=service.extract_info_metadata,
-        worker_args=(doc_items,),
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
         session_result_key="metadataOutput",
+        await_documentation=True,
+        await_documentation_timeout=750,
     )
 
     await repo.update_session(
         session_id,
         {
             "metadataJobId": str(job_id),
-            "metadataInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
+            # "metadataInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
         },
     )
 

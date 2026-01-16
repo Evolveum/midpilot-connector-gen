@@ -4,6 +4,7 @@
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple, cast
 from uuid import UUID
 
@@ -68,13 +69,26 @@ async def extract_object_classes_raw(
         chunk_metadata=doc_metadata,
     )
 
-    # Populate relevant_chunks for each object class - just store the document UUID
-    for obj_class in extracted:
-        if doc_id:
-            obj_class.relevant_chunks = [{"docUuid": str(doc_id)}]
+    extracted_valid: List[ObjectClass] = []
+    relevant_indices_valid: List[int] = []
 
-    logger.info("[Digester:ObjectClasses] Raw extraction complete from document. Count: %d", len(extracted))
-    return extracted, relevant_indices
+    # Populate relevant_chunks for each object class based on the chunk it was extracted from
+    for idx, obj_class in enumerate(extracted):
+        if obj_class.name and obj_class.name.strip():
+            if re.search(re.escape(obj_class.name.strip()) + r"(\s|\/|\'|s\s|s\'|s\/)", schema, re.IGNORECASE):
+                extracted_valid.append(obj_class)
+                if hasattr(obj_class, "_chunk_index"):
+                    chunk_idx = obj_class._chunk_index
+                    if chunk_idx not in relevant_indices_valid:
+                        relevant_indices_valid.append(chunk_idx)
+            else:
+                logger.info(
+                    "[Digester:ObjectClasses] Extracted object class name '%s' not found in document, deleting object class",
+                    obj_class.name,
+                )
+
+    logger.info("[Digester:ObjectClasses] Raw extraction complete from document. Count: %d", len(extracted_valid))
+    return extracted_valid, relevant_indices_valid
 
 
 async def deduplicate_and_sort_object_classes(

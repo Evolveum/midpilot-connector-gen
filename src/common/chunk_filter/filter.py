@@ -96,7 +96,9 @@ async def _filter_documentation_items_impl(
         if criteria.excluded_categories is not None and category in criteria.excluded_categories:
             continue
         if criteria.allowed_tags is not None:
-            if tags is None or not any(tag.lower().strip() in criteria.allowed_tags for tag in tags):
+            if tags is None or not all(
+                any(tag.lower().strip() in allowed_group for tag in tags) for allowed_group in criteria.allowed_tags
+            ):
                 continue
         if criteria.excluded_tags is not None:
             if tags is not None and any(tag.lower().strip() in criteria.excluded_tags for tag in tags):

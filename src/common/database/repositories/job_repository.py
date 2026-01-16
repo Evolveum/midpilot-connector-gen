@@ -318,6 +318,23 @@ class JobRepository:
         except Exception as e:
             logger.debug(f"Job progress update failed for {job_id}", exc_info=e)
 
+    async def update_job_input(self, job_id: UUID, new_input: Dict[str, Any]) -> None:
+        """
+        Update the input payload of a job.
+
+        :param job_id: Job ID
+        :param new_input: New input payload
+        """
+        job = await self.get_job(job_id)
+        if job is None:
+            raise FileNotFoundError(f"Job {job_id} not found")
+
+        job.input = to_jsonable(new_input)
+        job.updated_at = datetime.now(timezone.utc)
+
+        await self.db.flush()
+        logger.info(f"Updated input for job {job_id}")
+
     async def increment_processed_documents(self, job_id: UUID, delta: int = 1) -> None:
         """
         Increment the number of fully processed documents.
@@ -327,6 +344,9 @@ class JobRepository:
         """
 
         now = datetime.now(timezone.utc)
+
+        # This needs to be done first to avoid deadlock with update_job_progress in some rare cases
+        await self.db.execute(update(Job).where(Job.job_id == job_id).values(updated_at=now))
 
         query = (
             update(JobProgress)
@@ -340,8 +360,6 @@ class JobRepository:
 
         if result.rowcount == 0:
             self.db.add(JobProgress(job_id=job_id, processing_completed=delta, updated_at=now))
-
-        await self.db.execute(update(Job).where(Job.job_id == job_id).values(updated_at=now))
 
         await self.db.flush()
 
@@ -492,3 +510,19 @@ class JobRepository:
                 continue
 
         return count
+
+    async def get_not_finished_documentation_jobs_ids(self, session_id: UUID) -> list[UUID]:
+        """
+        Get IDs of all jobs that interfere with documentation and are not finished yet.
+
+        :param session_id: Session ID
+        :return: Sequence of job IDs
+        """
+        query = select(Job.job_id).where(
+            Job.session_id == session_id,
+            (Job.job_type == "scrape.getRelevantDocumentation") | (Job.job_type == "documentation.processUpload"),
+            (Job.status != JobStatus.finished.value) & (Job.status != JobStatus.failed.value),
+        )
+        result = await self.db.execute(query)
+        job_ids = [job for job in result.scalars().all()]
+        return job_ids
