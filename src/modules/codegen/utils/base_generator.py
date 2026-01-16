@@ -286,10 +286,13 @@ class BaseGroovyGenerator(ABC):
         total_chunks = len(chunks)
         logger.info("%s Processing %d chunks", self.config.logger_prefix, total_chunks)
 
+        # Use document count if available, otherwise use chunk count as fallback
+        total_count = len(docs_included) if docs_included else total_chunks
+
         update_job_progress(
             job_id,
             stage=JobStage.processing_chunks,
-            total_processing=len(docs_included),
+            total_processing=total_count,
             processing_completed=0,
             message="Processing chunks and try to extract relevant information",
         )
@@ -363,10 +366,16 @@ class BaseGroovyGenerator(ABC):
                 continue
 
             finally:
+                # Handle progress tracking based on mode
                 if per_doc_counts and docs_included and isinstance(doc_uuid, str):
+                    # Per-document mode: increment when document is complete
                     current_doc_chunks_remaining = max(0, current_doc_chunks_remaining - 1)
                     if current_doc_chunks_remaining == 0:
-                        await increment_processed_documents(job_id, 1)
+                        await increment_processed_documents(job_id, delta=1)
+                        logger.info("%s Completed document %s", self.config.logger_prefix, doc_uuid)
+                else:
+                    # Fallback mode (no per-doc tracking): increment per chunk
+                    await increment_processed_documents(job_id, delta=1)
 
         return result
 

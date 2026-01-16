@@ -12,6 +12,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..database.repositories.documentation_repository import DocumentationRepository
 from ..database.repositories.session_repository import SessionRepository
 from .schema import ChunkFilterCriteria
 
@@ -40,15 +41,27 @@ async def filter_documentation_items(
 async def _filter_documentation_items_impl(
     criteria: ChunkFilterCriteria, session_id: UUID, db: AsyncSession
 ) -> List[Dict[str, Any]]:
-    repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
+    session_repo = SessionRepository(db)
+    if not await session_repo.session_exists(session_id):
         raise ValueError(f"Session with ID {session_id} does not exist.")
 
-    # Get documentation items which now contain the chunk data
-    doc_items = await repo.get_session_data(session_id, "documentationItems")
-    if doc_items is None:
-        raise ValueError(
-            f"Session with ID {session_id} has no documentation items, the session data might be corrupted."
+    doc_repo = DocumentationRepository(db)
+    raw_items = await doc_repo.get_documentation_items_by_session(session_id)
+    if not raw_items:
+        raise ValueError(f"Session with ID {session_id} has no documentation items stored.")
+
+    doc_items: List[Dict[str, Any]] = []
+    for item in raw_items:
+        doc_items.append(
+            {
+                "uuid": item.get("id"),
+                "pageId": item.get("pageId"),
+                "source": item.get("source"),
+                "url": item.get("url"),
+                "summary": item.get("summary"),
+                "content": item.get("content", ""),
+                "@metadata": item.get("metadata", {}) or {},
+            }
         )
 
     # Filter documentation items based on criteria

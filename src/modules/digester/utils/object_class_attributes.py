@@ -287,7 +287,7 @@ async def extract_attributes(
         job_id,
         total_processing=total_documents,
         processing_completed=0,
-        message="Processing selected chunks",
+        message="Processing chunks and try to extract relevant information",
     )
 
     all_per_chunk: List[Dict[str, Dict[str, Any]]] = []

@@ -75,9 +75,7 @@ async def extract_endpoints(
     # Group chunks by document
     doc_to_chunks: Dict[str, List[Tuple[int, int, str]]] = {}
     for idx, (original_idx, doc_uuid) in enumerate(chunk_details):
-        if doc_uuid not in doc_to_chunks:
-            doc_to_chunks[doc_uuid] = []
-        doc_to_chunks[doc_uuid].append((idx, original_idx, chunks[idx]))
+        doc_to_chunks.setdefault(doc_uuid, []).append((idx, original_idx, chunks[idx]))
 
     total_documents = len(doc_to_chunks)
     logger.info(
@@ -91,7 +89,7 @@ async def extract_endpoints(
         job_id,
         total_processing=total_documents,
         processing_completed=0,
-        message="Processing selected chunks",
+        message="Processing chunks and try to extract relevant information",
     )
 
     # Prepare prompts
@@ -122,7 +120,7 @@ async def extract_endpoints(
     relevant_chunk_info: List[Dict[str, Any]] = []
 
     async def _extract_for_doc(
-        doc_uuid: UUID, doc_chunks: List[Tuple[int, int, str]], doc_idx: int
+        doc_uuid: UUID, doc_chunks: List[Tuple[int, int, str]], doc_index: int
     ) -> Tuple[List[EndpointInfo], List[Dict[str, Any]]]:
         """Extract endpoints from chunks of a single document."""
         update_job_progress(
@@ -131,7 +129,6 @@ async def extract_endpoints(
             message="Processing chunks and try to extract relevant information",
         )
 
-        # Disable for now metadata in endpoints extraction
         # Get metadata for this document
         doc_metadata = None
         if doc_metadata_map:
