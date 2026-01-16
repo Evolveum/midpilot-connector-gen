@@ -53,33 +53,6 @@ def update_job_progress(
             logger.debug(f"Job progress update failed - no event loop: {ex}")
 
 
-# def increment_processed_documents(job_id: UUID, delta: int = 1) -> None:
-#     """
-#     Increment the number of fully processed documents.
-#     """
-#
-#     async def _increment() -> None:
-#         try:
-#             async with async_session_maker() as db:
-#                 repo = JobRepository(db)
-#                 await repo.increment_processed_documents(job_id, delta)
-#                 await db.commit()
-#         except Exception as e:
-#             logger.debug("Increment processed documents failed.", exc_info=e)
-#
-#     try:
-#         asyncio.create_task(_increment())
-#     except RuntimeError:
-#         try:
-#             loop = asyncio.get_event_loop()
-#             if loop.is_running():
-#                 loop.create_task(_increment())
-#             else:
-#                 loop.run_until_complete(_increment())
-#         except Exception as ex:
-#             logger.debug(f"Increment processed documents failed - no event loop: {ex}")
-
-
 async def increment_processed_documents(job_id: UUID, delta: int = 1) -> None:
     async with async_session_maker() as db:
         repo = JobRepository(db)

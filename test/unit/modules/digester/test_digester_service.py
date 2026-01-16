@@ -15,6 +15,7 @@ from src.modules.digester.schema import (
     EndpointInfo,
     InfoMetadata,
     ObjectClass,
+    RelationRecord,
 )
 
 
@@ -598,4 +599,191 @@ async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_j
         assert result["relevantChunks"] == []
 
 
-### here
+# ==================== EXTRACT RELATIONS ====================
+@pytest.mark.asyncio
+async def test_extract_relations_success(mock_llm, mock_digester_update_job_progress):
+    """
+    Test extracting relations between object classes.
+    Validates parallel processing and relation merging.
+    """
+    doc_uuid = uuid4()
+    fake_doc_items = [
+        {
+            "uuid": str(doc_uuid),
+            "content": "User-Group relationship documentation",
+            "summary": "Relations",
+            "@metadata": {"tags": "relations"},
+        }
+    ]
+
+    relevant_object_class = "User"
+
+    with (
+        patch("src.modules.digester.service._extract_relations"),
+        patch("src.modules.digester.service.merge_relations_results"),
+        patch("src.modules.digester.service._process_over_documents") as mock_process,
+    ):
+        mock_process.return_value = {
+            "result": {
+                "relations": [
+                    RelationRecord(
+                        name="user_groups",
+                        short_description="User membership in groups",
+                        subject="user",
+                        subject_attribute="groups",
+                        object="group",
+                        object_attribute="members",
+                    ).model_dump(by_alias=True)
+                ]
+            },
+            "relevantChunks": [{"docUuid": str(doc_uuid)}],
+        }
+
+        job_id = uuid4()
+        result = await service.extract_relations(fake_doc_items, relevant_object_class, job_id)
+
+        assert "result" in result
+        assert "relevantChunks" in result
+        assert "relations" in result["result"]
+
+        relation = result["result"]["relations"][0]
+        assert relation["subject"] == "user"
+        assert relation["object"] == "group"
+
+
+@pytest.mark.asyncio
+async def test_extract_relations_no_relations_found(mock_llm, mock_digester_update_job_progress):
+    """Test extract_relations when no relations are discovered."""
+    fake_doc_items = [{"uuid": str(uuid4()), "content": "No relations", "summary": "", "@metadata": {}}]
+
+    with patch("src.modules.digester.service._process_over_documents") as mock_process:
+        mock_process.return_value = {"result": {"relations": []}, "relevantChunks": []}
+
+        result = await service.extract_relations(fake_doc_items, "User", uuid4())
+
+        assert result["result"]["relations"] == []
+
+
+# ==================== INTEGRATION SCENARIOS ====================
+@pytest.mark.asyncio
+async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_update_job_progress):
+    """
+    Integration test simulating the full workflow:
+    1. Extract object classes
+    2. Extract attributes for a class
+    3. Extract endpoints for a class
+    """
+    session_id = uuid4()
+    doc_uuid = uuid4()
+
+    doc_items = [
+        {
+            "uuid": str(doc_uuid),
+            "content": "Complete API documentation with User schema and endpoints",
+            "summary": "Full API docs",
+            "@metadata": {"tags": "spec"},
+        }
+    ]
+
+    with (
+        patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.service.increment_processed_documents", new_callable=AsyncMock),
+    ):
+        # Step 1: Extract object classes
+        with (
+            patch(
+                "src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock
+            ) as mock_parallel,
+            patch(
+                "src.modules.digester.service.deduplicate_and_sort_object_classes", new_callable=AsyncMock
+            ) as mock_dedupe_classes,
+        ):
+            mock_parallel.return_value = [
+                (
+                    [
+                        ObjectClass(
+                            name="User",
+                            relevant="true",
+                            description="User entity",
+                            relevant_chunks=[{"docUuid": doc_uuid}],
+                        )
+                    ],
+                    [0],
+                    doc_uuid,
+                )
+            ]
+
+            class ObjectClassResult:
+                def model_dump(self, by_alias=True):
+                    return {
+                        "objectClasses": [
+                            {
+                                "name": "User",
+                                "relevant": "true",
+                                "description": "User entity",
+                                "relevantChunks": [{"docUuid": str(doc_uuid)}],
+                            }
+                        ]
+                    }
+
+            mock_dedupe_classes.return_value = ObjectClassResult()
+
+            classes_result = await service.extract_object_classes(doc_items, True, "high", uuid4())
+            assert len(classes_result["result"]["objectClasses"]) == 1
+
+            mock_parallel.assert_awaited_once()
+            mock_dedupe_classes.assert_awaited_once()
+
+        # Step 2: Extract attributes
+        mock_db_session = AsyncMock()
+        mock_repo = MagicMock()
+        object_classes_output = classes_result["result"]
+        mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
+        mock_repo.update_session = AsyncMock()
+
+        with (
+            patch("src.modules.digester.service._extract_specific_chunks") as mock_chunks,
+            patch("src.modules.digester.service._extract_attributes") as mock_attrs,
+            patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
+            patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+        ):
+            mock_session_maker.return_value.__aenter__.return_value = mock_db_session
+            mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
+            mock_repo_class.return_value = mock_repo
+
+            mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
+            mock_attrs.return_value = {
+                "result": {"attributes": {"id": {"type": "string", "description": "ID"}}},
+                "relevantChunks": [],
+            }
+
+            attrs_result = await service.extract_attributes(
+                doc_items, "User", session_id, [{"docUuid": str(doc_uuid)}], uuid4()
+            )
+            assert "id" in attrs_result["result"]["attributes"]
+
+        # Step 3: Extract endpoints
+        with (
+            patch("src.modules.digester.service._extract_specific_chunks") as mock_chunks,
+            patch("src.modules.digester.service._extract_endpoints") as mock_endpoints,
+            patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
+            patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+        ):
+            # Update mock repo to include attributes
+            object_classes_output["objectClasses"][0]["attributes"] = attrs_result["result"]["attributes"]
+            mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
+
+            mock_session_maker.return_value.__aenter__.return_value = mock_db_session
+            mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
+            mock_repo_class.return_value = mock_repo
+
+            mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
+            mock_endpoints.return_value = {
+                "result": {"endpoints": [{"method": "GET", "path": "/users", "description": "Get users"}]},
+                "relevantChunks": [],
+            }
+
+            endpoints_result = await service.extract_endpoints(
+                doc_items, "User", session_id, [{"docUuid": str(doc_uuid)}], uuid4(), "https://api.example.com"
+            )
+            assert len(endpoints_result["result"]["endpoints"]) == 1
