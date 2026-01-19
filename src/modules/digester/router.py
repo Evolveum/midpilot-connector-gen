@@ -630,6 +630,9 @@ async def extract_relations(session_id: UUID = Path(..., description="Session ID
     NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
     repo = SessionRepository(db)
+    if not await repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
     try:
         doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
     except ValueError as e:
