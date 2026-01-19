@@ -280,14 +280,108 @@ async def get_specific_object_class(
     normalized_name = object_class.strip().lower()
     for obj_cls in object_classes:
         if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
-            # Return just this one object class
-            return obj_cls
+            # Merge in attributes and endpoints if they exist
+            result = obj_cls.copy()
+
+            # Get attributes from session
+            attributes_output = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
+            if attributes_output and isinstance(attributes_output, dict):
+                result["attributes"] = attributes_output.get("attributes", {})
+
+            # Get endpoints from session
+            endpoints_output = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
+            if endpoints_output and isinstance(endpoints_output, dict):
+                result["endpoints"] = endpoints_output.get("endpoints", [])
+
+            return result
 
     # If not found, raise 404
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Object class '{object_class}' not found in session {session_id}",
     )
+
+
+@router.put(
+    "/{session_id}/classes",
+    summary="Upload all object classes to session",
+)
+async def upload_all_object_classes(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_classes_data: Dict[str, Any] = Body(..., description="Object classes data as JSON"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload all object classes to the session.
+    Expects a JSON body with objectClasses array.
+    Replaces existing object classes in the session.
+    """
+    repo = SessionRepository(db)
+    if not await repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    await repo.update_session(session_id, {"objectClassesOutput": object_classes_data})
+
+    return {
+        "message": "All object classes uploaded successfully",
+        "sessionId": session_id,
+    }
+
+
+@router.put(
+    "/{session_id}/classes/{object_class}",
+    summary="Upload one object class to session",
+)
+async def upload_one_object_class(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_class: str = Path(..., description="Object class name"),
+    object_class_data: Dict[str, Any] = Body(..., description="Object class data as JSON"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload or update a specific object class in the session.
+    If the object class already exists, it will be updated.
+    If it doesn't exist, it will be added to the objectClasses array.
+    """
+    repo = SessionRepository(db)
+    if not await repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    # Get existing object classes
+    object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
+    if not object_classes_output or not isinstance(object_classes_output, dict):
+        # Initialize with empty structure if none exists
+        object_classes_output = {"objectClasses": []}
+
+    object_classes = object_classes_output.get("objectClasses", [])
+    if not isinstance(object_classes, list):
+        object_classes = []
+
+    # Ensure the name field is set from the URL path parameter
+    object_class_data["name"] = object_class
+
+    # Find and update existing object class (case-insensitive)
+    normalized_name = object_class.strip().lower()
+    updated = False
+    for i, obj_cls in enumerate(object_classes):
+        if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
+            # Update existing object class
+            object_classes[i] = object_class_data
+            updated = True
+            break
+
+    # If not found, add new object class
+    if not updated:
+        object_classes.append(object_class_data)
+
+    # Update session
+    object_classes_output["objectClasses"] = object_classes
+    await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
+
+    return {
+        "message": f"Object class '{object_class}' {'updated' if updated else 'added'} successfully",
+        "sessionId": session_id,
+    }
 
 
 # Digester Operations - Object Class Attributes
@@ -607,6 +701,7 @@ async def override_class_endpoints(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
+    object_class = object_class.strip().lower()
     await repo.update_session(session_id, {f"{object_class}EndpointsOutput": endpoints})
 
     return {

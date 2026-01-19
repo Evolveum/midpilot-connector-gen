@@ -152,7 +152,7 @@ async def test_extract_class_attributes_success():
     mock_object_classes_output = {
         "objectClasses": [
             {
-                "name": "User",
+                "name": "user",
                 "relevant": "true",
                 "superclass": "",
                 "abstract": False,
@@ -186,7 +186,7 @@ async def test_extract_class_attributes_success():
 
         response = await extract_class_attributes(
             session_id=session_id,
-            object_class="User",
+            object_class="user",
             db=MagicMock(),
         )
 
@@ -229,7 +229,7 @@ async def test_get_class_attributes_status_found():
         session_id = uuid4()
         response = await get_class_attributes_status(
             session_id=session_id,
-            object_class="User",
+            object_class="user",
             jobId=None,
             db=MagicMock(),
         )
@@ -241,8 +241,8 @@ async def test_get_class_attributes_status_found():
     assert response.result.attributes["id"].type == "string"
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     assert mock_repo.get_session_data.await_args_list == [
-        call(session_id, "UserAttributesJobId"),
-        call(session_id, "UserAttributesOutput"),
+        call(session_id, "userAttributesJobId"),
+        call(session_id, "userAttributesOutput"),
     ]
     mock_status_builder.assert_awaited_once()
 
@@ -264,10 +264,10 @@ async def test_override_class_attributes_success():
         )
 
     mock_repo.session_exists.assert_awaited_once_with(session_id)
-    mock_repo.update_session.assert_awaited_once_with(session_id, {"UserAttributesOutput": {"id": {"type": "string"}}})
-    assert response["message"].startswith("Attributes for User overridden successfully")
+    mock_repo.update_session.assert_awaited_once_with(session_id, {"userAttributesOutput": {"id": {"type": "string"}}})
+    assert response["message"].startswith("Attributes for user overridden successfully")
     assert response["sessionId"] == session_id
-    assert response["objectClass"] == "User"
+    assert response["objectClass"] == "user"
 
 
 # CLASS ENDPOINTS
@@ -393,11 +393,11 @@ async def test_override_class_endpoints_success():
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_repo.update_session.assert_awaited_once_with(
         session_id,
-        {"UserEndpointsOutput": {"listUsers": {"method": "GET", "path": "/users"}}},
+        {"userEndpointsOutput": {"listUsers": {"method": "GET", "path": "/users"}}},
     )
-    assert response["message"].startswith("Endpoints for User overridden successfully")
+    assert response["message"].startswith("Endpoints for user overridden successfully")
     assert response["sessionId"] == session_id
-    assert response["objectClass"] == "User"
+    assert response["objectClass"] == "user"
 
 
 # RELATIONS
