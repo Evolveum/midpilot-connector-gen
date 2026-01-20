@@ -284,12 +284,12 @@ async def get_specific_object_class(
             result = obj_cls.copy()
 
             # Get attributes from session
-            attributes_output = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
+            attributes_output = await repo.get_session_data(session_id, f"{normalized_name}AttributesOutput")
             if attributes_output and isinstance(attributes_output, dict):
                 result["attributes"] = attributes_output.get("attributes", {})
 
             # Get endpoints from session
-            endpoints_output = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
+            endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
             if endpoints_output and isinstance(endpoints_output, dict):
                 result["endpoints"] = endpoints_output.get("endpoints", [])
 
