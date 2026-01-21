@@ -383,7 +383,7 @@ async def create_relation(
     """
     Generate the Groovy `relation {}` block using relevant chunks + docs.
     """
-    relation_docs_text = _read_adoc_text(__package__ + ".documentations", "50-relationship.adoc")
+    relation_docs_text = _read_adoc_text(__package__ + ".documentations" + ".rest", "50-relationship.adoc")
 
     relevant_indices: Optional[List[int]] = None
     relevant_pairs: Optional[List[Dict[str, Any]]] = None
