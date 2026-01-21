@@ -15,7 +15,7 @@ from ....common.enums import JobStage
 from ....common.jobs import append_job_error, update_job_progress
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from .postprocess import _coerce_llm_text, strip_markdown_fences
+from ..utils.postprocess import _coerce_llm_text, strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 

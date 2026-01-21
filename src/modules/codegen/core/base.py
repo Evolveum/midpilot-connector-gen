@@ -22,11 +22,10 @@ from ....common.jobs import (
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
 from ...digester.schema import EndpointsResponse, ObjectClassSchemaResponse
-from .postprocess import _coerce_llm_text, strip_markdown_fences
+from ..utils.postprocess import _coerce_llm_text, strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 
-# Type aliases for flexibility
 AttributesPayload = Union[ObjectClassSchemaResponse, Mapping[str, Any]]
 EndpointsPayload = Union[EndpointsResponse, Mapping[str, Any]]
 
@@ -41,8 +40,6 @@ class OperationConfig:
     default_scaffold: str  # Fallback code when generation fails
     logger_prefix: str  # For logging, e.g., "Codegen:Search"
 
-    # Optional custom data preparation functions
-    # prepare_prompt_data: Optional[Callable[[Any], Dict[str, str]]] = None
     extra_prompt_vars: Dict[str, Any] = field(default_factory=dict)
 
 

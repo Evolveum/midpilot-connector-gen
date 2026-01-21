@@ -17,7 +17,8 @@ from typing import Any, Dict, List, Optional
 
 from ...digester.schema import RelationsResponse
 from ..prompts.relationPrompts import get_relation_system_prompt, get_relation_user_prompt
-from .base_generator import (
+from ..utils.protocol_selectors import select_prompts_for_protocol
+from .base import (
     AttributesPayload,
     BaseGroovyGenerator,
     EndpointsPayload,
@@ -25,7 +26,6 @@ from .base_generator import (
     attributes_to_records,
     endpoints_to_records,
 )
-from .protocol_selectors import select_prompts_for_protocol
 
 logger = logging.getLogger(__name__)
 

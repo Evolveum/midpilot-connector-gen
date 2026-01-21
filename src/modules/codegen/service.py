@@ -10,18 +10,18 @@ from uuid import UUID
 from ...common.database.config import async_session_maker
 from ...common.database.repositories.session_repository import SessionRepository
 from ..digester.schema import EndpointsResponse, ObjectClassSchemaResponse, RelationsResponse
-from .prompts.connIDPrompts import get_connID_system_prompt, get_connID_user_prompt
-from .prompts.nativeSchemaPrompts import get_native_schema_system_prompt, get_native_schema_user_prompt
-from .utils.api_type_helper import get_api_types_from_session
-from .utils.generate_groovy import generate_groovy
-from .utils.map_to_record import attributes_to_records_for_codegen
-from .utils.operation_generators import (
+from .core.generate_groovy import generate_groovy
+from .core.operation import (
     CreateGenerator,
     DeleteGenerator,
     RelationGenerator,
     SearchGenerator,
     UpdateGenerator,
 )
+from .prompts.connIDPrompts import get_connID_system_prompt, get_connID_user_prompt
+from .prompts.nativeSchemaPrompts import get_native_schema_system_prompt, get_native_schema_user_prompt
+from .utils.api_type_helper import get_api_types_from_session
+from .utils.map_to_record import attributes_to_records_for_codegen
 from .utils.protocol_selectors import select_docs_path_for_protocol
 
 logger = logging.getLogger(__name__)
@@ -156,7 +156,7 @@ async def create_native_schema(
     Generate Groovy for native schema mapping from attributes.
     """
     # packaged resource under codegen/documentations/
-    user_schema_docs_text = _read_adoc_text(__package__ + ".documentations", "25-user-schema.adoc")
+    user_schema_docs_text = _read_adoc_text(__package__ + ".documentations" + ".rest", "25-user-schema.adoc")
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)
@@ -182,7 +182,9 @@ async def create_conn_id(
     """
     Generate Groovy for ConnID attribute mapping from attributes.
     """
-    connid_docs_text = _read_adoc_text(__package__ + ".documentations", "30-attribute-to-connid-attributes.adoc")
+    connid_docs_text = _read_adoc_text(
+        __package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc"
+    )
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)
