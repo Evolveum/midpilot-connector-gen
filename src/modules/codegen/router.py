@@ -1,11 +1,11 @@
+#  Copyright (C) 2010-2026 Evolveum and contributors
+#
+#  Licensed under the EUPL-1.2 or later.
+
 """
 Codegen endpoints for V2 API (session-centric).
 All codegen operations are nested under sessions.
 """
-
-#  Copyright (C) 2010-2026 Evolveum and contributors
-#
-#  Licensed under the EUPL-1.2 or later.
 
 from typing import Any, Dict, Optional
 from uuid import UUID

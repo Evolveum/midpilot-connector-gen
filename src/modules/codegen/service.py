@@ -3,7 +3,6 @@
 #  Licensed under the EUPL-1.2 or later.
 
 import logging
-from importlib import resources
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union, cast
 from uuid import UUID
 
@@ -11,7 +10,7 @@ from ...common.database.config import async_session_maker
 from ...common.database.repositories.session_repository import SessionRepository
 from ..digester.schema import EndpointsResponse, ObjectClassSchemaResponse, RelationsResponse
 from .core.generate_groovy import generate_groovy
-from .core.operation import (
+from .core.operations import (
     CreateGenerator,
     DeleteGenerator,
     RelationGenerator,
@@ -20,27 +19,16 @@ from .core.operation import (
 )
 from .prompts.connIDPrompts import get_connID_system_prompt, get_connID_user_prompt
 from .prompts.nativeSchemaPrompts import get_native_schema_system_prompt, get_native_schema_user_prompt
-from .utils.api_type_helper import get_api_types_from_session
+from .selection.docs_loader import read_adoc_text
+from .selection.protocol import detect_protocol
+from .selection.protocol_selectors import get_operation_assets
+from .selection.session_metadata import get_api_types_from_session
 from .utils.map_to_record import attributes_to_records_for_codegen
-from .utils.protocol_selectors import select_docs_path_for_protocol
 
 logger = logging.getLogger(__name__)
 
 AttributesPayload = Union[ObjectClassSchemaResponse, Mapping[str, Any]]
 EndpointsPayload = Union[EndpointsResponse, Mapping[str, Any]]
-
-
-def _read_adoc_text(package: str, filename: str) -> str:
-    """
-    Read a documentation .adoc file from package data using importlib.resources,
-    which works both in dev and when packaged (wheel/zip).
-    """
-    try:
-        with resources.files(package).joinpath(filename).open("r", encoding="utf-8") as fh:
-            return fh.read()
-    except Exception as e:
-        logger.warning("Could not read resource %s/%s: %s", package, filename, e)
-        return ""
 
 
 def _attrs_map_from_payload(payload: AttributesPayload) -> Dict[str, Dict[str, Any]]:
@@ -156,7 +144,7 @@ async def create_native_schema(
     Generate Groovy for native schema mapping from attributes.
     """
     # packaged resource under codegen/documentations/
-    user_schema_docs_text = _read_adoc_text(__package__ + ".documentations" + ".rest", "25-user-schema.adoc")
+    user_schema_docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "25-user-schema.adoc")
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)
@@ -182,7 +170,7 @@ async def create_conn_id(
     """
     Generate Groovy for ConnID attribute mapping from attributes.
     """
-    connid_docs_text = _read_adoc_text(
+    connid_docs_text = read_adoc_text(
         __package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc"
     )
 
@@ -217,14 +205,16 @@ async def create_search(
     """
     # Get API types and select appropriate documentation
     api_types = await get_api_types_from_session(session_id)
-    docs_path = select_docs_path_for_protocol("search", api_types)
-    docs_text = _read_adoc_text(__package__ + ".documentations", docs_path)
+    protocol = detect_protocol(api_types)
+    assets = get_operation_assets("search", protocol)
+    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
 
-    # Create generator with protocol-aware configuration
     generator = SearchGenerator(
         object_class=object_class,
-        api_types=api_types,
         docs_text=docs_text,
+        system_prompt=assets.system_prompt,
+        user_prompt=assets.user_prompt,
+        protocol_label=protocol.name,
     )
 
     # Collect relevant chunks
@@ -261,14 +251,16 @@ async def create_create(
     """
     # Get API types and select appropriate documentation
     api_types = await get_api_types_from_session(session_id)
-    docs_path = select_docs_path_for_protocol("create", api_types)
-    docs_text = _read_adoc_text(__package__ + ".documentations", docs_path)
+    protocol = detect_protocol(api_types)
+    assets = get_operation_assets("create", protocol)
+    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
 
-    # Create generator with protocol-aware configuration
     generator = CreateGenerator(
         object_class=object_class,
-        api_types=api_types,
         docs_text=docs_text,
+        system_prompt=assets.system_prompt,
+        user_prompt=assets.user_prompt,
+        protocol_label=protocol.name,
     )
 
     # Collect relevant chunks
@@ -304,14 +296,16 @@ async def create_update(
     """
     # Get API types and select appropriate documentation
     api_types = await get_api_types_from_session(session_id)
-    docs_path = select_docs_path_for_protocol("update", api_types)
-    docs_text = _read_adoc_text(__package__ + ".documentations", docs_path)
+    protocol = detect_protocol(api_types)
+    assets = get_operation_assets("update", protocol)
+    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
 
-    # Create generator with protocol-aware configuration
     generator = UpdateGenerator(
         object_class=object_class,
-        api_types=api_types,
         docs_text=docs_text,
+        system_prompt=assets.system_prompt,
+        user_prompt=assets.user_prompt,
+        protocol_label=protocol.name,
     )
 
     # Collect relevant chunks
@@ -347,14 +341,16 @@ async def create_delete(
     """
     # Get API types and select appropriate documentation
     api_types = await get_api_types_from_session(session_id)
-    docs_path = select_docs_path_for_protocol("delete", api_types)
-    docs_text = _read_adoc_text(__package__ + ".documentations", docs_path)
+    protocol = detect_protocol(api_types)
+    assets = get_operation_assets("delete", protocol)
+    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
 
-    # Create generator with protocol-aware configuration
     generator = DeleteGenerator(
         object_class=object_class,
-        api_types=api_types,
         docs_text=docs_text,
+        system_prompt=assets.system_prompt,
+        user_prompt=assets.user_prompt,
+        protocol_label=protocol.name,
     )
 
     # Collect relevant chunks
@@ -385,7 +381,7 @@ async def create_relation(
     """
     Generate the Groovy `relation {}` block using relevant chunks + docs.
     """
-    relation_docs_text = _read_adoc_text(__package__ + ".documentations" + ".rest", "50-relationship.adoc")
+    relation_docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "50-relationship.adoc")
 
     relevant_indices: Optional[List[int]] = None
     relevant_pairs: Optional[List[Dict[str, Any]]] = None
