@@ -1,0 +1,395 @@
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:Schema"
+  ],
+  "id": "urn:ietf:params:scim:schemas:core:2.0:User",
+  "name": "User",
+  "description": "SCIM 2.0 User Resource Schema",
+  "attributes": [
+    {
+      "name": "id",
+      "type": "string",
+      "multiValued": false,
+      "description": "Unique identifier for the User, typically used as a primary key.",
+      "required": true,
+      "caseExact": false,
+      "mutability": "readOnly",
+      "returned": "always",
+      "uniqueness": "server"
+    },
+    {
+      "name": "userName",
+      "type": "string",
+      "multiValued": false,
+      "description": "Unique identifier for the User, typically used by the user to log in.",
+      "required": true,
+      "caseExact": false,
+      "mutability": "readWrite",
+      "returned": "default",
+      "uniqueness": "server"
+    },
+    {
+      "name": "name",
+      "type": "complex",
+      "multiValued": false,
+      "description": "The components of the user's real name.",
+      "required": false,
+      "subAttributes": [
+        {
+          "name": "formatted",
+          "type": "string",
+          "multiValued": false,
+          "description": "The full name, including all middle names, titles, and suffixes.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readWrite",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "familyName",
+          "type": "string",
+          "multiValued": false,
+          "description": "The family name of the User, or last name.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readWrite",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "givenName",
+          "type": "string",
+          "multiValued": false,
+          "description": "The given name of the User, or first name.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readWrite",
+          "returned": "default",
+          "uniqueness": "none"
+        }
+      ],
+      "mutability": "readWrite",
+      "returned": "default",
+      "uniqueness": "none"
+    },
+    {
+      "name": "displayName",
+      "type": "string",
+      "multiValued": false,
+      "description": "The name of the User, suitable for display to end-users.",
+      "required": false,
+      "caseExact": false,
+      "mutability": "readWrite",
+      "returned": "default",
+      "uniqueness": "none"
+    },
+    {
+      "name": "emails",
+      "type": "complex",
+      "multiValued": true,
+      "description": "Email addresses for the user.",
+      "required": false,
+      "subAttributes": [
+        {
+          "name": "value",
+          "type": "string",
+          "multiValued": false,
+          "description": "Email address value.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readWrite",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "multiValued": false,
+          "description": "A label indicating the type of email address (e.g., work, home, other).",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readWrite",
+          "returned": "default",
+          "uniqueness": "none",
+          "canonicalValues": ["work", "home", "other"]
+        },
+        {
+          "name": "primary",
+          "type": "boolean",
+          "multiValued": false,
+          "description": "A Boolean value indicating the primary email address.",
+          "required": false,
+          "mutability": "readWrite",
+          "returned": "default",
+          "uniqueness": "none"
+        }
+      ],
+      "mutability": "readWrite",
+      "returned": "default",
+      "uniqueness": "none"
+    },
+    {
+      "name": "phoneNumbers",
+      "type": "complex",
+      "multiValued": true,
+      "description": "Phone numbers for the User.",
+      "required": false,
+      "subAttributes": [
+        {
+          "name": "value",
+          "type": "string",
+          "multiValued": false,
+          "description": "Phone number value.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readWrite",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "multiValued": false,
+          "description": "A label indicating the type of phone number (e.g., work, home, mobile, fax, pager, other).",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readWrite",
+          "returned": "default",
+          "uniqueness": "none",
+          "canonicalValues": ["work", "home", "mobile", "fax", "pager", "other"]
+        },
+        {
+          "name": "primary",
+          "type": "boolean",
+          "multiValued": false,
+          "description": "A Boolean value indicating the primary phone number.",
+          "required": false,
+          "mutability": "readWrite",
+          "returned": "default",
+          "uniqueness": "none"
+        }
+      ],
+      "mutability": "readWrite",
+      "returned": "default",
+      "uniqueness": "none"
+    },
+    {
+      "name": "active",
+      "type": "boolean",
+      "multiValued": false,
+      "description": "A Boolean value indicating the User's administrative status.",
+      "required": false,
+      "mutability": "readWrite",
+      "returned": "default",
+      "uniqueness": "none"
+    },
+    {
+      "name": "groups",
+      "type": "complex",
+      "multiValued": true,
+      "description": "A list of groups to which the user belongs.",
+      "required": false,
+      "subAttributes": [
+        {
+          "name": "value",
+          "type": "string",
+          "multiValued": false,
+          "description": "The identifier of the group.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readOnly",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "$ref",
+          "type": "reference",
+          "referenceTypes": ["Group"],
+          "multiValued": false,
+          "description": "The URI of the corresponding Group resource.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readOnly",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "display",
+          "type": "string",
+          "multiValued": false,
+          "description": "A human-readable name for the group.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readOnly",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "multiValued": false,
+          "description": "A label indicating the type of group membership.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readOnly",
+          "returned": "default",
+          "uniqueness": "none",
+          "canonicalValues": ["direct", "indirect"]
+        }
+      ],
+      "mutability": "readOnly",
+      "returned": "default",
+      "uniqueness": "none"
+    },
+    {
+      "name": "meta",
+      "type": "complex",
+      "multiValued": false,
+      "description": "Resource metadata.",
+      "required": false,
+      "subAttributes": [
+        {
+          "name": "resourceType",
+          "type": "string",
+          "multiValued": false,
+          "description": "The name of the resource type.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readOnly",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "created",
+          "type": "dateTime",
+          "multiValued": false,
+          "description": "The DateTime the resource was added to the service provider.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readOnly",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "lastModified",
+          "type": "dateTime",
+          "multiValued": false,
+          "description": "The most recent DateTime that the resource was updated.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readOnly",
+          "returned": "default",
+          "uniqueness": "none"
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "multiValued": false,
+          "description": "The version of the resource.",
+          "required": false,
+          "caseExact": false,
+          "mutability": "readOnly",
+          "returned": "default",
+          "uniqueness": "none"
+        }
+      ],
+      "mutability": "readOnly",
+      "returned": "default",
+      "uniqueness": "none"
+    }
+  ],
+  "meta": {
+    "resourceType": "Schema",
+    "location": "/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User"
+  },
+  "_endpoints_documentation": {
+    "description": "Standard SCIM 2.0 endpoints for User resource",
+    "baseUrl": "https://<hostname>/scim/v2",
+    "endpoints": [
+      {
+        "path": "/Users",
+        "method": "GET",
+        "description": "List/search users with optional filtering, sorting, and pagination",
+        "parameters": {
+          "filter": "Filter expression using SCIM filter syntax",
+          "sortBy": "Attribute name to sort by",
+          "sortOrder": "ascending or descending",
+          "startIndex": "1-based index of the first result (default: 1)",
+          "count": "Number of results per page"
+        },
+        "response": {
+          "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+          "totalResults": 100,
+          "startIndex": 1,
+          "itemsPerPage": 20,
+          "Resources": []
+        }
+      },
+      {
+        "path": "/Users",
+        "method": "POST",
+        "description": "Create a new user",
+        "requestBody": {
+          "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+          "userName": "john.doe",
+          "name": {
+            "givenName": "John",
+            "familyName": "Doe"
+          },
+          "emails": [
+            {
+              "value": "john.doe@example.com",
+              "type": "work",
+              "primary": true
+            }
+          ],
+          "active": true
+        },
+        "response": {
+          "status": 201,
+          "location": "/Users/{id}",
+          "body": "Created user resource with id, meta fields"
+        }
+      },
+      {
+        "path": "/Users/{id}",
+        "method": "GET",
+        "description": "Retrieve a specific user by ID",
+        "response": "Complete user resource"
+      },
+      {
+        "path": "/Users/{id}",
+        "method": "PUT",
+        "description": "Replace an existing user (full update)",
+        "requestBody": "Complete user resource representation",
+        "response": "Updated user resource"
+      },
+      {
+        "path": "/Users/{id}",
+        "method": "PATCH",
+        "description": "Partially update a user using SCIM PATCH operations",
+        "requestBody": {
+          "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+          "Operations": [
+            {
+              "op": "replace",
+              "path": "active",
+              "value": false
+            }
+          ]
+        },
+        "response": "Updated user resource"
+      },
+      {
+        "path": "/Users/{id}",
+        "method": "DELETE",
+        "description": "Delete a user",
+        "response": {
+          "status": 204,
+          "body": "No content"
+        }
+      }
+    ]
+  }
+}

@@ -12,6 +12,7 @@ from ...common.database.repositories.session_repository import SessionRepository
 from ..digester.schema import EndpointsResponse, ObjectClassSchemaResponse, RelationsResponse
 from .prompts.connIDPrompts import get_connID_system_prompt, get_connID_user_prompt
 from .prompts.nativeSchemaPrompts import get_native_schema_system_prompt, get_native_schema_user_prompt
+from .utils.api_type_helper import get_api_types_from_session
 from .utils.generate_groovy import generate_groovy
 from .utils.map_to_record import attributes_to_records_for_codegen
 from .utils.operation_generators import (
@@ -21,6 +22,7 @@ from .utils.operation_generators import (
     SearchGenerator,
     UpdateGenerator,
 )
+from .utils.protocol_selectors import select_docs_path_for_protocol
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,52 @@ def _merge_unique_pairs(*seqs: Iterable[Tuple[int, Optional[str]]]) -> List[Tupl
     return merged
 
 
+async def _collect_relevant_chunks(
+    session_id: UUID, object_class: str, operation_name: str
+) -> Tuple[Optional[List[int]], Optional[List[Dict[str, Any]]]]:
+    """
+    Collect relevant chunk indices and pairs from session for a given object class.
+
+    Args:
+        session_id: Session UUID
+        object_class: Object class name
+        operation_name: Operation name for logging (e.g., "Search", "Create")
+
+    Returns:
+        Tuple of (relevant_indices, relevant_pairs)
+    """
+    async with async_session_maker() as db:
+        repo = SessionRepository(db)
+        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+
+    if not relevant_map:
+        return None, None
+
+    key_endpoints = f"{object_class}EndpointsOutput"
+    key_attributes = f"{object_class}AttributesOutput"
+
+    pairs_endpoints = _collect_pairs(relevant_map.get(key_endpoints))
+    pairs_attributes = _collect_pairs(relevant_map.get(key_attributes))
+    merged_pairs = _merge_unique_pairs(pairs_endpoints, pairs_attributes)
+
+    if not merged_pairs:
+        return None, None
+
+    relevant_indices = [i for i, _ in merged_pairs]
+    relevant_pairs = [{"chunkIndex": i, "docUuid": du} for i, du in merged_pairs if du]
+
+    logger.info(
+        "[Codegen:%s] Relevant chunks for endpoints=%d, for attributes=%d, merged=%d for %s",
+        operation_name,
+        len(pairs_endpoints),
+        len(pairs_attributes),
+        len(merged_pairs),
+        object_class,
+    )
+
+    return relevant_indices, relevant_pairs
+
+
 async def create_native_schema(
     attributes_payload: AttributesPayload,
     object_class: str,
@@ -163,42 +211,24 @@ async def create_search(
 ) -> Dict[str, str]:
     """
     Generate the Groovy `search {}` block using relevant chunks + docs.
-    If session_id is provided, attempts to use pre-chunked 'relevant_chunks' from the session.
+    Automatically selects protocol-specific prompts and documentation based on api_type.
     """
-    search_docs_text = _read_adoc_text(__package__ + ".documentations", "40-search-users.adoc")
+    # Get API types and select appropriate documentation
+    api_types = await get_api_types_from_session(session_id)
+    docs_path = select_docs_path_for_protocol("search", api_types)
+    docs_text = _read_adoc_text(__package__ + ".documentations", docs_path)
 
-    relevant_indices: Optional[List[int]] = None
-    relevant_pairs: Optional[List[Dict[str, Any]]] = None
+    # Create generator with protocol-aware configuration
+    generator = SearchGenerator(
+        object_class=object_class,
+        api_types=api_types,
+        docs_text=docs_text,
+    )
 
-    async with async_session_maker() as db:
-        repo = SessionRepository(db)
-        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+    # Collect relevant chunks
+    relevant_indices, relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Search")
 
-    if relevant_map:
-        key_endpoints = f"{object_class}EndpointsOutput"
-        key_attributes = f"{object_class}AttributesOutput"
-
-        pairs_endpoints = _collect_pairs(relevant_map.get(key_endpoints))
-        pairs_attributes = _collect_pairs(relevant_map.get(key_attributes))
-        merged_pairs = _merge_unique_pairs(pairs_endpoints, pairs_attributes)
-
-        if merged_pairs:
-            relevant_indices = [i for i, _ in merged_pairs]
-            # include uuid-only entries for downstream per-document selection
-            relevant_pairs = [{"chunkIndex": i, "docUuid": du} for i, du in merged_pairs if du]
-            logger.info(
-                "[Codegen:Search] Relevant chunks for endpoints=%d, for attributes=%d, merged=%d for %s",
-                len(pairs_endpoints),
-                len(pairs_attributes),
-                len(merged_pairs),
-                object_class,
-            )
-            try:
-                logger.info("[Codegen:Search] Relevant details for %s: %s", object_class, merged_pairs)
-            except Exception:
-                pass
-
-    generator = SearchGenerator(object_class=object_class, extra_prompt_vars={"search_docs": search_docs_text})
+    # Generate code
     code = await generator.generate(
         session_id=session_id,
         documentation=documentation,
@@ -225,38 +255,24 @@ async def create_create(
 ) -> Dict[str, str]:
     """
     Generate the Groovy `create {}` block using relevant chunks + docs.
+    Automatically selects protocol-specific prompts and documentation based on api_type.
     """
-    create_docs_text = _read_adoc_text(
-        __package__ + ".documentations", "50-create.adoc"
-    )  # No documentation yet, will be added later
+    # Get API types and select appropriate documentation
+    api_types = await get_api_types_from_session(session_id)
+    docs_path = select_docs_path_for_protocol("create", api_types)
+    docs_text = _read_adoc_text(__package__ + ".documentations", docs_path)
 
-    relevant_indices: Optional[List[int]] = None
-    relevant_pairs: Optional[List[Dict[str, Any]]] = None
+    # Create generator with protocol-aware configuration
+    generator = CreateGenerator(
+        object_class=object_class,
+        api_types=api_types,
+        docs_text=docs_text,
+    )
 
-    async with async_session_maker() as db:
-        repo = SessionRepository(db)
-        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+    # Collect relevant chunks
+    relevant_indices, relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Create")
 
-    if relevant_map:
-        key_endpoints = f"{object_class}EndpointsOutput"
-        key_attributes = f"{object_class}AttributesOutput"
-
-        pairs_endpoints = _collect_pairs(relevant_map.get(key_endpoints))
-        pairs_attributes = _collect_pairs(relevant_map.get(key_attributes))
-        merged_pairs = _merge_unique_pairs(pairs_endpoints, pairs_attributes)
-
-        if merged_pairs:
-            relevant_indices = [i for i, _ in merged_pairs]
-            relevant_pairs = [{"chunkIndex": i, "docUuid": du} for i, du in merged_pairs if du]
-            logger.info(
-                "[Codegen:Create] Relevant chunks for endpoints=%d, for attributes=%d, merged=%d for %s",
-                len(pairs_endpoints),
-                len(pairs_attributes),
-                len(merged_pairs),
-                object_class,
-            )
-
-    generator = CreateGenerator(object_class=object_class, extra_prompt_vars={"create_docs": create_docs_text})
+    # Generate code
     code = await generator.generate(
         session_id=session_id,
         documentation=documentation,
@@ -282,38 +298,24 @@ async def create_update(
 ) -> Dict[str, str]:
     """
     Generate the Groovy `update {}` block using relevant chunks + docs.
+    Automatically selects protocol-specific prompts and documentation based on api_type.
     """
-    update_docs_text = _read_adoc_text(
-        __package__ + ".documentations", "60-update.adoc"
-    )  # No documentation yet, will be added later
+    # Get API types and select appropriate documentation
+    api_types = await get_api_types_from_session(session_id)
+    docs_path = select_docs_path_for_protocol("update", api_types)
+    docs_text = _read_adoc_text(__package__ + ".documentations", docs_path)
 
-    relevant_indices: Optional[List[int]] = None
-    relevant_pairs: Optional[List[Dict[str, Any]]] = None
+    # Create generator with protocol-aware configuration
+    generator = UpdateGenerator(
+        object_class=object_class,
+        api_types=api_types,
+        docs_text=docs_text,
+    )
 
-    async with async_session_maker() as db:
-        repo = SessionRepository(db)
-        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+    # Collect relevant chunks
+    relevant_indices, relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Update")
 
-    if relevant_map:
-        key_endpoints = f"{object_class}EndpointsOutput"
-        key_attributes = f"{object_class}AttributesOutput"
-
-        pairs_endpoints = _collect_pairs(relevant_map.get(key_endpoints))
-        pairs_attributes = _collect_pairs(relevant_map.get(key_attributes))
-        merged_pairs = _merge_unique_pairs(pairs_endpoints, pairs_attributes)
-
-        if merged_pairs:
-            relevant_indices = [i for i, _ in merged_pairs]
-            relevant_pairs = [{"chunkIndex": i, "docUuid": du} for i, du in merged_pairs if du]
-            logger.info(
-                "[Codegen:Update] Relevant chunks for endpoints=%d, for attributes=%d, merged=%d for %s",
-                len(pairs_endpoints),
-                len(pairs_attributes),
-                len(merged_pairs),
-                object_class,
-            )
-
-    generator = UpdateGenerator(object_class=object_class, extra_prompt_vars={"update_docs": update_docs_text})
+    # Generate code
     code = await generator.generate(
         session_id=session_id,
         documentation=documentation,
@@ -339,38 +341,24 @@ async def create_delete(
 ) -> Dict[str, str]:
     """
     Generate the Groovy `delete {}` block using relevant chunks + docs.
+    Automatically selects protocol-specific prompts and documentation based on api_type.
     """
-    delete_docs_text = _read_adoc_text(
-        __package__ + ".documentations", "70-delete.adoc"
-    )  # No documentation yet, will be added later
+    # Get API types and select appropriate documentation
+    api_types = await get_api_types_from_session(session_id)
+    docs_path = select_docs_path_for_protocol("delete", api_types)
+    docs_text = _read_adoc_text(__package__ + ".documentations", docs_path)
 
-    relevant_indices: Optional[List[int]] = None
-    relevant_pairs: Optional[List[Dict[str, Any]]] = None
+    # Create generator with protocol-aware configuration
+    generator = DeleteGenerator(
+        object_class=object_class,
+        api_types=api_types,
+        docs_text=docs_text,
+    )
 
-    async with async_session_maker() as db:
-        repo = SessionRepository(db)
-        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+    # Collect relevant chunks
+    relevant_indices, relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Delete")
 
-    if relevant_map:
-        key_endpoints = f"{object_class}EndpointsOutput"
-        key_attributes = f"{object_class}AttributesOutput"
-
-        pairs_endpoints = _collect_pairs(relevant_map.get(key_endpoints))
-        pairs_attributes = _collect_pairs(relevant_map.get(key_attributes))
-        merged_pairs = _merge_unique_pairs(pairs_endpoints, pairs_attributes)
-
-        if merged_pairs:
-            relevant_indices = [i for i, _ in merged_pairs]
-            relevant_pairs = [{"chunkIndex": i, "docUuid": du} for i, du in merged_pairs if du]
-            logger.info(
-                "[Codegen:Delete] Relevant chunks for endpoints=%d, for attributes=%d, merged=%d for %s",
-                len(pairs_endpoints),
-                len(pairs_attributes),
-                len(merged_pairs),
-                object_class,
-            )
-
-    generator = DeleteGenerator(object_class=object_class, extra_prompt_vars={"delete_docs": delete_docs_text})
+    # Generate code
     code = await generator.generate(
         session_id=session_id,
         documentation=documentation,
@@ -416,7 +404,7 @@ async def create_relation(
                 len(relevant_pairs or []),
             )
 
-    generator = RelationGenerator(extra_prompt_vars={"relation_docs": relation_docs_text})
+    generator = RelationGenerator(docs_text=relation_docs_text)
     code = await generator.generate(
         session_id=session_id,
         documentation=documentation,

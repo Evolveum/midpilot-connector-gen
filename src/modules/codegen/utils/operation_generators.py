@@ -1,24 +1,22 @@
+#  Copyright (C) 2010-2026 Evolveum and contributors
+#
+#  Licensed under the EUPL-1.2 or later.
+
 """
 Concrete generator implementations for different Groovy operations.
 
 This module contains specialized generators for search, create, update, delete, and relation
 operations. Each generator extends BaseGroovyGenerator and implements operation-specific logic.
-"""
 
-#  Copyright (C) 2010-2026 Evolveum and contributors
-#
-#  Licensed under the EUPL-1.2 or later.
+Protocol-specific prompts and documentation are selected automatically based on api_type.
+"""
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ...digester.schema import RelationsResponse
-from ..prompts.createPrompts import get_create_system_prompt, get_create_user_prompt
-from ..prompts.deletePrompts import get_delete_system_prompt, get_delete_user_prompt
 from ..prompts.relationPrompts import get_relation_system_prompt, get_relation_user_prompt
-from ..prompts.searchPrompts import get_search_system_prompt, get_search_user_prompt
-from ..prompts.updatePrompts import get_update_system_prompt, get_update_user_prompt
 from .base_generator import (
     AttributesPayload,
     BaseGroovyGenerator,
@@ -27,23 +25,43 @@ from .base_generator import (
     attributes_to_records,
     endpoints_to_records,
 )
+from .protocol_selectors import select_prompts_for_protocol
 
 logger = logging.getLogger(__name__)
 
 
 class SearchGenerator(BaseGroovyGenerator):
-    """Generator for Groovy search {} blocks."""
+    """Generator for Groovy search {} blocks with protocol-aware prompts."""
 
-    def __init__(self, object_class: str, extra_prompt_vars: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        object_class: str,
+        api_types: List[str],
+        docs_text: str,
+        extra_prompt_vars: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Initialize SearchGenerator with protocol-specific prompts.
+
+        Args:
+            object_class: Object class name
+            api_types: List of API types from session metadata
+            docs_text: Documentation text content
+            extra_prompt_vars: Additional prompt variables
+        """
+        system_prompt, user_prompt = select_prompts_for_protocol("search", api_types)
+        protocol = "SCIM" if "SCIM" in api_types else "REST"
+
         config = OperationConfig(
             operation_name="Search",
-            system_prompt=get_search_system_prompt,
-            user_prompt=get_search_user_prompt,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             default_scaffold="search {\n}\n",
-            logger_prefix="[Codegen:Search]",
+            logger_prefix=f"[Codegen:Search:{protocol}]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["object_class"] = object_class
+        config.extra_prompt_vars["search_docs"] = docs_text
         super().__init__(config)
         self.object_class = object_class
 
@@ -63,18 +81,37 @@ class SearchGenerator(BaseGroovyGenerator):
 
 
 class CreateGenerator(BaseGroovyGenerator):
-    """Generator for Groovy create {} blocks."""
+    """Generator for Groovy create {} blocks with protocol-aware prompts."""
 
-    def __init__(self, object_class: str, extra_prompt_vars: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        object_class: str,
+        api_types: List[str],
+        docs_text: str,
+        extra_prompt_vars: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Initialize CreateGenerator with protocol-specific prompts.
+
+        Args:
+            object_class: Object class name
+            api_types: List of API types from session metadata
+            docs_text: Documentation text content
+            extra_prompt_vars: Additional prompt variables
+        """
+        system_prompt, user_prompt = select_prompts_for_protocol("create", api_types)
+        protocol = "SCIM" if "SCIM" in api_types else "REST"
+
         config = OperationConfig(
             operation_name="Create",
-            system_prompt=get_create_system_prompt,
-            user_prompt=get_create_user_prompt,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             default_scaffold="create {\n}\n",
-            logger_prefix="[Codegen:Create]",
+            logger_prefix=f"[Codegen:Create:{protocol}]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["object_class"] = object_class
+        config.extra_prompt_vars["create_docs"] = docs_text
         super().__init__(config)
         self.object_class = object_class
 
@@ -94,18 +131,37 @@ class CreateGenerator(BaseGroovyGenerator):
 
 
 class UpdateGenerator(BaseGroovyGenerator):
-    """Generator for Groovy update {} blocks."""
+    """Generator for Groovy update {} blocks with protocol-aware prompts."""
 
-    def __init__(self, object_class: str, extra_prompt_vars: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        object_class: str,
+        api_types: List[str],
+        docs_text: str,
+        extra_prompt_vars: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Initialize UpdateGenerator with protocol-specific prompts.
+
+        Args:
+            object_class: Object class name
+            api_types: List of API types from session metadata
+            docs_text: Documentation text content
+            extra_prompt_vars: Additional prompt variables
+        """
+        system_prompt, user_prompt = select_prompts_for_protocol("update", api_types)
+        protocol = "SCIM" if "SCIM" in api_types else "REST"
+
         config = OperationConfig(
             operation_name="Update",
-            system_prompt=get_update_system_prompt,
-            user_prompt=get_update_user_prompt,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             default_scaffold="update {\n}\n",
-            logger_prefix="[Codegen:Update]",
+            logger_prefix=f"[Codegen:Update:{protocol}]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["object_class"] = object_class
+        config.extra_prompt_vars["update_docs"] = docs_text
         super().__init__(config)
         self.object_class = object_class
 
@@ -125,18 +181,37 @@ class UpdateGenerator(BaseGroovyGenerator):
 
 
 class DeleteGenerator(BaseGroovyGenerator):
-    """Generator for Groovy delete {} blocks."""
+    """Generator for Groovy delete {} blocks with protocol-aware prompts."""
 
-    def __init__(self, object_class: str, extra_prompt_vars: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        object_class: str,
+        api_types: List[str],
+        docs_text: str,
+        extra_prompt_vars: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Initialize DeleteGenerator with protocol-specific prompts.
+
+        Args:
+            object_class: Object class name
+            api_types: List of API types from session metadata
+            docs_text: Documentation text content
+            extra_prompt_vars: Additional prompt variables
+        """
+        system_prompt, user_prompt = select_prompts_for_protocol("delete", api_types)
+        protocol = "SCIM" if "SCIM" in api_types else "REST"
+
         config = OperationConfig(
             operation_name="Delete",
-            system_prompt=get_delete_system_prompt,
-            user_prompt=get_delete_user_prompt,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             default_scaffold="delete {\n}\n",
-            logger_prefix="[Codegen:Delete]",
+            logger_prefix=f"[Codegen:Delete:{protocol}]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["object_class"] = object_class
+        config.extra_prompt_vars["delete_docs"] = docs_text
         super().__init__(config)
         self.object_class = object_class
 
@@ -158,7 +233,14 @@ class DeleteGenerator(BaseGroovyGenerator):
 class RelationGenerator(BaseGroovyGenerator):
     """Generator for Groovy relation {} blocks."""
 
-    def __init__(self, extra_prompt_vars: Optional[Dict[str, Any]] = None):
+    def __init__(self, docs_text: str, extra_prompt_vars: Optional[Dict[str, Any]] = None):
+        """
+        Initialize RelationGenerator.
+
+        Args:
+            docs_text: Documentation text content
+            extra_prompt_vars: Additional prompt variables
+        """
         config = OperationConfig(
             operation_name="Relation",
             system_prompt=get_relation_system_prompt,
@@ -167,6 +249,7 @@ class RelationGenerator(BaseGroovyGenerator):
             logger_prefix="[Codegen:Relation]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
+        config.extra_prompt_vars["relation_docs"] = docs_text
         super().__init__(config)
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:

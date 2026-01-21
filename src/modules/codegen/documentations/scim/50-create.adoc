@@ -1,0 +1,155 @@
+= SCIM User Create
+
+Write a Groovy script `User.create.op.groovy` which handles creation of the
+object class `User` using SCIM 2.0 protocol.
+
+SCIM creates use POST to the resource collection endpoint with standardized
+request and response formats.
+
+The Groovy script should look like:
+
+[source,groovy]
+----
+objectClass("User") {
+    create {
+        endpoint("/Users") {
+            method "POST"
+
+            // TODO: Map attributes to SCIM request body
+            // Exclude readOnly attributes like id, meta
+            // Handle multi-valued complex attributes
+        }
+    }
+}
+----
+
+== SCIM Create Pattern
+
+=== Request
+* Method: `POST`
+* Endpoint: `/Users` (collection endpoint)
+* Content-Type: `application/scim+json` or `application/json`
+* Body: JSON representation of the resource
+
+Example request body:
+[source,json]
+----
+{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+  "userName": "john.doe",
+  "name": {
+    "givenName": "John",
+    "familyName": "Doe",
+    "formatted": "John Doe"
+  },
+  "emails": [
+    {
+      "value": "john.doe@example.com",
+      "type": "work",
+      "primary": true
+    }
+  ],
+  "active": true
+}
+----
+
+=== Response
+* Status: `201 Created`
+* Location header: URI of the created resource (e.g., `/Users/abc123`)
+* Body: Complete resource representation including:
+  * `id` - server-generated unique identifier
+  * `meta` - resource metadata (created timestamp, resourceType, version)
+  * All submitted attributes
+  * Default values for unspecified optional attributes
+
+Example response:
+[source,json]
+----
+{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+  "id": "2819c223-7f76-453a-919d-413861904646",
+  "userName": "john.doe",
+  "name": {
+    "givenName": "John",
+    "familyName": "Doe",
+    "formatted": "John Doe"
+  },
+  "emails": [
+    {
+      "value": "john.doe@example.com",
+      "type": "work",
+      "primary": true
+    }
+  ],
+  "active": true,
+  "meta": {
+    "resourceType": "User",
+    "created": "2024-01-15T10:30:00Z",
+    "lastModified": "2024-01-15T10:30:00Z",
+    "location": "/Users/2819c223-7f76-453a-919d-413861904646",
+    "version": "W/\"abc123\""
+  }
+}
+----
+
+== Attribute Handling
+
+=== Required Attributes
+* User: `userName` (unique identifier)
+* Group: `displayName`
+
+Check the schema for resource-specific required attributes. These MUST be included
+in the create request.
+
+=== Mutability Rules
+SCIM attributes have mutability constraints:
+
+* `readOnly` - Cannot be set during create (e.g., `id`, `meta`)
+* `immutable` - Can only be set during create, cannot be changed later
+* `readWrite` - Can be set during create and modified later
+* `writeOnly` - Can be set but never returned (e.g., passwords)
+
+**Important**: Exclude `readOnly` attributes from create requests. They are
+server-generated.
+
+=== Multi-valued Complex Attributes
+SCIM supports arrays of complex objects:
+
+* `emails` - array of email objects with `value`, `type`, `primary`
+* `phoneNumbers` - array of phone objects
+* `addresses` - array of address objects
+* `groups` - array of group membership objects (typically readOnly)
+
+Example:
+[source,json]
+----
+"emails": [
+  {
+    "value": "work@example.com",
+    "type": "work",
+    "primary": true
+  },
+  {
+    "value": "personal@example.com",
+    "type": "home",
+    "primary": false
+  }
+]
+----
+
+=== Schema URNs
+Include the appropriate schema URN in the `schemas` array:
+
+* Core User: `urn:ietf:params:scim:schemas:core:2.0:User`
+* Core Group: `urn:ietf:params:scim:schemas:core:2.0:Group`
+* Enterprise User extension: `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User`
+
+== Implementation Notes
+
+* Map midPoint attributes to SCIM attribute structure
+* Handle complex nested attributes properly
+* Exclude readOnly attributes (id, meta, groups)
+* Set required attributes (userName for User)
+* Use proper data types (string, boolean, integer, dateTime)
+* Consider default values for optional attributes
+* Handle multi-valued attributes as arrays

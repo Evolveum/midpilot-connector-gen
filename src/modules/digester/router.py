@@ -532,6 +532,7 @@ async def override_class_attributes(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
+    object_class = object_class.strip().lower()
     await repo.update_session(session_id, {f"{object_class}AttributesOutput": attributes})
 
     return {
