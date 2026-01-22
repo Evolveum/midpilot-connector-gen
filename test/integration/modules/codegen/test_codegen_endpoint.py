@@ -158,13 +158,8 @@ async def test_generate_search_success():
 
     mock_repo.get_session_data = AsyncMock(side_effect=fake_get_session_data)
 
-    fake_docs = [{"uuid": str(uuid4()), "content": "fake content from docs"}]
-
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch(
-            "src.modules.codegen.router.get_session_documentation", new=AsyncMock(return_value=fake_docs)
-        ) as mock_docs,
         patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
@@ -176,7 +171,6 @@ async def test_generate_search_success():
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         assert mock_repo.get_session_data.await_count == 2
-        mock_docs.assert_awaited_once_with(session_id, db=ANY)
         mock_schedule.assert_awaited_once()
         mock_repo.update_session.assert_awaited_once()
 
@@ -202,13 +196,8 @@ async def test_generate_relation_code_success():
     mock_repo.get_session_data = AsyncMock(return_value=relations_payload)
     mock_repo.update_session = AsyncMock()
 
-    fake_docs = [{"uuid": str(uuid4()), "content": "fake relations doc"}]
-
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch(
-            "src.modules.codegen.router.get_session_documentation", new=AsyncMock(return_value=fake_docs)
-        ) as mock_docs,
         patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
@@ -220,7 +209,6 @@ async def test_generate_relation_code_success():
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "relationsOutput")
-        mock_docs.assert_awaited_once()
         mock_schedule.assert_awaited_once()
         mock_repo.update_session.assert_awaited_once()
 

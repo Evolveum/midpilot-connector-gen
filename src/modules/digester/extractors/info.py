@@ -10,14 +10,15 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from ....common.chunks import normalize_to_text, split_text_with_token_overlap
-from ....common.enums import JobStage
-from ....common.jobs import append_job_error, update_job_progress
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
+from src.common.chunks import normalize_to_text, split_text_with_token_overlap
+from src.common.enums import JobStage
+from src.common.jobs import append_job_error, update_job_progress
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
+
 from ..prompts.infoAboutSchemaPrompts import get_info_system_prompt, get_info_user_prompt
 from ..schema import InfoResponse
-from .metadata_helper import extract_summary_and_tags
+from ..utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 

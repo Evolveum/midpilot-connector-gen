@@ -193,8 +193,6 @@ async def create_search(
     *,
     attributes: AttributesPayload,
     endpoints: EndpointsPayload,
-    documentation: Optional[str] = None,
-    documentation_items: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -223,8 +221,6 @@ async def create_search(
     # Generate code
     code = await generator.generate(
         session_id=session_id,
-        documentation=documentation,
-        documentation_items=documentation_items,
         relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
@@ -239,8 +235,6 @@ async def create_create(
     *,
     attributes: AttributesPayload,
     endpoints: EndpointsPayload,
-    documentation: Optional[str] = None,
-    documentation_items: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -269,8 +263,6 @@ async def create_create(
     # Generate code
     code = await generator.generate(
         session_id=session_id,
-        documentation=documentation,
-        documentation_items=documentation_items,
         relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
@@ -284,8 +276,6 @@ async def create_update(
     *,
     attributes: AttributesPayload,
     endpoints: EndpointsPayload,
-    documentation: Optional[str] = None,
-    documentation_items: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -314,8 +304,6 @@ async def create_update(
     # Generate code
     code = await generator.generate(
         session_id=session_id,
-        documentation=documentation,
-        documentation_items=documentation_items,
         relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
@@ -329,8 +317,6 @@ async def create_delete(
     *,
     attributes: AttributesPayload,
     endpoints: EndpointsPayload,
-    documentation: Optional[str] = None,
-    documentation_items: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -359,8 +345,6 @@ async def create_delete(
     # Generate code
     code = await generator.generate(
         session_id=session_id,
-        documentation=documentation,
-        documentation_items=documentation_items,
         relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
@@ -373,8 +357,6 @@ async def create_delete(
 async def create_relation(
     *,
     relations: RelationsResponse,
-    documentation: Optional[str] = None,
-    documentation_items: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     job_id: UUID,
 ) -> Dict[str, str]:
@@ -405,8 +387,6 @@ async def create_relation(
     generator = RelationGenerator(docs_text=relation_docs_text)
     code = await generator.generate(
         session_id=session_id,
-        documentation=documentation,
-        documentation_items=documentation_items,
         relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,

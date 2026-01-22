@@ -10,16 +10,17 @@ from ...common.chunks import normalize_to_text, split_text_with_token_overlap
 from ...common.database.config import async_session_maker
 from ...common.database.repositories.session_repository import SessionRepository
 from ...common.jobs import increment_processed_documents, update_job_progress
-from .utils.auth import deduplicate_and_sort_auth, extract_auth_raw
-from .utils.endpoints import extract_endpoints as _extract_endpoints
-from .utils.info import extract_info_metadata as _extract_info_metadata
+from .extractors.attributes import extract_attributes as _extract_attributes
+from .extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
+from .extractors.endpoints import extract_endpoints as _extract_endpoints
+from .extractors.info import extract_info_metadata as _extract_info_metadata
+from .extractors.object_class import deduplicate_and_sort_object_classes, extract_object_classes_raw
+from .extractors.relations import extract_relations as _extract_relations
 from .utils.merges import (
     merge_relations_results,
 )
-from .utils.object_class import deduplicate_and_sort_object_classes, extract_object_classes_raw
-from .utils.object_class_attributes import extract_attributes as _extract_attributes
+from .utils.metadata_helper import build_doc_metadata_map
 from .utils.parallel_docs import process_documents_in_parallel
-from .utils.relations import extract_relations as _extract_relations
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,37 @@ async def _process_over_documents(
     }
 
 
+def _select_docs_by_uuid(
+    doc_items: List[dict],
+    relevant_chunks: List[Dict[str, Any]],
+    log_prefix: str,
+) -> Tuple[List[str], List[str]]:
+    """
+    Select doc contents by docUuid only.
+
+    DB contract: one docUuid == one chunk, so we do NOT split content further.
+    Returns:
+      - selected_chunks: list[str] (doc content)
+      - chunk_sources: list[str] (docUuid aligned with selected_chunks)
+    """
+    doc_uuids_to_process = {str(c.get("docUuid", "")) for c in relevant_chunks if c.get("docUuid")}
+    doc_uuids_to_process.discard("")
+
+    logger.info("[%s] Found %d docUuids in relevantChunks", log_prefix, len(doc_uuids_to_process))
+
+    selected_chunks: List[str] = []
+    chunk_sources: List[str] = []
+
+    for doc_item in doc_items:
+        doc_uuid = str(doc_item.get("uuid", ""))
+        if doc_uuid in doc_uuids_to_process:
+            selected_chunks.append(normalize_to_text(doc_item.get("content", "")))
+            chunk_sources.append(doc_uuid)
+
+    logger.info("[%s] Selected %d chunks from %d documents", log_prefix, len(selected_chunks), len(chunk_sources))
+    return selected_chunks, chunk_sources
+
+
 async def extract_object_classes(doc_items: List[dict], filter_relevancy: bool, min_relevancy_level: str, job_id: UUID):
     """
     Extract object classes from multiple documentation items and return merged result with metadata.
@@ -91,18 +123,10 @@ async def extract_object_classes(doc_items: List[dict], filter_relevancy: bool, 
     all_relevant_chunks: List[Dict[str, Any]] = []
     class_to_chunks: Dict[str, List[Dict[str, Any]]] = {}
 
-    # Create a wrapper extractor that includes metadata
+    doc_metadata_map = build_doc_metadata_map(doc_items)
+
     async def extractor_with_metadata(content: str, job_id: UUID, doc_uuid: UUID):
-        # Find the original doc_item to get metadata
-        doc_metadata = None
-        for doc_item in doc_items:
-            if doc_item.get("uuid") == str(doc_uuid):
-                # Extract summary and @metadata
-                doc_metadata = {
-                    "summary": doc_item.get("summary"),
-                    "@metadata": doc_item.get("@metadata", {}),
-                }
-                break
+        doc_metadata = doc_metadata_map.get(str(doc_uuid))
         return await extract_object_classes_raw(content, job_id, doc_uuid, doc_metadata)
 
     # Process all documents in parallel using the generic function
@@ -166,17 +190,10 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     all_auth_info = []
     all_relevant_chunks: List[Dict[str, Any]] = []
 
-    # Create a wrapper extractor that includes metadata
+    doc_metadata_map = build_doc_metadata_map(doc_items)
+
     async def extractor_with_metadata(content: str, job_id: UUID, doc_uuid: UUID):
-        # Find the original doc_item to get metadata
-        doc_metadata = None
-        for doc_item in doc_items:
-            if doc_item.get("uuid") == str(doc_uuid):
-                doc_metadata = {
-                    "summary": doc_item.get("summary"),
-                    "@metadata": doc_item.get("@metadata", {}),
-                }
-                break
+        doc_metadata = doc_metadata_map.get(str(doc_uuid))
         return await extract_auth_raw(content, job_id, doc_uuid, doc_metadata)
 
     # Process all documents in parallel using the generic function
@@ -279,22 +296,13 @@ async def extract_attributes(
         relevant_chunks: List of {docUuid, chunkIndex} pairs indicating which chunks to process
         job_id: Job ID for progress tracking
     """
-    # Extract specific chunks directly without re-chunking
-    selected_chunks, chunk_details = _extract_specific_chunks(doc_items, relevant_chunks, "Digester:Attributes")
+    selected_chunks, chunk_details = _select_docs_by_uuid(doc_items, relevant_chunks, "Digester:Attributes")
 
     if not selected_chunks:
         logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
         return {"result": {"attributes": {}}, "relevantChunks": []}
 
-    # Build metadata map: doc_uuid -> {summary, @metadata}
-    doc_metadata_map = {}
-    for doc_item in doc_items:
-        doc_uuid = doc_item.get("uuid")
-        if doc_uuid:
-            doc_metadata_map[doc_uuid] = {
-                "summary": doc_item.get("summary"),
-                "@metadata": doc_item.get("@metadata", {}),
-            }
+    doc_metadata_map = build_doc_metadata_map(doc_items)
 
     # Log chunk processing details
     total_chunks = len(selected_chunks)
@@ -391,21 +399,13 @@ async def extract_endpoints(
         base_api_url: Base API URL for endpoint extraction
     """
     # Extract specific chunks directly without re-chunking
-    selected_chunks, chunk_details = _extract_specific_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
+    selected_chunks, chunk_details = _select_docs_by_uuid(doc_items, relevant_chunks, "Digester:Endpoints")
 
     if not selected_chunks:
         logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
         return {"result": {"endpoints": []}, "relevantChunks": []}
 
-    # Build metadata map: doc_uuid -> {summary, @metadata}
-    doc_metadata_map = {}
-    for doc_item in doc_items:
-        doc_uuid = doc_item.get("uuid")
-        if doc_uuid:
-            doc_metadata_map[doc_uuid] = {
-                "summary": doc_item.get("summary"),
-                "@metadata": doc_item.get("@metadata", {}),
-            }
+    doc_metadata_map = build_doc_metadata_map(doc_items)
 
     # Log chunk processing details
     total_chunks = len(selected_chunks)
@@ -421,9 +421,9 @@ async def extract_endpoints(
         selected_chunks, object_class, job_id, base_api_url, chunk_details, doc_metadata_map
     )
 
-    # Now update the specific object class in objectClassesOutput
     try:
-        # Use database session to access session data
+        logger.info(f"[Digester:Endpoints] Attempting to update object class '{object_class}' with attributes")
+
         async with async_session_maker() as db:
             repo = SessionRepository(db)
             object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
@@ -547,16 +547,10 @@ def _extract_specific_chunks(
 async def extract_relations(doc_items: List[dict], relevant_object_class: str, job_id: UUID):
     """Extract relations from multiple documentation items."""
 
+    doc_metadata_map = build_doc_metadata_map(doc_items)
+
     def extractor(content: str, jid: UUID, doc_id: UUID):
-        # Find the original doc_item to get metadata
-        doc_metadata = None
-        for doc_item in doc_items:
-            if doc_item.get("uuid") == str(doc_id):
-                doc_metadata = {
-                    "summary": doc_item.get("summary"),
-                    "@metadata": doc_item.get("@metadata", {}),
-                }
-                break
+        doc_metadata = doc_metadata_map.get(str(doc_id))
         return _extract_relations(content, relevant_object_class, jid, doc_id, doc_metadata)
 
     def per_doc_count(d: Dict[str, Any]) -> int:

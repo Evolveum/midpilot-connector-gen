@@ -22,7 +22,6 @@ from ...common.schema import (
     JobStatusMultiDocResponse,
     JobStatusStageResponse,
 )
-from ...common.session.session import get_session_documentation
 from ...common.status_response import build_stage_status_response
 from ..digester.schema import RelationsResponse
 from . import service
@@ -282,10 +281,6 @@ async def generate_search(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    # Get documentation items and concatenate for fallback
-    doc_items = await get_session_documentation(session_id, db=db)
-    doc_text = "\n\n---\n\n".join([item["content"] for item in doc_items])
-
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
@@ -316,11 +311,9 @@ async def generate_search(
             "attributes": attrs,
             "endpoints": eps,
             "session_id": session_id,
-            "documentation": doc_text,
-            "documentation_items": doc_items,
             "object_class": object_class,
         },
-        initial_stage="chunking",
+        initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
         session_result_key=f"{object_class}Search",
@@ -413,10 +406,6 @@ async def generate_create(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    # Get documentation items and concatenate for fallback
-    doc_items = await get_session_documentation(session_id, db=db)
-    doc_text = "\n\n---\n\n".join([item["content"] for item in doc_items])
-
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
@@ -447,11 +436,9 @@ async def generate_create(
             "attributes": attrs,
             "endpoints": eps,
             "session_id": session_id,
-            "documentation": doc_text,
-            "documentation_items": doc_items,
             "object_class": object_class,
         },
-        initial_stage="chunking",
+        initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
         session_result_key=f"{object_class}Create",
@@ -543,10 +530,6 @@ async def generate_update(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    # Get documentation items and concatenate for fallback
-    doc_items = await get_session_documentation(session_id, db=db)
-    doc_text = "\n\n---\n\n".join([item["content"] for item in doc_items])
-
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
@@ -577,11 +560,9 @@ async def generate_update(
             "attributes": attrs,
             "endpoints": eps,
             "session_id": session_id,
-            "documentation": doc_text,
-            "documentation_items": doc_items,
             "object_class": object_class,
         },
-        initial_stage="chunking",
+        initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
         session_result_key=f"{object_class}Update",
@@ -673,10 +654,6 @@ async def generate_delete(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    # Get documentation items and concatenate for fallback
-    doc_items = await get_session_documentation(session_id, db=db)
-    doc_text = "\n\n---\n\n".join([item["content"] for item in doc_items])
-
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
@@ -707,11 +684,9 @@ async def generate_delete(
             "attributes": attrs,
             "endpoints": eps,
             "session_id": session_id,
-            "documentation": doc_text,
-            "documentation_items": doc_items,
             "object_class": object_class,
         },
-        initial_stage="chunking",
+        initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
         session_result_key=f"{object_class}Delete",
@@ -803,10 +778,6 @@ async def generate_relation_code(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    # Get documentation items and concatenate for fallback
-    doc_items = await get_session_documentation(session_id, db=db)
-    doc_text = "\n\n---\n\n".join([item["content"] for item in doc_items])
-
     # Load relations from session
     relations_json = await repo.get_session_data(session_id, "relationsOutput")
     if not relations_json:
@@ -824,10 +795,8 @@ async def generate_relation_code(
         worker_kwargs={
             "relations": relations_model,
             "session_id": session_id,
-            "documentation": doc_text,
-            "documentation_items": doc_items,
         },
-        initial_stage="queue",
+        initial_stage="preparing",
         initial_message="Queued code generation from relevant chunks",
         session_id=session_id,
         session_result_key=f"{relation_name}Code",

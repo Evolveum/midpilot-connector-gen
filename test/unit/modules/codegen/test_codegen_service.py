@@ -70,7 +70,6 @@ async def test_generate_search():
     }
 
     test_endpoints = {"endpoints": [{"method": "GET", "path": "/users", "description": "List users"}]}
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
@@ -91,8 +90,6 @@ async def test_generate_search():
         result = await service.create_search(
             attributes=test_attributes,
             endpoints=test_endpoints,
-            documentation_items=test_docs,
-            documentation="joined docs",
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
@@ -130,7 +127,6 @@ async def test_generate_relation():
             },
         ]
     }
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
@@ -152,8 +148,6 @@ async def test_generate_relation():
 
         result = await service.create_relation(
             relations=relations_model,
-            documentation_items=test_docs,
-            documentation="joined docs",
             session_id=uuid4(),
             job_id=uuid4(),
         )
@@ -176,7 +170,6 @@ async def test_generate_create():
     }
 
     test_endpoints = {"endpoints": [{"method": "POST", "path": "/users", "description": "Create user"}]}
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
@@ -197,8 +190,6 @@ async def test_generate_create():
         result = await service.create_create(
             attributes=test_attributes,
             endpoints=test_endpoints,
-            documentation_items=test_docs,
-            documentation="joined docs",
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
@@ -222,7 +213,6 @@ async def test_generate_update():
     }
 
     test_endpoints = {"endpoints": [{"method": "PUT", "path": "/users/{id}", "description": "Update user"}]}
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
@@ -243,8 +233,6 @@ async def test_generate_update():
         result = await service.create_update(
             attributes=test_attributes,
             endpoints=test_endpoints,
-            documentation_items=test_docs,
-            documentation="joined docs",
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
@@ -267,7 +255,6 @@ async def test_generate_delete():
     }
 
     test_endpoints = {"endpoints": [{"method": "DELETE", "path": "/users/{id}", "description": "Delete user"}]}
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
@@ -288,8 +275,6 @@ async def test_generate_delete():
         result = await service.create_delete(
             attributes=test_attributes,
             endpoints=test_endpoints,
-            documentation_items=test_docs,
-            documentation="joined docs",
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),

@@ -30,7 +30,7 @@ from ..prompts.sortingOutputPrompts import (
     sort_object_classes_user_prompt,
 )
 from ..schema import ObjectClass, ObjectClassesRelevancyResponse, ObjectClassesResponse
-from .parallel import run_extraction_parallel
+from ..utils.parallel import run_extraction_parallel
 
 logger = logging.getLogger(__name__)
 

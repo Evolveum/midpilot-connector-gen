@@ -20,7 +20,7 @@ from ..prompts.relationsPrompts import (
     get_relations_user_prompt,
 )
 from ..schema import RelationRecord, RelationsResponse
-from .metadata_helper import extract_summary_and_tags
+from ..utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 

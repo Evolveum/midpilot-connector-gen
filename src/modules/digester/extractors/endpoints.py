@@ -28,7 +28,7 @@ from ..prompts.endpointsPrompts import (
 )
 from ..schema import EndpointInfo, EndpointParamInfo, EndpointsResponse
 from ..utils.metadata_helper import extract_summary_and_tags
-from .parallel_docs import process_grouped_chunks_in_parallel
+from ..utils.parallel_docs import process_grouped_chunks_in_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -48,34 +48,23 @@ async def extract_endpoints(
     object_class: str,
     job_id: UUID,
     base_api_url: str = "",
-    chunk_details: List[Tuple[int, str]] | None = None,
+    chunk_details: List[str] | None = None,
     doc_metadata_map: Dict[str, Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     """
-    Extract endpoints from pre-selected chunks without re-chunking.
-    Processes each chunk directly through the LLM.
-
-    Args:
-        chunks: Pre-selected chunk texts
-        object_class: Name of the object class
-        job_id: Job ID for progress tracking
-        base_api_url: Base API URL
-        chunk_details: List of (original_chunk_index, doc_uuid) for logging
-
-    Returns:
-        Dict with {"result": EndpointsResponse, "relevantChunks": [...]}
+    TODO
     """
 
     if chunk_details is None:
-        chunk_details = [(i, "") for i in range(len(chunks))]
+        chunk_details = [""] * len(chunks)
 
     total_chunks = len(chunks)
     logger.info("[Digester:Endpoints] Processing %d pre-selected chunks", total_chunks)
 
     # Group chunks by document
-    doc_to_chunks: Dict[str, List[Tuple[int, int, str]]] = {}
-    for idx, (original_idx, doc_uuid) in enumerate(chunk_details):
-        doc_to_chunks.setdefault(doc_uuid, []).append((idx, original_idx, chunks[idx]))
+    doc_to_chunks: Dict[str, List[str]] = {}
+    for chunk_text, doc_uuid in zip(chunks, chunk_details, strict=False):
+        doc_to_chunks.setdefault(doc_uuid, []).append(chunk_text)
 
     total_documents = len(doc_to_chunks)
     logger.info(
@@ -120,7 +109,7 @@ async def extract_endpoints(
     relevant_chunk_info: List[Dict[str, Any]] = []
 
     async def _extract_for_doc(
-        doc_uuid: UUID, doc_chunks: List[Tuple[int, int, str]], doc_index: int
+        doc_uuid: UUID, doc_chunks: List[str]
     ) -> Tuple[List[EndpointInfo], List[Dict[str, Any]]]:
         """Extract endpoints from chunks of a single document."""
         update_job_progress(
@@ -136,16 +125,13 @@ async def extract_endpoints(
 
         doc_relevant_chunks: List[Dict[str, Any]] = []
 
-        async def _process_chunk(
-            array_idx: int, chunk: str, original_idx: int, doc_uuid: UUID, doc_metadata: Dict[str, Any] | None = None
-        ) -> List[EndpointInfo]:
-            one_based = array_idx + 1
+        async def _process_chunk(chunk_idx: int, chunk: str) -> List[EndpointInfo]:
+            one_based = chunk_idx + 1
             try:
                 logger.info(
-                    "[Digester:Endpoints] LLM call %d/%d (original chunk index: %d, doc_uuid: %s)",
+                    "[Digester:Endpoints] LLM call chunk %d/%d (doc_uuid: %s)",
                     one_based,
                     total_chunks,
-                    original_idx,
                     doc_uuid,
                 )
 
@@ -184,11 +170,10 @@ async def extract_endpoints(
                         doc_relevant_chunks.append({"docUuid": str(doc_uuid)})
 
                 logger.info(
-                    "[Digester:Endpoints] got endpoint %s from chunk %d/%d (original chunk index: %d, doc_uuid: %s)",
+                    "[Digester:Endpoints] got endpoint %s from chunk %d/%d (doc_uuid: %s)",
                     [ep.path for ep in valid_endpoints],
                     one_based,
                     total_chunks,
-                    original_idx,
                     doc_uuid,
                 )
 
@@ -223,10 +208,7 @@ async def extract_endpoints(
                 return []
 
         # Process all chunks in this document in parallel
-        tasks = [
-            _process_chunk(array_idx, chunk_text, original_idx, doc_uuid, doc_metadata)  # doc_metadata
-            for array_idx, original_idx, chunk_text in doc_chunks
-        ]
+        tasks = [_process_chunk(i, chunk_text) for i, chunk_text in enumerate(doc_chunks)]
         results = await asyncio.gather(*tasks)
 
         # Collect results from this document

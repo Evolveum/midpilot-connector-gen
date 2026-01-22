@@ -12,7 +12,9 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from ....common.chunks import normalize_to_text, split_text_with_token_overlap
+from ....common.chunks import normalize_to_text
+from ....common.database.config import async_session_maker
+from ....common.database.repositories.session_repository import SessionRepository
 from ....common.enums import JobStage
 from ....common.jobs import (
     append_job_error,
@@ -54,6 +56,7 @@ class ChunkProcessor:
     ) -> tuple[List[str], List[Optional[str]], Dict[str, int], List[str]]:
         """
         Build chunks using per-document selection (when pairs + items are provided).
+        Uses pre-chunked documentation items directly without re-chunking.
 
         Returns:
             - chunks: List of text chunks
@@ -66,101 +69,55 @@ class ChunkProcessor:
         per_doc_selected_counts: Dict[str, int] = {}
         docs_included: List[str] = []
 
-        # Build content map
-        content_by_uuid: Dict[str, str] = {}
+        # Build chunk map by UUID - documentation_items are already chunked
+        chunks_by_uuid: Dict[str, Dict[str, Any]] = {}
         for item in documentation_items:
             try:
                 uid = item.get("uuid") or item.get("id")
-                cnt = item.get("content")
-                if isinstance(uid, str) and isinstance(cnt, str):
-                    content_by_uuid[uid] = normalize_to_text(cnt)
+                if isinstance(uid, str):
+                    chunks_by_uuid[uid] = item
             except Exception:
                 continue
 
-        # Group indices by UUID preserving order
-        ordered_doc_uuids: List[str] = []
-        selected_indices_by_uuid: Dict[str, List[int]] = {}
+        # Process pairs in order - each pair references a specific chunk by its ID
+        doc_counts: Dict[str, int] = {}
+        seen_docs: List[str] = []
+
         for p in relevant_chunk_pairs:
             doc_uuid = p.get("docUuid")
-            idx = p.get("chunkIndex")
-            if not isinstance(doc_uuid, str) or not isinstance(idx, int):
-                continue
-            if doc_uuid not in selected_indices_by_uuid:
-                selected_indices_by_uuid[doc_uuid] = []
-                ordered_doc_uuids.append(doc_uuid)
-            selected_indices_by_uuid[doc_uuid].append(idx)
-
-        # Process each document
-        total_docs = 0
-        total_chunks_selected = 0
-        for doc_uuid in ordered_doc_uuids:
-            text = content_by_uuid.get(doc_uuid)
-            if not text:
-                logger.warning("%s Missing content for doc_uuid=%s", logger_prefix, doc_uuid)
+            if not isinstance(doc_uuid, str):
                 continue
 
-            doc_chunks_with_tokens = split_text_with_token_overlap(text)
-            doc_chunks = [chunk_text for chunk_text, _ in doc_chunks_with_tokens]
-            selected_indices = selected_indices_by_uuid.get(doc_uuid, [])
-            selected_chunks = [doc_chunks[i] for i in selected_indices if 0 <= i < len(doc_chunks)]
-
-            if not selected_chunks:
+            chunk_item = chunks_by_uuid.get(doc_uuid)
+            if not chunk_item:
+                logger.warning("%s Missing chunk for doc_uuid=%s", logger_prefix, doc_uuid)
                 continue
 
-            chunks.extend(selected_chunks)
-            provenance_doc_uuid.extend([doc_uuid] * len(selected_chunks))
-            per_doc_selected_counts[doc_uuid] = len(selected_chunks)
-            docs_included.append(doc_uuid)
-            total_docs += 1
-            total_chunks_selected += len(selected_chunks)
+            content = chunk_item.get("content")
+            if not isinstance(content, str):
+                continue
 
-            logger.info(
-                "%s Doc %s -> %d total chunks, selected indices: %s, kept: %d",
-                logger_prefix,
-                doc_uuid,
-                len(doc_chunks),
-                selected_indices,
-                len(selected_chunks),
-            )
+            # Add chunk
+            chunks.append(normalize_to_text(content))
+            provenance_doc_uuid.append(doc_uuid)
+
+            # Track per-document counts
+            if doc_uuid not in doc_counts:
+                doc_counts[doc_uuid] = 0
+                seen_docs.append(doc_uuid)
+            doc_counts[doc_uuid] += 1
+
+        per_doc_selected_counts = doc_counts
+        docs_included = seen_docs
 
         logger.info(
-            "%s Aggregated %d selected chunks from %d documents",
+            "%s Using %d pre-chunked documentation items from %d unique documents",
             logger_prefix,
-            total_chunks_selected,
-            total_docs,
+            len(chunks),
+            len(docs_included),
         )
 
         return chunks, provenance_doc_uuid, per_doc_selected_counts, docs_included
-
-    @staticmethod
-    def build_chunks_from_documentation(
-        documentation: str,
-        relevant_chunk_indices: Optional[List[int]],
-        logger_prefix: str,
-    ) -> tuple[List[str], List[Optional[str]]]:
-        """
-        Build chunks from concatenated documentation (fallback mode).
-
-        Returns:
-            - chunks: List of text chunks
-            - provenance_doc_uuid: List of None values (no per-doc tracking)
-        """
-        text = normalize_to_text(documentation)
-        all_chunks_with_tokens = split_text_with_token_overlap(text)
-        all_chunks = [chunk_text for chunk_text, _ in all_chunks_with_tokens]
-        all_prov: List[Optional[str]] = [None] * len(all_chunks)
-
-        if relevant_chunk_indices:
-            sel = [i for i in relevant_chunk_indices if 0 <= i < len(all_chunks)]
-            chunks = [all_chunks[i] for i in sel]
-            provenance_doc_uuid = [all_prov[i] for i in sel]
-            logger.info("%s Filtered to %d relevant chunks (indices=%s)", logger_prefix, len(chunks), sel)
-        else:
-            chunks = all_chunks
-            provenance_doc_uuid = all_prov
-            logger.info("%s Using all %d chunks", logger_prefix, len(chunks))
-
-        return chunks, provenance_doc_uuid
 
 
 class BaseGroovyGenerator(ABC):
@@ -197,9 +154,6 @@ class BaseGroovyGenerator(ABC):
         self,
         *,
         session_id: Optional[UUID] = None,
-        documentation: Optional[str] = None,
-        documentation_items: Optional[List[Dict[str, Any]]] = None,
-        relevant_chunk_indices: Optional[List[int]] = None,
         relevant_chunk_pairs: Optional[List[Dict[str, Any]]] = None,
         job_id: UUID,
         **operation_specific_kwargs,
@@ -208,16 +162,18 @@ class BaseGroovyGenerator(ABC):
         Main generation method using Template Method pattern.
 
         This method orchestrates the entire generation process:
-        1. Build chunks (per-document or fallback)
-        2. Initialize progress tracking
-        3. Process chunks iteratively with LLM
-        4. Handle errors and return result
+        1. Load documentation items from DB
+        2. Build chunks (using pre-chunked docs)
+        3. Initialize progress tracking
+        4. Process chunks iteratively with LLM
+        5. Handle errors and return result
         """
-        # Step 1: Build chunks
+        # Step 1: Load documentation items from session
+        documentation_items = await self._load_documentation_items(session_id) if session_id else []
+
+        # Step 2: Build chunks
         chunks, provenance_doc_uuid, per_doc_counts, docs_included = self._build_chunks(
-            documentation=documentation,
             documentation_items=documentation_items,
-            relevant_chunk_indices=relevant_chunk_indices,
             relevant_chunk_pairs=relevant_chunk_pairs,
         )
 
@@ -251,26 +207,34 @@ class BaseGroovyGenerator(ABC):
 
         return strip_markdown_fences(result)
 
+    async def _load_documentation_items(self, session_id: UUID) -> List[Dict[str, Any]]:
+        """Load documentation items from session."""
+        async with async_session_maker() as db:
+            repo = SessionRepository(db)
+            doc_items = await repo.get_session_data(session_id, "documentationItems")
+            return doc_items or []
+
     def _build_chunks(
         self,
-        documentation: Optional[str],
-        documentation_items: Optional[List[Dict[str, Any]]],
-        relevant_chunk_indices: Optional[List[int]],
+        documentation_items: List[Dict[str, Any]],
         relevant_chunk_pairs: Optional[List[Dict[str, Any]]],
     ) -> tuple[List[str], List[Optional[str]], Dict[str, int], List[str]]:
-        """Build chunks using appropriate strategy."""
-        if relevant_chunk_pairs and documentation_items:
+        """Build chunks from pre-chunked documentation items."""
+        if not documentation_items:
+            logger.warning("%s No documentation items available", self.config.logger_prefix)
+            return [], [], {}, []
+
+        if relevant_chunk_pairs:
+            # Use selected chunks based on pairs
             chunks, provenance, per_doc_counts, docs = ChunkProcessor.build_chunks_from_pairs(
                 relevant_chunk_pairs, documentation_items, self.config.logger_prefix
             )
             return chunks, provenance, per_doc_counts, docs
         else:
-            if not documentation:
-                raise ValueError("documentation parameter is required when documentation_items/pairs not provided")
-
-            chunks, provenance = ChunkProcessor.build_chunks_from_documentation(
-                documentation, relevant_chunk_indices, self.config.logger_prefix
-            )
+            # Use all documentation items directly
+            chunks = [normalize_to_text(item.get("content", "")) for item in documentation_items]
+            provenance = [item.get("uuid") or item.get("id") for item in documentation_items]
+            logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
             return chunks, provenance, {}, []
 
     def _initialize_progress(

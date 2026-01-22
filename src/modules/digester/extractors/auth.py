@@ -18,7 +18,7 @@ from ....common.llm import get_default_llm, make_basic_chain
 from ..prompts.authPrompts import get_auth_system_prompt, get_auth_user_prompt
 from ..prompts.sortingOutputPrompts import sort_auth_system_prompt, sort_auth_user_prompt
 from ..schema import AuthInfo, AuthResponse
-from .parallel import run_extraction_parallel
+from ..utils.parallel import run_extraction_parallel
 
 logger = logging.getLogger(__name__)
 
