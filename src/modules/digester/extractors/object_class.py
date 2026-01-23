@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 async def extract_object_classes_raw(
     schema: str, job_id: UUID, doc_id: Optional[UUID] = None, doc_metadata: Optional[Dict[str, Any]] = None
-) -> Tuple[List[ObjectClass], List[int]]:
+) -> Tuple[List[ObjectClass], bool]:
     """
     Extract raw object classes from a single document with per-chunk parallel LLM calls.
     Does NOT deduplicate or sort - that's done later across all documents.
@@ -50,13 +50,13 @@ async def extract_object_classes_raw(
 
     Returns:
         - List of raw ObjectClass instances (with relevant_chunks populated)
-        - List of relevant chunk indices
+        - Boolean indicating if relevant data was found
     """
 
     def parse_fn(result: ObjectClassesResponse) -> List[ObjectClass]:
         return result.objectClasses or []
 
-    extracted, relevant_indices = await run_extraction_parallel(
+    extracted, has_relevant_data = await run_extraction_parallel(
         schema=schema,
         pydantic_model=ObjectClassesResponse,
         system_prompt=get_object_class_system_prompt,
@@ -70,17 +70,12 @@ async def extract_object_classes_raw(
     )
 
     extracted_valid: List[ObjectClass] = []
-    relevant_indices_valid: List[int] = []
 
-    # Populate relevant_chunks for each object class based on the chunk it was extracted from
-    for idx, obj_class in enumerate(extracted):
+    # Validate extracted object classes by checking if names exist in the schema
+    for obj_class in extracted:
         if obj_class.name and obj_class.name.strip():
             if re.search(re.escape(obj_class.name.strip()) + r"(\s|\/|\'|s\s|s\'|s\/)", schema, re.IGNORECASE):
                 extracted_valid.append(obj_class)
-                if hasattr(obj_class, "_chunk_index"):
-                    chunk_idx = obj_class._chunk_index
-                    if chunk_idx not in relevant_indices_valid:
-                        relevant_indices_valid.append(chunk_idx)
             else:
                 logger.info(
                     "[Digester:ObjectClasses] Extracted object class name '%s' not found in document, deleting object class",
@@ -88,7 +83,7 @@ async def extract_object_classes_raw(
                 )
 
     logger.info("[Digester:ObjectClasses] Raw extraction complete from document. Count: %d", len(extracted_valid))
-    return extracted_valid, relevant_indices_valid
+    return extracted_valid, bool(extracted_valid)
 
 
 async def deduplicate_and_sort_object_classes(

@@ -18,26 +18,26 @@ async def process_documents_in_parallel(
     *,
     doc_items: List[dict],
     job_id: UUID,
-    extractor: Callable[[str, UUID, UUID], Awaitable[Tuple[T, List[int]]]],
+    extractor: Callable[[str, UUID, UUID], Awaitable[Tuple[T, bool]]],
     logger_scope: str,
-) -> List[Tuple[T, List[int], UUID]]:
+) -> List[Tuple[T, bool, UUID]]:
     """
     TODO
     """
     total_docs = len(doc_items)
     update_job_progress(job_id, total_processing=total_docs, message="Processing documents")
 
-    async def _process_single_doc(doc_item: dict) -> Tuple[T, List[int], UUID]:
+    async def _process_single_doc(doc_item: dict) -> Tuple[T, bool, UUID]:
         """Process a single document and return its results."""
         doc_uuid = UUID(doc_item["uuid"])
         doc_content = doc_item["content"]
 
         logger.info(f"[{logger_scope}] Processing document (UUID: {doc_uuid})")
 
-        result, relevant_indices = await extractor(doc_content, job_id, doc_uuid)
+        result, has_relevant_data = await extractor(doc_content, job_id, doc_uuid)
 
         await increment_processed_documents(job_id, delta=1)
-        return result, relevant_indices, doc_uuid
+        return result, has_relevant_data, doc_uuid
 
     return list(await asyncio.gather(*(_process_single_doc(doc_item) for doc_item in doc_items)))
 

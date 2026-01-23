@@ -12,14 +12,6 @@ following the patterns established in the discovery module.
 from typing import Any, Dict, List
 
 
-def _merge_first_non_empty_result(results: List[Dict[str, Any]], default: Dict[str, Any]) -> Dict[str, Any]:
-    """Helper function to get the first non-empty result."""
-    for result in results:
-        if result and isinstance(result, dict):
-            return result
-    return default
-
-
 def merge_auth_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Merge auth results from multiple documents.

@@ -2,7 +2,6 @@
 #
 #  Licensed under the EUPL-1.2 or later.
 
-import asyncio
 import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
@@ -13,7 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, ValidationError
 
-from ....common.chunks import normalize_to_text, split_text_with_token_overlap
+from ....common.chunks import normalize_to_text
 from ....common.enums import JobStage
 from ....common.jobs import append_job_error, update_job_progress
 from ....common.langfuse import langfuse_handler
@@ -35,12 +34,15 @@ async def run_extraction_parallel(
     doc_id: Optional[UUID] = None,
     track_chunk_per_item: bool = False,
     chunk_metadata: Optional[Dict[str, Any]] = None,
-) -> Tuple[List[Any], List[int]]:
+) -> Tuple[List[Any], bool]:
     """
-    Split schema into chunks and run an LLM extraction concurrently.
+    Run LLM extraction on a pre-chunked document.
+
+    Since documents are already pre-chunked in the DB (max 20000 tokens),
+    no further splitting is needed - we process the document as-is.
 
     Args:
-        schema: The input schema text to be processed
+        schema: The pre-chunked document text to be processed
         pydantic_model: The Pydantic model to validate the extracted data against
         system_prompt: The system prompt to use for the LLM
         user_prompt: The user prompt template to use for the LLM
@@ -48,33 +50,30 @@ async def run_extraction_parallel(
         job_id: ID of the job for progress tracking
         logger_prefix: Optional prefix for log messages
         doc_id: Optional document ID for tracking
-        track_chunk_per_item: If True, returns items with chunk_index attribute set
-        chunk_metadata: Optional metadata about the chunk (summary, llm_tags, etc.)
+        track_chunk_per_item: Deprecated (kept for backward compatibility, always sets index to 0)
+        chunk_metadata: Optional metadata about the document (summary, llm_tags, etc.)
 
     Returns:
-        - Flat list of extracted items (with chunk_index attribute if track_chunk_per_item=True)
-        - List of chunk indices that contained relevant data
+        - Flat list of extracted items
+        - Boolean indicating if any relevant data was found
     """
+    # Normalize text (document is already a single pre-chunked unit)
     text = normalize_to_text(schema)
-    chunks: List[tuple[str, int]] = split_text_with_token_overlap(text)
-    total_chunks = len(chunks)
-    logger.info("%sExtracting. Total chunks: %s", logger_prefix, total_chunks)
-    # Progress: chunking done, start processing
+
+    # Progress: start processing
     update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
-        message="Processing chunks and try to extract relevant information",
+        message="Processing document and extracting relevant information",
     )
 
+    # Build LLM chain
     parser: BaseOutputParser = PydanticOutputParser(pydantic_object=pydantic_model)
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [("system", system_prompt + "\n\n{format_instructions}"), ("human", user_prompt)]
     ).partial(format_instructions=parser.get_format_instructions())
     chain = make_basic_chain(prompt, llm, parser)
-
-    # Track which chunks contain relevant data
-    relevant_chunk_indices: List[int] = []
 
     def _result_snippet(result: Any, limit: int = 2000) -> str:
         """Best-effort stringify of a pydantic model or arbitrary object for logging/errors."""
@@ -90,69 +89,63 @@ async def run_extraction_parallel(
         raw = raw if isinstance(raw, str) else str(raw)
         return raw if len(raw) <= limit else raw[:limit] + "...(truncated)"
 
-    async def _process_chunk(idx: int, chunk: str) -> List[Any]:
-        try:
-            logger.info("%sCalling LLM.", logger_prefix)
+    # Process the document (already pre-chunked)
+    try:
+        logger.info("%sCalling LLM for document extraction.", logger_prefix)
 
-            # Extract summary and tags from chunk metadata if available
-            summary, tags = extract_summary_and_tags(chunk_metadata)
+        # Extract summary and tags from document metadata
+        summary, tags = extract_summary_and_tags(chunk_metadata)
 
-            result = cast(
-                T,
-                await chain.ainvoke(
-                    {"chunk": chunk, "summary": summary, "tags": tags},
-                    config=RunnableConfig(callbacks=[langfuse_handler]),
-                ),
-            )
-            logger.debug("%sLLM result: %r", logger_prefix, (result or ""))
+        result = cast(
+            T,
+            await chain.ainvoke(
+                {"chunk": text, "summary": summary, "tags": tags},
+                config=RunnableConfig(callbacks=[langfuse_handler]),
+            ),
+        )
+        logger.debug("%sLLM result: %r", logger_prefix, (result or ""))
 
-            if not result:
-                logger.warning("%sEmpty LLM response. Chunk idx: %s", logger_prefix)
-                error_msg = f"{logger_prefix}Empty LLM response."
-                if doc_id:
-                    error_msg = f"{error_msg} (Doc: {doc_id})"
-                append_job_error(job_id, error_msg)
-                return []
-
-            # Parse structured output
-            try:
-                items = parse_fn(result)
-            except (ValidationError, ValueError, json.JSONDecodeError) as e:
-                logger.info("%sJSON parse failed. Error: %s", logger_prefix, e)
-                snippet = _result_snippet(result)
-                error_msg = f"{logger_prefix}Parse failed: {e}. LLM output: {snippet}"
-                if doc_id:
-                    error_msg = f"{error_msg} (Doc: {doc_id})"
-                append_job_error(job_id, error_msg)
-                return []
-
-            # Mark chunk as relevant if we got any items
-            if items:
-                relevant_chunk_indices.append(idx)
-                # If tracking chunk per item, annotate each item with its source chunk
-                if track_chunk_per_item:
-                    for item in items:
-                        if hasattr(item, "__dict__"):
-                            item._chunk_index = idx
-            return items
-
-        except Exception as e:
-            logger.error("%sChunk processing failed. Error: %s", logger_prefix, e)
-            error_msg = f"{logger_prefix}Chunk call failed: {e}"
+        if not result:
+            logger.warning("%sEmpty LLM response.", logger_prefix)
+            error_msg = f"{logger_prefix}Empty LLM response."
             if doc_id:
                 error_msg = f"{error_msg} (Doc: {doc_id})"
             append_job_error(job_id, error_msg)
-            return []
+            return [], False
 
-    # Run all chunks
-    results = await asyncio.gather(*(_process_chunk(i, ch[0]) for i, ch in enumerate(chunks)))
-    all_items = [item for sub in results for item in sub]
+        # Parse structured output
+        try:
+            items = parse_fn(result)
+        except (ValidationError, ValueError, json.JSONDecodeError) as e:
+            logger.info("%sJSON parse failed. Error: %s", logger_prefix, e)
+            snippet = _result_snippet(result)
+            error_msg = f"{logger_prefix}Parse failed: {e}. LLM output: {snippet}"
+            if doc_id:
+                error_msg = f"{error_msg} (Doc: {doc_id})"
+            append_job_error(job_id, error_msg)
+            return [], False
 
-    logger.info(
-        "%sExtraction complete. Total items: %d, relevant_chunk=%s",
-        logger_prefix,
-        len(all_items),
-        bool(all_items),
-    )
+        has_relevant_data = bool(items)
 
-    return all_items, sorted(relevant_chunk_indices)
+        # Optional: annotate items with chunk index (for backward compatibility, always 0 now)
+        if track_chunk_per_item and items:
+            for item in items:
+                if hasattr(item, "__dict__"):
+                    item._chunk_index = 0
+
+        logger.info(
+            "%sExtraction complete. Total items: %d, has_relevant_data=%s",
+            logger_prefix,
+            len(items),
+            has_relevant_data,
+        )
+
+        return items, has_relevant_data
+
+    except Exception as e:
+        logger.error("%sDocument processing failed. Error: %s", logger_prefix, e)
+        error_msg = f"{logger_prefix}Document call failed: {e}"
+        if doc_id:
+            error_msg = f"{error_msg} (Doc: {doc_id})"
+        append_job_error(job_id, error_msg)
+        return [], False

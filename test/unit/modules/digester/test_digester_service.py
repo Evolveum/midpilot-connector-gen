@@ -61,7 +61,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
                         relevant_chunks=[{"docUuid": doc_uuid1}],
                     ),
                 ],
-                [0, 1],
+                True,
                 doc_uuid1,
             ),
             (
@@ -76,7 +76,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
                         relevant_chunks=[{"docUuid": doc_uuid2}],
                     ),
                 ],
-                [0],
+                True,
                 doc_uuid2,
             ),
         ]
@@ -177,7 +177,7 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.service._select_docs_by_uuid") as mock_extract_chunks,
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.service._extract_attributes") as mock_extract_attrs,
         patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
         patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
@@ -248,7 +248,7 @@ async def test_extract_attributes_no_relevant_chunks(mock_llm, mock_digester_upd
     session_id = uuid4()
     job_id = uuid4()
 
-    with patch("src.modules.digester.service._select_docs_by_uuid") as mock_extract_chunks:
+    with patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks:
         mock_extract_chunks.return_value = ([], [])
 
         result = await service.extract_attributes([], "User", session_id, [], job_id)
@@ -272,7 +272,7 @@ async def test_extract_attributes_session_not_found(mock_llm, mock_digester_upda
     mock_repo.get_session_data = AsyncMock(return_value=None)
 
     with (
-        patch("src.modules.digester.service._select_docs_by_uuid") as mock_extract_chunks,
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.service._extract_attributes") as mock_extract_attrs,
         patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
         patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
@@ -331,7 +331,7 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.service._select_docs_by_uuid") as mock_extract_chunks,
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.service._extract_endpoints") as mock_extract_endpoints,
         patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
         patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
@@ -397,7 +397,7 @@ async def test_extract_endpoints_no_relevant_chunks(mock_llm, mock_digester_upda
     session_id = uuid4()
     job_id = uuid4()
 
-    with patch("src.modules.digester.service._select_docs_by_uuid") as mock_extract_chunks:
+    with patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks:
         mock_extract_chunks.return_value = ([], [])
 
         result = await service.extract_endpoints([], "User", session_id, [], job_id, "")
@@ -425,7 +425,7 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.service._select_docs_by_uuid") as mock_extract_chunks,
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.service._extract_endpoints") as mock_extract_endpoints,
         patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
         patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
@@ -472,12 +472,12 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
         mock_parallel.return_value = [
             (
                 [AuthInfo(name="OAuth2", type="oauth2", quirks="Supports authorization_code and client_credentials")],
-                [0, 1],
+                True,
                 doc_uuid1,
             ),
             (
                 [AuthInfo(name="API Key", type="apiKey", quirks="Header: X-API-Key")],
-                [0],
+                True,
                 doc_uuid2,
             ),
         ]
@@ -521,7 +521,7 @@ async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_prog
         patch("src.modules.digester.service.deduplicate_and_sort_auth", new_callable=AsyncMock) as mock_dedupe,
         patch("src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock) as mock_parallel,
     ):
-        mock_parallel.return_value = [([], [0], doc_uuid)]
+        mock_parallel.return_value = [([], False, doc_uuid)]
 
         class EmptyAuth:
             def model_dump(self, **kwargs):
@@ -560,7 +560,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
                     api_type=["REST", "OpenAPI"],
                     base_api_endpoint=[],
                 ),
-                [0],
+                True,
             ),
             (
                 InfoMetadata(
@@ -570,7 +570,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
                     api_type=["REST", "OpenAPI"],
                     base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1", type="constant")],
                 ),
-                [0],
+                True,
             ),
         ]
 
@@ -708,7 +708,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                             relevant_chunks=[{"docUuid": doc_uuid}],
                         )
                     ],
-                    [0],
+                    True,
                     doc_uuid,
                 )
             ]
@@ -742,7 +742,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
         mock_repo.update_session = AsyncMock()
 
         with (
-            patch("src.modules.digester.service._select_docs_by_uuid") as mock_chunks,
+            patch("src.modules.digester.service.select_doc_chunks") as mock_chunks,
             patch("src.modules.digester.service._extract_attributes") as mock_attrs,
             patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
             patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
@@ -764,7 +764,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
 
         # Step 3: Extract endpoints
         with (
-            patch("src.modules.digester.service._select_docs_by_uuid") as mock_chunks,
+            patch("src.modules.digester.service.select_doc_chunks") as mock_chunks,
             patch("src.modules.digester.service._extract_endpoints") as mock_endpoints,
             patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
             patch("src.modules.digester.service.SessionRepository") as mock_repo_class,

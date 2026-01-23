@@ -25,20 +25,20 @@ logger = logging.getLogger(__name__)
 
 async def extract_auth_raw(
     schema: str, job_id: UUID, doc_id: Optional[UUID] = None, doc_metadata: Optional[Dict] = None
-) -> Tuple[List[AuthInfo], List[int]]:
+) -> Tuple[List[AuthInfo], bool]:
     """
     Extract raw auth info from a single document with per-chunk parallel LLM calls.
     Does NOT deduplicate or sort - that's done later across all documents.
 
     Returns:
         - List of raw AuthInfo instances
-        - List of relevant chunk indices
+        - Boolean indicating if relevant data was found
     """
 
     def parse_fn(result: AuthResponse) -> List[AuthInfo]:
         return result.auth or []
 
-    extracted, relevant_indices = await run_extraction_parallel(
+    extracted, has_relevant_data = await run_extraction_parallel(
         schema=schema,
         pydantic_model=AuthResponse,
         system_prompt=get_auth_system_prompt,
@@ -53,7 +53,7 @@ async def extract_auth_raw(
     logger.info("[Digester:Auth] Auth extracted: %s from document: %s", extracted, doc_id)
 
     logger.info("[Digester:Auth] Raw extraction complete from document. Count: %d", len(extracted))
-    return extracted, relevant_indices
+    return extracted, has_relevant_data
 
 
 async def deduplicate_and_sort_auth(
