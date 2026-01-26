@@ -54,8 +54,8 @@ class LLMSettings(BaseModel):
     """
 
     openai_api_key: str = ""
-    openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-20b"
+    openai_api_base: str = ""
+    model_name: str = ""
     request_timeout: int = 120
 
 
@@ -70,8 +70,8 @@ class LLMSmall1Settings(BaseModel):
     """
 
     openai_api_key: str = ""
-    openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-20b"
+    openai_api_base: str = ""
+    model_name: str = ""
     request_timeout: int = 120
 
 
@@ -86,8 +86,8 @@ class LLMSmall2Settings(BaseModel):
     """
 
     openai_api_key: str = ""
-    openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-20b"
+    openai_api_base: str = ""
+    model_name: str = ""
     request_timeout: int = 120
 
 
@@ -103,8 +103,8 @@ class LLMSmall2Settings(BaseModel):
 #     """
 #
 #     openai_api_key: str = ""
-#     openai_api_base: str = "http://localhost:11434"
-#     model_name: str = "nomic-ai/nomic-embed-text-v1.5"
+#     openai_api_base: str = ""
+#     model_name: str = ""
 
 
 class LangfuseSettings(BaseModel):

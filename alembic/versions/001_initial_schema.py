@@ -1,12 +1,3 @@
-"""initial_schema
-
-Revision ID: 001
-Revises:
-Create Date: 2026-01-05
-
-Initial database schema with all tables and correct foreign key relationships.
-"""
-
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
