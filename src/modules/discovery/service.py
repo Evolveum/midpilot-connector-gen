@@ -163,7 +163,7 @@ async def _run_discovery_async(app_data: CandidateLinksInput, job_id: UUID) -> C
             llm_generated_search_query=app_data.llm_generated_search_query,
         )
 
-    _model_output, _output_message, tool_output_raw, _eval_output, parsed = await asyncio.to_thread(tasks)
+    model_output, output_message, tool_output_raw, eval_output, parsed = await asyncio.to_thread(tasks)
 
     parsed_ref = cast(Optional[PyScrapeFetchReferences], parsed)
     if not parsed_ref:
