@@ -57,24 +57,24 @@ async def extract_auth_raw(
 
 
 async def deduplicate_and_sort_auth(
-    all_auth_info: List[AuthInfo],
+    auth_info: List[AuthInfo],
     job_id: UUID,
 ) -> AuthResponse:
     """
     Deduplicate and sort auth info from all documents.
 
     Args:
-        all_auth_info: List of AuthInfo instances from all documents
+        auth_info: List of AuthInfo instances from all documents
         job_id: Job ID for progress tracking
 
     Returns:
         AuthResponse with deduplicated and sorted auth info
     """
-    logger.info("[Digester:Auth] Starting deduplication and sorting. Total count: %d", len(all_auth_info))
+    logger.info("[Digester:Auth] Starting deduplication and sorting. Total count: %d", len(auth_info))
 
     # Dedup + merge quirks if it is an exact match
     seen: Dict[Tuple[str, str], AuthInfo] = {}
-    for auth in all_auth_info:
+    for auth in auth_info:
         if not auth or not auth.name:
             continue
         name_norm = (auth.name or "").strip().lower().replace("-", "").replace(" ", "")

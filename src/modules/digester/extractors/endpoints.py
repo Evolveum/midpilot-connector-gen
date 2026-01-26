@@ -52,7 +52,24 @@ async def extract_endpoints(
     doc_metadata_map: Dict[str, Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     """
-    TODO
+    Extract API endpoints from document chunks using LLM analysis.
+
+    Processes chunks of text to identify and extract API endpoint information including
+    paths, methods, parameters, and metadata. Uses parallel processing for efficiency
+    and includes parameter validation through context analysis.
+
+    Args:
+        chunks: List of text chunks to analyze for endpoint information
+        object_class: Target object class for endpoint extraction context
+        job_id: UUID for job tracking and progress updates
+        base_api_url: Base URL for API endpoints (default: "")
+        chunk_details: Optional list of document UUIDs for each chunk (default: None)
+        doc_metadata_map: Optional metadata mapping for documents (default: None)
+
+    Returns:
+        Dict containing:
+        - "result": Dict with "endpoints" key containing extracted endpoint information
+        - "relevantChunks": List of chunks that contained relevant endpoint information
     """
 
     if chunk_details is None:

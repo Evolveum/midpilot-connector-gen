@@ -1,10 +1,3 @@
-"""
-Merge utility functions for combining results from multiple documents.
-
-This module provides sophisticated merging logic for different types of extraction results,
-following the patterns established in the discovery module.
-"""
-
 #  Copyright (C) 2010-2026 Evolveum and contributors
 #
 #  Licensed under the EUPL-1.2 or later.

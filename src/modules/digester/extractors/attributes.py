@@ -231,7 +231,23 @@ async def extract_attributes(
     doc_metadata_map: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
-    TODO
+    Extract object class attributes from document chunks using LLM analysis.
+
+    Processes chunks of text to identify and extract attribute information including
+    names, types, descriptions, and metadata for a specific object class. Uses parallel
+    processing for efficiency and includes duplicate resolution across chunks.
+
+    Args:
+        chunks: List of text chunks to analyze for attribute information
+        object_class: Target object class for attribute extraction context
+        job_id: UUID for job tracking and progress updates
+        chunk_details: Optional list of document UUIDs for each chunk (default: None)
+        doc_metadata_map: Optional metadata mapping for documents (default: None)
+
+    Returns:
+        Dict containing:
+        - "result": Dict with "attributes" key containing extracted attribute information
+        - "relevantChunks": List of chunks that contained relevant attribute information
     """
     if chunk_details is None:
         chunk_details = [""] * len(chunks)
