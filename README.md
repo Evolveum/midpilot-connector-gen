@@ -230,7 +230,6 @@ If any issues are found or files are modified, the commit will be aborted until 
 ### Langfuse configuration
 
 For development and testing purposes is every api request and llm call traced with [Langfuse](https://langfuse.com/).
-[Default langfuse host](https://langfuse-vaia.k8s.evolveum.com/) is behind Evolveum's VPN therefore you need to connect to it first.
 By default is langfuse tracing disabled, you can enable it by configuration:
 
 ```

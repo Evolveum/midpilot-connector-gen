@@ -5,9 +5,9 @@ This module integrates with the main application config (src/config.py)
 to provide database connectivity using SQLAlchemy async.
 """
 
-#  Copyright (C) 2010-2026 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
-#  Licensed under the EUPL-1.2 or later.
+# Licensed under the EUPL-1.2 or later.
 
 from typing import AsyncGenerator
 

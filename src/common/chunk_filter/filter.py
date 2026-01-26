@@ -1,11 +1,6 @@
-"""
-This module provides functionality to filter chunks based on specific criteria.
-It is designed to be used by digestor and codegen services.
-"""
-
-#  Copyright (C) 2010-2026 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
-#  Licensed under the EUPL-1.2 or later.
+# Licensed under the EUPL-1.2 or later.
 
 from typing import Any, Dict, List
 from uuid import UUID
