@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Dict, List
 from uuid import UUID
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import config
@@ -189,3 +189,8 @@ async def _get_session_documentation_impl(
         status_code=400,
         detail=f"Session {session_id} has no stored documentation. Please upload documentation file or run scraper.",
     )
+
+
+async def ensure_session_exists(repo: SessionRepository, session_id: UUID) -> None:
+    if not await repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")

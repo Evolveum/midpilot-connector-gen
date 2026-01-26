@@ -1,8 +1,3 @@
-"""
-Discovery endpoints for V2 API (session-centric).
-All discovery operations are nested under sessions.
-"""
-
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
@@ -10,14 +5,14 @@ All discovery operations are nested under sessions.
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi import Path as PathParam
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...common.database.config import get_db
 from ...common.database.repositories.session_repository import SessionRepository
 from ...common.jobs import schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusStageResponse
+from ...common.session.session import ensure_session_exists
 from ...common.status_response import build_stage_status_response
 from . import service
 from .schema import CandidateLinksInput
@@ -33,7 +28,7 @@ router = APIRouter()
 )
 async def discover_candidate_links(
     req: CandidateLinksInput,
-    session_id: UUID = PathParam(..., description="Session ID"),
+    session_id: UUID = Path(..., description="Session ID"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -41,8 +36,7 @@ async def discover_candidate_links(
     The discovered URLs will be stored in the session.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     job_id = await schedule_coroutine_job(
         job_type="discovery.getCandidateLinks",
@@ -69,7 +63,7 @@ async def discover_candidate_links(
     response_model_exclude_none=True,
 )
 async def get_discovery_status(
-    session_id: UUID = PathParam(..., description="Session ID"),
+    session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -77,13 +71,14 @@ async def get_discovery_status(
     Get the status of candidate links discovery job.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     if not jobId:
         job_id_str = await repo.get_session_data(session_id, "discoveryJobId")
         if not job_id_str:
-            raise HTTPException(status_code=404, detail=f"No discovery job found in session {session_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"No discovery job found in session {session_id}"
+            )
         return await build_stage_status_response(job_id_str)
 
     return await build_stage_status_response(jobId)

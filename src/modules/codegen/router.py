@@ -22,6 +22,7 @@ from ...common.schema import (
     JobStatusMultiDocResponse,
     JobStatusStageResponse,
 )
+from ...common.session.session import ensure_session_exists
 from ...common.status_response import build_stage_status_response
 from ..digester.schema import RelationsResponse
 from . import service
@@ -67,8 +68,7 @@ async def generate_native_schema(
     Loads attributes from session automatically.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
@@ -116,8 +116,7 @@ async def get_native_schema_status(
     Get the status of native schema generation job.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     if not jobId:
         jobId = await repo.get_session_data(session_id, f"{object_class}NativeSchemaJobId")
@@ -144,8 +143,7 @@ async def override_native_schema(
     Manually override the native schema for an object class.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     await repo.update_session(session_id, {f"{object_class}NativeSchema": native_schema})
 
@@ -172,8 +170,7 @@ async def generate_connid(
     Loads attributes from session automatically.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
@@ -221,8 +218,7 @@ async def get_connid_status(
     Get the status of ConnID generation job.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     if not jobId:
         jobId = await repo.get_session_data(session_id, f"{object_class}ConnidJobId")
@@ -249,8 +245,7 @@ async def override_connid(
     Manually override the ConnID for an object class.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     await repo.update_session(session_id, {f"{object_class}Connid": connid})
 
@@ -278,8 +273,7 @@ async def generate_search(
     Loads attributes and endpoints from session automatically.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
@@ -346,8 +340,7 @@ async def get_search_status(
     Get the status of search code generation job.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     if not jobId:
         jobId = await repo.get_session_data(session_id, f"{object_class}SearchJobId")
@@ -375,8 +368,7 @@ async def override_search(
     Manually override the search code for an object class.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     await repo.update_session(session_id, {f"{object_class}Search": search_code})
 
@@ -403,8 +395,7 @@ async def generate_create(
     Loads attributes and endpoints from session automatically.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
@@ -470,8 +461,7 @@ async def get_create_status(
     Get the status of create code generation job.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     if not jobId:
         job_id_raw = await repo.get_session_data(session_id, f"{object_class}CreateJobId")
@@ -499,8 +489,7 @@ async def override_create(
     Manually override the create code for an object class.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     await repo.update_session(session_id, {f"{object_class}Create": create_code})
 
@@ -527,8 +516,7 @@ async def generate_update(
     Loads attributes and endpoints from session automatically.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
@@ -594,8 +582,7 @@ async def get_update_status(
     Get the status of update code generation job.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     if not jobId:
         job_id_raw = await repo.get_session_data(session_id, f"{object_class}UpdateJobId")
@@ -623,8 +610,7 @@ async def override_update(
     Manually override the update code for an object class.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     await repo.update_session(session_id, {f"{object_class}Update": update_code})
 
@@ -651,8 +637,7 @@ async def generate_delete(
     Loads attributes and endpoints from session automatically.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
@@ -718,8 +703,7 @@ async def get_delete_status(
     Get the status of delete code generation job.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     if not jobId:
         job_id_raw = await repo.get_session_data(session_id, f"{object_class}DeleteJobId")
@@ -747,8 +731,7 @@ async def override_delete(
     Manually override the delete code for an object class.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     await repo.update_session(session_id, {f"{object_class}Delete": delete_code})
 
@@ -775,8 +758,7 @@ async def generate_relation_code(
     Loads relations from session automatically.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     # Load relations from session
     relations_json = await repo.get_session_data(session_id, "relationsOutput")
@@ -828,8 +810,7 @@ async def get_relation_code_status(
     Get the status of relation code generation job.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     if not jobId:
         jobId = await repo.get_session_data(session_id, f"{relation_name}CodeJobId")
@@ -856,8 +837,7 @@ async def override_relation_code(
     Manually override the relation code.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     await repo.update_session(session_id, {f"{relation_name}Code": relation_code})
 

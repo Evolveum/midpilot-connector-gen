@@ -13,6 +13,7 @@ from ...common.database.repositories.session_repository import SessionRepository
 from ...common.enums import JobStatus
 from ...common.jobs import get_job_status, schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusIterationResponse
+from ...common.session.session import ensure_session_exists
 from . import service
 from .schema import ScrapeRequest
 
@@ -35,8 +36,7 @@ async def scrape_documentation(
     The scraped documentation will be stored in the session.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     job_id = await schedule_coroutine_job(
         job_type="scrape.getRelevantDocumentation",
@@ -75,8 +75,7 @@ async def get_scrape_status(
     Get the status of documentation scraping job.
     """
     repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    await ensure_session_exists(repo, session_id)
 
     if not jobId:
         job_id_str = await repo.get_session_data(session_id, "scrapeJobId")
