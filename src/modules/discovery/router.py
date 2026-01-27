@@ -5,14 +5,14 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...common.database.config import get_db
 from ...common.database.repositories.session_repository import SessionRepository
 from ...common.jobs import schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusStageResponse
-from ...common.session.session import ensure_session_exists
+from ...common.session.session import ensure_session_exists, resolve_session_job_id
 from ...common.status_response import build_stage_status_response
 from . import service
 from .schema import CandidateLinksInput
@@ -73,12 +73,11 @@ async def get_discovery_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        job_id_str = await repo.get_session_data(session_id, "discoveryJobId")
-        if not job_id_str:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No discovery job found in session {session_id}"
-            )
-        return await build_stage_status_response(job_id_str)
-
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="discoveryJobId",
+        job_label="discovery",
+    )
     return await build_stage_status_response(jobId)

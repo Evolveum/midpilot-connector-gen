@@ -22,7 +22,7 @@ from ...common.schema import (
     JobStatusMultiDocResponse,
     JobStatusStageResponse,
 )
-from ...common.session.session import ensure_session_exists
+from ...common.session.session import ensure_session_exists, resolve_session_job_id
 from ...common.status_response import build_stage_status_response
 from ..digester.schema import RelationsResponse
 from . import service
@@ -118,13 +118,14 @@ async def get_native_schema_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, f"{object_class}NativeSchemaJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No native schema job found for {object_class} in session {session_id}",
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}NativeSchemaJobId",
+        job_label="native schema",
+        not_found_detail=f"No native schema job found for {object_class} in session {session_id}",
+    )
 
     return await build_stage_status_response(jobId)
 
@@ -220,13 +221,14 @@ async def get_connid_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, f"{object_class}ConnidJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No ConnID job found for {object_class} in session {session_id}",
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}ConnidJobId",
+        job_label="ConnID",
+        not_found_detail=f"No ConnID job found for {object_class} in session {session_id}",
+    )
 
     return await build_stage_status_response(jobId)
 
@@ -342,13 +344,14 @@ async def get_search_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, f"{object_class}SearchJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No search job found for {object_class} in session {session_id}",
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}SearchJobId",
+        job_label="search",
+        not_found_detail=f"No search job found for {object_class} in session {session_id}",
+    )
 
     return await _build_multi_doc_status_response(jobId)
 
@@ -463,14 +466,14 @@ async def get_create_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        job_id_raw = await repo.get_session_data(session_id, f"{object_class}CreateJobId")
-        if not job_id_raw:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No create job found for {object_class} in session {session_id}",
-            )
-        jobId = UUID(str(job_id_raw)) if not isinstance(job_id_raw, UUID) else job_id_raw
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}CreateJobId",
+        job_label="create",
+        not_found_detail=f"No create job found for {object_class} in session {session_id}",
+    )
 
     return await _build_multi_doc_status_response(jobId)
 
@@ -584,14 +587,14 @@ async def get_update_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        job_id_raw = await repo.get_session_data(session_id, f"{object_class}UpdateJobId")
-        if not job_id_raw:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No update job found for {object_class} in session {session_id}",
-            )
-        jobId = UUID(str(job_id_raw)) if not isinstance(job_id_raw, UUID) else job_id_raw
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}UpdateJobId",
+        job_label="update",
+        not_found_detail=f"No update job found for {object_class} in session {session_id}",
+    )
 
     return await _build_multi_doc_status_response(jobId)
 
@@ -705,14 +708,14 @@ async def get_delete_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        job_id_raw = await repo.get_session_data(session_id, f"{object_class}DeleteJobId")
-        if not job_id_raw:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No delete job found for {object_class} in session {session_id}",
-            )
-        jobId = UUID(str(job_id_raw)) if not isinstance(job_id_raw, UUID) else job_id_raw
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}DeleteJobId",
+        job_label="delete",
+        not_found_detail=f"No delete job found for {object_class} in session {session_id}",
+    )
 
     return await _build_multi_doc_status_response(jobId)
 
@@ -812,13 +815,14 @@ async def get_relation_code_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, f"{relation_name}CodeJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No relation code job found for {relation_name} in session {session_id}",
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{relation_name}CodeJobId",
+        job_label="relation code",
+        not_found_detail=f"No relation code job found for {relation_name} in session {session_id}",
+    )
 
     return await _build_multi_doc_status_response(jobId)
 

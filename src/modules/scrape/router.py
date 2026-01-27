@@ -5,7 +5,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...common.database.config import get_db
@@ -13,7 +13,7 @@ from ...common.database.repositories.session_repository import SessionRepository
 from ...common.enums import JobStatus
 from ...common.jobs import get_job_status, schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusIterationResponse
-from ...common.session.session import ensure_session_exists
+from ...common.session.session import ensure_session_exists, resolve_session_job_id
 from . import service
 from .schema import ScrapeRequest
 
@@ -77,13 +77,13 @@ async def get_scrape_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        job_id_str = await repo.get_session_data(session_id, "scrapeJobId")
-        if not job_id_str:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No scrape job found in session {session_id}"
-            )
-        jobId = UUID(job_id_str)
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="scrapeJobId",
+        job_label="scrape",
+    )
 
     job_status = await get_job_status(jobId)
     raw_status = job_status.get("status", JobStatus.not_found.value)

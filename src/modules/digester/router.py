@@ -20,7 +20,7 @@ from ...common.database.repositories.session_repository import SessionRepository
 from ...common.enums import JobStatus
 from ...common.jobs import get_job_status, schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusMultiDocResponse
-from ...common.session.session import ensure_session_exists, get_session_documentation
+from ...common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
 from . import service
 from .schema import (
     AuthResponse,
@@ -220,12 +220,13 @@ async def get_object_classes_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, "objectClassesJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No object classes job found in session {session_id}"
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="objectClassesJobId",
+        job_label="object classes",
+    )
 
     response = await _build_typed_job_status_response(jobId, ObjectClassesResponse)
 
@@ -483,13 +484,14 @@ async def get_class_attributes_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, f"{object_class}AttributesJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No attributes job found for {object_class} in session {session_id}",
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}AttributesJobId",
+        job_label="attributes",
+        not_found_detail=f"No attributes job found for {object_class} in session {session_id}",
+    )
 
     # Get job status but override result with current session data
     response = await _build_typed_job_status_response(jobId, ObjectClassSchemaResponse)
@@ -664,13 +666,14 @@ async def get_class_endpoints_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, f"{object_class}EndpointsJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No endpoints job found for {object_class} in session {session_id}",
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}EndpointsJobId",
+        job_label="endpoints",
+        not_found_detail=f"No endpoints job found for {object_class} in session {session_id}",
+    )
 
     return await _build_typed_job_status_response(jobId, EndpointsResponse)
 
@@ -773,12 +776,13 @@ async def get_relations_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, "relationsJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No relations job found in session {session_id}"
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="relationsJobId",
+        job_label="relations",
+    )
 
     return await _build_typed_job_status_response(jobId, RelationsResponse)
 
@@ -889,12 +893,13 @@ async def get_auth_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, "authJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No auth job found in session {session_id}"
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="authJobId",
+        job_label="auth",
+    )
 
     return await _build_typed_job_status_response(jobId, AuthResponse)
 
@@ -983,11 +988,12 @@ async def get_metadata_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = await repo.get_session_data(session_id, "metadataJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No metadata job found in session {session_id}"
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="metadataJobId",
+        job_label="metadata",
+    )
 
     return await _build_typed_job_status_response(jobId, InfoResponse)

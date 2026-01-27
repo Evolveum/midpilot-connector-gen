@@ -191,6 +191,27 @@ async def _get_session_documentation_impl(
     )
 
 
+async def resolve_session_job_id(
+    repo: SessionRepository,
+    session_id: UUID,
+    job_id: UUID | None,
+    session_key: str,
+    job_label: str,
+    not_found_detail: str | None = None,
+) -> UUID:
+    if job_id:
+        return job_id
+
+    job_id_value = await repo.get_session_data(session_id, session_key)
+    if not job_id_value:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=not_found_detail or f"No {job_label} job found in session {session_id}",
+        )
+
+    return job_id_value if isinstance(job_id_value, UUID) else UUID(str(job_id_value))
+
+
 async def ensure_session_exists(repo: SessionRepository, session_id: UUID) -> None:
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
