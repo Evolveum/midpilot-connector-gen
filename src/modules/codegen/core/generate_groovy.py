@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -15,7 +15,7 @@ from ....common.enums import JobStage
 from ....common.jobs import append_job_error, update_job_progress
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from .postprocess import _coerce_llm_text, strip_markdown_fences
+from ..utils.postprocess import _coerce_llm_text, strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,3 @@ async def generate_groovy(
     except Exception as exc:
         append_job_error(job_id, f"[Codegen:{logger_prefix}] Generation failed: {exc}")
         return f'objectClass("{object_class}") {{}}'
-
-    finally:
-        update_job_progress(job_id, stage=JobStage.generating)

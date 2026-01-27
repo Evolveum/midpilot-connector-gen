@@ -1,0 +1,127 @@
+= SCIM User Search
+
+Write a Groovy script `User.search.op.groovy` which handles search of the
+object class `User` using SCIM 2.0 protocol.
+
+SCIM (System for Cross-domain Identity Management) uses standardized filtering,
+pagination, and response formats.
+
+The Groovy script should look like:
+
+[source,groovy]
+----
+objectClass("User") {
+    search {
+        endpoint("/Users") {
+            objectExtractor {
+                return response.body().get("Resources")
+            }
+            pagingSupport {
+                request.queryParameter("startIndex", paging.pageOffset + 1)
+                       .queryParameter("count", paging.pageSize)
+
+                paging.setCookie(response.body().get("totalResults"))
+            }
+            emptyFilterSupported true
+
+            supportedFilter(attribute("userName").eq().anySingleValue()) {
+                request.queryParameter("filter", "userName eq \"" + value + "\"")
+            }
+
+            supportedFilter(attribute("emails").contains().anySingleValue()) {
+                request.queryParameter("filter", "emails co \"" + value + "\"")
+            }
+        }
+
+        endpoint("/Users/{id}") {
+            singleResult()
+            supportedFilter(attribute("id").eq().anySingleValue()) {
+                request.pathParameter("id", value)
+            }
+        }
+    }
+}
+----
+
+== SCIM-Specific Features
+
+=== Pagination
+SCIM uses 1-based pagination:
+
+* `startIndex` - 1-based index of the first result (default: 1)
+* `count` - number of resources to return per page
+
+Response includes pagination metadata:
+* `totalResults` - total number of matching resources
+* `startIndex` - the 1-based index of the first result returned
+* `itemsPerPage` - number of resources returned in this response
+
+=== Response Format
+SCIM wraps search results in a ListResponse:
+
+[source,json]
+----
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+  "totalResults": 100,
+  "startIndex": 1,
+  "itemsPerPage": 20,
+  "Resources": [
+    { ... user object ... },
+    { ... user object ... }
+  ]
+}
+----
+
+Use `objectExtractor` to extract the `Resources` array.
+
+=== SCIM Filter Syntax
+SCIM defines a standardized filter query language:
+
+==== Attribute Operators
+* `eq` - equals
+* `ne` - not equals
+* `co` - contains
+* `sw` - starts with
+* `ew` - ends with
+* `pr` - present (has value)
+* `gt` - greater than
+* `ge` - greater than or equal
+* `lt` - less than
+* `le` - less than or equal
+
+==== Logical Operators
+* `and` - logical AND
+* `or` - logical OR
+* `not` - logical NOT
+
+==== Example Filters
+* Simple: `filter=userName eq "john.doe"`
+* Contains: `filter=emails co "@example.com"`
+* Complex: `filter=userName eq "john" and active eq true`
+* Multi-valued: `filter=emails[type eq "work"].value co "@company.com"`
+
+=== Endpoints
+
+==== Collection Endpoint
+`GET /Users` - List/search users with filtering
+
+Query parameters:
+* `filter` - SCIM filter expression
+* `sortBy` - attribute name to sort by
+* `sortOrder` - "ascending" or "descending"
+* `startIndex` - 1-based pagination index
+* `count` - page size
+* `attributes` - comma-separated list of attributes to return
+* `excludedAttributes` - comma-separated list to exclude
+
+==== Resource Endpoint
+`GET /Users/{id}` - Retrieve specific user by ID
+
+Use `singleResult()` to indicate this endpoint returns a single resource.
+
+=== Notes
+* SCIM uses plural resource names: `/Users`, `/Groups`
+* IDs are typically UUIDs or opaque strings
+* Filter values for strings must be quoted: `"value"`
+* Filter values for booleans/numbers are unquoted: `true`, `42`

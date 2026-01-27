@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -18,27 +18,27 @@ from ....common.llm import get_default_llm, make_basic_chain
 from ..prompts.authPrompts import get_auth_system_prompt, get_auth_user_prompt
 from ..prompts.sortingOutputPrompts import sort_auth_system_prompt, sort_auth_user_prompt
 from ..schema import AuthInfo, AuthResponse
-from .parallel import run_extraction_parallel
+from ..utils.parallel import run_extraction_parallel
 
 logger = logging.getLogger(__name__)
 
 
 async def extract_auth_raw(
     schema: str, job_id: UUID, doc_id: Optional[UUID] = None, doc_metadata: Optional[Dict] = None
-) -> Tuple[List[AuthInfo], List[int]]:
+) -> Tuple[List[AuthInfo], bool]:
     """
     Extract raw auth info from a single document with per-chunk parallel LLM calls.
     Does NOT deduplicate or sort - that's done later across all documents.
 
     Returns:
         - List of raw AuthInfo instances
-        - List of relevant chunk indices
+        - Boolean indicating if relevant data was found
     """
 
     def parse_fn(result: AuthResponse) -> List[AuthInfo]:
         return result.auth or []
 
-    extracted, relevant_indices = await run_extraction_parallel(
+    extracted, has_relevant_data = await run_extraction_parallel(
         schema=schema,
         pydantic_model=AuthResponse,
         system_prompt=get_auth_system_prompt,
@@ -53,28 +53,28 @@ async def extract_auth_raw(
     logger.info("[Digester:Auth] Auth extracted: %s from document: %s", extracted, doc_id)
 
     logger.info("[Digester:Auth] Raw extraction complete from document. Count: %d", len(extracted))
-    return extracted, relevant_indices
+    return extracted, has_relevant_data
 
 
 async def deduplicate_and_sort_auth(
-    all_auth_info: List[AuthInfo],
+    auth_info: List[AuthInfo],
     job_id: UUID,
 ) -> AuthResponse:
     """
     Deduplicate and sort auth info from all documents.
 
     Args:
-        all_auth_info: List of AuthInfo instances from all documents
+        auth_info: List of AuthInfo instances from all documents
         job_id: Job ID for progress tracking
 
     Returns:
         AuthResponse with deduplicated and sorted auth info
     """
-    logger.info("[Digester:Auth] Starting deduplication and sorting. Total count: %d", len(all_auth_info))
+    logger.info("[Digester:Auth] Starting deduplication and sorting. Total count: %d", len(auth_info))
 
     # Dedup + merge quirks if it is an exact match
     seen: Dict[Tuple[str, str], AuthInfo] = {}
-    for auth in all_auth_info:
+    for auth in auth_info:
         if not auth or not auth.name:
             continue
         name_norm = (auth.name or "").strip().lower().replace("-", "").replace(" ", "")

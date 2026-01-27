@@ -1,12 +1,12 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
 import textwrap
 
-get_delete_system_prompt = textwrap.dedent("""\
+get_update_system_prompt = textwrap.dedent("""\
 <instruction>
-You are an expert in creating connectors (connID and midPoint). Your goal is to prepare a `delete` schema in Groovy. Input will include:
+You are an expert in creating connectors (connID and midPoint). Your goal is to prepare an `update` schema in Groovy. Input will include:
 1. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger schema.
 2. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger endpoints.
 3. A chunk of the original document (e.g., API spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated—such as parameter semantics, data types, required vs optional fields, authentication hints, default values, example requests/responses, and error behavior.
@@ -14,22 +14,22 @@ You are an expert in creating connectors (connID and midPoint). Your goal is to 
 </instruction>
 
 # Reference documentation injected from .adoc:
-<delete_docs>
-{delete_docs}
-</delete_docs>
+<update_docs>
+{update_docs}
+</update_docs>
 
 Output rules:
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
-- Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the example in <delete_docs>.
+- Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the examples in <update_docs>.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it; do not discard or rename previously correct parts.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment instead of guessing.
-- Preserve the outer objectClass and delete blocks if already present in <result>.
-- Return ONLY a valid format of the delete schema in Groovy, including the inline comments as specified. No extra explanation outside the code block.
+- Preserve the outer objectClass and update blocks if already present in <result>.
+- Return ONLY a valid format of the update schema in Groovy, including the inline comments as specified. No extra explanation outside the code block.
 - The output format is just an example and may vary slightly based on the various specifications and documentations that will be available to you in the user prompt.
 - No extra commentary.
 """)
 
-get_delete_user_prompt = textwrap.dedent("""
+get_update_user_prompt = textwrap.dedent("""
             Chunk {idx}/{total} of the API schema:
             Target object class: {object_class}
             Here is extracted object class attributes from OpenAPI/Swagger schema wrapped into JSON from previous LLM:

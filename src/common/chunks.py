@@ -1,9 +1,10 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
 import json
 import logging
+import re
 from typing import List, Union
 
 import tiktoken
@@ -62,6 +63,51 @@ def split_text_with_token_overlap(
         chunk_tokens = tokens[start : start + chunk_size]
         chunks.append((enc.decode(chunk_tokens), len(chunk_tokens)))
     return chunks
+
+
+def get_neighboring_tokens(
+    search_phrase: str,
+    text: str,
+    context_token_count_before: int = 150,
+    context_token_count_after: int = 1000,
+    encoding_type: str = "cl100k_base",
+    word_boundary: bool = True,
+) -> str:
+    """
+    Extract one or more snippets from the text that contain the search phrase along with a specified number of tokens before and after it.
+    inputs:
+        search_phrase: str - phrase to search for in the text
+        text: str - the text to search within
+        context_token_count_before: int - number of tokens to include before every occurance of the search phrase
+        context_token_count_after: int - number of tokens to include after every occurance of the search phrase
+        encoding_type: str - tiktoken encoding type
+        word_boundary: bool - if True, only match if phrase is followed by whitespace/newline/punctuation
+    outputs:
+        snippet: str - concatenated snippets containing the search phrase with surrounding context
+    """
+    if not text or not search_phrase:
+        return ""
+    enc = encoding(encoding_type)
+    parts = []
+    # We must use re because with tokenized text, there were weird bugs
+    if word_boundary:
+        parts = re.split(r"(" + re.escape(search_phrase) + r'[\s\n\t.,;:!?\-\)\]\}"\'])', text, flags=re.IGNORECASE)
+    else:
+        parts = re.split("(" + re.escape(search_phrase) + ")", text, flags=re.IGNORECASE)
+    if len(parts) == 1:
+        return ""
+    snippets = []
+    for i in range(1, len(parts), 2):
+        before = parts[i - 1]
+        after = parts[i + 1]
+        before_tokens = enc.encode(before)
+        after_tokens = enc.encode(after)
+        start_index = max(0, len(before_tokens) - context_token_count_before)
+        end_index = min(len(after_tokens), context_token_count_after)
+        snippet = enc.decode(before_tokens[start_index:]) + parts[i] + enc.decode(after_tokens[:end_index])
+        snippets.append(snippet.strip())
+
+    return "\n...\n".join(snippets)
 
 
 def normalize_to_text(schema: Union[str, dict, list]) -> str:

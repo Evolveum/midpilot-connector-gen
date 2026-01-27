@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -51,7 +51,7 @@ class ObservedRoute(APIRoute):
                     request_json = None
 
             with langfuse.start_as_current_span(name="api_request", input=request_json) as span:
-                span.update_trace(name=request.url.path, tags=["wp1"])
+                span.update_trace(name=request.url.path, tags=["midpilot-connector-gen"])
 
                 # Execute the actual route handler
                 response: Response = await original_route_handler(request)

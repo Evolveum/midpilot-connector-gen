@@ -1,8 +1,7 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
-import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,7 +10,7 @@ from uuid import UUID
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from ....common.chunks import normalize_to_text, split_text_with_token_overlap
+from ....common.chunks import normalize_to_text
 from ....common.jobs import append_job_error, update_job_progress
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
@@ -20,7 +19,7 @@ from ..prompts.relationsPrompts import (
     get_relations_user_prompt,
 )
 from ..schema import RelationRecord, RelationsResponse
-from .metadata_helper import extract_summary_and_tags
+from ..utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +166,6 @@ async def _extract_from_chunk(
             error_msg = f"{error_msg} (Doc: {doc_id})"
         append_job_error(job_id, error_msg)
         return []
-    finally:
-        update_job_progress(job_id, stage="processing_chunks")
 
 
 async def extract_relations(
@@ -177,7 +174,7 @@ async def extract_relations(
     job_id: UUID,
     doc_id: Optional[UUID] = None,
     doc_metadata: Optional[Dict[str, Any]] = None,
-) -> Tuple[RelationsResponse, List[int]]:
+) -> Tuple[RelationsResponse, bool]:
     """
     Extract relationships between object classes from an OpenAPI/Swagger specification.
 
@@ -193,8 +190,7 @@ async def extract_relations(
         Tuple containing:
         - RelationsResponse: Contains list of discovered relationships with normalized class names,
                           subject/object attributes, and relationship metadata.
-        - List[int]: Indices of chunks that contained relevant relation data
-        - List[str]: All chunks processed
+        - Boolean indicating if relevant relation data was found
 
     Note:
         - Class names are used exactly as provided without any normalization
@@ -205,7 +201,7 @@ async def extract_relations(
     relevant_items = _extract_relevant_names(relevant_object_classes)
     if not relevant_items:
         logger.warning("[Digester:Relations] No relevant object classes; returning empty.")
-        return RelationsResponse(relations=[]), []
+        return RelationsResponse(relations=[]), False
 
     # Extract names and descriptions
     relevant_names = [name for name, _ in relevant_items]
@@ -216,21 +212,18 @@ async def extract_relations(
         f"- {name}: {desc}" if desc.strip() else f"- {name}" for name, desc in relevant_items
     )
 
+    # Normalize text (document is already pre-chunked in DB)
     text = normalize_to_text(schema)
-    chunks: List[tuple[str, int]] = split_text_with_token_overlap(text)
-    total_chunks = len(chunks)
-    logger.info("[Digester:Relations] Split schema into %d chunks for processing", total_chunks)
-    if not chunks:
-        logger.warning("[Digester:Relations] No chunks generated from schema; returning empty.")
-        return RelationsResponse(relations=[]), []
 
-    # Progress: chunking done, start processing
+    if not text or not text.strip():
+        logger.warning("[Digester:Relations] Empty schema provided; returning empty.")
+        return RelationsResponse(relations=[]), False
+
+    # Progress: start processing
     update_job_progress(
         job_id,
         stage="processing_chunks",
-        current_doc_processed_chunks=0,
-        current_doc_total_chunks=total_chunks,
-        message="Processing chunks for document",
+        message="Processing document and extracting relations",
     )
 
     parser: PydanticOutputParser[RelationsResponse] = PydanticOutputParser(pydantic_object=RelationsResponse)
@@ -240,7 +233,6 @@ async def extract_relations(
     prompt = ChatPromptTemplate.from_messages(
         [("system", get_relations_system_prompt + "\n\n{format_instructions}"), ("human", get_relations_user_prompt)]
     ).partial(
-        total=total_chunks,
         relevant_list=relevant_names,
         relevant_descriptions=relevant_descriptions,
         relevant_list_with_descriptions=relevant_list_with_descriptions,
@@ -249,35 +241,26 @@ async def extract_relations(
 
     chain = make_basic_chain(prompt, llm, parser)
 
-    logger.info("[Digester:Relations] Starting parallel processing of %d chunks", total_chunks)
-    chunk_results = await asyncio.gather(
-        *[
-            _extract_from_chunk(
-                chain, i, ch[0], job_id, total_chunks=total_chunks, doc_id=doc_id, doc_metadata=doc_metadata
-            )
-            for i, ch in enumerate(chunks)
-        ]
-    )
-    logger.info("[Digester:Relations] Parallel extraction completed for all chunks")
+    logger.info("[Digester:Relations] Processing document for relation extraction")
+    # Process the single pre-chunked document (no need for asyncio.gather with just one item)
+    chunk_results = [
+        await _extract_from_chunk(chain, 0, text, job_id, total_chunks=1, doc_id=doc_id, doc_metadata=doc_metadata)
+    ]
+    logger.info("[Digester:Relations] Extraction completed")
 
-    update_job_progress(
-        job_id,
-        stage="merging",
-        message="Merging and deduplicating relations",
-    )
+    # update_job_progress(
+    #     job_id,
+    #     stage="merging",
+    #     message="Merging and deduplicating relations",
+    # )
 
     merged_relations: List[RelationRecord] = []
-    relevant_indices: List[int] = []
-    for idx, relation_list in enumerate(chunk_results):
-        if not relation_list:
-            continue
-        for relation_record in relation_list:
-            merged_relations.append(relation_record)
-        # Track this chunk as relevant since it contained relations
-        relevant_indices.append(idx)
+    for relation_list in chunk_results:
+        if relation_list:
+            merged_relations.extend(relation_list)
 
     if not merged_relations:
-        return RelationsResponse(relations=[]), []
+        return RelationsResponse(relations=[]), False
 
     deduplicated_relations: Dict[Tuple[str, str, str], RelationRecord] = {}
     for relation in merged_relations:
@@ -298,6 +281,6 @@ async def extract_relations(
         "[Digester:Relations] Extraction process completed successfully with %d final relations", len(final_relations)
     )
 
-    update_job_progress(job_id, stage="relations_ready", message="Relation extraction complete")
+    # update_job_progress(job_id, stage=JobStage.finished, message="Relation extraction complete")
 
-    return RelationsResponse(relations=final_relations), sorted(relevant_indices)
+    return RelationsResponse(relations=final_relations), bool(final_relations)

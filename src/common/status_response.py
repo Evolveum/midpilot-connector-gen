@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -13,9 +13,9 @@ from .schema import (
 )
 
 
-def build_stage_status_response(job_id: UUID) -> JobStatusStageResponse:
+async def build_stage_status_response(job_id: UUID) -> JobStatusStageResponse:
     """Build a stage-only status response (stage + message)."""
-    status = get_job_status(job_id)
+    status = await get_job_status(job_id)
     raw_status = status.get("status", JobStatus.not_found.value)
     enum_status = JobStatus(raw_status)
     prog = status.get("progress") or {}

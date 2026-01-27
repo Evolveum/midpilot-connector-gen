@@ -1,0 +1,247 @@
+= SCIM User Update
+
+Write a Groovy script `User.update.op.groovy` which handles updates to the
+object class `User` using SCIM 2.0 protocol.
+
+SCIM supports two update methods: PUT (full replacement) and PATCH (partial update).
+PATCH with PatchOp is preferred for partial updates.
+
+The Groovy script should look like:
+
+[source,groovy]
+----
+objectClass("User") {
+    update {
+        endpoint("/Users/{id}") {
+            method "PATCH"
+
+            // TODO: Build SCIM PatchOp request
+            // Use operations: add, replace, remove
+            // Handle path selectors for multi-valued attributes
+        }
+    }
+}
+----
+
+== SCIM Update Methods
+
+=== PATCH (Partial Update) - PREFERRED
+
+==== Request
+* Method: `PATCH`
+* Endpoint: `/Users/{id}`
+* Content-Type: `application/scim+json`
+* Schema: `urn:ietf:params:scim:api:messages:2.0:PatchOp`
+
+Request body structure:
+[source,json]
+----
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [
+    {
+      "op": "replace",
+      "path": "active",
+      "value": false
+    },
+    {
+      "op": "replace",
+      "path": "emails[type eq \"work\"].value",
+      "value": "newemail@example.com"
+    },
+    {
+      "op": "add",
+      "path": "phoneNumbers",
+      "value": [
+        {
+          "value": "+1-555-0123",
+          "type": "work"
+        }
+      ]
+    }
+  ]
+}
+----
+
+==== Operations
+* `add` - Add a new attribute value or add to multi-valued attribute
+* `replace` - Replace existing attribute value
+* `remove` - Remove attribute value or specific item from multi-valued attribute
+
+==== Path Syntax
+* Simple attribute: `"path": "active"`
+* Nested attribute: `"path": "name.givenName"`
+* Multi-valued with filter: `"path": "emails[type eq \"work\"].value"`
+* Multi-valued by index: `"path": "emails[0].value"`
+* Remove specific item: `"path": "emails[type eq \"work\"]"`
+
+==== Response
+* Status: `200 OK` or `204 No Content`
+* Body: Updated resource representation (if 200) or no body (if 204)
+
+=== PUT (Full Replacement)
+
+==== Request
+* Method: `PUT`
+* Endpoint: `/Users/{id}`
+* Content-Type: `application/scim+json`
+* Body: Complete resource representation
+
+Important:
+* All attributes must be provided
+* Missing optional attributes may be removed/reset to defaults
+* readOnly attributes should be omitted or will be ignored
+
+Example:
+[source,json]
+----
+{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+  "userName": "john.doe",
+  "name": {
+    "givenName": "John",
+    "familyName": "Doe"
+  },
+  "emails": [
+    {
+      "value": "john.doe@example.com",
+      "type": "work",
+      "primary": true
+    }
+  ],
+  "active": true
+}
+----
+
+==== Response
+* Status: `200 OK`
+* Body: Complete updated resource with server-managed attributes
+
+== Mutability Rules
+
+=== Attribute Mutability
+* `readOnly` - Cannot be modified (e.g., `id`, `meta`, `groups`)
+* `immutable` - Cannot be changed after creation (exclude from updates)
+* `readWrite` - Can be modified
+* `writeOnly` - Can be modified but never read
+
+**Important**: Exclude `readOnly` and `immutable` attributes from update requests.
+
+=== Multi-valued Attribute Updates
+
+==== Replace Entire Array
+[source,json]
+----
+{
+  "op": "replace",
+  "path": "emails",
+  "value": [
+    {"value": "new@example.com", "type": "work", "primary": true}
+  ]
+}
+----
+
+==== Update Specific Item
+[source,json]
+----
+{
+  "op": "replace",
+  "path": "emails[type eq \"work\"].value",
+  "value": "updated@example.com"
+}
+----
+
+==== Add Item to Array
+[source,json]
+----
+{
+  "op": "add",
+  "path": "phoneNumbers",
+  "value": [
+    {"value": "+1-555-9999", "type": "mobile"}
+  ]
+}
+----
+
+==== Remove Specific Item
+[source,json]
+----
+{
+  "op": "remove",
+  "path": "emails[type eq \"work\"]"
+}
+----
+
+==== Remove Entire Attribute
+[source,json]
+----
+{
+  "op": "remove",
+  "path": "displayName"
+}
+----
+
+== Implementation Strategy
+
+=== Preferred: PATCH with PatchOp
+Build PatchOp operations for changed attributes:
+
+1. Compare current vs desired state
+2. Generate operations only for changed attributes
+3. Use path selectors for multi-valued attributes
+4. Group related changes in single PATCH request
+
+Advantages:
+* More efficient (only send changes)
+* Atomic updates
+* Safer (won't accidentally clear unspecified attributes)
+
+=== Alternative: PUT for Full Replacement
+Use PUT when:
+* Provider doesn't support PATCH
+* Replacing entire resource is simpler
+* Documentation explicitly requires PUT
+
+Caution:
+* Must send all attributes
+* Missing attributes may be removed
+
+== Common Patterns
+
+=== Activate/Deactivate User
+[source,json]
+----
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [
+    {"op": "replace", "path": "active", "value": false}
+  ]
+}
+----
+
+=== Update Primary Email
+[source,json]
+----
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [
+    {
+      "op": "replace",
+      "path": "emails[primary eq true].value",
+      "value": "newemail@example.com"
+    }
+  ]
+}
+----
+
+=== Update Name Components
+[source,json]
+----
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [
+    {"op": "replace", "path": "name.givenName", "value": "Jane"},
+    {"op": "replace", "path": "name.familyName", "value": "Smith"}
+  ]
+}
+----
