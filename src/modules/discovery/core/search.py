@@ -4,12 +4,14 @@
 
 
 import logging
-from typing import List, TypedDict
+from typing import List
 
 import requests
 from ddgs import DDGS
 
 from src.config import config
+
+from ..schema import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -17,20 +19,13 @@ _DEFAULT_MAX_RESULTS = 10
 _HTTP_TIMEOUT_SECS = 15
 
 
-class SearchResult(TypedDict):
-    title: str
-    href: str
-    body: str
-    source: str
-
-
 def normalize_result(*, title: str | None, href: str | None, body: str | None, source: str) -> SearchResult:
-    return {
-        "title": title or "",
-        "href": href or "",
-        "body": body or "",
-        "source": source,
-    }
+    return SearchResult(
+        title=title or "",
+        href=href or "",
+        body=body or "",
+        source=source,
+    )
 
 
 def search_with_ddgs(query: str, *, max_results: int = _DEFAULT_MAX_RESULTS) -> List[SearchResult]:

@@ -16,14 +16,14 @@ from ...common.enums import JobStage
 from ...common.jobs import update_job_progress
 from ...common.langfuse import langfuse_handler
 from ...common.llm import get_default_llm_small1, get_default_llm_small2
-from .core.search import SearchResult, search_web
+from .core.search import search_web
 from .prompts.prompts import (
     get_discovery_eval_sys_prompt,
     get_discovery_eval_user_prompt,
     get_discovery_fetch_sys_prompt,
     get_discovery_fetch_user_prompt,
 )
-from .schema import CandidateLinksInput, CandidateLinksOutput, PyScrapeFetchReferences, PySearchPrompt
+from .schema import CandidateLinksInput, CandidateLinksOutput, PyScrapeFetchReferences, PySearchPrompt, SearchResult
 from .utils.llm_helpers import (
     fetch_parser_response,
     generate_query_via_llm,
@@ -85,7 +85,7 @@ def fetch_candidate_links_simplified(
     ver: str,
     pydantic_class_template: type[PyScrapeFetchReferences],
     llm_generated_search_query: bool,
-) -> Tuple[Any, PySearchPrompt, List[SearchResult], Any, Optional[PyScrapeFetchReferences]]:
+) -> Tuple[Any, PySearchPrompt, List[Dict[str, Any]], Any, Optional[PyScrapeFetchReferences]]:
     """
     End-to-end: create query (LLM or preset), search, evaluate results with LLM,
     and parse the evaluator's output into a structured model.
@@ -102,12 +102,14 @@ def fetch_candidate_links_simplified(
     else:
         search_output, response, parsed_response = query_and_search_candidate_preset(app, ver)
 
+    search_output_raw = [item.model_dump() for item in search_output]
+
     # Evaluate the tool output
     eval_prompt_template = make_eval_prompt(system_prompt_eval)
     chain = eval_prompt_template | eval_model
     eval_input = user_prompt_eval.format(app, ver)
     eval_output: Any = chain.invoke(
-        {"tool_output_raw": str(search_output), "input": eval_input},
+        {"tool_output_raw": str(search_output_raw), "input": eval_input},
         config=RunnableConfig(callbacks=[langfuse_handler]),
     )
     logger.debug("Discovery eval_output raw: %s", str(eval_output))
@@ -120,12 +122,12 @@ def fetch_candidate_links_simplified(
                 parser_model, cast(str, eval_output.content), pydantic_class_template
             )
             logger.info("Output parsing was successful.")
-            return response, parsed_response, search_output, eval_output, parsed_eval_output
+            return response, parsed_response, search_output_raw, eval_output, parsed_eval_output
         except Exception as exc:
             logger.info("Parsing attempt %d failed with error: %s", attempt + 1, exc)
 
     # Final fallback (None means parsing failed)
-    return response, parsed_response, search_output, eval_output, None
+    return response, parsed_response, search_output_raw, eval_output, None
 
 
 async def _run_discovery_async(app_data: CandidateLinksInput, job_id: UUID) -> CandidateLinksOutput:

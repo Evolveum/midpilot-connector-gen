@@ -45,6 +45,14 @@ class CandidateLinksOutput(BaseModel):
     )
 
 
+class SearchResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    title: str = Field(..., description="Result title")
+    href: str = Field(..., description="Result URL")
+    body: str = Field(..., description="Result summary/snippet")
+    source: str = Field(..., description="Search backend source")
+
+
 # --- Pydantic models used only for LLM output parsing ---
 
 

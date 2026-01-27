@@ -25,9 +25,9 @@ def test_search_with_ddgs():
         results = search.search_with_ddgs("test query", max_results=1)
 
         assert len(results) == 1
-        assert results[0]["title"] == "Test"
-        assert results[0]["href"] == "https://example.com"
-        assert results[0]["body"] == "Test body"
+        assert results[0].title == "Test"
+        assert results[0].href == "https://example.com"
+        assert results[0].body == "Test body"
         mock_instance.text.assert_called_once_with("test query", max_results=1, backend=["bing", "brave", "yahoo"])
 
 
