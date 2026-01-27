@@ -30,6 +30,7 @@ from ..prompts.sorting_output_prompts import (
     sort_object_classes_user_prompt,
 )
 from ..schema import ObjectClass, ObjectClassesRelevancyResponse, ObjectClassesResponse
+from ..utils.merges import merge_object_classes
 from ..utils.parallel import run_extraction_parallel
 
 logger = logging.getLogger(__name__)
@@ -111,59 +112,9 @@ async def deduplicate_and_sort_object_classes(
         ObjectClassesResponse with deduplicated and sorted classes
     """
     logger.info("[Digester:ObjectClasses] Starting deduplication and sorting. Total count: %d", len(all_object_classes))
-
-    # Dedup/merge
-    by_name: dict[str, ObjectClass] = {}
-    for obj_class in all_object_classes:
-        if not obj_class or not obj_class.name:
-            continue
-        key = obj_class.name.strip().lower()
-        if key not in by_name:
-            # If we have chunk information for this class, set it
-            if class_to_chunks and key in class_to_chunks:
-                # Remove duplicate documents (same docUuid)
-                unique_chunks: List[Dict[str, Any]] = []
-                seen: set[str] = set()
-                for chunk in class_to_chunks[key]:
-                    doc_uuid = str(chunk["docUuid"])
-                    if doc_uuid not in seen:
-                        seen.add(doc_uuid)
-                        unique_chunks.append(chunk)
-                # Sort chunks by docUuid
-                obj_class.relevant_chunks = sorted(unique_chunks, key=lambda x: str(x["docUuid"]))
-            by_name[key] = obj_class
-            continue
-
-        current = by_name[key]
-        # Prefer non-empty superclass, keep original if new is empty
-        if obj_class.superclass and not current.superclass:
-            current.superclass = obj_class.superclass
-        # OR booleans (any evidence of True wins)
-        current.abstract = current.abstract or obj_class.abstract
-        current.embedded = current.embedded or obj_class.embedded
-        # Prefer longer, non-empty description
-        if obj_class.description and len(obj_class.description) > len(current.description or ""):
-            current.description = obj_class.description
-        # Merge relevant chunks if available
-        if class_to_chunks and key in class_to_chunks:
-            # Convert to set of docUuids to remove duplicates
-            current_doc_uuids = set(chunk["docUuid"] for chunk in (current.relevant_chunks or []))
-            # Add new document UUIDs
-            for chunk in class_to_chunks[key]:
-                current_doc_uuids.add(chunk["docUuid"])
-            # Convert back to list of dicts and sort
-            current.relevant_chunks = [{"docUuid": doc_uuid} for doc_uuid in sorted(current_doc_uuids)]
-
-    # Remove duplicates with whitespace-only differences (preferring no-space versions)
-    for key in list(by_name.keys()):
-        key_no_space = key.replace(" ", "")
-        if key != key_no_space and key_no_space in by_name:
-            by_name.pop(key)
-
-    dedup_list: List[ObjectClass] = list(by_name.values())
+    dedup_list: List[ObjectClass] = merge_object_classes(all_object_classes, class_to_chunks)
     logger.info("[Digester:ObjectClasses] Deduplication complete. Unique count: %d", len(dedup_list))
 
-    # Sort alphabetically as a fallback
     dedup_list.sort(key=lambda x: x.name.lower())
 
     if filter_relevancy:
