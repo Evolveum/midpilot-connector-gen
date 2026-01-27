@@ -93,7 +93,7 @@ async def test_get_discovery_status_found():
         assert "candidateLinks" in response.result
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "discoveryJobId")
-        mock_status.assert_awaited_once_with(str(job_id))
+        mock_status.assert_awaited_once_with(job_id)
 
 
 @pytest.mark.asyncio

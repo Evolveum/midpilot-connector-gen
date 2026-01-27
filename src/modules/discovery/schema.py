@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,12 +37,20 @@ class CandidateLinksOutput(BaseModel):
         validation_alias="candidateLinks",
         description="Selected links to crawl",
     )
-    candidate_links_enriched: List[dict] = Field(
+    candidate_links_enriched: List[Dict[str, Any]] = Field(
         default_factory=list,
         serialization_alias="candidateLinksEnriched",
         validation_alias="candidateLinksEnriched",
         description="Selected links to crawl with additional information",
     )
+
+
+class SearchResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    title: str = Field(..., description="Result title")
+    href: str = Field(..., description="Result URL")
+    body: str = Field(..., description="Result summary/snippet")
+    source: str = Field(..., description="Search backend source")
 
 
 # --- Pydantic models used only for LLM output parsing ---

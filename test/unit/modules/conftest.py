@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from langchain_openai import ChatOpenAI
 
 from src.app import api
+from src.modules.discovery.schema import SearchResult
 
 # Common fixtures
 
@@ -42,8 +43,8 @@ def mock_search_web():
     """Mock the web search functionality for discovery tests."""
     with patch("src.modules.discovery.service.search_web") as mock:
         mock.return_value = [
-            {"title": "Test Title 1", "href": "https://example.com/1", "body": "Test body 1", "source": "test"},
-            {"title": "Test Title 2", "href": "https://example.com/2", "body": "Test body 2", "source": "test"},
+            SearchResult(title="Test Title 1", href="https://example.com/1", body="Test body 1", source="test"),
+            SearchResult(title="Test Title 2", href="https://example.com/2", body="Test body 2", source="test"),
         ]
         yield mock
 
