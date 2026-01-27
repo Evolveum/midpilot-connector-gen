@@ -15,8 +15,8 @@ from ....common.enums import JobStage
 from ....common.jobs import append_job_error, update_job_progress
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.authPrompts import get_auth_system_prompt, get_auth_user_prompt
-from ..prompts.sortingOutputPrompts import sort_auth_system_prompt, sort_auth_user_prompt
+from ..prompts.auth_prompts import get_auth_system_prompt, get_auth_user_prompt
+from ..prompts.sorting_output_prompts import sort_auth_system_prompt, sort_auth_user_prompt
 from ..schema import AuthInfo, AuthResponse
 from ..utils.parallel import run_extraction_parallel
 

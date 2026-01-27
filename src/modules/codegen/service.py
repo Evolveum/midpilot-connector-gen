@@ -17,8 +17,8 @@ from .core.operations import (
     SearchGenerator,
     UpdateGenerator,
 )
-from .prompts.connIDPrompts import get_connID_system_prompt, get_connID_user_prompt
-from .prompts.nativeSchemaPrompts import get_native_schema_system_prompt, get_native_schema_user_prompt
+from .prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
+from .prompts.native_schema_prompts import get_native_schema_system_prompt, get_native_schema_user_prompt
 from .selection.docs_loader import read_adoc_text
 from .selection.protocol import detect_protocol
 from .selection.protocol_selectors import get_operation_assets

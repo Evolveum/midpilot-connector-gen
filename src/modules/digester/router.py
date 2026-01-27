@@ -1,8 +1,3 @@
-"""
-Digester endpoints for V2 API (session-centric).
-All digester operations are nested under sessions.
-"""
-
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
@@ -14,11 +9,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...common.chunk_filter.filter import filter_documentation_items
-from ...common.chunk_filter.schema import ChunkFilterCriteria
 from ...common.database.config import get_db
 from ...common.database.repositories.session_repository import SessionRepository
 from ...common.enums import JobStatus
-from ...common.jobs import get_job_status, schedule_coroutine_job
+from ...common.jobs import schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusMultiDocResponse
 from ...common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
 from . import service
@@ -30,123 +24,11 @@ from .schema import (
     ObjectClassSchemaResponse,
     RelationsResponse,
 )
+from .utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
+from .utils.inputs import auth_input, metadata_input, object_classes_input
+from .utils.status import build_typed_job_status_response
 
 router = APIRouter()
-
-DEFAULT_CRITERIA = ChunkFilterCriteria(  # Apply static category filter to documentation items
-    min_length=None,
-    min_endpoints_num=None,
-    allowed_categories=[
-        "spec_yaml",
-        "spec_json",
-        "reference_api",
-    ],
-)
-
-AUTH_CRITERIA = ChunkFilterCriteria(
-    min_length=None,
-    min_endpoints_num=None,
-    allowed_categories=[
-        "spec_yaml",
-        "spec_json",
-        "overview",
-    ],
-    allowed_tags=[
-        [
-            "authentication",
-            "auth",
-            "authorization",
-        ]
-    ],
-)
-
-ENDPOINT_CRITERIA = ChunkFilterCriteria(
-    min_length=None,
-    min_endpoints_num=1,
-    allowed_categories=[
-        "spec_yaml",
-        "spec_json",
-        "reference_api",
-    ],
-)
-
-
-# Helper Functions
-async def _build_typed_job_status_response(job_id: UUID, model_cls) -> JobStatusMultiDocResponse:
-    """Helper to normalize building a JobStatusMultiDocResponse and parsing the result into a given model."""
-    status = await get_job_status(job_id)
-    result_payload = None
-    raw_status = status.get("status", JobStatus.not_found.value)
-    if raw_status == JobStatus.finished.value and isinstance(status.get("result"), dict):
-        try:
-            result_dict = status["result"]
-            # Handle new format with chunks metadata
-            if "result" in result_dict and isinstance(result_dict["result"], dict):
-                actual_result = result_dict["result"]
-            else:
-                actual_result = result_dict
-
-            # Special handling for ObjectClassesResponse to ensure proper model validation
-            if model_cls == ObjectClassesResponse:
-                # Ensure objectClasses is a list and each item has the required fields
-                if "objectClasses" in actual_result and isinstance(actual_result["objectClasses"], list):
-                    for obj_class in actual_result["objectClasses"]:
-                        # Ensure relevant_chunks exists and is a list
-                        if "relevant_chunks" not in obj_class:
-                            obj_class["relevant_chunks"] = []
-                        elif not isinstance(obj_class["relevant_chunks"], list):
-                            obj_class["relevant_chunks"] = []
-
-            if hasattr(model_cls, "model_validate"):
-                result_payload = model_cls.model_validate(actual_result)
-            else:
-                result_payload = model_cls(**actual_result)
-        except Exception as e:
-            return JobStatusMultiDocResponse(
-                jobId=status.get("jobId", job_id),
-                status=JobStatus.failed,
-                errors=[f"Corrupted result payload: {str(e)}"],
-            )
-    enum_status = JobStatus(raw_status)
-
-    return JobStatusMultiDocResponse(
-        jobId=status.get("jobId", job_id),
-        status=enum_status,
-        createdAt=status.get("createdAt"),
-        startedAt=status.get("startedAt"),
-        updatedAt=status.get("updatedAt"),
-        progress=status.get("progress"),
-        result=result_payload,
-        errors=status.get("errors"),
-    )
-
-
-async def object_classes_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
-    """
-    Dynamic input provider for object classes extraction job.
-    It is important to wait for the documentation to be ready before starting the job.
-    input:
-        session_id - session ID to retrieve documentation items from
-        db - SQLAlchemy AsyncSession
-    output:
-        dict with:
-            sessionInput - dict with documentationItemsCount and totalLength - used for input in session field
-            jobInput - dict for job input field
-            args - tuple with documentation items
-    """
-    # Apply static category filter to documentation items
-    doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
-    total_length = sum(len(item["content"]) for item in doc_items)
-    return {
-        "sessionInput": {
-            "documentationItemsCount": len(doc_items),
-            "totalLength": total_length,
-        },
-        "jobInput": {
-            "documentationItems": doc_items,
-        },
-        "args": (doc_items,),
-    }
 
 
 # Digester Operations - Object Classes
@@ -169,6 +51,8 @@ async def extract_object_classes(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
+    doc_items = await get_session_documentation(session_id, db=db)
+
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
         input_payload={},
@@ -187,13 +71,12 @@ async def extract_object_classes(
         await_documentation_timeout=750,
     )
 
-    # TODO: add input to session
     await repo.update_session(
         session_id,
         {
             "objectClassesJobId": str(job_id),
             "objectClassesInput": {
-                # "documentationItemsCount": len(doc_items),
+                "documentationItemsCount": len(doc_items),
                 # "totalLength": total_length,
             },
         },
@@ -228,7 +111,7 @@ async def get_object_classes_status(
         job_label="object classes",
     )
 
-    response = await _build_typed_job_status_response(jobId, ObjectClassesResponse)
+    response = await build_typed_job_status_response(jobId, ObjectClassesResponse)
 
     if response.status == JobStatus.finished:
         object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
@@ -494,7 +377,7 @@ async def get_class_attributes_status(
     )
 
     # Get job status but override result with current session data
-    response = await _build_typed_job_status_response(jobId, ObjectClassSchemaResponse)
+    response = await build_typed_job_status_response(jobId, ObjectClassSchemaResponse)
 
     # If job is finished, replace result with current session data (which may have been updated)
     if response.status == JobStatus.finished:
@@ -675,7 +558,7 @@ async def get_class_endpoints_status(
         not_found_detail=f"No endpoints job found for {object_class} in session {session_id}",
     )
 
-    return await _build_typed_job_status_response(jobId, EndpointsResponse)
+    return await build_typed_job_status_response(jobId, EndpointsResponse)
 
 
 @router.put(
@@ -784,7 +667,7 @@ async def get_relations_status(
         job_label="relations",
     )
 
-    return await _build_typed_job_status_response(jobId, RelationsResponse)
+    return await build_typed_job_status_response(jobId, RelationsResponse)
 
 
 @router.put(
@@ -805,34 +688,6 @@ async def override_relations(
     await repo.update_session(session_id, {"relationsOutput": relations})
 
     return {"message": "Relations overridden successfully", "sessionId": session_id}
-
-
-async def auth_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
-    """
-    Dynamic input provider for auth extraction job.
-    It is important to wait for the documentation to be ready before starting the job.
-    input:
-        session_id - session ID to retrieve documentation items from
-        db - SQLAlchemy AsyncSession
-    output:
-        dict with:
-            args - tuple of documentation items
-            sessionInput - dict with documentationItemsCount and totalLength - used for input in session field
-            jobInput - dict for job input field
-    """
-    # Apply static category filter to documentation items
-    doc_items = await filter_documentation_items(AUTH_CRITERIA, session_id, db=db)
-    total_length = sum(len(item["content"]) for item in doc_items)
-    return {
-        "sessionInput": {
-            "documentationItemsCount": len(doc_items),
-            "totalLength": total_length,
-        },
-        "jobInput": {
-            "documentationItems": doc_items,
-        },
-        "args": (doc_items,),
-    }
 
 
 # Digester Operations - Auth & Metadata
@@ -901,34 +756,7 @@ async def get_auth_status(
         job_label="auth",
     )
 
-    return await _build_typed_job_status_response(jobId, AuthResponse)
-
-
-async def metadata_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
-    """
-    Dynamic input provider for metadata extraction job.
-    It is important to wait for the documentation to be ready before starting the job.
-    input:
-        session_id - session ID to retrieve documentation items from
-        db - SQLAlchemy AsyncSession
-    output:
-        dict with:
-            'args' key containing tuple of documentation items,
-            'sessionInput' key with metadata for input in session field,
-            'jobInput' key with metadata for input in job field
-    """
-    doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
-    total_length = sum(len(item["content"]) for item in doc_items)
-    return {
-        "sessionInput": {
-            "documentationItemsCount": len(doc_items),
-            "totalLength": total_length,
-        },
-        "jobInput": {
-            "documentationItems": doc_items,
-        },
-        "args": (doc_items,),
-    }
+    return await build_typed_job_status_response(jobId, AuthResponse)
 
 
 @router.post(
@@ -996,4 +824,4 @@ async def get_metadata_status(
         job_label="metadata",
     )
 
-    return await _build_typed_job_status_response(jobId, InfoResponse)
+    return await build_typed_job_status_response(jobId, InfoResponse)

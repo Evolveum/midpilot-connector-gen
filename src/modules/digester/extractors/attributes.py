@@ -20,7 +20,7 @@ from ....common.jobs import (
 )
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.objectClassAttributesPrompts import (
+from ..prompts.attributes_prompts import (
     get_filter_duplicates_system_prompt,
     get_filter_duplicates_user_prompt,
     get_object_class_schema_system_prompt,

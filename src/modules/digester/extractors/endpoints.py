@@ -20,7 +20,7 @@ from ....common.jobs import (
 )
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.endpointsPrompts import (
+from ..prompts.endpoints_prompts import (
     check_endpoint_params_system_prompt,
     check_endpoint_params_user_prompt,
     get_endpoints_system_prompt,

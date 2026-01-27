@@ -17,15 +17,15 @@ from ....common.enums import JobStage
 from ....common.jobs import append_job_error, update_job_progress
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.objectClassPrompts import (
+from ..prompts.object_class_prompts import (
     get_object_class_system_prompt,
     get_object_class_user_prompt,
 )
-from ..prompts.objectClassRelevancy import (
+from ..prompts.object_class_relevancy_prompt import (
     get_object_classes_relevancy_system_prompt,
     get_object_classes_relevancy_user_prompt,
 )
-from ..prompts.sortingOutputPrompts import (
+from ..prompts.sorting_output_prompts import (
     sort_object_classes_system_prompt,
     sort_object_classes_user_prompt,
 )
