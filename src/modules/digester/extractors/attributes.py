@@ -24,7 +24,7 @@ from ..prompts.attributes_prompts import (
     get_object_class_schema_system_prompt,
     get_object_class_schema_user_prompt,
 )
-from ..schema import ObjectClassSchemaResponse
+from ..schema import AttributeResponse
 from ..utils.merges import merge_attribute_candidates
 from ..utils.metadata_helper import extract_summary_and_tags
 from ..utils.parallel_docs import process_grouped_chunks_in_parallel
@@ -36,9 +36,7 @@ def _build_attribute_chain(total_chunks: int) -> Any:
     """
     Build the LLM chain for extracting attributes from a single chunk.
     """
-    parser: PydanticOutputParser[ObjectClassSchemaResponse] = PydanticOutputParser(
-        pydantic_object=ObjectClassSchemaResponse
-    )
+    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -53,9 +51,7 @@ def _build_dedupe_chain() -> Any:
     """
     Build the LLM chain used to resolve attribute duplicates across chunks.
     """
-    parser: PydanticOutputParser[ObjectClassSchemaResponse] = PydanticOutputParser(
-        pydantic_object=ObjectClassSchemaResponse
-    )
+    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -95,14 +91,14 @@ async def _extract_from_single_chunk(
             config={"callbacks": [langfuse_handler]},
         )
 
-        if isinstance(result, ObjectClassSchemaResponse):
+        if isinstance(result, AttributeResponse):
             parsed = result
         elif isinstance(result, dict):
-            parsed = ObjectClassSchemaResponse.model_validate(result)
+            parsed = AttributeResponse.model_validate(result)
         else:
             content = getattr(result, "content", None)
             if isinstance(content, str) and content.strip():
-                parsed = ObjectClassSchemaResponse.model_validate(json.loads(content))
+                parsed = AttributeResponse.model_validate(json.loads(content))
             else:
                 return {}
 

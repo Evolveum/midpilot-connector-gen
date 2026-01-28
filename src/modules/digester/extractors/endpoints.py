@@ -26,7 +26,7 @@ from ..prompts.endpoints_prompts import (
     get_endpoints_system_prompt,
     get_endpoints_user_prompt,
 )
-from ..schema import EndpointInfo, EndpointParamInfo, EndpointsResponse
+from ..schema import EndpointInfo, EndpointParamInfo, EndpointResponse
 from ..utils.merges import merge_endpoint_candidates
 from ..utils.metadata_helper import extract_summary_and_tags
 from ..utils.parallel_docs import process_grouped_chunks_in_parallel
@@ -102,7 +102,7 @@ async def extract_endpoints(
         "{base_api_url}", base_api_url
     )
 
-    parser: PydanticOutputParser[EndpointsResponse] = PydanticOutputParser(pydantic_object=EndpointsResponse)
+    parser: PydanticOutputParser[EndpointResponse] = PydanticOutputParser(pydantic_object=EndpointResponse)
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [("system", system_prompt + "\n\n{format_instructions}"), ("human", user_prompt)]
@@ -147,7 +147,7 @@ async def extract_endpoints(
                 summary, tags = extract_summary_and_tags(doc_metadata)
 
                 result = cast(
-                    EndpointsResponse,
+                    EndpointResponse,
                     await chain.ainvoke(
                         {"chunk": chunk, "summary": summary, "tags": tags},  # , "summary": summary, "tags": tags
                         config=RunnableConfig(callbacks=[langfuse_handler]),

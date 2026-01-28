@@ -13,40 +13,9 @@ from langchain_core.runnables.config import RunnableConfig
 from ....common.enums import JobStage
 from ....common.jobs import update_job_progress
 from ....common.langfuse import langfuse_handler
-from ..schema import EndpointInfo, ObjectClass, ObjectClassSchemaResponse
+from ..schema import AttributeResponse, EndpointInfo, ObjectClass
 
 logger = logging.getLogger(__name__)
-
-
-def merge_auth_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Merge auth results from multiple documents.
-
-    Combines all auth entries from different documents and deduplicates them based on:
-    - name (normalized)
-    - type (normalized)
-
-    Merges quirks from duplicate entries.
-    """
-    seen: Dict[tuple, Dict[str, Any]] = {}
-
-    for result in results:
-        if isinstance(result, dict) and "auth" in result:
-            for auth in result["auth"]:
-                name_norm = (auth.get("name") or "").strip().lower()
-                type_norm = (auth.get("type") or "").strip().lower()
-                key = (name_norm, type_norm)
-
-                if key not in seen:
-                    seen[key] = auth
-                else:
-                    # Merge quirks if present
-                    quirks = auth.get("quirks", "")
-                    if quirks and quirks not in (seen[key].get("quirks") or ""):
-                        existing_quirks = seen[key].get("quirks") or ""
-                        seen[key]["quirks"] = f"{existing_quirks}; {quirks}" if existing_quirks else quirks
-
-    return {"auth": list(seen.values())}
 
 
 def merge_relations_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -200,15 +169,11 @@ async def merge_attribute_candidates(
             config=RunnableConfig(callbacks=[langfuse_handler]),
         )
 
-        if isinstance(result, ObjectClassSchemaResponse):
+        if isinstance(result, AttributeResponse):
             parsed = result
         else:
             content = getattr(result, "content", None)
-            parsed = (
-                ObjectClassSchemaResponse.model_validate(json.loads(content))
-                if content
-                else ObjectClassSchemaResponse()
-            )
+            parsed = AttributeResponse.model_validate(json.loads(content)) if content else AttributeResponse()
 
         return {name: info.model_dump() for name, info in parsed.attributes.items()}
 

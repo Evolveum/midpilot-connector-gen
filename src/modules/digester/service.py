@@ -350,7 +350,7 @@ async def extract_endpoints(
         job_id: Job ID for progress tracking
         base_api_url: Base API URL for endpoint extraction
     """
-    # Extract specific chunks directly without re-chunking
+
     selected_docs, doc_uuids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
 
     if not selected_docs:

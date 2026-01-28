@@ -31,12 +31,12 @@ from src.modules.digester.router import (
 )
 from src.modules.digester.schema import (
     AttributeInfo,
+    AttributeResponse,
     AuthInfo,
     AuthResponse,
     EndpointInfo,
-    EndpointsResponse,
+    EndpointResponse,
     InfoResponse,
-    ObjectClassSchemaResponse,
     RelationsResponse,
 )
 
@@ -232,7 +232,7 @@ async def test_get_class_attributes_status_found():
 
     assert response.jobId == job_id
     assert response.status == JobStatus.finished
-    assert isinstance(response.result, ObjectClassSchemaResponse)
+    assert isinstance(response.result, AttributeResponse)
     assert "id" in response.result.attributes
     assert response.result.attributes["id"].type == "string"
     mock_repo.session_exists.assert_awaited_once_with(session_id)
@@ -341,7 +341,7 @@ async def test_get_class_endpoints_status_found():
     fake_status = MagicMock(
         jobId=job_id,
         status=JobStatus.finished,
-        result=EndpointsResponse(endpoints=[EndpointInfo(method="GET", path="/users", description="List users")]),
+        result=EndpointResponse(endpoints=[EndpointInfo(method="GET", path="/users", description="List users")]),
     )
 
     with (

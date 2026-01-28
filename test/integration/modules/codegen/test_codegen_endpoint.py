@@ -189,7 +189,7 @@ async def test_generate_relation_code_success():
                 "subjectAttribute": "members",
                 "objectAttribute": "",
                 "shortDescription": "",
-                "name": None,
+                "name": "User to Group",
             }
         ]
     }

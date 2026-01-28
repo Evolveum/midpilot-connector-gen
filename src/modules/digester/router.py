@@ -17,11 +17,11 @@ from ...common.schema import JobCreateResponse, JobStatusMultiDocResponse
 from ...common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
 from . import service
 from .schema import (
+    AttributeResponse,
     AuthResponse,
-    EndpointsResponse,
+    EndpointResponse,
     InfoResponse,
     ObjectClassesResponse,
-    ObjectClassSchemaResponse,
     RelationsResponse,
 )
 from .utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
@@ -377,7 +377,7 @@ async def get_class_attributes_status(
     )
 
     # Get job status but override result with current session data
-    response = await build_typed_job_status_response(jobId, ObjectClassSchemaResponse)
+    response = await build_typed_job_status_response(jobId, AttributeResponse)
 
     # If job is finished, replace result with current session data (which may have been updated)
     if response.status == JobStatus.finished:
@@ -385,7 +385,7 @@ async def get_class_attributes_status(
         if attributes_output:
             try:
                 # Validate and parse the session data
-                response.result = ObjectClassSchemaResponse.model_validate(attributes_output)
+                response.result = AttributeResponse.model_validate(attributes_output)
             except Exception:
                 # If validation fails, keep the original job result
                 pass
@@ -558,7 +558,7 @@ async def get_class_endpoints_status(
         not_found_detail=f"No endpoints job found for {object_class} in session {session_id}",
     )
 
-    return await build_typed_job_status_response(jobId, EndpointsResponse)
+    return await build_typed_job_status_response(jobId, EndpointResponse)
 
 
 @router.put(

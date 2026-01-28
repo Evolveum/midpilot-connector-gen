@@ -40,6 +40,12 @@ Apply to class names:
 4) Object class is evidenced in this chunk (as a $ref target or a schema/definition name) AND object's normalized form is in the relevant list.
 5) Do not infer from endpoints/paths, examples, or mere co-occurrence.
 
+## RELATION NAMING (REQUIRED)
+- ALWAYS provide a meaningful, descriptive name for the `name` field.
+- Use patterns like: "Subject to Object", "Subject has Object", "Subject belongs to Object", etc.
+- Examples: "User to Group", "Account to User", "Employee to Department", "Order to Customer"
+- NEVER leave the name field empty or use generic names.
+
 ## OUTPUT
 Use the structured output schema RelationsResponse. If none qualify (including cases where subject or object is not in the relevant list), return an empty list.
 No prose.
@@ -67,6 +73,7 @@ Task:
 - Normalize class names for subject/object per the system rules.
 - Ensure subject/object correspond to normalized forms of the relevant exact names above.
 - Consider the provided descriptions to better understand the domain context when identifying relationships.
+- IMPORTANT: Always provide meaningful, descriptive names for relations using patterns like "Subject to Object", "Subject has Object", etc.
 - If none qualify, return an empty list.""")
 
 # import textwrap

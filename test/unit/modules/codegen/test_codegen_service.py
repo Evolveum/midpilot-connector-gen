@@ -110,7 +110,7 @@ async def test_generate_relation():
     test_relations_payload = {
         "relations": [
             {
-                "name": None,
+                "name": "Project to Membership",
                 "subject": "project",
                 "object": "membership",
                 "subjectAttribute": "memberships",
@@ -118,7 +118,7 @@ async def test_generate_relation():
                 "shortDescription": "",
             },
             {
-                "name": None,
+                "name": "Membership to Principal",
                 "subject": "membership",
                 "object": "principal",
                 "subjectAttribute": "principal",

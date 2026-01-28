@@ -8,7 +8,7 @@ from uuid import UUID
 
 from ...common.database.config import async_session_maker
 from ...common.database.repositories.session_repository import SessionRepository
-from ..digester.schema import EndpointsResponse, ObjectClassSchemaResponse, RelationsResponse
+from ..digester.schema import AttributeResponse, EndpointResponse, RelationsResponse
 from .core.generate_groovy import generate_groovy
 from .core.operations import (
     CreateGenerator,
@@ -27,15 +27,15 @@ from .utils.map_to_record import attributes_to_records_for_codegen
 
 logger = logging.getLogger(__name__)
 
-AttributesPayload = Union[ObjectClassSchemaResponse, Mapping[str, Any]]
-EndpointsPayload = Union[EndpointsResponse, Mapping[str, Any]]
+AttributesPayload = Union[AttributeResponse, Mapping[str, Any]]
+EndpointsPayload = Union[EndpointResponse, Mapping[str, Any]]
 
 
 def _attrs_map_from_payload(payload: AttributesPayload) -> Dict[str, Dict[str, Any]]:
     """
     Normalize attributes payload (pydantic model or mapping) into a dict[name] -> dict(info).
     """
-    if isinstance(payload, ObjectClassSchemaResponse):
+    if isinstance(payload, AttributeResponse):
         attrs = payload.attributes or {}
         return {k: v.model_dump() for k, v in attrs.items()}
 

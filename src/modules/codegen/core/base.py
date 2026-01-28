@@ -23,13 +23,13 @@ from ....common.jobs import (
 )
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from ...digester.schema import EndpointsResponse, ObjectClassSchemaResponse
+from ...digester.schema import AttributeResponse, EndpointResponse
 from ..utils.postprocess import _coerce_llm_text, strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 
-AttributesPayload = Union[ObjectClassSchemaResponse, Mapping[str, Any]]
-EndpointsPayload = Union[EndpointsResponse, Mapping[str, Any]]
+AttributesPayload = Union[AttributeResponse, Mapping[str, Any]]
+EndpointsPayload = Union[EndpointResponse, Mapping[str, Any]]
 
 
 @dataclass
@@ -343,7 +343,7 @@ class BaseGroovyGenerator(ABC):
 
 def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
     """Convert attributes payload to list of records."""
-    if isinstance(payload, ObjectClassSchemaResponse):
+    if isinstance(payload, AttributeResponse):
         records: List[Dict[str, Any]] = []
         for name, info in (payload.attributes or {}).items():
             item: Dict[str, Any] = {"name": name}
@@ -369,7 +369,7 @@ def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
 
 def endpoints_to_records(payload: EndpointsPayload) -> List[Dict[str, Any]]:
     """Convert endpoints payload to list of records."""
-    if isinstance(payload, EndpointsResponse):
+    if isinstance(payload, EndpointResponse):
         return [cast(Dict[str, Any], ep.model_dump()) for ep in (payload.endpoints or [])]
 
     if isinstance(payload, Mapping):
