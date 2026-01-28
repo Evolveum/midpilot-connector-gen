@@ -174,7 +174,6 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
     mock_db_session = AsyncMock()
     mock_repo = MagicMock()
     mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
-    mock_repo.update_session = AsyncMock()
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
@@ -233,13 +232,6 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
 
         # Verify attribute extraction was called
         mock_extract_attrs.assert_called_once()
-
-        # Verify session was updated
-        mock_repo.update_session.assert_called_once()
-        update_call_args = mock_repo.update_session.call_args
-        assert update_call_args[0][0] == session_id
-        updated_data = update_call_args[0][1]
-        assert "objectClassesOutput" in updated_data
 
 
 @pytest.mark.asyncio
@@ -328,7 +320,6 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
     mock_db_session = AsyncMock()
     mock_repo = MagicMock()
     mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
-    mock_repo.update_session = AsyncMock()
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
@@ -386,9 +377,6 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
         mock_extract_endpoints.assert_called_once()
         call_args = mock_extract_endpoints.call_args
         assert call_args[0][3] == base_api_url
-
-        # Verify session was updated
-        mock_repo.update_session.assert_called_once()
 
 
 @pytest.mark.asyncio

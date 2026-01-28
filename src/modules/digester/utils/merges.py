@@ -13,7 +13,7 @@ from langchain_core.runnables.config import RunnableConfig
 from ....common.enums import JobStage
 from ....common.jobs import update_job_progress
 from ....common.langfuse import langfuse_handler
-from ..schema import ObjectClass, ObjectClassSchemaResponse
+from ..schema import EndpointInfo, ObjectClass, ObjectClassSchemaResponse
 
 logger = logging.getLogger(__name__)
 
@@ -223,3 +223,76 @@ async def merge_attribute_candidates(
             )
             fallback[attr_name] = cast(Dict[str, Any], best["info"])
         return fallback
+
+
+async def merge_endpoint_candidates(
+    extracted_endpoints: List[EndpointInfo], object_class: str, job_id: UUID
+) -> List[Dict[str, Any]]:
+    """
+    Merge and deduplicate endpoint candidates extracted from multiple chunks.
+
+    :param extracted_endpoints: List of endpoints extracted from different chunks
+    :param object_class: Name of the object class for logging
+    :param job_id: Job ID for progress updates
+    :return: List of merged endpoint dictionaries
+    """
+
+    # HTTP method ordering for consistent sorting
+    _METHOD_ORDER: Dict[str, int] = {"GET": 0, "HEAD": 1, "OPTIONS": 2, "POST": 3, "PUT": 4, "PATCH": 5, "DELETE": 6}
+
+    def _normalize_method(method: str) -> str:
+        return (method or "").strip().upper()
+
+    def _endpoint_key(ep: EndpointInfo) -> tuple:
+        return (ep.path.strip(), _normalize_method(ep.method))
+
+    by_key: Dict[tuple, EndpointInfo] = {}
+
+    for ep in extracted_endpoints:
+        if not ep.path or not ep.method:
+            continue
+
+        ep.method = _normalize_method(ep.method)
+        key = _endpoint_key(ep)
+
+        if key not in by_key:
+            by_key[key] = ep
+            continue
+
+        current = by_key[key]
+
+        # Prefer longer, non-empty description
+        if (ep.description or "") and len(ep.description) > len(current.description or ""):
+            current.description = ep.description
+
+        # Prefer non-empty content types
+        if not current.request_content_type and ep.request_content_type:
+            current.request_content_type = ep.request_content_type
+        if not current.response_content_type and ep.response_content_type:
+            current.response_content_type = ep.response_content_type
+
+        # Merge suggested_use (unique, preserve order)
+        if ep.suggested_use:
+            existing = list(current.suggested_use or [])
+            for su in ep.suggested_use:
+                if su not in existing:
+                    existing.append(su)
+            current.suggested_use = existing
+
+    merged = list(by_key.values())
+
+    # Sort by path, then by common HTTP method order
+    merged.sort(key=lambda e: (e.path, _METHOD_ORDER.get(_normalize_method(e.method), 99), e.method))
+
+    # Convert to dicts for JSON serialization
+    merged_dicts = [ep.model_dump(by_alias=True) for ep in merged]
+
+    logger.info("[Digester:Endpoints] Merged %d endpoints for %s", len(merged_dicts), object_class)
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.finished,
+        message="complete",
+    )
+
+    return merged_dicts

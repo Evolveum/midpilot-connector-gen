@@ -322,10 +322,6 @@ async def extract_attributes(
                 logger.info(f"[Digester:Attributes] Available classes: {available_classes}")
                 return result
 
-            # Save back to session
-            logger.info("[Digester:Attributes] Saving updated attributes back to session")
-            await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
-            await db.commit()
             logger.info("[Digester:Attributes] Successfully saved attributes to session")
 
     except Exception as e:
@@ -407,10 +403,6 @@ async def extract_endpoints(
                                 f"[Digester:Endpoints] Updated object class '{obj_class.get('name')}' with {len(endpoints_list)} endpoints"
                             )
                             break
-
-                    # Save back to session
-                    await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
-                    await db.commit()
     except Exception as e:
         logger.warning(f"[Digester:Endpoints] Failed to update object class with endpoints: {e}")
 

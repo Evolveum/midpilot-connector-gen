@@ -27,20 +27,11 @@ from ..prompts.endpoints_prompts import (
     get_endpoints_user_prompt,
 )
 from ..schema import EndpointInfo, EndpointParamInfo, EndpointsResponse
+from ..utils.merges import merge_endpoint_candidates
 from ..utils.metadata_helper import extract_summary_and_tags
 from ..utils.parallel_docs import process_grouped_chunks_in_parallel
 
 logger = logging.getLogger(__name__)
-
-_METHOD_ORDER: Dict[str, int] = {"GET": 0, "HEAD": 1, "OPTIONS": 2, "POST": 3, "PUT": 4, "PATCH": 5, "DELETE": 6}
-
-
-def _normalize_method(method: str) -> str:
-    return (method or "").strip().upper()
-
-
-def _endpoint_key(ep: EndpointInfo) -> Tuple[str, str]:
-    return (ep.path.strip(), _normalize_method(ep.method))
 
 
 async def extract_endpoints(
@@ -76,7 +67,12 @@ async def extract_endpoints(
         chunk_details = [""] * len(chunks)
 
     total_chunks = len(chunks)
-    logger.info("[Digester:Endpoints] Processing %d pre-selected chunks", total_chunks)
+    logger.info(
+        "[Digester:Endpoints] Processing %d pre-selected chunks for %s (docs UUIDs: %s)",
+        len(chunks),
+        object_class,
+        chunk_details,
+    )
 
     # Group chunks by document
     doc_to_chunks: Dict[str, List[str]] = {}
@@ -85,9 +81,9 @@ async def extract_endpoints(
 
     total_documents = len(doc_to_chunks)
     logger.info(
-        "[Digester:Endpoints] Processing chunks from %d documents: %s",
+        "[Digester:Endpoints] Processing chunks from %d documents for %s",
         total_documents,
-        {doc_uuid: len(chunks_list) for doc_uuid, chunks_list in doc_to_chunks.items()},
+        object_class,
     )
 
     # Initialize document-level progress tracking
@@ -145,12 +141,7 @@ async def extract_endpoints(
         async def _process_chunk(chunk_idx: int, chunk: str) -> List[EndpointInfo]:
             one_based = chunk_idx + 1
             try:
-                logger.info(
-                    "[Digester:Endpoints] LLM call chunk %d/%d (doc_uuid: %s)",
-                    one_based,
-                    total_chunks,
-                    doc_uuid,
-                )
+                logger.info("[Digester:Endpoints] LLM call for document %s", doc_uuid)
 
                 # Extract summary and tags from doc metadata
                 summary, tags = extract_summary_and_tags(doc_metadata)
@@ -187,10 +178,8 @@ async def extract_endpoints(
                         doc_relevant_chunks.append({"docUuid": str(doc_uuid)})
 
                 logger.info(
-                    "[Digester:Endpoints] got endpoint %s from chunk %d/%d (doc_uuid: %s)",
+                    "[Digester:Endpoints] got endpoint %s (doc_uuid: %s)",
                     [ep.path for ep in valid_endpoints],
-                    one_based,
-                    total_chunks,
                     doc_uuid,
                 )
 
@@ -220,8 +209,8 @@ async def extract_endpoints(
                 return valid_endpoints
 
             except Exception as e:
-                logger.warning("[Digester:Endpoints] Error processing chunk %d: %s", one_based, str(e))
-                append_job_error(job_id, f"[Digester:Endpoints] Error processing chunk {one_based}: {str(e)}")
+                logger.error("[Digester:Endpoints] Document %s call failed: %s", doc_uuid, e)
+                append_job_error(job_id, f"[Digester:Endpoints] Document {doc_uuid} call failed: {e}")
                 return []
 
         # Process all chunks in this document in parallel
@@ -233,6 +222,7 @@ async def extract_endpoints(
         for endpoints_list in results:
             doc_endpoints.extend(endpoints_list)
 
+        logger.info("[Digester:Endpoints] Extraction completed for document %s", doc_uuid)
         return doc_endpoints, doc_relevant_chunks
 
     # Process all documents in parallel using the generic function
@@ -256,50 +246,10 @@ async def extract_endpoints(
         message=f"Merging, deduplicating and sorting endpoints for {object_class}",
     )
 
-    by_key: Dict[Tuple[str, str], EndpointInfo] = {}
-    for ep in extracted_endpoints:
-        if not ep.path or not ep.method:
-            continue
-
-        ep.method = _normalize_method(ep.method)
-        key = _endpoint_key(ep)
-
-        if key not in by_key:
-            by_key[key] = ep
-            continue
-
-        current = by_key[key]
-        # Prefer longer, non-empty description
-        if (ep.description or "") and len(ep.description) > len(current.description or ""):
-            current.description = ep.description
-
-        # Prefer non-empty content types
-        if not current.request_content_type and ep.request_content_type:
-            current.request_content_type = ep.request_content_type
-        if not current.response_content_type and ep.response_content_type:
-            current.response_content_type = ep.response_content_type
-
-        # Merge suggested_use (unique, preserve order)
-        if ep.suggested_use:
-            existing = list(current.suggested_use or [])
-            for su in ep.suggested_use:
-                if su not in existing:
-                    existing.append(su)
-            current.suggested_use = existing
-
-    merged = list(by_key.values())
-
-    # Sort by path, then by common HTTP method order
-    merged.sort(key=lambda e: (e.path, _METHOD_ORDER.get(_normalize_method(e.method), 99), e.method))
-
-    # Convert EndpointInfo objects to dicts for JSON serialization
-    merged_dicts = [ep.model_dump(by_alias=True) if hasattr(ep, "model_dump") else ep for ep in merged]
+    merged_dicts: List[Dict[str, Any]] = await merge_endpoint_candidates(extracted_endpoints, object_class, job_id)
 
     logger.info("[Digester:Endpoints] Extraction complete. Unique endpoints: %d", len(merged_dicts))
-    await update_job_progress(
-        job_id,
-        stage=JobStage.finished,
-        message="complete",
-    )
+
+    await update_job_progress(job_id, stage=JobStage.schema_ready, message="Endpoint extraction complete")
 
     return {"result": {"endpoints": merged_dicts}, "relevantChunks": relevant_chunk_info}
