@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _job_futures: Dict[UUID, asyncio.Future] = {}
 
 
-def update_job_progress(
+async def update_job_progress(
     job_id: UUID,
     *,
     stage: Optional[Union[str, JobStage]] = None,
@@ -26,33 +26,19 @@ def update_job_progress(
     processing_completed: Optional[int] = None,
 ) -> None:
     """Update progress information for a running job."""
-
-    async def _update() -> None:
-        try:
-            async with async_session_maker() as db:
-                repo = JobRepository(db)
-                await repo.update_job_progress(
-                    job_id,
-                    stage=stage,
-                    message=message,
-                    total_processing=total_processing,
-                    processing_completed=processing_completed,
-                )
-                await db.commit()
-        except Exception as e:
-            logger.debug("Job progress update failed", exc_info=e)
-
     try:
-        asyncio.create_task(_update())
-    except RuntimeError:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(_update())
-            else:
-                loop.run_until_complete(_update())
-        except Exception as ex:
-            logger.debug(f"Job progress update failed - no event loop: {ex}")
+        async with async_session_maker() as db:
+            repo = JobRepository(db)
+            await repo.update_job_progress(
+                job_id,
+                stage=stage,
+                message=message,
+                total_processing=total_processing,
+                processing_completed=processing_completed,
+            )
+            await db.commit()
+    except Exception as e:
+        logger.debug("Job progress update failed", exc_info=e)
 
 
 async def increment_processed_documents(job_id: UUID, delta: int = 1) -> None:
@@ -165,7 +151,7 @@ async def schedule_coroutine_job(
     job_id = await create_job(input_payload, job_type, session_id)
 
     if initial_stage or initial_message:
-        update_job_progress(job_id, stage=initial_stage, message=initial_message)
+        await update_job_progress(job_id, stage=initial_stage, message=initial_message)
 
     future = asyncio.get_event_loop().create_future()
     _job_futures[job_id] = future
@@ -173,7 +159,9 @@ async def schedule_coroutine_job(
     async def _runner() -> None:
         try:
             if await_documentation:
-                update_job_progress(job_id, stage="queue", message="Waiting for documentation processing to complete.")
+                await update_job_progress(
+                    job_id, stage="queue", message="Waiting for documentation processing to complete."
+                )
                 async with async_session_maker() as db:
                     repo_doc = JobRepository(db)
                     not_finished_jobs_ids = await repo_doc.get_not_finished_documentation_jobs_ids(session_id)

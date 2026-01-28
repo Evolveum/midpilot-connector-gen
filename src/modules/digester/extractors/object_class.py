@@ -120,7 +120,7 @@ async def deduplicate_and_sort_object_classes(
     if filter_relevancy:
         # Filters object classes by relevancy using LLM
         try:
-            update_job_progress(
+            await update_job_progress(
                 job_id,
                 stage=JobStage.relevancy_filtering,
                 message="Filtering object classes by relevancy via LLM",
@@ -196,20 +196,20 @@ async def deduplicate_and_sort_object_classes(
 
                 dedup_list = filtered_object_classes
                 logger.info("[Digester:ObjectClasses] Relevancy filtering complete. Final count: %d", len(dedup_list))
-                update_job_progress(
+                await update_job_progress(
                     job_id, stage=JobStage.relevancy_filtering_finished, message="Relevancy filtering finished"
                 )
 
         except Exception as e:
             logger.exception("[Digester:ObjectClasses] Relevancy filtering failed. Error: %s", e)
-            update_job_progress(
+            await update_job_progress(
                 job_id, stage=JobStage.relevancy_filtering_finished, message="Relevancy filtering failed"
             )
             append_job_error(job_id, f"[Digester:ObjectClasses] Relevancy filtering failed: {e}")
 
     # Try to sort by importance using LLM, but fall back to alphabetical if it fails
     try:
-        update_job_progress(
+        await update_job_progress(
             job_id,
             stage=JobStage.sorting,
             message="Processing chunks finished; now sorting by importance",
@@ -262,7 +262,9 @@ async def deduplicate_and_sort_object_classes(
                         sorted_filtered.append(oc)
 
                 logger.info("[Digester:ObjectClasses] Sorting complete. Final count: %d", len(sorted_filtered))
-                update_job_progress(job_id, stage=JobStage.sorting_finished, message="Sorting finished; finalizing")
+                await update_job_progress(
+                    job_id, stage=JobStage.sorting_finished, message="Sorting finished; finalizing"
+                )
                 return ObjectClassesResponse(object_classes=sorted_filtered)
 
             logger.warning("[Digester:ObjectClasses] Sorting LLM returned empty; using alphabetical order.")
@@ -276,5 +278,5 @@ async def deduplicate_and_sort_object_classes(
         append_job_error(job_id, f"[Digester:ObjectClasses] Sorting failed, using alphabetical order: {exc}")
 
     # Fallback to alphabetical order
-    update_job_progress(job_id, stage=JobStage.sorting_finished, message="Using alphabetical order")
+    await update_job_progress(job_id, stage=JobStage.sorting_finished, message="Using alphabetical order")
     return ObjectClassesResponse(object_classes=dedup_list)

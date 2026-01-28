@@ -2,9 +2,20 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Dict, List, Optional
+import json
+import logging
+from collections import defaultdict
+from typing import Any, Callable, Dict, List, Optional, cast
+from uuid import UUID
 
-from ..schema import ObjectClass
+from langchain_core.runnables.config import RunnableConfig
+
+from ....common.enums import JobStage
+from ....common.jobs import update_job_progress
+from ....common.langfuse import langfuse_handler
+from ..schema import ObjectClass, ObjectClassSchemaResponse
+
+logger = logging.getLogger(__name__)
 
 
 def merge_auth_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -135,3 +146,80 @@ def merge_object_classes(
             by_name.pop(key)
 
     return list(by_name.values())
+
+
+async def merge_attribute_candidates(
+    *,
+    object_class: str,
+    per_chunk: List[Dict[str, Dict[str, Any]]],
+    job_id: UUID,
+    build_dedupe_chain: Callable[[], Any],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Merge attribute candidates extracted from multiple chunks and deduplicate via LLM when needed.
+    """
+
+    await update_job_progress(
+        job_id,
+        stage="merging",
+        message=f"Merging and deduplicating attributes for {object_class}",
+    )
+
+    candidates: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+    for partial in per_chunk:
+        if not partial:
+            continue
+        for attr_name, attr_info in partial.items():
+            info_copy = dict(attr_info)
+            info_copy.setdefault("name", attr_name)
+            candidates[attr_name].append({"info": info_copy})
+
+    if not candidates:
+        return {}
+
+    if not any(len(v) > 1 for v in candidates.values()):
+        return {name: infos[0]["info"] for name, infos in candidates.items()}
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.resolving_duplicates,
+        message=f"Resolving duplicate attributes for {object_class}",
+    )
+
+    dedupe_chain = build_dedupe_chain()
+    payload = json.dumps(candidates, ensure_ascii=False)
+
+    try:
+        result = await dedupe_chain.ainvoke(
+            {
+                "object_class": object_class,
+                "candidates_json": payload,
+                "guaranteed_candidates_per_name": True,
+            },
+            config=RunnableConfig(callbacks=[langfuse_handler]),
+        )
+
+        if isinstance(result, ObjectClassSchemaResponse):
+            parsed = result
+        else:
+            content = getattr(result, "content", None)
+            parsed = (
+                ObjectClassSchemaResponse.model_validate(json.loads(content))
+                if content
+                else ObjectClassSchemaResponse()
+            )
+
+        return {name: info.model_dump() for name, info in parsed.attributes.items()}
+
+    except Exception as exc:
+        logger.error("[Digester:Attributes] Dedupe failed: %s", exc)
+        fallback: Dict[str, Dict[str, Any]] = {}
+        object_class_lower = object_class.lower()
+        for attr_name, attr_list in candidates.items():
+            best = max(
+                attr_list,
+                key=lambda c: int(object_class_lower in (c["info"].get("description", "").lower())),
+            )
+            fallback[attr_name] = cast(Dict[str, Any], best["info"])
+        return fallback

@@ -65,5 +65,4 @@ def select_doc_chunks(
         selected_chunks.append(normalize_to_text(item.get("content", "")))
         selected_doc_uuids.append(doc_uuid)
 
-    logger.info("[%s] Selected %d chunks", log_prefix, len(selected_chunks))
     return selected_chunks, selected_doc_uuids

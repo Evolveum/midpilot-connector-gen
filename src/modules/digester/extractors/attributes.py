@@ -5,13 +5,11 @@
 import asyncio
 import json
 import logging
-from collections import defaultdict
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables.config import RunnableConfig
 
 from ....common.enums import JobStage
 from ....common.jobs import (
@@ -27,6 +25,7 @@ from ..prompts.attributes_prompts import (
     get_object_class_schema_user_prompt,
 )
 from ..schema import ObjectClassSchemaResponse
+from ..utils.merges import merge_attribute_candidates
 from ..utils.metadata_helper import extract_summary_and_tags
 from ..utils.parallel_docs import process_grouped_chunks_in_parallel
 
@@ -129,7 +128,7 @@ async def _extract_attributes_for_doc(
     Returns a list aligned with doc_chunks: index -> {attribute_name: info}
     """
     total_chunks = len(doc_chunks)
-    update_job_progress(
+    await update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
         message="Processing chunks and try to extract relevant information",
@@ -152,75 +151,6 @@ async def _extract_attributes_for_doc(
 
     logger.info("[Digester:Attributes] Extraction completed for document %s", doc_id)
     return results
-
-
-async def _merge_attribute_candidates(
-    *,
-    object_class: str,
-    per_chunk: List[Dict[str, Dict[str, Any]]],
-    job_id: UUID,
-) -> Dict[str, Dict[str, Any]]:
-    candidates: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    """
-        TODO
-    """
-
-    for partial in per_chunk:
-        if not partial:
-            continue
-        for attr_name, attr_info in partial.items():
-            info_copy = dict(attr_info)
-            info_copy.setdefault("name", attr_name)
-            candidates[attr_name].append({"info": info_copy})
-
-    if not candidates:
-        return {}
-
-    if not any(len(v) > 1 for v in candidates.values()):
-        return {name: infos[0]["info"] for name, infos in candidates.items()}
-
-    update_job_progress(
-        job_id,
-        stage=JobStage.resolving_duplicates,
-        message=f"Resolving duplicate attributes for {object_class}",
-    )
-
-    dedupe_chain = _build_dedupe_chain()
-    payload = json.dumps(candidates, ensure_ascii=False)
-
-    try:
-        result = await dedupe_chain.ainvoke(
-            {
-                "object_class": object_class,
-                "candidates_json": payload,
-                "guaranteed_candidates_per_name": True,
-            },
-            config=RunnableConfig(callbacks=[langfuse_handler]),
-        )
-
-        if isinstance(result, ObjectClassSchemaResponse):
-            parsed = result
-        else:
-            content = getattr(result, "content", None)
-            parsed = (
-                ObjectClassSchemaResponse.model_validate(json.loads(content))
-                if content
-                else ObjectClassSchemaResponse()
-            )
-
-        return {name: info.model_dump() for name, info in parsed.attributes.items()}
-
-    except Exception as exc:
-        logger.error("[Digester:Attributes] Dedupe failed: %s", exc)
-        fallback: Dict[str, Dict[str, Any]] = {}
-        object_class_lower = object_class.lower()
-        for attr_name, attr_list in candidates.items():
-            best = max(
-                attr_list,
-                key=lambda c: int(object_class_lower in (c["info"].get("description", "").lower())),
-            )
-            fallback[attr_name] = cast(Dict[str, Any], best["info"])
-        return fallback
 
 
 async def extract_attributes(
@@ -252,15 +182,19 @@ async def extract_attributes(
     if chunk_details is None:
         chunk_details = [""] * len(chunks)
 
-    logger.info("[Digester:Attributes] Processing %d pre-selected chunks", len(chunks))
-
+    logger.info(
+        "[Digester:Attributes] Processing %d pre-selected chunks for %s (docs UUIDs: %s)",
+        len(chunks),
+        object_class,
+        chunk_details,
+    )
     doc_to_chunks: Dict[str, List[str]] = {}
     for chunk_text, doc_uuid in zip(chunks, chunk_details, strict=False):
         doc_to_chunks.setdefault(doc_uuid, []).append(chunk_text)
 
     total_documents = len(doc_to_chunks)
 
-    update_job_progress(
+    await update_job_progress(
         job_id,
         total_processing=total_documents,
         processing_completed=0,
@@ -297,18 +231,13 @@ async def extract_attributes(
         all_per_chunk.extend(doc_per_chunk)
         relevant_docs.extend(doc_relevant)
 
-    update_job_progress(
-        job_id,
-        stage="merging",
-        message=f"Merging and deduplicating attributes for {object_class}",
-    )
-
-    merged_attributes = await _merge_attribute_candidates(
+    merged_attributes = await merge_attribute_candidates(
         object_class=object_class,
         per_chunk=all_per_chunk,
         job_id=job_id,
+        build_dedupe_chain=_build_dedupe_chain,
     )
 
-    update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
+    await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
     return {"result": {"attributes": merged_attributes}, "relevantChunks": relevant_docs}

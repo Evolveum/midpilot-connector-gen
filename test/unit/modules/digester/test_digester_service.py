@@ -592,7 +592,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
 @pytest.mark.asyncio
 async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_job_progress):
     """Test extract_info_metadata with no documentation items."""
-    with patch("src.modules.digester.service.update_job_progress"):
+    with patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock):
         result = await service.extract_info_metadata([], uuid4())
 
         assert result["result"] == {}

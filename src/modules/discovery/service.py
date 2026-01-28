@@ -144,7 +144,7 @@ async def _run_discovery_async(app_data: CandidateLinksInput, job_id: UUID) -> C
     system_prompt_eval = get_discovery_eval_sys_prompt()
 
     try:
-        update_job_progress(job_id, stage=JobStage.processing, message="Discovering candidate links")
+        await update_job_progress(job_id, stage=JobStage.processing, message="Discovering candidate links")
     except Exception as exc:
         logger.info("update_job_progress failed (start): %s", exc)
 

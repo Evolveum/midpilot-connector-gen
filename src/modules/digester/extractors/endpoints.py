@@ -91,7 +91,7 @@ async def extract_endpoints(
     )
 
     # Initialize document-level progress tracking
-    update_job_progress(
+    await update_job_progress(
         job_id,
         total_processing=total_documents,
         processing_completed=0,
@@ -129,7 +129,7 @@ async def extract_endpoints(
         doc_uuid: UUID, doc_chunks: List[str]
     ) -> Tuple[List[EndpointInfo], List[Dict[str, Any]]]:
         """Extract endpoints from chunks of a single document."""
-        update_job_progress(
+        await update_job_progress(
             job_id,
             stage=JobStage.processing_chunks,
             message="Processing chunks and try to extract relevant information",
@@ -250,7 +250,7 @@ async def extract_endpoints(
         relevant_chunk_info.extend(doc_relevant_chunks)
 
     # Deduplicate and merge
-    update_job_progress(
+    await update_job_progress(
         job_id,
         stage="merging",
         message=f"Merging, deduplicating and sorting endpoints for {object_class}",
@@ -296,7 +296,7 @@ async def extract_endpoints(
     merged_dicts = [ep.model_dump(by_alias=True) if hasattr(ep, "model_dump") else ep for ep in merged]
 
     logger.info("[Digester:Endpoints] Extraction complete. Unique endpoints: %d", len(merged_dicts))
-    update_job_progress(
+    await update_job_progress(
         job_id,
         stage=JobStage.finished,
         message="complete",

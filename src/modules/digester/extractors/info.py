@@ -40,7 +40,7 @@ async def extract_info_metadata(
     logger.info("Extracting info metadata from pre-chunked document")
 
     # Progress: start processing
-    update_job_progress(
+    await update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
         message="Processing document and extracting info metadata",

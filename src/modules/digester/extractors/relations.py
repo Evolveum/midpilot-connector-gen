@@ -220,7 +220,7 @@ async def extract_relations(
         return RelationsResponse(relations=[]), False
 
     # Progress: start processing
-    update_job_progress(
+    await update_job_progress(
         job_id,
         stage="processing_chunks",
         message="Processing document and extracting relations",

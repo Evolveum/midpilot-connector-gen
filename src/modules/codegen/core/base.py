@@ -182,7 +182,7 @@ class BaseGroovyGenerator(ABC):
             return self.config.default_scaffold
 
         # Step 2: Initialize progress
-        self._initialize_progress(job_id, chunks, docs_included)
+        await self._initialize_progress(job_id, chunks, docs_included)
 
         # Step 3: Prepare input data and LLM chain
         input_data = self.prepare_input_data(**operation_specific_kwargs)
@@ -237,7 +237,7 @@ class BaseGroovyGenerator(ABC):
             logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
             return chunks, provenance, {}, []
 
-    def _initialize_progress(
+    async def _initialize_progress(
         self,
         job_id: UUID,
         chunks: List[str],
@@ -250,7 +250,7 @@ class BaseGroovyGenerator(ABC):
         # Use document count if available, otherwise use chunk count as fallback
         total_count = len(docs_included) if docs_included else total_chunks
 
-        update_job_progress(
+        await update_job_progress(
             job_id,
             stage=JobStage.processing_chunks,
             total_processing=total_count,
