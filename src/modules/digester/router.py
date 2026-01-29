@@ -51,8 +51,6 @@ async def extract_object_classes(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    doc_items = await get_session_documentation(session_id, db=db)
-
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
         input_payload={},
@@ -75,10 +73,7 @@ async def extract_object_classes(
         session_id,
         {
             "objectClassesJobId": str(job_id),
-            "objectClassesInput": {
-                "documentationItemsCount": len(doc_items),
-                # "totalLength": total_length,
-            },
+            "objectClassesInput": {},
         },
     )
 
@@ -340,7 +335,6 @@ async def extract_class_attributes(
             f"{object_class}AttributesJobId": str(job_id),
             f"{object_class}AttributesInput": {
                 "objectClass": object_class,
-                "documentationItemsCount": len(doc_items),
                 "relevantChunksCount": total_chunks,
             },
         },
@@ -522,7 +516,6 @@ async def extract_class_endpoints(
             f"{object_class}EndpointsJobId": str(job_id),
             f"{object_class}EndpointsInput": {
                 "objectClass": object_class,
-                "documentationItemsCount": len(doc_items),
                 "relevantChunksCount": total_chunks,
                 "baseApiUrl": base_api_url,
             },
@@ -607,7 +600,6 @@ async def extract_relations(session_id: UUID = Path(..., description="Session ID
         doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    total_length = sum(len(item["content"]) for item in doc_items)
 
     # Load object_classes from session
     relevant = await repo.get_session_data(session_id, "objectClassesOutput")
@@ -634,8 +626,6 @@ async def extract_relations(session_id: UUID = Path(..., description="Session ID
             "relationsJobId": str(job_id),
             "relationsInput": {
                 "relevantObjectClasses": relevant,
-                "documentationItemsCount": len(doc_items),
-                "totalLength": total_length,
             },
         },
     )

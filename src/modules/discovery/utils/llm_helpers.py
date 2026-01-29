@@ -76,7 +76,7 @@ def generate_query_via_llm(
 
 
 def generate_query_via_preset(
-    app: str, ver: str, *, template: str = "{app} API documentation {ver}"
+    app: str, ver: str, *, template: str = "{app} API/SCIM documentation {ver}"
 ) -> Tuple[str, str]:
     """
     Produce a deterministic query from a string preset.

@@ -2,8 +2,6 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Tuple, cast
@@ -40,16 +38,16 @@ def query_and_search_candidate(
     user_prompt: str,
     system_prompt: str,
     app: str,
-    ver: str,
+    version: str,
 ) -> Tuple[List[SearchResult], Any, PySearchPrompt]:
     """
     Generate query via LLM, search, and return normalized results.
     """
-    logger.info("Running discovery for application='%s' version='%s'", app, ver)
+    logger.info("Running discovery for application='%s' version='%s'", app, version)
 
     query, response, _ = generate_query_via_llm(model, parser_model, user_prompt, system_prompt)
     # The LLM produced query might include placeholders; patch if present.
-    query = query.format(app=app, ver=ver)
+    query = query.format(app=app, version=version)
 
     logger.info("Running web search with prompt: %s", query)
     search_output = search_web(query)
@@ -59,13 +57,13 @@ def query_and_search_candidate(
     return search_output, response, search_prompt
 
 
-def query_and_search_candidate_preset(app: str, ver: str) -> Tuple[List[SearchResult], str, PySearchPrompt]:
+def query_and_search_candidate_preset(app: str, version: str) -> Tuple[List[SearchResult], str, PySearchPrompt]:
     """
     Generate query via deterministic preset, search, and return normalized results.
     """
-    logger.info("Running discovery (preset) for application='%s' version='%s'", app, ver)
+    logger.info("Running discovery (preset) for application='%s' version='%s'", app, version)
 
-    query, preset_used = generate_query_via_preset(app, ver)
+    query, preset_used = generate_query_via_preset(app, version)
     logger.info("Running web search with preset prompt: %s", query)
     search_output = search_web(query)
 
@@ -82,7 +80,7 @@ def fetch_candidate_links_simplified(
     system_prompt: str,
     system_prompt_eval: str,
     app: str,
-    ver: str,
+    version: str,
     pydantic_class_template: type[PyScrapeFetchReferences],
     llm_generated_search_query: bool,
 ) -> Tuple[Any, PySearchPrompt, List[Dict[str, Any]], Any, Optional[PyScrapeFetchReferences]]:
@@ -97,17 +95,17 @@ def fetch_candidate_links_simplified(
             user_prompt=user_prompt,
             system_prompt=system_prompt,
             app=app,
-            ver=ver,
+            version=version,
         )
     else:
-        search_output, response, parsed_response = query_and_search_candidate_preset(app, ver)
+        search_output, response, parsed_response = query_and_search_candidate_preset(app, version)
 
     search_output_raw = [item.model_dump() for item in search_output]
 
     # Evaluate the tool output
     eval_prompt_template = make_eval_prompt(system_prompt_eval)
     chain = eval_prompt_template | eval_model
-    eval_input = user_prompt_eval.format(app, ver)
+    eval_input = user_prompt_eval.format(app, version)
     eval_output: Any = chain.invoke(
         {"tool_output_raw": str(search_output_raw), "input": eval_input},
         config=RunnableConfig(callbacks=[langfuse_handler]),
@@ -160,7 +158,7 @@ async def _run_discovery_async(app_data: CandidateLinksInput, job_id: UUID) -> C
             system_prompt=system_prompt_fetch,
             system_prompt_eval=system_prompt_eval,
             app=app_data.application_name,
-            ver=app_version,
+            version=app_version,
             pydantic_class_template=PyScrapeFetchReferences,
             llm_generated_search_query=app_data.llm_generated_search_query,
         )

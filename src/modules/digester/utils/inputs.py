@@ -26,12 +26,8 @@ async def object_classes_input(db: AsyncSession, session_id: UUID) -> Dict[str, 
     """
     # Apply static category filter to documentation items
     doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
-    total_length = sum(len(item["content"]) for item in doc_items)
     return {
-        "sessionInput": {
-            "documentationItemsCount": len(doc_items),
-            "totalLength": total_length,
-        },
+        "sessionInput": {},
         "jobInput": {
             "documentationItems": doc_items,
         },
@@ -54,12 +50,8 @@ async def auth_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
     """
     # Apply static category filter to documentation items
     doc_items = await filter_documentation_items(AUTH_CRITERIA, session_id, db=db)
-    total_length = sum(len(item["content"]) for item in doc_items)
     return {
-        "sessionInput": {
-            "documentationItemsCount": len(doc_items),
-            "totalLength": total_length,
-        },
+        "sessionInput": {},
         "jobInput": {
             "documentationItems": doc_items,
         },
@@ -81,12 +73,8 @@ async def metadata_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
             'jobInput' key with metadata for input in job field
     """
     doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
-    total_length = sum(len(item["content"]) for item in doc_items)
     return {
-        "sessionInput": {
-            "documentationItemsCount": len(doc_items),
-            "totalLength": total_length,
-        },
+        "sessionInput": {},
         "jobInput": {
             "documentationItems": doc_items,
         },
