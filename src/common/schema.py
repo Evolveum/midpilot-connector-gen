@@ -45,11 +45,6 @@ class BaseProgress(BaseModel):
     message: Optional[str] = Field(default=None, description="Human-friendly note about current work")
 
 
-class ChunkProgress(BaseProgress):
-    processedChunks: Optional[int] = Field(default=None, description="Number of processed chunks")
-    totalChunks: Optional[int] = Field(default=None, description="Total number of chunks")
-
-
 class IterationProgress(BaseProgress):
     completedIterations: Optional[int] = Field(default=None, description="Current iteration")
     totalIterations: Optional[int] = Field(default=None, description="Maximum iterations configured")
