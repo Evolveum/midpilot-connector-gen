@@ -9,14 +9,14 @@ Helpers that select prompts and docs based on API protocol.
 from dataclasses import dataclass
 from typing import Mapping
 
-from ..prompts.rest.createPrompts import get_create_system_prompt, get_create_user_prompt
-from ..prompts.rest.deletePrompts import get_delete_system_prompt, get_delete_user_prompt
-from ..prompts.rest.searchPrompts import get_search_system_prompt, get_search_user_prompt
-from ..prompts.rest.updatePrompts import get_update_system_prompt, get_update_user_prompt
-from ..prompts.scim.scimCreatePrompts import get_scim_create_system_prompt, get_scim_create_user_prompt
-from ..prompts.scim.scimDeletePrompts import get_scim_delete_system_prompt, get_scim_delete_user_prompt
-from ..prompts.scim.scimSearchPrompts import get_scim_search_system_prompt, get_scim_search_user_prompt
-from ..prompts.scim.scimUpdatePrompts import get_scim_update_system_prompt, get_scim_update_user_prompt
+from ..prompts.rest.create_prompts import get_create_system_prompt, get_create_user_prompt
+from ..prompts.rest.delete_prompts import get_delete_system_prompt, get_delete_user_prompt
+from ..prompts.rest.search_prompts import get_search_system_prompt, get_search_user_prompt
+from ..prompts.rest.update_prompts import get_update_system_prompt, get_update_user_prompt
+from ..prompts.scim.scim_create_prompts import get_scim_create_system_prompt, get_scim_create_user_prompt
+from ..prompts.scim.scim_delete_prompts import get_scim_delete_system_prompt, get_scim_delete_user_prompt
+from ..prompts.scim.scim_search_prompts import get_scim_search_system_prompt, get_scim_search_user_prompt
+from ..prompts.scim.scim_update_prompts import get_scim_update_system_prompt, get_scim_update_user_prompt
 from .protocol import ApiProtocol
 
 

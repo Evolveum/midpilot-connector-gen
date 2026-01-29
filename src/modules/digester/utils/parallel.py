@@ -61,7 +61,7 @@ async def run_extraction_parallel(
     text = normalize_to_text(schema)
 
     # Progress: start processing
-    update_job_progress(
+    await update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
         message="Processing document and extracting relevant information",

@@ -47,48 +47,6 @@ SCIM defines standard search/filter patterns:
 {search_docs}
 </search_docs>
 
-<output_format>
-objectClass("{object_class}") {{
-    search {{
-
-        endpoint("/Users") {{
-            objectExtractor {{
-                return response.body().get("Resources")
-            }}
-            pagingSupport {{
-                request.queryParameter("startIndex", paging.pageOffset + 1) // SCIM uses 1-based indexing
-                       .queryParameter("count", paging.pageSize)
-
-                paging.setCookie(response.body().get("totalResults"))
-            }}
-            emptyFilterSupported true
-
-            // SCIM filter: userName eq "value"
-            supportedFilter(attribute("userName").eq().anySingleValue()) {{
-                request.queryParameter("filter", "userName eq \\"" + value + "\\"")
-            }}
-
-            // SCIM filter: emails co "value"
-            supportedFilter(attribute("emails").contains().anySingleValue()) {{
-                request.queryParameter("filter", "emails co \\"" + value + "\\"")
-            }}
-
-            // SCIM filter: active eq true/false
-            supportedFilter(attribute("active").eq().anySingleValue()) {{
-                request.queryParameter("filter", "active eq " + value)
-            }}
-        }}
-
-        endpoint("/Users/{{id}}") {{
-            singleResult()
-            supportedFilter(attribute("id").eq().anySingleValue()) {{
-                request.pathParameter("id", value)
-            }}
-        }}
-    }}
-}}
-</output_format>
-
 Output rules:
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
 - SCIM uses 1-based pagination with `startIndex` and `count` parameters.

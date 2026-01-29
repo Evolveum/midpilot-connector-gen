@@ -4,7 +4,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -52,12 +52,12 @@ def mock_search_web():
 @pytest.fixture
 def mock_digester_update_job_progress():
     """Mock job progress update for digester module."""
-    with patch("src.modules.digester.service.update_job_progress") as mock:
+    with patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock) as mock:
         yield mock
 
 
 @pytest.fixture
 def mock_discovery_update_job_progress():
     """Mock job progress update for discovery module."""
-    with patch("src.modules.discovery.service.update_job_progress") as mock:
+    with patch("src.modules.discovery.service.update_job_progress", new_callable=AsyncMock) as mock:
         yield mock

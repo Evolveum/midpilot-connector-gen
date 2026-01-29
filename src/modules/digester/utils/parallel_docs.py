@@ -38,7 +38,7 @@ async def process_documents_in_parallel(
         List of tuples containing (result, has_relevant_data, doc_uuid) for each processed document
     """
     total_docs = len(doc_items)
-    update_job_progress(job_id, total_processing=total_docs, message="Processing documents")
+    await update_job_progress(job_id, total_processing=total_docs, message="Processing documents")
 
     async def _process_single_doc(doc_item: dict) -> Tuple[T, bool, UUID]:
         """Process a single document and return its results."""
@@ -80,7 +80,7 @@ async def process_grouped_chunks_in_parallel(
     Returns:
         List of tuples containing (result, relevant_chunks) for each processed document
     """
-    update_job_progress(
+    await update_job_progress(
         job_id,
         total_processing=total_documents,
         processing_completed=0,

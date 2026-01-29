@@ -18,39 +18,6 @@ You are an expert in creating connectors (connID and midPoint). Your goal is to 
 {search_docs}
 </search_docs>
 
-<output_format>
-objectClass("{object_class}") {{
-    search {{
-
-        endpoint("/users/search") {{
-            objectExtractor {{
-                return response.body().get("data")
-            }}
-            pagingSupport {{
-                request.queryParameter("limit", paging.pageSize)
-                       .queryParameter("page", paging.pageOffset)
-            }}
-            emptyFilterSupported true
-
-            supportedFilter(attribute("id").eq().anySingleValue()) {{
-                request.queryParameter("uid", value)
-            }}
-
-            supportedFilter(attribute("login").contains().anySingleValue()) {{
-                request.queryParameter("q", value)
-            }}
-        }}
-
-        endpoint("/users/{{username}}") {{
-            singleResult()
-            supportedFilter(attribute("login").eq().anySingleValue()) {{
-                request.pathParameter("username", value)
-            }}
-        }}
-    }}
-}}
-</output_format>
-
 Output rules:
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
 - Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the example in <output_format>.

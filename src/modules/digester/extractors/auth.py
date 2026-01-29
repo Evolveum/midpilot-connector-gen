@@ -15,8 +15,8 @@ from ....common.enums import JobStage
 from ....common.jobs import append_job_error, update_job_progress
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.authPrompts import get_auth_system_prompt, get_auth_user_prompt
-from ..prompts.sortingOutputPrompts import sort_auth_system_prompt, sort_auth_user_prompt
+from ..prompts.auth_prompts import get_auth_system_prompt, get_auth_user_prompt
+from ..prompts.sorting_output_prompts import sort_auth_system_prompt, sort_auth_user_prompt
 from ..schema import AuthInfo, AuthResponse
 from ..utils.parallel import run_extraction_parallel
 
@@ -142,7 +142,7 @@ async def deduplicate_and_sort_auth(
     logger.info("[Digester:Auth] Deduplication complete. Unique count: %d", len(dedup_list))
 
     # Progress: chunks processed finished, moving to sorting
-    update_job_progress(
+    await update_job_progress(
         job_id,
         stage=JobStage.sorting,
         message="Processing chunks finished; now sorting by importance",
@@ -167,7 +167,7 @@ async def deduplicate_and_sort_auth(
             await chain.ainvoke({"items_json": items_json}, config=RunnableConfig(callbacks=[langfuse_handler])),
         )
 
-        update_job_progress(job_id, stage=JobStage.sorting, message="Sorting results by importance")
+        await update_job_progress(job_id, stage=JobStage.sorting, message="Sorting results by importance")
 
         if sort_result and sort_result.auth:
             original_map: Dict[Tuple[str, str], AuthInfo] = {
@@ -185,18 +185,18 @@ async def deduplicate_and_sort_auth(
                 if key not in used:
                     out.append(auth)
             logger.info("[Digester:Auth] Sorting complete. Final count: %d", len(out))
-            update_job_progress(job_id, stage=JobStage.sorting_finished, message="Sorting finished; finalizing")
+            await update_job_progress(job_id, stage=JobStage.sorting_finished, message="Sorting finished; finalizing")
 
             return AuthResponse(auth=out)
 
         logger.warning("[Digester:Auth]  Sorting LLM returned empty; keeping original order.")
-        update_job_progress(job_id, stage="sorting_finished", message="Sorting skipped/empty; finalizing")
+        await update_job_progress(job_id, stage="sorting_finished", message="Sorting skipped/empty; finalizing")
 
         return AuthResponse(auth=dedup_list)
 
     except Exception as e:
         logger.error("[Digester:Auth] Sorting pass failed. Error: %s", e)
-        update_job_progress(job_id, stage=JobStage.sorting_failed, message=f"Sorting failed: {e}")
+        await update_job_progress(job_id, stage=JobStage.sorting_failed, message=f"Sorting failed: {e}")
         append_job_error(job_id, f"[Digester:Auth] Sorting failed: {e}")
 
         return AuthResponse(auth=dedup_list)

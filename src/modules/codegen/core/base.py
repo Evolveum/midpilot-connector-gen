@@ -23,13 +23,13 @@ from ....common.jobs import (
 )
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from ...digester.schema import EndpointsResponse, ObjectClassSchemaResponse
+from ...digester.schema import AttributeResponse, EndpointResponse
 from ..utils.postprocess import _coerce_llm_text, strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 
-AttributesPayload = Union[ObjectClassSchemaResponse, Mapping[str, Any]]
-EndpointsPayload = Union[EndpointsResponse, Mapping[str, Any]]
+AttributesPayload = Union[AttributeResponse, Mapping[str, Any]]
+EndpointsPayload = Union[EndpointResponse, Mapping[str, Any]]
 
 
 @dataclass
@@ -182,7 +182,7 @@ class BaseGroovyGenerator(ABC):
             return self.config.default_scaffold
 
         # Step 2: Initialize progress
-        self._initialize_progress(job_id, chunks, docs_included)
+        await self._initialize_progress(job_id, chunks, docs_included)
 
         # Step 3: Prepare input data and LLM chain
         input_data = self.prepare_input_data(**operation_specific_kwargs)
@@ -237,7 +237,7 @@ class BaseGroovyGenerator(ABC):
             logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
             return chunks, provenance, {}, []
 
-    def _initialize_progress(
+    async def _initialize_progress(
         self,
         job_id: UUID,
         chunks: List[str],
@@ -250,7 +250,7 @@ class BaseGroovyGenerator(ABC):
         # Use document count if available, otherwise use chunk count as fallback
         total_count = len(docs_included) if docs_included else total_chunks
 
-        update_job_progress(
+        await update_job_progress(
             job_id,
             stage=JobStage.processing_chunks,
             total_processing=total_count,
@@ -343,7 +343,7 @@ class BaseGroovyGenerator(ABC):
 
 def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
     """Convert attributes payload to list of records."""
-    if isinstance(payload, ObjectClassSchemaResponse):
+    if isinstance(payload, AttributeResponse):
         records: List[Dict[str, Any]] = []
         for name, info in (payload.attributes or {}).items():
             item: Dict[str, Any] = {"name": name}
@@ -369,7 +369,7 @@ def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
 
 def endpoints_to_records(payload: EndpointsPayload) -> List[Dict[str, Any]]:
     """Convert endpoints payload to list of records."""
-    if isinstance(payload, EndpointsResponse):
+    if isinstance(payload, EndpointResponse):
         return [cast(Dict[str, Any], ep.model_dump()) for ep in (payload.endpoints or [])]
 
     if isinstance(payload, Mapping):

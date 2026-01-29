@@ -44,7 +44,7 @@ async def generate_groovy(
         vars_payload.update(extra_prompt_vars)
 
     try:
-        update_job_progress(job_id, stage=JobStage.generating, message=f"Generating {logger_prefix or 'code'}")
+        await update_job_progress(job_id, stage=JobStage.generating, message=f"Generating {logger_prefix or 'code'}")
         logger.info("[Codegen:%s] Generating Groovy for %s", logger_prefix, object_class)
         resp = await chain.ainvoke(vars_payload, config=RunnableConfig(callbacks=[langfuse_handler]))
         text = _coerce_llm_text(resp).strip()

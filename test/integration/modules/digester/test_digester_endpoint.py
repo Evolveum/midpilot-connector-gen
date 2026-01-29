@@ -31,12 +31,12 @@ from src.modules.digester.router import (
 )
 from src.modules.digester.schema import (
     AttributeInfo,
+    AttributeResponse,
     AuthInfo,
     AuthResponse,
     EndpointInfo,
-    EndpointsResponse,
+    EndpointResponse,
     InfoResponse,
-    ObjectClassSchemaResponse,
     RelationsResponse,
 )
 
@@ -57,11 +57,7 @@ async def test_extract_object_classes_success():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch(
-            "src.modules.digester.router.filter_documentation_items",
-            new_callable=AsyncMock,
-            return_value=fake_docs,
-        ),
+        patch("src.modules.digester.router.get_session_documentation", new_callable=AsyncMock, return_value=fake_docs),
         patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
@@ -127,7 +123,7 @@ async def test_get_object_classes_status_found():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.get_job_status", new_callable=AsyncMock, return_value=mock_status),
+        patch("src.modules.digester.utils.status.get_job_status", new_callable=AsyncMock, return_value=mock_status),
     ):
         session_id = uuid4()
         response = await get_object_classes_status(session_id, db=MagicMock())
@@ -221,7 +217,7 @@ async def test_get_class_attributes_status_found():
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router._build_typed_job_status_response",
+            "src.modules.digester.router.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=MagicMock(jobId=job_id, status=JobStatus.finished, result=None),
         ) as mock_status_builder,
@@ -236,7 +232,7 @@ async def test_get_class_attributes_status_found():
 
     assert response.jobId == job_id
     assert response.status == JobStatus.finished
-    assert isinstance(response.result, ObjectClassSchemaResponse)
+    assert isinstance(response.result, AttributeResponse)
     assert "id" in response.result.attributes
     assert response.result.attributes["id"].type == "string"
     mock_repo.session_exists.assert_awaited_once_with(session_id)
@@ -345,13 +341,13 @@ async def test_get_class_endpoints_status_found():
     fake_status = MagicMock(
         jobId=job_id,
         status=JobStatus.finished,
-        result=EndpointsResponse(endpoints=[EndpointInfo(method="GET", path="/users", description="List users")]),
+        result=EndpointResponse(endpoints=[EndpointInfo(method="GET", path="/users", description="List users")]),
     )
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router._build_typed_job_status_response",
+            "src.modules.digester.router.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
@@ -474,7 +470,7 @@ async def test_get_relations_status_found():
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router._build_typed_job_status_response",
+            "src.modules.digester.router.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
@@ -570,7 +566,7 @@ async def test_get_auth_status_found():
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router._build_typed_job_status_response",
+            "src.modules.digester.router.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
@@ -637,7 +633,7 @@ async def test_get_metadata_status_found():
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router._build_typed_job_status_response",
+            "src.modules.digester.router.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
