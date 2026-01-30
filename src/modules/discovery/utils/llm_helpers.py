@@ -51,7 +51,7 @@ def generate_query_via_llm(
     user_prompt: str,
     system_prompt: str,
     *,
-    fallback_template: str = "{app} API documentation {ver}",
+    fallback_template: str = "{app} API documentation {version}",
 ) -> Tuple[str, Any, PySearchPrompt]:
     """
     Ask the LLM to produce a query string and post-parse it into PySearchPrompt.
@@ -76,12 +76,12 @@ def generate_query_via_llm(
 
 
 def generate_query_via_preset(
-    app: str, ver: str, *, template: str = "{app} API/SCIM documentation {ver}"
+    app: str, version: str, *, template: str = "{app} API/SCIM documentation for version {version}"
 ) -> Tuple[str, str]:
     """
     Produce a deterministic query from a string preset.
     Returns (query_string, preset_used).
     """
     preset = template
-    query = preset.format(app=app, ver=ver)
+    query = preset.format(app=app, ver=version)
     return query, preset
