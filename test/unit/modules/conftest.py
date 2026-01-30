@@ -33,7 +33,7 @@ def mock_llm():
 @pytest.fixture
 def mock_llm_eval():
     """Mock LLM for evaluation."""
-    with patch("src.common.llm.get_default_llm_small2") as mock_llm:
+    with patch("src.common.llm.get_default_llm") as mock_llm:
         mock_llm.return_value = MagicMock(spec=ChatOpenAI)
         yield mock_llm
 

@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage
 import src.modules.discovery.core.search as search
 import src.modules.discovery.utils.llm_helpers as llm_helpers
 from src.modules.discovery import service
-from src.modules.discovery.schema import CandidateLinksInput, PyScrapeFetchReferences, PySearchPrompt
+from src.modules.discovery.schema import CandidateLinksInput, PyScrapeFetchReferences, PySearchPrompts
 
 
 def test_search_with_ddgs():
@@ -80,19 +80,21 @@ def test_fetch_parser_response():
 
 
 def test_generate_query_via_llm(mock_llm, mock_llm_eval):
-    """Test generating a search query via LLM."""
+    """Test generating multiple search queries via LLM."""
     mock_llm.return_value.invoke.return_value = AIMessage(
-        content=json.dumps({"searchPrompt": "test search query", "searchReasoning": "test reasoning"})
+        content=json.dumps({"searchPrompts": ["test search query 1", "test search query 2", "test search query 3"]})
     )
 
-    query, _, _ = llm_helpers.generate_query_via_llm(
+    queries, _, parsed = llm_helpers.generate_queries_via_llm(
         model=mock_llm.return_value,
         parser_model=mock_llm_eval.return_value,
         user_prompt="test user prompt",
         system_prompt="test system prompt",
+        num_queries=3,
     )
 
-    assert query == "test search query"
+    assert len(queries) == 3
+    assert "test search query 1" in queries
     mock_llm.return_value.invoke.assert_called_once()
 
 
@@ -106,18 +108,18 @@ async def test_fetch_candidate_links(mock_llm, mock_llm_eval, mock_search_web, m
     )
 
     with (
-        patch("src.modules.discovery.service.get_default_llm_small1") as mock_llm_small1,
-        patch("src.modules.discovery.service.get_default_llm_small2") as mock_llm_small2,
+        patch("src.modules.discovery.service.get_default_llm") as mock_llm_default,
         patch("src.modules.discovery.utils.llm_helpers.OutputFixingParser") as mock_ofp,
         patch("src.modules.discovery.utils.llm_helpers.PydanticOutputParser"),
     ):
         # Mock the LLMs that get called inside _run_discovery_blocking
-        mock_llm_small1.return_value = mock_llm.return_value
-        mock_llm_small2.return_value = mock_llm_eval.return_value
+        mock_llm_default.return_value = mock_llm.return_value
 
         # First parser: for _generate_query_via_llm -> returns PySearchPrompt
         meta_prompt = MagicMock()
-        meta_prompt.parse.return_value = PySearchPrompt(search_prompt="test search query")
+        meta_prompt.parse.return_value = PySearchPrompts(
+            search_prompts=["test search query 1", "test search query 2", "test search query 3"]
+        )
 
         # Second parser: for fetch_parser_response -> returns PyScrapeFetchReferences
         meta_refs = MagicMock()

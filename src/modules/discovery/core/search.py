@@ -15,8 +15,8 @@ from ..schema import SearchResult
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MAX_RESULTS = 10
-_HTTP_TIMEOUT_SECS = 15
+DEFAULT_MAX_RESULTS = 10
+HTTP_TIMEOUT_SECS = 15
 
 
 def normalize_result(*, title: str | None, href: str | None, body: str | None, source: str) -> SearchResult:
@@ -28,7 +28,7 @@ def normalize_result(*, title: str | None, href: str | None, body: str | None, s
     )
 
 
-def search_with_ddgs(query: str, *, max_results: int = _DEFAULT_MAX_RESULTS) -> List[SearchResult]:
+def search_with_ddgs(query: str, *, max_results: int = DEFAULT_MAX_RESULTS) -> List[SearchResult]:
     """Search via ddgs (DuckDuckGo) helper."""
     logger.info("Web search method: ddgs package")
     try:
@@ -55,7 +55,7 @@ def search_with_ddgs(query: str, *, max_results: int = _DEFAULT_MAX_RESULTS) -> 
         return []
 
 
-def search_with_brave(query: str, *, max_results: int = _DEFAULT_MAX_RESULTS) -> List[SearchResult]:
+def search_with_brave(query: str, *, max_results: int = DEFAULT_MAX_RESULTS) -> List[SearchResult]:
     """Search via Brave Search API."""
     logger.info("Web search method: Brave API")
     endpoint = config.brave.endpoint
@@ -78,7 +78,7 @@ def search_with_brave(query: str, *, max_results: int = _DEFAULT_MAX_RESULTS) ->
 
     try:
         with requests.Session() as session:
-            resp = session.get(endpoint, headers=headers, params=params, timeout=_HTTP_TIMEOUT_SECS)
+            resp = session.get(endpoint, headers=headers, params=params, timeout=HTTP_TIMEOUT_SECS)
             resp.raise_for_status()
             data = resp.json()
     except requests.RequestException:
@@ -103,7 +103,7 @@ def search_with_brave(query: str, *, max_results: int = _DEFAULT_MAX_RESULTS) ->
     return results
 
 
-def search_web(query: str, *, max_results: int = _DEFAULT_MAX_RESULTS) -> List[SearchResult]:
+def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS) -> List[SearchResult]:
     """
     Query web using configured backend and return normalized results.
     """

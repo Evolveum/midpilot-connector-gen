@@ -59,54 +59,6 @@ class LLMSettings(BaseModel):
     request_timeout: int = 120
 
 
-class LLMSmall1Settings(BaseModel):
-    """
-    Configuration for the LLM client.
-
-    :param openai_api_key: API key for OpenAI-compatible services.
-    :param openai_api_base: Base URL for the API endpoint.
-    :param model_name: Default model identifier to use.
-    :param request_timeout: Timeout for API requests in seconds.
-    """
-
-    openai_api_key: str = ""
-    openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-20b"
-    request_timeout: int = 120
-
-
-class LLMSmall2Settings(BaseModel):
-    """
-    Configuration for the LLM client.
-
-    :param openai_api_key: API key for OpenAI-compatible services.
-    :param openai_api_base: Base URL for the API endpoint.
-    :param model_name: Default model identifier to use.
-    :param request_timeout: Timeout for API requests in seconds.
-    """
-
-    openai_api_key: str = ""
-    openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-20b"
-    request_timeout: int = 120
-
-
-# We dont use embedding model
-# class EmbeddingsSettings(BaseModel):
-#     """
-#     Configuration for the Embeddings client.
-#
-#     :param openai_api_key: API key for OpenAI-compatible services.
-#     :param openai_api_base: Base URL for the API endpoint.
-#     :param model_name: Default model identifier to use.
-#     :param request_timeout: Timeout for API requests in seconds.
-#     """
-#
-#     openai_api_key: str = ""
-#     openai_api_base: str = "http://localhost:11434"
-#     model_name: str = "nomic-ai/nomic-embed-text-v1.5"
-
-
 class LangfuseSettings(BaseModel):
     """
     Configuration for the Langfuse client.
@@ -313,8 +265,6 @@ class Settings(BaseSettings):
     app: AppSettings = AppSettings()
     logging: LoggingSettings = LoggingSettings()
     llm: LLMSettings = LLMSettings()
-    llm_small1: LLMSmall1Settings = LLMSmall1Settings()
-    llm_small2: LLMSmall2Settings = LLMSmall2Settings()
     # embeddings: EmbeddingsSettings = EmbeddingsSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
     search: SearchSettings = SearchSettings()
