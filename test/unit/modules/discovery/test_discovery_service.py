@@ -108,7 +108,7 @@ async def test_fetch_candidate_links(mock_llm, mock_llm_eval, mock_search_web, m
     )
 
     with (
-        patch("src.modules.discovery.service.get_default_llm") as mock_llm_default,
+        patch("src.modules.discovery.utils.discovery_helpers.get_default_llm") as mock_llm_default,
         patch("src.modules.discovery.utils.llm_helpers.OutputFixingParser") as mock_ofp,
         patch("src.modules.discovery.utils.llm_helpers.PydanticOutputParser"),
     ):

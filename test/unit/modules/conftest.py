@@ -41,7 +41,7 @@ def mock_llm_eval():
 @pytest.fixture
 def mock_search_web():
     """Mock the web search functionality for discovery tests."""
-    with patch("src.modules.discovery.service.search_web") as mock:
+    with patch("src.modules.discovery.utils.discovery_helpers.search_web") as mock:
         mock.return_value = [
             SearchResult(title="Test Title 1", href="https://example.com/1", body="Test body 1", source="test"),
             SearchResult(title="Test Title 2", href="https://example.com/2", body="Test body 2", source="test"),

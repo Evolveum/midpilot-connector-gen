@@ -2,11 +2,19 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class IrrelevantLinks(BaseModel):
+    """
+    Schema for LLM output containing irrelevant links
+    """
+
+    links: List[str] = Field(description="List of links deemed irrelevant")
 
 
 class CandidateLinksInput(BaseModel):
@@ -28,7 +36,7 @@ class CandidateLinksInput(BaseModel):
         default=False,
         serialization_alias="llmGeneratedSearchQuery",
         validation_alias="llmGeneratedSearchQuery",
-        description="Use LLM to generate web search queries (defaults to preset templates)",
+        description="Use LLM to generate web search queries (default to use templates)",
     )
 
     # New knobs (safe defaults, fully optional)
@@ -110,3 +118,9 @@ class PyScrapeFetchReferences(BaseModel):
         validation_alias="textOutput",
         description="Optional notes or free-form text returned by the evaluator.",
     )
+
+
+@dataclass(frozen=True)
+class DiscoverySearchBatch:
+    query: str
+    results: List[SearchResult]
