@@ -24,6 +24,7 @@ from ...common.session.schema import DocumentationItem
 from ...config import config
 from .fucntions import scraper_loop
 from .schema import ScrapeRequest, ScrapeResult
+from ...common.metadata import generate_metadata_from_doc_items
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,11 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                     len(page_chunks),
                     len(all_docs),
                 )
+
+                logger.info("[Scrape] Job %s: Generating metadata from documentation items", job_id)
+                await generate_metadata_from_doc_items(session_id=session_id, db=db)
+
+            
     else:
         page_chunks = (
             await process_all_pages(

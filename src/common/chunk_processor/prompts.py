@@ -237,6 +237,15 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
     - category: string - one of the predefined categories
     - llm_tags: list of strings - tags that best describe the content according to only you
     - llm_category: string - category that best describes the content according to only you, not from the predefined list
+    - application_version: Optional[str] - the application version mentioned in the content, if any
+    - api_version: Optional[str] - the API version mentioned in the content, if any
+    - api_type: Optional[List[str]] - the API type(s) mentioned in the content, if any
+    - base_api_endpoint: Optional[List[BaseAPIEndpoint]] - the base API endpoint(s) mentioned in the content, if any, BaseAPIEndpoint has 'uri' and 'type' fields, type can be 'constant' or 'dynamic'. Be very careful to only include actual base endpoints, not example endpoints or partial endpoints. It is better to return an empty list than to include incorrect or partial endpoints.
+    - different_app_name: bool - indicates if the chunk mentions a different application name than {app}, be very careful, only mark as true if you are 100% sure that the chunk is about a different application
+    - application_name: Optional[str] - the application name mentioned in the chunk, if any
+
+EXAMPLE OUTPUTS:
+    
 
     EXAMPLE OUTPUT:
     {{
@@ -245,7 +254,13 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
         "tags": ["endpoints", "user management", "provisioning", "User", "Group"],
         "category": "reference_api",
         "llm_tags": ["user management", "API reference", "provisioning"],
-        "llm_category": "API reference"
+        "llm_category": "API reference",
+        "application_version": "v2.1",
+        "api_version": "v1",
+        "api_type": ["REST"],
+        "base_api_endpoint": [{{"uri": "https://<hostname>/api/v3/", "type": "dynamic"}}],
+        "different_app_name": false,
+        "application_name": "ExampleApp"
     }}
     """
 

@@ -212,6 +212,29 @@ class ScrapeAndProcessSettings(BaseModel):
         description="List of chunk categories to consider while processing, to be used in Literal type",
     )
 
+    latest_version_synonyms: list[str] = Field(
+        [
+            "latest",
+            "current",
+            "newest",
+            "development",
+            "stable",
+            "up-to-date",
+        ],
+        description="List of synonyms indicating latest version in documentation",
+    )
+
+    unknown_version_threshold: float = Field(
+        0.9,
+        description="If the number of chunks with unknown version exceeds this ratio, the app version is considered unknown",
+    )
+
+    metadata_uncertainty_threshold: float = Field(
+        0.05,
+        description="If any parameter in metadata is present in less than this ratio of chunks, it is considered uncertain and ignored",
+    )
+
+
 
 class DatabaseSettings(BaseModel):
     """

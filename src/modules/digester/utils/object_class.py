@@ -75,7 +75,7 @@ async def extract_object_classes_raw(
     # Populate relevant_chunks for each object class based on the chunk it was extracted from
     for idx, obj_class in enumerate(extracted):
         if obj_class.name and obj_class.name.strip():
-            if re.search(re.escape(obj_class.name.strip()) + r"(\s|\/|\'|s\s|s\'|s\/)", schema, re.IGNORECASE):
+            if re.search(re.escape(obj_class.name.strip()) + r'[\s\n\t.,;:!?\-\)\]\}"\']', schema, re.IGNORECASE):
                 extracted_valid.append(obj_class)
                 if hasattr(obj_class, "_chunk_index"):
                     chunk_idx = obj_class._chunk_index

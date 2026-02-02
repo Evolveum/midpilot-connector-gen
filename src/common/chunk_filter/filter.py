@@ -107,6 +107,18 @@ async def _filter_documentation_items_impl(
             content_type is None or content_type not in criteria.allowed_content_types
         ):
             continue
+        if not criteria.allow_different_app_name:
+            different_app_name = metadata.get("different_app_name", False)
+            if different_app_name:
+                continue
+        if criteria.target_app_versions is not None:
+            application_version = metadata.get("application_version")
+            if application_version is not None and application_version not in criteria.target_app_versions:
+                continue
+        if not criteria.allow_unknown_app_version:
+            application_version = metadata.get("application_version")
+            if application_version is None:
+                continue
 
         filtered_items.append(item)
 

@@ -43,6 +43,18 @@ class ChunkFilterCriteria(BaseModel):
         default=None,
         description="List of allowed content types for chunk filtering, if None, all content types that are not excluded are allowed",
     )
+    allow_different_app_name: bool = Field(
+        default=False,
+        description="Whether to allow chunks that mention a different application name than expected",
+    )
+    allow_unknown_app_version: bool = Field(
+        default=True,
+        description="Whether to allow chunks with unknown application version",
+    )
+    target_app_versions: List[str] | None = Field(
+        default=None,
+        description="List of target application versions to filter chunks by, if None, all versions are allowed",
+    )
 
     @field_validator("allowed_categories", "excluded_categories")
     @classmethod
