@@ -110,8 +110,6 @@ class ObjectClass(BaseModel):
         for chunk in v:
             if not isinstance(chunk, dict):
                 continue
-
-            # Only extract docUuid, no chunkIndex
             if "docUuid" in chunk:
                 validated_chunks.append({"docUuid": chunk["docUuid"]})
 

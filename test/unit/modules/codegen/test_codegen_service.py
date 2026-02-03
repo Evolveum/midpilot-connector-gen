@@ -13,6 +13,34 @@ from src.modules.codegen import service
 from src.modules.digester.schema import RelationsResponse
 
 
+def test_collect_pairs_new_format():
+    """Test _collect_pairs with new format containing only docUuid."""
+    input_data = [{"docUuid": "uuid1"}, {"docUuid": "uuid2"}, {"docUuid": "uuid3"}]
+
+    result = service._collect_pairs(input_data)
+
+    expected = [(0, "uuid1"), (1, "uuid2"), (2, "uuid3")]
+    assert result == expected
+
+
+def test_collect_pairs_legacy_format():
+    """Test _collect_pairs with legacy format containing only integers."""
+    # Legacy format: list of integers
+    input_data = [1, 2, 3, 4]
+
+    result = service._collect_pairs(input_data)
+
+    expected = [(1, None), (2, None), (3, None), (4, None)]
+    assert result == expected
+
+
+def test_collect_pairs_empty_input():
+    """Test _collect_pairs with empty or None input."""
+    assert service._collect_pairs(None) == []
+    assert service._collect_pairs([]) == []
+    assert service._collect_pairs("") == []
+
+
 @pytest.mark.asyncio
 async def test_generate_native_schema():
     """Test generating native schema from attributes."""

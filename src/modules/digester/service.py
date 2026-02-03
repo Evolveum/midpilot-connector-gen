@@ -115,12 +115,9 @@ async def extract_object_classes(doc_items: List[dict], filter_relevancy: bool, 
             if class_name not in class_to_chunks:
                 class_to_chunks[class_name] = []
 
-            # If the object class already has relevant_chunks set during extraction, use those
-            # Otherwise add document-level reference (new format: docUuid only)
             if obj_class.relevant_chunks:
                 class_to_chunks[class_name].extend(obj_class.relevant_chunks)
             else:
-                # Add document-level reference (no chunkIndex in new format)
                 class_to_chunks[class_name].append({"docUuid": str(doc_uuid)})
 
         all_object_classes.extend(raw_classes)
