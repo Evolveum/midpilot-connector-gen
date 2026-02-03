@@ -190,7 +190,7 @@ def fetch_candidate_links_simplified(
 
 def resolve_filtering_settings(app_data: CandidateLinksInput) -> tuple[bool, int]:
     """Resolve filtering-related settings from input (with safe defaults)."""
-    enable = bool(getattr(app_data, "enable_link_filtering", False))
+    enable = bool(getattr(app_data, "enable_link_filtering", True))
     max_calls = int(getattr(app_data, "max_filter_llm_calls", 3) or 3)
     if max_calls < 1:
         max_calls = 1

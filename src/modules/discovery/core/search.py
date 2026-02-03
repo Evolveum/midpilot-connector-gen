@@ -4,6 +4,8 @@
 
 
 import logging
+import random
+import time
 from typing import List
 
 import requests
@@ -17,6 +19,19 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 10
 HTTP_TIMEOUT_SECS = 15
+BRAVE_MAX_RETRIES = 3
+BRAVE_RETRY_BASE_SECONDS = 1.0
+BRAVE_RETRY_MAX_SECONDS = 10.0
+BRAVE_RETRY_JITTER_SECONDS = 0.5
+
+
+def _parse_retry_after_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return max(float(value), 0.0)
+    except ValueError:
+        return None
 
 
 def normalize_result(*, title: str | None, href: str | None, body: str | None, source: str) -> SearchResult:
@@ -78,9 +93,37 @@ def search_with_brave(query: str, *, max_results: int = DEFAULT_MAX_RESULTS) -> 
 
     try:
         with requests.Session() as session:
-            resp = session.get(endpoint, headers=headers, params=params, timeout=HTTP_TIMEOUT_SECS)
-            resp.raise_for_status()
-            data = resp.json()
+            data = None
+            for attempt in range(BRAVE_MAX_RETRIES + 1):
+                resp = session.get(endpoint, headers=headers, params=params, timeout=HTTP_TIMEOUT_SECS)
+
+                if resp.status_code == 429:
+                    retry_after = _parse_retry_after_seconds(resp.headers.get("Retry-After"))
+                    if retry_after is None:
+                        backoff = min(
+                            BRAVE_RETRY_BASE_SECONDS * (2**attempt),
+                            BRAVE_RETRY_MAX_SECONDS,
+                        )
+                    else:
+                        backoff = retry_after
+
+                    sleep_for = backoff + random.uniform(0.0, BRAVE_RETRY_JITTER_SECONDS)
+                    logger.warning(
+                        "Brave rate limit hit (429). Retrying in %.2fs (attempt %s/%s).",
+                        sleep_for,
+                        attempt + 1,
+                        BRAVE_MAX_RETRIES,
+                    )
+                    time.sleep(sleep_for)
+                    continue
+
+                resp.raise_for_status()
+                data = resp.json()
+                break
+
+            if data is None:
+                logger.error("Brave web search failed after %s retries due to rate limiting.", BRAVE_MAX_RETRIES)
+                return []
     except requests.RequestException:
         logger.exception("Brave web search request failed")
         return []

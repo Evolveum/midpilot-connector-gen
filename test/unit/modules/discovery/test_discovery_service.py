@@ -131,7 +131,10 @@ async def test_fetch_candidate_links(mock_llm, mock_llm_eval, mock_search_web, m
         mock_ofp.from_llm.side_effect = [meta_prompt, meta_refs]
 
         input_data = CandidateLinksInput(
-            application_name="test-app", application_version="1.0.0", llm_generated_search_query=True
+            application_name="test-app",
+            application_version="1.0.0",
+            llm_generated_search_query=True,
+            enable_link_filtering=False,
         )
 
         result = await service.fetch_candidate_links(input_data, uuid4())

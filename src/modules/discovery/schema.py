@@ -52,6 +52,18 @@ class CandidateLinksInput(BaseModel):
         validation_alias="maxResultsPerQuery",
         description="How many results to fetch per query (per backend)",
     )
+    enable_link_filtering: bool = Field(
+        default=True,
+        serialization_alias="enableLinkFiltering",
+        validation_alias="enableLinkFiltering",
+        description="Enable LLM-based filtering of irrelevant links",
+    )
+    max_filter_llm_calls: int = Field(
+        default=3,
+        serialization_alias="maxFilterLlmCalls",
+        validation_alias="maxFilterLlmCalls",
+        description="Maximum number of LLM calls for filtering irrelevant links",
+    )
 
 
 class CandidateLinksOutput(BaseModel):
