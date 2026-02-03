@@ -23,7 +23,7 @@ async def get_irrelevant_llm_response(prompts: tuple[str, str], max_retries: int
     :param app_version: Application version.
     :return: Configured ChatOpenAI instance or None if failed.
     """
-    logger.debug("[Scrape:LLM] Starting LLM call for irrelevant links filtering")
+    logger.debug("[LLM] Starting LLM call for irrelevant links filtering")
     developer_msg, user_msg = prompts
 
     llm = get_default_llm(temperature=1)
@@ -55,13 +55,13 @@ async def get_irrelevant_llm_response(prompts: tuple[str, str], max_retries: int
         try:
             result = await chain.ainvoke({})
             done = True
-            logger.debug("[Scrape:LLM] LLM call successful on attempt %s", req_num + 1)
+            logger.debug("[LLM] LLM call successful on attempt %s", req_num + 1)
         except Exception as e:
-            logger.error("[Scrape:LLM] Error invoking LLM (attempt %s/%s): %s", req_num + 1, max_retries, e)
+            logger.error("[LLM] Error invoking LLM (attempt %s/%s): %s", req_num + 1, max_retries, e)
             req_num += 1
 
     if not done:
-        logger.error("[Scrape:LLM] Failed to get LLM response after %s retries", max_retries)
+        logger.error("[LLM] Failed to get LLM response after %s retries", max_retries)
         raise Exception("Failed to get LLM response after maximum retries")
 
     return result
