@@ -17,6 +17,14 @@ class IrrelevantLinks(BaseModel):
     links: List[str] = Field(description="List of links deemed irrelevant")
 
 
+class RankedLinks(BaseModel):
+    """
+    Schema for LLM output containing ranked links
+    """
+
+    links: List[str] = Field(description="List of links ordered from most relevant to least relevant")
+
+
 class CandidateLinksInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -51,6 +59,12 @@ class CandidateLinksInput(BaseModel):
         serialization_alias="maxResultsPerQuery",
         validation_alias="maxResultsPerQuery",
         description="How many results to fetch per query (per backend)",
+    )
+    max_candidate_links: int = Field(
+        default=5,
+        serialization_alias="maxCandidateLinks",
+        validation_alias="maxCandidateLinks",
+        description="Max number of candidate links to return after ranking",
     )
     enable_link_filtering: bool = Field(
         default=True,

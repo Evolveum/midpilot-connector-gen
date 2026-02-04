@@ -21,10 +21,11 @@ from .utils.discovery_helpers import (
     extract_links,
     fetch_candidate_links_simplified,
     filter_enriched_by_links,
+    order_enriched_by_links,
     resolve_discovery_models,
     resolve_filtering_settings,
 )
-from .utils.filter_helpers import filter_candidate_links
+from .utils.filter_helpers import filter_candidate_links, rank_candidate_links
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ async def discover_candidate_links(app_data: CandidateLinksInput, job_id: UUID) 
 
     if enable_filtering and candidate_links:
         relevant_links, irrelevant_links = await filter_candidate_links(
-            links=candidate_links,
+            candidates_enriched=candidates_enriched,
             app=app_data.application_name,
             app_version=app_version,
             max_llm_calls=max_filter_llm_calls,
@@ -78,7 +79,20 @@ async def discover_candidate_links(app_data: CandidateLinksInput, job_id: UUID) 
         candidates_enriched = filter_enriched_by_links(candidates_enriched, relevant_links)
         candidate_links = relevant_links
 
-        logger.info("Selected urls to crawl next (filtered): %s", relevant_links)
+        ranked_links = await rank_candidate_links(
+            candidates_enriched=candidates_enriched,
+            app=app_data.application_name,
+            app_version=app_version,
+            max_links=app_data.max_candidate_links,
+        )
+        if ranked_links:
+            candidate_links = ranked_links
+            candidates_enriched = order_enriched_by_links(candidates_enriched, candidate_links)
+        if app_data.max_candidate_links > 0:
+            candidate_links = candidate_links[: app_data.max_candidate_links]
+            candidates_enriched = order_enriched_by_links(candidates_enriched, candidate_links)
+
+        logger.info("Ranked urls to crawl next (top %s): %s", app_data.max_candidate_links, candidate_links)
         if irrelevant_links:
             logger.info("Filtered out irrelevant urls: %s", irrelevant_links)
     else:

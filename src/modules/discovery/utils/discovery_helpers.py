@@ -76,6 +76,25 @@ def filter_enriched_by_links(
     return [item for item in enriched if str(item.get("href", "")).strip() in allowed]
 
 
+def order_enriched_by_links(
+    enriched: Sequence[Dict[str, Any]],
+    ordered_links: Sequence[str],
+) -> List[Dict[str, Any]]:
+    index: Dict[str, Dict[str, Any] | None] = {}
+    for item in enriched:
+        href = str(item.get("href", "")).strip()
+        if href and href not in index:
+            index[href] = item
+
+    ordered: List[Dict[str, Any]] = []
+    for href in ordered_links:
+        current_item: Dict[str, Any] | None = index.get(str(href).strip())
+        if current_item is None:
+            continue
+        ordered.append(current_item)
+    return ordered
+
+
 def query_and_search_candidates_llm(
     *,
     model: ChatOpenAI,
