@@ -24,6 +24,8 @@ from .utils.discovery_helpers import (
     order_enriched_by_links,
     resolve_discovery_models,
     resolve_filtering_settings,
+    resolve_ranking_settings,
+    select_links_by_query,
 )
 from .utils.filter_helpers import filter_candidate_links, rank_candidate_links
 
@@ -35,13 +37,16 @@ async def discover_candidate_links(app_data: CandidateLinksInput, job_id: UUID) 
 
     Router should schedule THIS function (single entrypoint).
     Filtering is controlled by optional request fields:
-      - enable_link_filtering: bool (default False)
+      - enable_link_filtering: bool (default True)
       - max_filter_llm_calls: int (default 3)
+    Ranking is controlled by:
+      - enable_link_ranking: bool (default True)
 
     If filtering is disabled, results are returned as discovered (deduped).
     """
     discovery_model, discovery_parser_model = resolve_discovery_models(app_data)
     enable_filtering, max_filter_llm_calls = resolve_filtering_settings(app_data)
+    enable_ranking = resolve_ranking_settings(app_data)
 
     app_version = app_data.application_version or ""
     user_prompt_fetch = get_discovery_fetch_user_prompt(app_data.application_name, app_version)
@@ -68,6 +73,7 @@ async def discover_candidate_links(app_data: CandidateLinksInput, job_id: UUID) 
     )
     candidate_links = extract_links(candidates_enriched)
 
+    irrelevant_links: list[str] = []
     if enable_filtering and candidate_links:
         relevant_links, irrelevant_links = await filter_candidate_links(
             candidates_enriched=candidates_enriched,
@@ -79,24 +85,36 @@ async def discover_candidate_links(app_data: CandidateLinksInput, job_id: UUID) 
         candidates_enriched = filter_enriched_by_links(candidates_enriched, relevant_links)
         candidate_links = relevant_links
 
-        ranked_links = await rank_candidate_links(
-            candidates_enriched=candidates_enriched,
-            app=app_data.application_name,
-            app_version=app_version,
-            max_links=app_data.max_candidate_links,
-        )
-        if ranked_links:
-            candidate_links = ranked_links
-            candidates_enriched = order_enriched_by_links(candidates_enriched, candidate_links)
-        if app_data.max_candidate_links > 0:
-            candidate_links = candidate_links[: app_data.max_candidate_links]
-            candidates_enriched = order_enriched_by_links(candidates_enriched, candidate_links)
+    if candidate_links:
+        if enable_filtering and enable_ranking:
+            ranked_links = await rank_candidate_links(
+                candidates_enriched=candidates_enriched,
+                app=app_data.application_name,
+                app_version=app_version,
+                max_links=app_data.max_candidate_links,
+            )
+            if ranked_links:
+                candidate_links = ranked_links
+                candidates_enriched = order_enriched_by_links(candidates_enriched, candidate_links)
+            if app_data.max_candidate_links > 0:
+                candidate_links = candidate_links[: app_data.max_candidate_links]
+                candidates_enriched = order_enriched_by_links(candidates_enriched, candidate_links)
 
-        logger.info("Ranked urls to crawl next (top %s): %s", app_data.max_candidate_links, candidate_links)
-        if irrelevant_links:
-            logger.info("Filtered out irrelevant urls: %s", irrelevant_links)
+            logger.info("Ranked urls to crawl next (top %s): %s", app_data.max_candidate_links, candidate_links)
+        else:
+            candidate_links = select_links_by_query(candidates_enriched, max_links=app_data.max_candidate_links)
+            if app_data.max_candidate_links > 0:
+                candidates_enriched = order_enriched_by_links(candidates_enriched, candidate_links)
+            logger.info(
+                "Selected urls to crawl next (top %s, per query): %s",
+                app_data.max_candidate_links,
+                candidate_links,
+            )
     else:
         logger.info("Selected urls to crawl next: %s", candidate_links)
+
+    if irrelevant_links:
+        logger.info("Filtered out irrelevant urls: %s", irrelevant_links)
 
     logger.debug("Discovery raw output: %s", raw_output)
     logger.info("End of the discovery script.")

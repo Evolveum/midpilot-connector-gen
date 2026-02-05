@@ -95,6 +95,77 @@ def order_enriched_by_links(
     return ordered
 
 
+def select_links_by_query(
+    enriched: Sequence[Dict[str, Any]],
+    *,
+    max_links: int,
+) -> List[str]:
+    """Select top links per query to reach max_links, preserving per-query order."""
+    links = extract_links(enriched)
+    if max_links <= 0 or not links:
+        return links
+
+    query_map: Dict[str, List[str]] = {}
+    for item in enriched:
+        href = str(item.get("href", "")).strip()
+        if not href:
+            continue
+        query = str(item.get("query", "")).strip() or "__unknown__"
+        query_map.setdefault(query, []).append(href)
+
+    if not query_map:
+        return []
+
+    queries = list(query_map.keys())
+    num_queries = len(queries)
+    base = max_links // num_queries
+    remainder = max_links % num_queries
+
+    selected: List[str] = []
+    seen: set[str] = set()
+    positions: Dict[str, int] = {}
+
+    for idx, query in enumerate(queries):
+        allocation = base + (1 if idx < remainder else 0)
+        pos = 0
+        taken = 0
+        items = query_map[query]
+        while pos < len(items) and taken < allocation:
+            href = items[pos]
+            pos += 1
+            if href in seen:
+                continue
+            selected.append(href)
+            seen.add(href)
+            taken += 1
+        positions[query] = pos
+
+    if len(selected) >= max_links:
+        return selected[:max_links]
+
+    while len(selected) < max_links:
+        added_any = False
+        for query in queries:
+            items = query_map[query]
+            pos = positions.get(query, 0)
+            while pos < len(items):
+                href = items[pos]
+                pos += 1
+                if href in seen:
+                    continue
+                selected.append(href)
+                seen.add(href)
+                added_any = True
+                break
+            positions[query] = pos
+            if len(selected) >= max_links:
+                break
+        if not added_any:
+            break
+
+    return selected
+
+
 def query_and_search_candidates_llm(
     *,
     model: ChatOpenAI,
@@ -214,6 +285,14 @@ def resolve_filtering_settings(app_data: CandidateLinksInput) -> tuple[bool, int
     if max_calls < 1:
         max_calls = 1
     return enable, max_calls
+
+
+def resolve_ranking_settings(app_data: CandidateLinksInput) -> bool:
+    """Resolve ranking-related settings from input (with safe defaults)."""
+    enable = getattr(app_data, "enable_link_ranking", True)
+    if enable is None:
+        return True
+    return bool(enable)
 
 
 def resolve_discovery_models(app_data: CandidateLinksInput) -> tuple[Optional[ChatOpenAI], Optional[ChatOpenAI]]:
