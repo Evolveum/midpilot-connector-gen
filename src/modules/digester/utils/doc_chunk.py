@@ -3,29 +3,11 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from typing import Any, Dict, Iterable, List, Set, Tuple
-from uuid import UUID
+from typing import Any, Dict, List, Set, Tuple
 
 from ....common.chunks import normalize_to_text
 
 logger = logging.getLogger(__name__)
-
-
-def collect_relevant_chunks(doc_uuid: UUID, indices: Iterable[int]) -> List[Dict[str, Any]]:
-    """
-    Collect relevant chunk references for a document.
-
-    Args:
-        doc_uuid: Document UUID
-        indices: Chunk indices (ignored, kept for backward compatibility)
-
-    Returns:
-        List containing a single dict with docUuid only (new DB format)
-    """
-    if not indices:
-        return []
-    # New format: return single entry per document (docUuid only, no chunkIndex)
-    return [{"docUuid": str(doc_uuid)}]
 
 
 def select_doc_chunks(
@@ -65,5 +47,4 @@ def select_doc_chunks(
         selected_chunks.append(normalize_to_text(item.get("content", "")))
         selected_doc_uuids.append(doc_uuid)
 
-    logger.info("[%s] Selected %d chunks", log_prefix, len(selected_chunks))
     return selected_chunks, selected_doc_uuids

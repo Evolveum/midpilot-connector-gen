@@ -8,7 +8,7 @@ from uuid import UUID
 
 from ...common.database.config import async_session_maker
 from ...common.database.repositories.session_repository import SessionRepository
-from ..digester.schema import EndpointsResponse, ObjectClassSchemaResponse, RelationsResponse
+from ..digester.schema import AttributeResponse, EndpointResponse, RelationsResponse
 from .core.generate_groovy import generate_groovy
 from .core.operations import (
     CreateGenerator,
@@ -17,8 +17,8 @@ from .core.operations import (
     SearchGenerator,
     UpdateGenerator,
 )
-from .prompts.connIDPrompts import get_connID_system_prompt, get_connID_user_prompt
-from .prompts.nativeSchemaPrompts import get_native_schema_system_prompt, get_native_schema_user_prompt
+from .prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
+from .prompts.native_schema_prompts import get_native_schema_system_prompt, get_native_schema_user_prompt
 from .selection.docs_loader import read_adoc_text
 from .selection.protocol import detect_protocol
 from .selection.protocol_selectors import get_operation_assets
@@ -27,15 +27,15 @@ from .utils.map_to_record import attributes_to_records_for_codegen
 
 logger = logging.getLogger(__name__)
 
-AttributesPayload = Union[ObjectClassSchemaResponse, Mapping[str, Any]]
-EndpointsPayload = Union[EndpointsResponse, Mapping[str, Any]]
+AttributesPayload = Union[AttributeResponse, Mapping[str, Any]]
+EndpointsPayload = Union[EndpointResponse, Mapping[str, Any]]
 
 
 def _attrs_map_from_payload(payload: AttributesPayload) -> Dict[str, Dict[str, Any]]:
     """
     Normalize attributes payload (pydantic model or mapping) into a dict[name] -> dict(info).
     """
-    if isinstance(payload, ObjectClassSchemaResponse):
+    if isinstance(payload, AttributeResponse):
         attrs = payload.attributes or {}
         return {k: v.model_dump() for k, v in attrs.items()}
 
@@ -49,23 +49,21 @@ def _attrs_map_from_payload(payload: AttributesPayload) -> Dict[str, Dict[str, A
 
 def _collect_pairs(val: Any) -> List[Tuple[int, Optional[str]]]:
     """
-    Convert 'relevant_chunks' variants to a list of (chunk_index, doc_uuid_or_none).
-    Supports:
-      - [{'chunk_index': int, 'doc_uuid': '...'}, ...]
-      - [int, int, ...]
-      - None / unexpected -> []
+    TODO
     """
     out: List[Tuple[int, Optional[str]]] = []
     if not val:
         return out
     if isinstance(val, list) and val:
         first = val[0]
-        if isinstance(first, dict) and "chunkIndex" in first:
-            for item in val:
-                if isinstance(item, dict):
-                    idx = item.get("chunkIndex")
-                    if isinstance(idx, int):
-                        out.append((idx, cast(Optional[str], item.get("docUuid"))))
+        if isinstance(first, dict):
+            if "docUuid" in first:
+                for item in val:
+                    if isinstance(item, dict) and "docUuid" in item:
+                        doc_uuid = item.get("docUuid")
+                        if isinstance(doc_uuid, str):
+                            # Use sequential index
+                            out.append((len(out), doc_uuid))
         else:
             for idx in val:
                 if isinstance(idx, int):
@@ -120,7 +118,7 @@ async def _collect_relevant_chunks(
         return None, None
 
     relevant_indices = [i for i, _ in merged_pairs]
-    relevant_pairs = [{"chunkIndex": i, "docUuid": du} for i, du in merged_pairs if du]
+    relevant_pairs = [{"docUuid": du} for _, du in merged_pairs]
 
     logger.info(
         "[Codegen:%s] Relevant chunks for endpoints=%d, for attributes=%d, merged=%d for %s",
@@ -377,7 +375,7 @@ async def create_relation(
         pairs = _collect_pairs(raw)
         if pairs:
             relevant_indices = [i for i, _ in pairs]
-            relevant_pairs = [{"chunkIndex": i, "docUuid": du} for i, du in pairs if du]
+            relevant_pairs = [{"docUuid": du} for _, du in pairs]
             logger.info(
                 "[Codegen:Relation] Relevant chunks for indices_only=%d, pairs_with_uuid=%d",
                 len(relevant_indices or []),

@@ -16,7 +16,7 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
 
-from ..prompts.infoAboutSchemaPrompts import get_info_system_prompt, get_info_user_prompt
+from ..prompts.info_about_schema_prompts import get_info_system_prompt, get_info_user_prompt
 from ..schema import InfoResponse
 from ..utils.metadata_helper import extract_summary_and_tags
 
@@ -40,7 +40,7 @@ async def extract_info_metadata(
     logger.info("Extracting info metadata from pre-chunked document")
 
     # Progress: start processing
-    update_job_progress(
+    await update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
         message="Processing document and extracting info metadata",

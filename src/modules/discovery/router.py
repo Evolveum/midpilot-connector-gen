@@ -41,7 +41,7 @@ async def discover_candidate_links(
     job_id = await schedule_coroutine_job(
         job_type="discovery.getCandidateLinks",
         input_payload=req.model_dump(by_alias=True),
-        worker=service.fetch_candidate_links,
+        worker=service.discover_candidate_links,
         worker_args=(req,),
         initial_stage="queue",
         initial_message="Queued candidate links discovery",

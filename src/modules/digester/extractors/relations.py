@@ -14,7 +14,7 @@ from ....common.chunks import normalize_to_text
 from ....common.jobs import append_job_error, update_job_progress
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.relationsPrompts import (
+from ..prompts.relations_prompts import (
     get_relations_system_prompt,
     get_relations_user_prompt,
 )
@@ -220,7 +220,7 @@ async def extract_relations(
         return RelationsResponse(relations=[]), False
 
     # Progress: start processing
-    update_job_progress(
+    await update_job_progress(
         job_id,
         stage="processing_chunks",
         message="Processing document and extracting relations",

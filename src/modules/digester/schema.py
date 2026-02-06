@@ -110,8 +110,6 @@ class ObjectClass(BaseModel):
         for chunk in v:
             if not isinstance(chunk, dict):
                 continue
-
-            # Only extract docUuid, no chunkIndex
             if "docUuid" in chunk:
                 validated_chunks.append({"docUuid": chunk["docUuid"]})
 
@@ -313,7 +311,7 @@ class InfoResponse(BaseModel):
 # --- Info about schema ---
 
 
-# --- Object Class Attributes ---
+# --- Attributes ---
 class AttributeInfo(BaseModel):
     """
     Attribute metadata for an object class property as described in OpenAPI/JSON Schema.
@@ -366,7 +364,7 @@ class AttributeInfo(BaseModel):
     )
 
 
-class ObjectClassSchemaResponse(BaseModel):
+class AttributeResponse(BaseModel):
     """
     Attribute map for a specific object class where each key is the property name.
     Return an empty map when the object class has no properties in the fragment.
@@ -378,7 +376,7 @@ class ObjectClassSchemaResponse(BaseModel):
     )
 
 
-# --- Object Class Attributes ---
+# --- Attributes ---
 
 
 # --- Endpoints ---
@@ -459,7 +457,7 @@ class EndpointParamInfo(BaseModel):
     )
 
 
-class EndpointsResponse(BaseModel):
+class EndpointResponse(BaseModel):
     """
     Container for endpoints discovered for a given object class. Return an empty list when none.
     """
@@ -483,15 +481,15 @@ class RelationRecord(BaseModel):
 
     model_config = {"populate_by_name": True}
 
-    name: Optional[str] = Field(
-        default=None,
-        description="Human-readable name of the relation if explicitly provided in docs; otherwise null.",
+    name: str = Field(
+        ...,
+        description="Human-readable name of the relation. ALWAYS provide a meaningful name based on the relationship (e.g., 'User to Group', 'Account to User', etc.). Never leave empty.",
     )
-    short_description: Optional[str] = Field(
+    short_description: str = Field(
         default="",
         validation_alias="shortDescription",
         serialization_alias="shortDescription",
-        description="Short description or summary if present; empty when not available.",
+        description="Short description or summary if present. LLM can propose if documentation do not has description",
     )
     subject: str = Field(
         ...,

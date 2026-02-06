@@ -115,12 +115,9 @@ async def extract_object_classes(doc_items: List[dict], filter_relevancy: bool, 
             if class_name not in class_to_chunks:
                 class_to_chunks[class_name] = []
 
-            # If the object class already has relevant_chunks set during extraction, use those
-            # Otherwise add document-level reference (new format: docUuid only)
             if obj_class.relevant_chunks:
                 class_to_chunks[class_name].extend(obj_class.relevant_chunks)
             else:
-                # Add document-level reference (no chunkIndex in new format)
                 class_to_chunks[class_name].append({"docUuid": str(doc_uuid)})
 
         all_object_classes.extend(raw_classes)
@@ -200,7 +197,9 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     all_relevant_chunks: List[Dict[str, Any]] = []
     total_docs = len(doc_items)
 
-    update_job_progress(job_id, total_processing=total_docs, processing_completed=0, message="Processing documents")
+    await update_job_progress(
+        job_id, total_processing=total_docs, processing_completed=0, message="Processing documents"
+    )
 
     aggregated_result: Any = None
 
@@ -228,7 +227,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
 
     # All documents processed, now finalizing
     logger.info("[Digester:InfoMetadata] All documents processed. Finalizing aggregated result.")
-    update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
+    await update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
 
     if hasattr(aggregated_result, "model_dump"):
         merged_result: Dict[str, Any] = cast(Dict[str, Any], aggregated_result.model_dump(by_alias=True))
@@ -266,15 +265,6 @@ async def extract_attributes(
         return {"result": {"attributes": {}}, "relevantChunks": []}
 
     doc_metadata_map = build_doc_metadata_map(doc_items)
-
-    # Log chunk processing details
-    total_chunks = len(selected_docs)
-    logger.info(
-        "[Digester:Attributes] Processing %d pre-selected chunks for %s (from original indices: %s)",
-        total_chunks,
-        object_class,
-        doc_uuids,
-    )
 
     result = await _extract_attributes(selected_docs, object_class, job_id, doc_uuids, doc_metadata_map)
 
@@ -329,10 +319,6 @@ async def extract_attributes(
                 logger.info(f"[Digester:Attributes] Available classes: {available_classes}")
                 return result
 
-            # Save back to session
-            logger.info("[Digester:Attributes] Saving updated attributes back to session")
-            await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
-            await db.commit()
             logger.info("[Digester:Attributes] Successfully saved attributes to session")
 
     except Exception as e:
@@ -361,7 +347,7 @@ async def extract_endpoints(
         job_id: Job ID for progress tracking
         base_api_url: Base API URL for endpoint extraction
     """
-    # Extract specific chunks directly without re-chunking
+
     selected_docs, doc_uuids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
 
     if not selected_docs:
@@ -414,10 +400,6 @@ async def extract_endpoints(
                                 f"[Digester:Endpoints] Updated object class '{obj_class.get('name')}' with {len(endpoints_list)} endpoints"
                             )
                             break
-
-                    # Save back to session
-                    await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
-                    await db.commit()
     except Exception as e:
         logger.warning(f"[Digester:Endpoints] Failed to update object class with endpoints: {e}")
 

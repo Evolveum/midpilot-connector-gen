@@ -31,11 +31,11 @@ logger = logging.getLogger(__name__)
 
 async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Optional[UUID] = None) -> ScrapeResult:
     logger.info("[Scrape] Starting scrape job %s for session %s", job_id, session_id)
-    update_job_progress(job_id, stage=JobStage.running, message="initializing scraper")
+    await update_job_progress(job_id, stage=JobStage.running, message="initializing scraper")
 
     if not input.starter_links:
         logger.warning("[Scrape] No starter links provided for job %s", job_id)
-        update_job_progress(job_id, stage=JobStage.failed, message="no-starter-links provided")
+        await update_job_progress(job_id, stage=JobStage.failed, message="no-starter-links provided")
         return ScrapeResult(
             finish_reason="no-starter-links",
             saved_pages_count=0,
@@ -62,7 +62,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             config.scrape_and_process.max_scraper_iterations,
             job_id,
         )
-        update_job_progress(job_id, stage=JobStage.failed, message="wrong-scraper-iterations-value")
+        await update_job_progress(job_id, stage=JobStage.failed, message="wrong-scraper-iterations-value")
         return ScrapeResult(
             finish_reason="wrong-scraper-iterations-value",
             saved_pages_count=0,
@@ -83,7 +83,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             len(links),
         )
         # Update progress at start of iteration - shows N-1 completed, iteration N running
-        update_job_progress(
+        await update_job_progress(
             job_id,
             processing_completed=curr_iter - 1,
             total_processing=max_iters,
@@ -114,7 +114,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
         )
 
         # Update progress after iteration completes
-        update_job_progress(
+        await update_job_progress(
             job_id,
             processing_completed=curr_iter,
             total_processing=max_iters,
@@ -130,7 +130,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
 
     # Chunk processing
     logger.info("[Scrape] Job %s: Starting chunk processing for %s saved pages", job_id, len(saved_pages))
-    update_job_progress(job_id, stage=JobStage.processing_chunks, message="processing scraped documents")
+    await update_job_progress(job_id, stage=JobStage.processing_chunks, message="processing scraped documents")
 
     pages_list = list(saved_pages.values())
 

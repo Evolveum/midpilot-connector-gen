@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from ...digester.schema import RelationsResponse
-from ..prompts.relationPrompts import get_relation_system_prompt, get_relation_user_prompt
+from ..prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
 from .base import (
     AttributesPayload,
     BaseGroovyGenerator,
