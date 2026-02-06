@@ -64,7 +64,9 @@ async def process_scraped_page(
                     "api_type": data.api_type,
                     "different_app_name": data.different_app_name,
                     "application_name": data.application_name,
-                    "base_api_endpoint": [endpoint.model_dump() for endpoint in data.base_api_endpoint] if data.base_api_endpoint else None,
+                    "base_api_endpoint": [endpoint.model_dump() for endpoint in data.base_api_endpoint]
+                    if data.base_api_endpoint
+                    else None,
                 },
                 content=chunk[0],
             )

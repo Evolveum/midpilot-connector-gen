@@ -14,7 +14,7 @@ from crawl4ai import (  # type: ignore
     DefaultMarkdownGenerator,
     PruningContentFilter,
 )
-from crawl4ai.async_configs import CrawlerRunConfig, BrowserConfig  # type: ignore
+from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig  # type: ignore
 from crawl4ai.utils import (  # type: ignore
     get_base_domain,
     normalize_url,
@@ -368,10 +368,12 @@ async def filterOutIrrelevantLinks(
         if irrelevant_llm_response is None:
             logger.warning("[Scrape:Filter] LLM filtering call %s/%s failed", curr_run + 1, llm_calls)
         else:
-            logger.info("[Scrape:Filter] LLM identified %s irrelevant links", len(irrelevant_llm_response.links))
-            logger.debug("[Scrape:Filter] LLM irrelevant links: %s", irrelevant_llm_response.links)
+            logger.debug("[Scrape:Filter] LLM identified %s RAW irrelevant links", len(irrelevant_llm_response.links))
+            irrelevant_llm_links = list(set(irrelevant_llm_response.links) & set(current_links_not_forbidden))
+            logger.info("[Scrape:Filter] LLM identified %s irrelevant links", len(irrelevant_llm_links))
+            logger.debug("[Scrape:Filter] LLM irrelevant links: %s", irrelevant_llm_links)
 
-            past_irrelevant_links.extend(irrelevant_llm_response.links)
+            past_irrelevant_links.extend(irrelevant_llm_links)
 
             current_links_not_forbidden = list(set(current_links_not_forbidden) - set(past_irrelevant_links))
 

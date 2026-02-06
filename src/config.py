@@ -235,7 +235,6 @@ class ScrapeAndProcessSettings(BaseModel):
     )
 
 
-
 class DatabaseSettings(BaseModel):
     """
     Configuration for PostgreSQL database connection.

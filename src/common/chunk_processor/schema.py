@@ -70,8 +70,12 @@ class LlmChunkOutput(BaseModel):
     application_version: Optional[str] = Field(description="Application version mentioned in the chunk, if any")
     api_version: Optional[str] = Field(description="API version mentioned in the chunk, if any")
     api_type: Optional[List[str]] = Field(description="API type(s) mentioned in the chunk, if any")
-    base_api_endpoint: Optional[List[BaseAPIEndpoint]] = Field(description="Base API endpoint(s) mentioned in the chunk, if any")
-    different_app_name: bool = Field(description="Indicates if the chunk mentions a different application name than expected")
+    base_api_endpoint: Optional[List[BaseAPIEndpoint]] = Field(
+        description="Base API endpoint(s) mentioned in the chunk, if any"
+    )
+    different_app_name: bool = Field(
+        description="Indicates if the chunk mentions a different application name than expected"
+    )
     application_name: Optional[str] = Field(description="The application name mentioned in the chunk, if any")
 
     @field_validator("category")
