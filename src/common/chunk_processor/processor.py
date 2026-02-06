@@ -59,6 +59,14 @@ async def process_scraped_page(
                     "num_endpoints": data.num_endpoints,
                     "length": chunk[1],
                     "contentType": page.contentType,
+                    "application_version": data.application_version,
+                    "api_version": data.api_version,
+                    "api_type": data.api_type,
+                    "different_app_name": data.different_app_name,
+                    "application_name": data.application_name,
+                    "base_api_endpoint": [endpoint.model_dump() for endpoint in data.base_api_endpoint]
+                    if data.base_api_endpoint
+                    else None,
                 },
                 content=chunk[0],
             )

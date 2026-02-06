@@ -74,7 +74,7 @@ async def extract_object_classes_raw(
     # Validate extracted object classes by checking if names exist in the schema
     for obj_class in extracted:
         if obj_class.name and obj_class.name.strip():
-            if re.search(re.escape(obj_class.name.strip()) + r"(\s|\/|\'|s\s|s\'|s\/)", schema, re.IGNORECASE):
+            if re.search(re.escape(obj_class.name.strip()) + r'[\s\n\t.,;:!?\-\)\]\}"\']', schema, re.IGNORECASE):
                 extracted_valid.append(obj_class)
             else:
                 logger.info(
