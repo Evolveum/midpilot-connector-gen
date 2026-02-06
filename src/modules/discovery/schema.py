@@ -46,8 +46,18 @@ class CandidateLinksInput(BaseModel):
         validation_alias="llmGeneratedSearchQuery",
         description="Use LLM to generate web search queries (default to use templates)",
     )
-
-    # New knobs (safe defaults, fully optional)
+    enable_link_filtering: bool = Field(
+        default=True,
+        serialization_alias="enableLinkFiltering",
+        validation_alias="enableLinkFiltering",
+        description="Enable LLM-based filtering of irrelevant links",
+    )
+    enable_link_ranking: bool = Field(
+        default=True,
+        serialization_alias="enableLinkRanking",
+        validation_alias="enableLinkRanking",
+        description="Enable LLM-based ranking of candidate links",
+    )
     num_queries: int = Field(
         default=5,
         serialization_alias="numQueries",
@@ -65,18 +75,6 @@ class CandidateLinksInput(BaseModel):
         serialization_alias="maxCandidateLinks",
         validation_alias="maxCandidateLinks",
         description="Max number of candidate links to return after ranking/selection",
-    )
-    enable_link_filtering: bool = Field(
-        default=True,
-        serialization_alias="enableLinkFiltering",
-        validation_alias="enableLinkFiltering",
-        description="Enable LLM-based filtering of irrelevant links",
-    )
-    enable_link_ranking: bool = Field(
-        default=False,
-        serialization_alias="enableLinkRanking",
-        validation_alias="enableLinkRanking",
-        description="Enable LLM-based ranking of candidate links",
     )
     max_filter_llm_calls: int = Field(
         default=3,
