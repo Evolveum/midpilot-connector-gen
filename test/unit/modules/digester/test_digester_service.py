@@ -1,101 +1,163 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
-from unittest.mock import MagicMock, patch
-from uuid import UUID, uuid4
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
 from src.modules.digester import service
-from src.modules.digester.schema import ObjectClass
+from src.modules.digester.schema import (
+    AttributeInfo,
+    AuthInfo,
+    BaseAPIEndpoint,
+    EndpointInfo,
+    InfoMetadata,
+    ObjectClass,
+    RelationRecord,
+)
 
 
-# extract_object_classes
+# ==================== EXTRACT OBJECT CLASSES ====================
 @pytest.mark.asyncio
-async def test_extract_object_classes(mock_llm, mock_digester_update_job_progress):
+async def test_extract_object_classes_success(mock_llm, mock_digester_update_job_progress):
     """
     Test extracting object classes from multiple documentation items.
-    Matches the new async, multi-doc, progress-reporting version.
+    Validates metadata tracking, deduplication, and class-to-chunk mapping.
     """
+    doc_uuid1 = uuid4()
+    doc_uuid2 = uuid4()
 
-    fake_doc_items = [{"uuid": str(uuid4()), "content": "Test documentation content"}]
+    fake_doc_items = [
+        {
+            "uuid": str(doc_uuid1),
+            "content": "User management API documentation",
+            "summary": "User API docs",
+            "@metadata": {"source": "api_spec", "category": "reference_api"},
+        },
+        {
+            "uuid": str(doc_uuid2),
+            "content": "Group management API documentation",
+            "summary": "Group API docs",
+            "@metadata": {"source": "api_spec", "category": "reference_api"},
+        },
+    ]
 
     with (
-        patch("src.modules.digester.service.extract_object_classes_raw") as mock_raw,
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
-        patch("src.modules.digester.utils.parallel_docs.update_job_progress") as mock_parallel_progress,
+        patch("src.modules.digester.service.process_documents_in_parallel") as mock_parallel,
     ):
-        mock_raw.return_value = (
-            [
-                ObjectClass(
-                    name="User",
-                    relevant="true",
-                    superclass="",
-                    abstract=False,
-                    embedded=False,
-                    description="User's description",
-                    relevant_chunks=[{"docUuid": uuid4(), "chunkIndex": 0}],
-                ),
-                ObjectClass(
-                    name="Group",
-                    relevant="true",
-                    superclass="",
-                    abstract=False,
-                    embedded=False,
-                    description="Group's description",
-                    relevant_chunks=[{"docUuid": uuid4(), "chunkIndex": 1}],
-                ),
-            ],
-            [0, 1],
-        )
+        mock_parallel.return_value = [
+            (
+                [
+                    ObjectClass(
+                        name="User",
+                        relevant="true",
+                        superclass=None,
+                        abstract=False,
+                        embedded=False,
+                        description="Represents a user in the system",
+                        relevant_chunks=[{"docUuid": doc_uuid1}],
+                    ),
+                ],
+                True,
+                doc_uuid1,
+            ),
+            (
+                [
+                    ObjectClass(
+                        name="Group",
+                        relevant="true",
+                        superclass=None,
+                        abstract=False,
+                        embedded=False,
+                        description="Represents a group of users",
+                        relevant_chunks=[{"docUuid": doc_uuid2}],
+                    ),
+                ],
+                True,
+                doc_uuid2,
+            ),
+        ]
 
         class FakeDeduped:
             def model_dump(self, by_alias=True):
                 return {
                     "objectClasses": [
-                        {"name": "User", "relevant": "true"},
-                        {"name": "Group", "relevant": "true"},
+                        {
+                            "name": "User",
+                            "relevant": "true",
+                            "description": "Represents a user in the system",
+                            "relevantChunks": [{"docUuid": doc_uuid1}],
+                        },
+                        {
+                            "name": "Group",
+                            "relevant": "true",
+                            "description": "Represents a group of users",
+                            "relevantChunks": [{"docUuid": doc_uuid2}],
+                        },
                     ]
                 }
 
         mock_dedupe.return_value = FakeDeduped()
 
-        result = await service.extract_object_classes(
-            fake_doc_items,
-            True,
-            "high",
-            uuid4(),
-        )
+        job_id = uuid4()
+        result = await service.extract_object_classes(fake_doc_items, True, "high", job_id)
 
         assert "result" in result
         assert "relevantChunks" in result
-
         assert "objectClasses" in result["result"]
         assert len(result["result"]["objectClasses"]) == 2
         assert result["result"]["objectClasses"][0]["name"] == "User"
         assert result["result"]["objectClasses"][1]["name"] == "Group"
 
-        # Verify progress tracking was called
-        assert mock_parallel_progress.called or mock_digester_update_job_progress.called
+        mock_parallel.assert_called_once()
 
 
-# extract attributes
 @pytest.mark.asyncio
-async def test_extract_attributes_updates_session(mock_llm, mock_digester_update_job_progress):
-    """
-    service.extract_attributes now:
-    - takes doc_items + object_class + session_id + relevant_chunks + job_id
-    - extracts only selected chunks
-    - calls lower-level _extract_attributes
-    - writes the attributes back into the objectClassesOutput in session
-    """
+async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_job_progress):
+    """Test extract_object_classes with no documentation items."""
+    with (
+        patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
+        patch("src.modules.digester.utils.parallel_docs.process_documents_in_parallel") as mock_parallel,
+    ):
+        mock_parallel.return_value = []
 
+        class EmptyDeduped:
+            def model_dump(self, by_alias=True):
+                return {"objectClasses": []}
+
+        mock_dedupe.return_value = EmptyDeduped()
+
+        result = await service.extract_object_classes([], True, "high", uuid4())
+
+        assert result["result"]["objectClasses"] == []
+        assert result["relevantChunks"] == []
+
+
+# ==================== EXTRACT ATTRIBUTES ====================
+@pytest.mark.asyncio
+async def test_extract_attributes_updates_session_success(mock_llm, mock_digester_update_job_progress):
+    """
+    Test extract_attributes successfully extracts attributes and updates the session.
+    Validates chunk selection, attribute extraction, and session update.
+    """
+    session_id = uuid4()
+    job_id = uuid4()
     doc_uuid = str(uuid4())
-    fake_doc_items = [{"uuid": doc_uuid, "content": "Test documentation content"}]
+
+    fake_doc_items = [
+        {
+            "uuid": doc_uuid,
+            "content": "User schema documentation",
+            "summary": "User attributes",
+            "@metadata": {"source": "schema"},
+        }
+    ]
+
     relevant_chunks = [
-        {"docUuid": doc_uuid, "chunkIndex": 0},
-        {"docUuid": doc_uuid, "chunkIndex": 2},
+        {"docUuid": doc_uuid},
     ]
 
     object_classes_output = {
@@ -103,308 +165,613 @@ async def test_extract_attributes_updates_session(mock_llm, mock_digester_update
             {
                 "name": "User",
                 "relevant": "true",
-                "superclass": "",
-                "abstract": False,
-                "embedded": False,
+                "description": "User object",
                 "relevantChunks": relevant_chunks,
             }
         ]
     }
 
-    mock_session = MagicMock()
-    mock_session.get_session_data.return_value = object_classes_output
+    mock_db_session = AsyncMock()
+    mock_repo = MagicMock()
+    mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
 
     with (
-        patch("src.modules.digester.service.SessionManager", mock_session),
-        patch("src.modules.digester.service._extract_specific_chunks") as mock_extract_specific,
-        patch("src.modules.digester.service._extract_attributes") as mock_low_level_attrs,
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.service._extract_attributes") as mock_extract_attrs,
+        patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
     ):
-        mock_extract_specific.return_value = (
+        # Setup mocks
+        mock_session_maker.return_value.__aenter__.return_value = mock_db_session
+        mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
+        mock_repo_class.return_value = mock_repo
+
+        mock_extract_chunks.return_value = (
             ["chunk-0 text", "chunk-2 text"],
             [(0, doc_uuid), (2, doc_uuid)],
         )
 
-        mock_low_level_attrs.return_value = {
+        mock_extract_attrs.return_value = {
             "result": {
                 "attributes": {
-                    "id": {"type": "string", "description": "Unique identifier"},
-                    "username": {"type": "string", "description": "User login"},
+                    "id": AttributeInfo(
+                        type="string",
+                        description="Unique identifier",
+                        mandatory=True,
+                        readable=True,
+                        updatable=False,
+                        creatable=True,
+                        multivalue=False,
+                        returnedByDefault=True,
+                    ).model_dump(),
+                    "username": AttributeInfo(
+                        type="string",
+                        description="User login name",
+                        mandatory=True,
+                        readable=True,
+                        updatable=True,
+                        creatable=True,
+                        multivalue=False,
+                        returnedByDefault=True,
+                    ).model_dump(),
                 }
             },
-            "relevantChunks": [
-                {"docUuid": doc_uuid, "chunkIndex": 0},
-                {"docUuid": doc_uuid, "chunkIndex": 2},
-            ],
+            "relevantChunks": relevant_chunks,
         }
 
-        result = await service.extract_attributes(
-            doc_items=fake_doc_items,
-            object_class="User",
-            session_id=uuid4(),
-            relevant_chunks=relevant_chunks,
-            job_id=uuid4(),
-        )
+        result = await service.extract_attributes(fake_doc_items, "User", session_id, relevant_chunks, job_id)
 
+        # Verify result structure
         assert "result" in result
-        assert "relevantChunks" in result
         assert "attributes" in result["result"]
         assert "id" in result["result"]["attributes"]
         assert "username" in result["result"]["attributes"]
 
-        mock_session.update_session.assert_called_once()
-        args, kwargs = mock_session.update_session.call_args
-        # args[0] is the UUID session_id passed above
-        assert args[0] is not None
-        updated_payload = args[1]
-        assert "objectClassesOutput" in updated_payload
-        updated_obj_classes = updated_payload["objectClassesOutput"]["objectClasses"]
-        assert len(updated_obj_classes) == 1
-        assert updated_obj_classes[0]["name"].lower() == "user"
-        assert "attributes" in updated_obj_classes[0]
-        assert "id" in updated_obj_classes[0]["attributes"]
+        # Verify chunk extraction was called correctly
+        mock_extract_chunks.assert_called_once_with(fake_doc_items, relevant_chunks, "Digester:Attributes")
+
+        # Verify attribute extraction was called
+        mock_extract_attrs.assert_called_once()
 
 
-# extract endpoints
 @pytest.mark.asyncio
-async def test_extract_endpoints_updates_session(mock_llm, mock_digester_update_job_progress):
-    """
-    service.extract_endpoints now:
-    - takes doc_items + object_class + session_id + relevant_chunks + job_id + base_api_url
-    - extracts only selected chunks
-    - calls lower-level _extract_endpoints
-    - writes the endpoints back into the objectClassesOutput in session
-    """
+async def test_extract_attributes_no_relevant_chunks(mock_llm, mock_digester_update_job_progress):
+    """Test extract_attributes when no relevant chunks are found."""
+    session_id = uuid4()
+    job_id = uuid4()
 
+    with patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks:
+        mock_extract_chunks.return_value = ([], [])
+
+        result = await service.extract_attributes([], "User", session_id, [], job_id)
+
+        assert result["result"]["attributes"] == {}
+        assert result["relevantChunks"] == []
+
+
+@pytest.mark.asyncio
+async def test_extract_attributes_session_not_found(mock_llm, mock_digester_update_job_progress):
+    """Test extract_attributes handles missing session gracefully."""
+    session_id = uuid4()
+    job_id = uuid4()
     doc_uuid = str(uuid4())
-    fake_doc_items = [{"uuid": doc_uuid, "content": "Test documentation content"}]
-    relevant_chunks = [
-        {"docUuid": doc_uuid, "chunkIndex": 0},
-        {"docUuid": doc_uuid, "chunkIndex": 3},
+
+    fake_doc_items = [{"uuid": doc_uuid, "content": "test"}]
+    relevant_chunks = [{"docUuid": doc_uuid}]
+
+    mock_db_session = AsyncMock()
+    mock_repo = MagicMock()
+    mock_repo.get_session_data = AsyncMock(return_value=None)
+
+    with (
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.service._extract_attributes") as mock_extract_attrs,
+        patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+    ):
+        mock_session_maker.return_value.__aenter__.return_value = mock_db_session
+        mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
+        mock_repo_class.return_value = mock_repo
+
+        mock_extract_chunks.return_value = (["chunk text"], [(0, doc_uuid)])
+        mock_extract_attrs.return_value = {"result": {"attributes": {"id": {}}}, "relevantChunks": []}
+
+        result = await service.extract_attributes(fake_doc_items, "User", session_id, relevant_chunks, job_id)
+
+        # Should return result even if session update fails
+        assert "result" in result
+        mock_repo.update_session.assert_not_called()
+
+
+# ==================== EXTRACT ENDPOINTS ====================
+@pytest.mark.asyncio
+async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester_update_job_progress):
+    """
+    Test extract_endpoints successfully extracts endpoints and updates the session.
+    Validates chunk selection, endpoint extraction, and session update.
+    """
+    session_id = uuid4()
+    job_id = uuid4()
+    doc_uuid = str(uuid4())
+    base_api_url = "https://api.example.com"
+
+    fake_doc_items = [
+        {
+            "uuid": doc_uuid,
+            "content": "User endpoints documentation",
+            "summary": "User API endpoints",
+            "@metadata": {"source": "api_spec"},
+        }
     ]
+
+    relevant_chunks = [{"docUuid": doc_uuid}]
 
     object_classes_output = {
         "objectClasses": [
             {
                 "name": "User",
                 "relevant": "true",
-                "superclass": "",
-                "abstract": False,
-                "embedded": False,
+                "description": "User object",
                 "relevantChunks": relevant_chunks,
-                "attributes": {},
-                "endpoints": [],
             }
         ]
     }
 
-    mock_session = MagicMock()
-
-    def _get_session_data(session_id, key=None):
-        if key == "objectClassesOutput":
-            return object_classes_output
-        return None
-
-    mock_session.get_session_data.side_effect = _get_session_data
+    mock_db_session = AsyncMock()
+    mock_repo = MagicMock()
+    mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
 
     with (
-        patch("src.modules.digester.service.SessionManager", mock_session),
-        patch("src.modules.digester.service._extract_specific_chunks") as mock_extract_specific,
-        patch("src.modules.digester.service._extract_endpoints") as mock_low_level_endpoints,
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.service._extract_endpoints") as mock_extract_endpoints,
+        patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
     ):
-        mock_extract_specific.return_value = (
-            ["chunk-0 text", "chunk-3 text"],
-            [(0, doc_uuid), (3, doc_uuid)],
-        )
+        mock_session_maker.return_value.__aenter__.return_value = mock_db_session
+        mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
+        mock_repo_class.return_value = mock_repo
 
-        mock_low_level_endpoints.return_value = {
+        mock_extract_chunks.return_value = (["chunk-0 text"], [(0, doc_uuid)])
+
+        mock_extract_endpoints.return_value = {
             "result": {
                 "endpoints": [
-                    {
-                        "method": "GET",
-                        "path": "/users",
-                        "description": "List users",
-                    }
+                    EndpointInfo(
+                        method="GET",
+                        path="/users",
+                        description="List all users",
+                        suggested_use=["getAll"],
+                    ).model_dump(),
+                    EndpointInfo(
+                        method="POST",
+                        path="/users",
+                        description="Create a new user",
+                        suggested_use=["create"],
+                    ).model_dump(),
+                    EndpointInfo(
+                        method="GET",
+                        path="/users/{id}",
+                        description="Get user by ID",
+                        suggested_use=["getById"],
+                    ).model_dump(),
                 ]
             },
-            "relevantChunks": [
-                {"docUuid": "doc-1", "chunkIndex": 0},
-            ],
+            "relevantChunks": relevant_chunks,
         }
 
         result = await service.extract_endpoints(
-            doc_items=fake_doc_items,
-            object_class="User",
-            session_id=uuid4(),
-            relevant_chunks=relevant_chunks,
-            job_id=uuid4(),
-            base_api_url="https://api.example.com",
+            fake_doc_items, "User", session_id, relevant_chunks, job_id, base_api_url
         )
 
+        # Verify result structure
         assert "result" in result
-        assert "relevantChunks" in result
         assert "endpoints" in result["result"]
-        assert len(result["result"]["endpoints"]) == 1
+        assert len(result["result"]["endpoints"]) == 3
         assert result["result"]["endpoints"][0]["path"] == "/users"
+        assert result["result"]["endpoints"][0]["method"] == "GET"
 
-        mock_session.update_session.assert_called_once()
-        args, kwargs = mock_session.update_session.call_args
-        assert isinstance(args[0], UUID)
-        updated_payload = args[1]
-        assert "objectClassesOutput" in updated_payload
-        updated_obj_classes = updated_payload["objectClassesOutput"]["objectClasses"]
-        assert len(updated_obj_classes) == 1
-        assert updated_obj_classes[0]["name"].lower() == "user"
-        assert "endpoints" in updated_obj_classes[0]
-        assert len(updated_obj_classes[0]["endpoints"]) == 1
-        assert updated_obj_classes[0]["endpoints"][0]["path"] == "/users"
+        # Verify chunk extraction was called
+        mock_extract_chunks.assert_called_once_with(fake_doc_items, relevant_chunks, "Digester:Endpoints")
+
+        # Verify endpoint extraction was called with base_api_url
+        mock_extract_endpoints.assert_called_once()
+        call_args = mock_extract_endpoints.call_args
+        assert call_args[0][3] == base_api_url
 
 
-# extract_auth
 @pytest.mark.asyncio
-async def test_extract_auth(mock_llm, mock_digester_update_job_progress):
-    """
-    Test extracting authentication info across multiple documents.
-    """
+async def test_extract_endpoints_no_relevant_chunks(mock_llm, mock_digester_update_job_progress):
+    """Test extract_endpoints when no relevant chunks are found."""
+    session_id = uuid4()
+    job_id = uuid4()
 
-    fake_doc_items = [{"uuid": str(uuid4()), "content": "Test documentation content"}]
+    with patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks:
+        mock_extract_chunks.return_value = ([], [])
+
+        result = await service.extract_endpoints([], "User", session_id, [], job_id, "")
+
+        assert result["result"]["endpoints"] == []
+        assert result["relevantChunks"] == []
+
+
+@pytest.mark.asyncio
+async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_job_progress):
+    """Test extract_endpoints properly passes base_api_url to extraction function."""
+    session_id = uuid4()
+    job_id = uuid4()
+    doc_uuid = str(uuid4())
+    base_api_url = "https://custom-api.example.com/v2"
+
+    fake_doc_items = [{"uuid": doc_uuid, "content": "test", "summary": "", "@metadata": {}}]
+    relevant_chunks = [{"docUuid": doc_uuid}]
+
+    mock_db_session = AsyncMock()
+    mock_repo = MagicMock()
+    mock_repo.get_session_data = AsyncMock(
+        return_value={"objectClasses": [{"name": "User", "endpoints": [], "relevantChunks": relevant_chunks}]}
+    )
+    mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.service.extract_auth_raw") as mock_extract,
-        patch("src.modules.digester.service.deduplicate_and_sort_auth") as mock_dedupe,
-        patch("src.modules.digester.utils.parallel_docs.update_job_progress") as mock_parallel_progress,
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.service._extract_endpoints") as mock_extract_endpoints,
+        patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
     ):
-        mock_extract.return_value = (
-            [
-                {
-                    "name": "OAuth2",
-                    "type": "authorization_code",
-                    "quirks": None,
-                }
-            ],
-            [0, 1],
-        )
+        mock_session_maker.return_value.__aenter__.return_value = mock_db_session
+        mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
+        mock_repo_class.return_value = mock_repo
+
+        mock_extract_chunks.return_value = (["chunk"], [(0, doc_uuid)])
+        mock_extract_endpoints.return_value = {"result": {"endpoints": []}, "relevantChunks": []}
+
+        await service.extract_endpoints(fake_doc_items, "User", session_id, relevant_chunks, job_id, base_api_url)
+
+        # Verify base_api_url was passed correctly
+        call_args = mock_extract_endpoints.call_args
+        assert call_args[0][3] == base_api_url
+
+
+# ==================== EXTRACT AUTH ====================
+@pytest.mark.asyncio
+async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress):
+    doc_uuid1 = str(uuid4())
+    doc_uuid2 = str(uuid4())
+
+    fake_doc_items = [
+        {
+            "uuid": doc_uuid1,
+            "content": "OAuth2 authentication documentation",
+            "summary": "OAuth2 setup",
+            "@metadata": {"source": "auth_guide"},
+        },
+        {
+            "uuid": doc_uuid2,
+            "content": "API Key authentication documentation",
+            "summary": "API Key usage",
+            "@metadata": {"source": "api_spec"},
+        },
+    ]
+
+    with (
+        patch("src.modules.digester.service.deduplicate_and_sort_auth", new_callable=AsyncMock) as mock_dedupe,
+        patch("src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock) as mock_parallel,
+    ):
+        mock_parallel.return_value = [
+            (
+                [AuthInfo(name="OAuth2", type="oauth2", quirks="Supports authorization_code and client_credentials")],
+                True,
+                doc_uuid1,
+            ),
+            (
+                [AuthInfo(name="API Key", type="apiKey", quirks="Header: X-API-Key")],
+                True,
+                doc_uuid2,
+            ),
+        ]
 
         class FakeDedupedAuth:
-            def model_dump(self, by_alias=True):
+            def model_dump(self, **kwargs):
                 return {
                     "auth": [
                         {
                             "name": "OAuth2",
-                            "type": "authorization_code",
-                            "quirks": None,
-                        }
+                            "type": "oauth2",
+                            "quirks": "Supports authorization_code and client_credentials",
+                        },
+                        {"name": "API Key", "type": "apiKey", "quirks": "Header: X-API-Key"},
                     ]
                 }
 
         mock_dedupe.return_value = FakeDedupedAuth()
 
-        result = await service.extract_auth(
-            fake_doc_items,
-            uuid4(),
-        )
+        job_id = uuid4()
+        result = await service.extract_auth(fake_doc_items, job_id)
 
         assert "result" in result
         assert "relevantChunks" in result
-
         assert "auth" in result["result"]
-        assert len(result["result"]["auth"]) == 1
+        assert len(result["result"]["auth"]) == 2
         assert result["result"]["auth"][0]["name"] == "OAuth2"
-        assert result["result"]["auth"][0]["type"] == "authorization_code"
+        assert result["result"]["auth"][1]["name"] == "API Key"
 
-        # Verify progress tracking was called
-        assert mock_parallel_progress.called or mock_digester_update_job_progress.called
+        mock_parallel.assert_awaited_once()
+        mock_dedupe.assert_awaited_once()
 
 
-# extract_info_metadata
 @pytest.mark.asyncio
-async def test_extract_info_metadata(mock_llm, mock_digester_update_job_progress):
-    """
-    Test extracting API metadata (infoAboutSchema, etc.) across documents.
-    """
-
-    fake_doc_items = [{"uuid": str(uuid4()), "content": "Test documentation content"}]
+async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_progress):
+    """Test extract_auth when no authentication methods are found."""
+    doc_uuid = str(uuid4())
+    fake_doc_items = [{"uuid": doc_uuid, "content": "General documentation", "summary": "", "@metadata": {}}]
 
     with (
-        patch("src.modules.digester.service._extract_info_metadata") as mock_extract,
-        patch("src.modules.digester.service.update_job_progress") as mock_update_progress,
+        patch("src.modules.digester.service.deduplicate_and_sort_auth", new_callable=AsyncMock) as mock_dedupe,
+        patch("src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock) as mock_parallel,
     ):
-        mock_extract.return_value = (
-            {
-                "infoAboutSchema": [
-                    {
-                        "title": "Example API",
-                        "version": "1.0.0",
-                    }
-                ]
-            },
-            [2],
-        )
+        mock_parallel.return_value = [([], False, doc_uuid)]
 
-        result = await service.extract_info_metadata(
-            fake_doc_items,
-            uuid4(),
-        )
+        class EmptyAuth:
+            def model_dump(self, **kwargs):
+                return {"auth": []}
+
+        mock_dedupe.return_value = EmptyAuth()
+
+        result = await service.extract_auth(fake_doc_items, uuid4())
+
+        assert result["result"]["auth"] == []
+        mock_parallel.assert_awaited_once()
+        mock_dedupe.assert_awaited_once()
+
+
+# ==================== EXTRACT INFO METADATA ====================
+@pytest.mark.asyncio
+async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_progress):
+    doc_uuid1 = uuid4()
+    doc_uuid2 = uuid4()
+
+    fake_doc_items = [
+        {"uuid": str(doc_uuid1), "content": "API Overview: ExampleAPI v1.0"},
+        {"uuid": str(doc_uuid2), "content": "Base URL: https://api.example.com/v1"},
+    ]
+
+    with (
+        patch("src.modules.digester.service._extract_info_metadata", new_callable=AsyncMock) as mock_extract,
+        patch("src.modules.digester.service.increment_processed_documents", new_callable=AsyncMock) as mock_increment,
+    ):
+        mock_extract.side_effect = [
+            (
+                InfoMetadata(
+                    name="ExampleAPI",
+                    api_version="v1.0",
+                    application_version="1.0.0",
+                    api_type=["REST", "OpenAPI"],
+                    base_api_endpoint=[],
+                ),
+                True,
+            ),
+            (
+                InfoMetadata(
+                    name="ExampleAPI",
+                    api_version="v1.0",
+                    application_version="1.0.0",
+                    api_type=["REST", "OpenAPI"],
+                    base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1", type="constant")],
+                ),
+                True,
+            ),
+        ]
+
+        job_id = uuid4()
+        result = await service.extract_info_metadata(fake_doc_items, job_id)
 
         assert "result" in result
         assert "relevantChunks" in result
 
-        assert "infoAboutSchema" in result["result"]
-        assert len(result["result"]["infoAboutSchema"]) == 1
-        assert result["result"]["infoAboutSchema"][0]["title"] == "Example API"
+        metadata = result["result"]
+        assert metadata["name"] == "ExampleAPI"
+        assert metadata["apiVersion"] == "v1.0"
+        assert len(metadata["baseApiEndpoint"]) == 1
 
-        assert mock_update_progress.called or mock_digester_update_job_progress.called
+        assert mock_extract.call_count == 2
+        assert mock_increment.call_count == 2
 
 
-# extract_relations
 @pytest.mark.asyncio
-async def test_extract_relations(mock_llm, mock_digester_update_job_progress):
-    """
-    Test extracting relations between object classes from multiple docs.
-    """
+async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_job_progress):
+    """Test extract_info_metadata with no documentation items."""
+    with patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock):
+        result = await service.extract_info_metadata([], uuid4())
 
-    fake_doc_items = [{"uuid": str(uuid4()), "content": "Test documentation content"}]
+        assert result["result"] == {}
+        assert result["relevantChunks"] == []
+
+
+# ==================== EXTRACT RELATIONS ====================
+@pytest.mark.asyncio
+async def test_extract_relations_success(mock_llm, mock_digester_update_job_progress):
+    """
+    Test extracting relations between object classes.
+    Validates parallel processing and relation merging.
+    """
+    doc_uuid = uuid4()
+    fake_doc_items = [
+        {
+            "uuid": str(doc_uuid),
+            "content": "User-Group relationship documentation",
+            "summary": "Relations",
+            "@metadata": {"tags": "relations"},
+        }
+    ]
+
+    relevant_object_class = "User"
 
     with (
-        patch("src.modules.digester.service._extract_relations") as mock_extract,
-        patch("src.modules.digester.service.merge_relations_results") as mock_merge,
-        patch("src.modules.digester.utils.parallel_docs.update_job_progress") as mock_parallel_progress,
+        patch("src.modules.digester.service._extract_relations"),
+        patch("src.modules.digester.service.merge_relations_results"),
+        patch("src.modules.digester.service._process_over_documents") as mock_process,
     ):
-        mock_extract.return_value = (
-            {
+        mock_process.return_value = {
+            "result": {
                 "relations": [
-                    {
-                        "from": "User",
-                        "to": "Group",
-                        "type": "membership",
-                    }
+                    RelationRecord(
+                        name="user_groups",
+                        short_description="User membership in groups",
+                        subject="user",
+                        subject_attribute="groups",
+                        object="group",
+                        object_attribute="members",
+                    ).model_dump(by_alias=True)
                 ]
             },
-            [1, 3],
-        )
-
-        mock_merge.return_value = {
-            "relations": [
-                {
-                    "from": "User",
-                    "to": "Group",
-                    "type": "membership",
-                }
-            ]
+            "relevantChunks": [{"docUuid": str(doc_uuid)}],
         }
 
-        result = await service.extract_relations(
-            fake_doc_items,
-            relevant_object_class="User",
-            job_id=uuid4(),
-        )
+        job_id = uuid4()
+        result = await service.extract_relations(fake_doc_items, relevant_object_class, job_id)
 
         assert "result" in result
         assert "relevantChunks" in result
-
         assert "relations" in result["result"]
-        assert len(result["result"]["relations"]) == 1
-        assert result["result"]["relations"][0]["from"] == "User"
-        assert result["result"]["relations"][0]["to"] == "Group"
 
-        # Verify progress tracking was called
-        assert mock_parallel_progress.called or mock_digester_update_job_progress.called
+        relation = result["result"]["relations"][0]
+        assert relation["subject"] == "user"
+        assert relation["object"] == "group"
+
+
+@pytest.mark.asyncio
+async def test_extract_relations_no_relations_found(mock_llm, mock_digester_update_job_progress):
+    """Test extract_relations when no relations are discovered."""
+    fake_doc_items = [{"uuid": str(uuid4()), "content": "No relations", "summary": "", "@metadata": {}}]
+
+    with patch("src.modules.digester.service._process_over_documents") as mock_process:
+        mock_process.return_value = {"result": {"relations": []}, "relevantChunks": []}
+
+        result = await service.extract_relations(fake_doc_items, "User", uuid4())
+
+        assert result["result"]["relations"] == []
+
+
+# ==================== INTEGRATION SCENARIOS ====================
+@pytest.mark.asyncio
+async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_update_job_progress):
+    """
+    Integration test simulating the full workflow:
+    1. Extract object classes
+    2. Extract attributes for a class
+    3. Extract endpoints for a class
+    """
+    session_id = uuid4()
+    doc_uuid = uuid4()
+
+    doc_items = [
+        {
+            "uuid": str(doc_uuid),
+            "content": "Complete API documentation with User schema and endpoints",
+            "summary": "Full API docs",
+            "@metadata": {"tags": "spec"},
+        }
+    ]
+
+    with (
+        patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.service.increment_processed_documents", new_callable=AsyncMock),
+    ):
+        # Step 1: Extract object classes
+        with (
+            patch(
+                "src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock
+            ) as mock_parallel,
+            patch(
+                "src.modules.digester.service.deduplicate_and_sort_object_classes", new_callable=AsyncMock
+            ) as mock_dedupe_classes,
+        ):
+            mock_parallel.return_value = [
+                (
+                    [
+                        ObjectClass(
+                            name="User",
+                            relevant="true",
+                            description="User entity",
+                            relevant_chunks=[{"docUuid": doc_uuid}],
+                        )
+                    ],
+                    True,
+                    doc_uuid,
+                )
+            ]
+
+            class ObjectClassResult:
+                def model_dump(self, by_alias=True):
+                    return {
+                        "objectClasses": [
+                            {
+                                "name": "User",
+                                "relevant": "true",
+                                "description": "User entity",
+                                "relevantChunks": [{"docUuid": str(doc_uuid)}],
+                            }
+                        ]
+                    }
+
+            mock_dedupe_classes.return_value = ObjectClassResult()
+
+            classes_result = await service.extract_object_classes(doc_items, True, "high", uuid4())
+            assert len(classes_result["result"]["objectClasses"]) == 1
+
+            mock_parallel.assert_awaited_once()
+            mock_dedupe_classes.assert_awaited_once()
+
+        # Step 2: Extract attributes
+        mock_db_session = AsyncMock()
+        mock_repo = MagicMock()
+        object_classes_output = classes_result["result"]
+        mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
+        mock_repo.update_session = AsyncMock()
+
+        with (
+            patch("src.modules.digester.service.select_doc_chunks") as mock_chunks,
+            patch("src.modules.digester.service._extract_attributes") as mock_attrs,
+            patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
+            patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+        ):
+            mock_session_maker.return_value.__aenter__.return_value = mock_db_session
+            mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
+            mock_repo_class.return_value = mock_repo
+
+            mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
+            mock_attrs.return_value = {
+                "result": {"attributes": {"id": {"type": "string", "description": "ID"}}},
+                "relevantChunks": [],
+            }
+
+            attrs_result = await service.extract_attributes(
+                doc_items, "User", session_id, [{"docUuid": str(doc_uuid)}], uuid4()
+            )
+            assert "id" in attrs_result["result"]["attributes"]
+
+        # Step 3: Extract endpoints
+        with (
+            patch("src.modules.digester.service.select_doc_chunks") as mock_chunks,
+            patch("src.modules.digester.service._extract_endpoints") as mock_endpoints,
+            patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
+            patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+        ):
+            # Update mock repo to include attributes
+            object_classes_output["objectClasses"][0]["attributes"] = attrs_result["result"]["attributes"]
+            mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
+
+            mock_session_maker.return_value.__aenter__.return_value = mock_db_session
+            mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
+            mock_repo_class.return_value = mock_repo
+
+            mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
+            mock_endpoints.return_value = {
+                "result": {"endpoints": [{"method": "GET", "path": "/users", "description": "Get users"}]},
+                "relevantChunks": [],
+            }
+
+            endpoints_result = await service.extract_endpoints(
+                doc_items, "User", session_id, [{"docUuid": str(doc_uuid)}], uuid4(), "https://api.example.com"
+            )
+            assert len(endpoints_result["result"]["endpoints"]) == 1

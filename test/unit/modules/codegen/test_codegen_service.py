@@ -1,14 +1,44 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
 """Unit tests for the codegen service module."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
 from src.modules.codegen import service
+from src.modules.digester.schema import RelationsResponse
+
+
+def test_collect_pairs_new_format():
+    """Test _collect_pairs with new format containing only docUuid."""
+    input_data = [{"docUuid": "uuid1"}, {"docUuid": "uuid2"}, {"docUuid": "uuid3"}]
+
+    result = service._collect_pairs(input_data)
+
+    expected = [(0, "uuid1"), (1, "uuid2"), (2, "uuid3")]
+    assert result == expected
+
+
+def test_collect_pairs_legacy_format():
+    """Test _collect_pairs with legacy format containing only integers."""
+    # Legacy format: list of integers
+    input_data = [1, 2, 3, 4]
+
+    result = service._collect_pairs(input_data)
+
+    expected = [(1, None), (2, None), (3, None), (4, None)]
+    assert result == expected
+
+
+def test_collect_pairs_empty_input():
+    """Test _collect_pairs with empty or None input."""
+    assert service._collect_pairs(None) == []
+    assert service._collect_pairs([]) == []
+    assert service._collect_pairs("") == []
 
 
 @pytest.mark.asyncio
@@ -25,7 +55,7 @@ async def test_generate_native_schema():
         result = await service.create_native_schema(
             test_attributes,
             "User",
-            job_id="test-job-id",
+            job_id=uuid4(),
         )
 
         assert isinstance(result, dict)
@@ -49,7 +79,7 @@ async def test_generate_conn_id():
         result = await service.create_conn_id(
             test_attributes,
             "User",
-            job_id="test-job-id",
+            job_id=uuid4(),
         )
 
         assert isinstance(result, dict)
@@ -68,13 +98,18 @@ async def test_generate_search():
     }
 
     test_endpoints = {"endpoints": [{"method": "GET", "path": "/users", "description": "List users"}]}
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
 
     with (
-        patch("src.modules.codegen.service.SessionManager") as mock_session_manager,
+        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
         patch("src.modules.codegen.service.SearchGenerator") as mock_search_generator_class,
     ):
-        mock_session_manager.get_session_data.return_value = None
+        mock_db_cm = mock_session_maker.return_value
+        mock_db = MagicMock()
+        mock_db_cm.__aenter__ = AsyncMock(return_value=mock_db)
+
+        mock_repo_instance = mock_session_repository.return_value
+        mock_repo_instance.get_session_data = AsyncMock(return_value=None)
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_search_generator_class.return_value
@@ -83,11 +118,9 @@ async def test_generate_search():
         result = await service.create_search(
             attributes=test_attributes,
             endpoints=test_endpoints,
-            documentation_items=test_docs,
-            documentation="joined docs",
-            session_id="test-session",
+            session_id=uuid4(),
             object_class="User",
-            job_id="test-job-id",
+            job_id=uuid4(),
         )
 
         assert isinstance(result, dict)
@@ -102,25 +135,49 @@ async def test_generate_search():
 @pytest.mark.asyncio
 async def test_generate_relation():
     """Test generating relation code."""
-    test_relations = {"relations": [{"from": "User", "to": "Group", "type": "membership"}]}
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
+    test_relations_payload = {
+        "relations": [
+            {
+                "name": "Project to Membership",
+                "subject": "project",
+                "object": "membership",
+                "subjectAttribute": "memberships",
+                "objectAttribute": "",
+                "shortDescription": "",
+            },
+            {
+                "name": "Membership to Principal",
+                "subject": "membership",
+                "object": "principal",
+                "subjectAttribute": "principal",
+                "objectAttribute": "",
+                "shortDescription": "",
+            },
+        ]
+    }
 
     with (
-        patch("src.modules.codegen.service.SessionManager") as mock_session_manager,
+        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
         patch("src.modules.codegen.service.RelationGenerator") as mock_relation_generator_class,
     ):
-        mock_session_manager.get_session_data.return_value = None
+        mock_db_cm = mock_session_maker.return_value
+        mock_db = AsyncMock()
+        mock_db_cm.__aenter__.return_value = mock_db
+
+        mock_repo_instance = mock_session_repository.return_value
+        mock_repo_instance.get_session_data = AsyncMock(return_value=None)
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_relation_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked relation code")
 
+        relations_model = RelationsResponse.model_validate(test_relations_payload)
+
         result = await service.create_relation(
-            relations=test_relations,
-            documentation_items=test_docs,
-            documentation="joined docs",
-            session_id="test-session",
-            job_id="test-job-id",
+            relations=relations_model,
+            session_id=uuid4(),
+            job_id=uuid4(),
         )
 
         assert isinstance(result, dict)
@@ -141,13 +198,18 @@ async def test_generate_create():
     }
 
     test_endpoints = {"endpoints": [{"method": "POST", "path": "/users", "description": "Create user"}]}
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
 
     with (
-        patch("src.modules.codegen.service.SessionManager") as mock_session_manager,
+        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
         patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
     ):
-        mock_session_manager.get_session_data.return_value = None
+        mock_db_cm = mock_session_maker.return_value
+        mock_db = AsyncMock()
+        mock_db_cm.__aenter__.return_value = mock_db
+
+        mock_repo_instance = mock_session_repository.return_value
+        mock_repo_instance.get_session_data = AsyncMock(return_value=None)
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_create_generator_class.return_value
@@ -156,11 +218,9 @@ async def test_generate_create():
         result = await service.create_create(
             attributes=test_attributes,
             endpoints=test_endpoints,
-            documentation_items=test_docs,
-            documentation="joined docs",
-            session_id="test-session",
+            session_id=uuid4(),
             object_class="User",
-            job_id="test-job-id",
+            job_id=uuid4(),
         )
 
         assert isinstance(result, dict)
@@ -181,13 +241,18 @@ async def test_generate_update():
     }
 
     test_endpoints = {"endpoints": [{"method": "PUT", "path": "/users/{id}", "description": "Update user"}]}
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
 
     with (
-        patch("src.modules.codegen.service.SessionManager") as mock_session_manager,
+        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
         patch("src.modules.codegen.service.UpdateGenerator") as mock_update_generator_class,
     ):
-        mock_session_manager.get_session_data.return_value = None
+        mock_db_cm = mock_session_maker.return_value
+        mock_db = AsyncMock()
+        mock_db_cm.__aenter__.return_value = mock_db
+
+        mock_repo_instance = mock_session_repository.return_value
+        mock_repo_instance.get_session_data = AsyncMock(return_value=None)
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_update_generator_class.return_value
@@ -196,11 +261,9 @@ async def test_generate_update():
         result = await service.create_update(
             attributes=test_attributes,
             endpoints=test_endpoints,
-            documentation_items=test_docs,
-            documentation="joined docs",
-            session_id="test-session",
+            session_id=uuid4(),
             object_class="User",
-            job_id="test-job-id",
+            job_id=uuid4(),
         )
 
         assert isinstance(result, dict)
@@ -220,13 +283,18 @@ async def test_generate_delete():
     }
 
     test_endpoints = {"endpoints": [{"method": "DELETE", "path": "/users/{id}", "description": "Delete user"}]}
-    test_docs = [{"uuid": "doc1", "content": "Test documentation"}]
 
     with (
-        patch("src.modules.codegen.service.SessionManager") as mock_session_manager,
+        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
         patch("src.modules.codegen.service.DeleteGenerator") as mock_delete_generator_class,
     ):
-        mock_session_manager.get_session_data.return_value = None
+        mock_db_cm = mock_session_maker.return_value
+        mock_db = AsyncMock()
+        mock_db_cm.__aenter__.return_value = mock_db
+
+        mock_repo_instance = mock_session_repository.return_value
+        mock_repo_instance.get_session_data = AsyncMock(return_value=None)
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_delete_generator_class.return_value
@@ -235,11 +303,9 @@ async def test_generate_delete():
         result = await service.create_delete(
             attributes=test_attributes,
             endpoints=test_endpoints,
-            documentation_items=test_docs,
-            documentation="joined docs",
-            session_id="test-session",
+            session_id=uuid4(),
             object_class="User",
-            job_id="test-job-id",
+            job_id=uuid4(),
         )
 
         assert isinstance(result, dict)

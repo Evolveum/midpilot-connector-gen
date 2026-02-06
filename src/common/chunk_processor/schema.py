@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -8,6 +8,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from ...config import config
+from ...modules.digester.schema import BaseAPIEndpoint
 
 
 class SummaryOutput(BaseModel):
@@ -66,6 +67,16 @@ class LlmChunkOutput(BaseModel):
     category: str = Field(description="Type of the content in the chunk")
     llm_tags: Optional[List[str]] = Field(description="LLM-generated tags, not tags from predefined selection")
     llm_category: Optional[str] = Field(description="LLM-generated category, not from predefined selection")
+    application_version: Optional[str] = Field(description="Application version mentioned in the chunk, if any")
+    api_version: Optional[str] = Field(description="API version mentioned in the chunk, if any")
+    api_type: Optional[List[str]] = Field(description="API type(s) mentioned in the chunk, if any")
+    base_api_endpoint: Optional[List[BaseAPIEndpoint]] = Field(
+        description="Base API endpoint(s) mentioned in the chunk, if any"
+    )
+    different_app_name: bool = Field(
+        description="Indicates if the chunk mentions a different application name than expected"
+    )
+    application_name: Optional[str] = Field(description="The application name mentioned in the chunk, if any")
 
     @field_validator("category")
     @classmethod

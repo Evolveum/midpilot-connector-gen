@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -14,7 +14,7 @@ from crawl4ai import (  # type: ignore
     DefaultMarkdownGenerator,
     PruningContentFilter,
 )
-from crawl4ai.async_configs import CrawlerRunConfig  # type: ignore
+from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig  # type: ignore
 from crawl4ai.utils import (  # type: ignore
     get_base_domain,
     normalize_url,
@@ -38,6 +38,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
     logger.info("[Scrape:URLs] Starting to scrape %s URLs", len(links_to_scrape_orig))
     prune_filter = PruningContentFilter(threshold=0.42, threshold_type="dynamic", min_word_threshold=1)
     md_generator = DefaultMarkdownGenerator(content_filter=prune_filter)
+    browser_config = BrowserConfig(accept_downloads=True)
     run_config = CrawlerRunConfig(
         check_robots_txt=True,
         wait_until="networkidle",
@@ -56,7 +57,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
         last_attempt = attempt
         logger.info("[Scrape:URLs] Attempt %s/%s: Scraping %s URLs", attempt, max_attempts, len(links_to_scrape))
         # create a fresh crawler each attempt and ensure clean shutdown
-        async with AsyncWebCrawler() as crawler:
+        async with AsyncWebCrawler(config=browser_config) as crawler:
             raw_results = await crawler.arun_many(urls=links_to_scrape, config=run_config)
 
         # Tell the type checker exactly what arun_many returns
@@ -367,10 +368,12 @@ async def filterOutIrrelevantLinks(
         if irrelevant_llm_response is None:
             logger.warning("[Scrape:Filter] LLM filtering call %s/%s failed", curr_run + 1, llm_calls)
         else:
-            logger.info("[Scrape:Filter] LLM identified %s irrelevant links", len(irrelevant_llm_response.links))
-            logger.debug("[Scrape:Filter] LLM irrelevant links: %s", irrelevant_llm_response.links)
+            logger.debug("[Scrape:Filter] LLM identified %s RAW irrelevant links", len(irrelevant_llm_response.links))
+            irrelevant_llm_links = list(set(irrelevant_llm_response.links) & set(current_links_not_forbidden))
+            logger.info("[Scrape:Filter] LLM identified %s irrelevant links", len(irrelevant_llm_links))
+            logger.debug("[Scrape:Filter] LLM irrelevant links: %s", irrelevant_llm_links)
 
-            past_irrelevant_links.extend(irrelevant_llm_response.links)
+            past_irrelevant_links.extend(irrelevant_llm_links)
 
             current_links_not_forbidden = list(set(current_links_not_forbidden) - set(past_irrelevant_links))
 

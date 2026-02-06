@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -45,14 +45,9 @@ class BaseProgress(BaseModel):
     message: Optional[str] = Field(default=None, description="Human-friendly note about current work")
 
 
-class ChunkProgress(BaseProgress):
-    processedChunks: Optional[int] = Field(default=None, description="Number of processed chunks")
-    totalChunks: Optional[int] = Field(default=None, description="Total number of chunks")
-
-
 class IterationProgress(BaseProgress):
-    currentIteration: Optional[int] = Field(default=None, description="Current iteration (1-based)")
-    maxIterations: Optional[int] = Field(default=None, description="Maximum iterations configured")
+    completedIterations: Optional[int] = Field(default=None, description="Current iteration")
+    totalIterations: Optional[int] = Field(default=None, description="Maximum iterations configured")
 
 
 class DocumentProgress(BaseModel):

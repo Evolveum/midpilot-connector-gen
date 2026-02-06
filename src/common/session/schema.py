@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -48,7 +48,7 @@ class DocumentationItem(BaseModel):
         default_factory=dict,
         serialization_alias="@metadata",
         validation_alias=AliasChoices("@metadata", "metadata"),
-        description="Additional metadata - for scraped: chunk_number, num_endpoints, length, contentType, tags, category, llm_tags, llm_category; for uploads: filename, length",
+        description="Additional metadata: chunk_number, num_endpoints, length, contentType, tags, category, llm_tags, llm_category",
     )
 
 

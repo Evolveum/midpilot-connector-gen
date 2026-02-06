@@ -1,6 +1,7 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
+
 
 def get_irrelevant_filter_prompts(links: list[str], app: str, app_version: str) -> tuple[str, str]:
     """
@@ -46,6 +47,12 @@ Only documentation directly supporting IDM integration, API development, or iden
    "groups", "access control", "identity", "directory", "SSO", "OAuth", "SAML",  "admin",
    "API", "REST", "schema", "SCIM", "federation", "claims", "tokens"
 
+5. Overview and Landing Pages:
+   * High-level overviews of API capabilities
+   * Landing pages for developer portals or API documentation hubs
+   * Architecture diagrams related to identity management
+   * It is important to NEVER mark these as irrelevant, so that we can get to relevant content later on.
+
 ## ALWAYS IRRELEVANT (ALWAYS mark these as irrelevant):
 
 1. Legal & Compliance:
@@ -62,6 +69,7 @@ Only documentation directly supporting IDM integration, API development, or iden
    * How-to guides for non-technical users
    * UI walkthroughs, feature tutorials for end users
    * Troubleshooting for end-user issues
+   * Not admin or developer focused content
 
 4. Community & Social:
    * Blog posts, articles, news
@@ -107,13 +115,20 @@ Only documentation directly supporting IDM integration, API development, or iden
 * When in doubt about REST API pages → KEEP (mark as relevant)
 * When in doubt about IDM terminology → KEEP (mark as relevant)
 * When in doubt about OpenAPI/Swagger → KEEP (mark as relevant)
-* When clearly for end users, not developers → REMOVE (mark as irrelevant)
+* When in doubt about tutorials/guides/manuals → KEEP if even remotly technical (mark as relevant)
+* When clearly for end users except admins, not developers → REMOVE (mark as irrelevant)
 * When legal, marketing, or social content → REMOVE (mark as irrelevant)
 
 Be aggressive in filtering out irrelevant content, but conservative with anything that might contain API specifications, IDM concepts, or integration documentation.
 Also be very careful not to mark as irrelevant any pages that are general. Simple urls that do not have that much specific keywords but can lead to relevant content later on.
 Main example are landing pages for REST API documentation or IDM topics, not complicated urls that are like intersections for more valuable content.
 These must never be marked as irrelevant.
+
+## Versioning:
+
+When there are multiple versions of the application documented, focus ONLY on the version {app_version}.
+Be VERY CAREFUL about removing links that are for the specific version {app_version}.
+If the link is contains completely different version, for example much older version, then it can be marked as irrelevant.
 
 ## NOTES
 

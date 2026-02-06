@@ -1,36 +1,62 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
-
-"""
-This module provides functionality to filter chunks based on specific criteria.
-It is designed to be used by digestor and codegen services.
-"""
 
 from typing import Any, Dict, List
 from uuid import UUID
 
-from ..session.session import SessionManager
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..database.repositories.documentation_repository import DocumentationRepository
+from ..database.repositories.session_repository import SessionRepository
 from .schema import ChunkFilterCriteria
 
 
-def filter_documentation_items(criteria: ChunkFilterCriteria, session_id: UUID) -> List[Dict[str, Any]]:
+async def filter_documentation_items(
+    criteria: ChunkFilterCriteria, session_id: UUID, db: AsyncSession | None = None
+) -> List[Dict[str, Any]]:
     """
     Filters documentation items based on the provided criteria.
     Works directly with documentationItems without reconstructing PageChunk objects.
 
     input: criteria - ChunkFilterCriteria object defining the filtering conditions
            session_id - session ID to retrieve documentation items from
+           db - optional SQLAlchemy AsyncSession
     output: list of documentationItem dicts that meet the criteria
     """
-    if not SessionManager.session_exists(session_id):
+    if db is None:
+        from ..database.config import async_session_maker
+
+        async with async_session_maker() as session:
+            return await _filter_documentation_items_impl(criteria, session_id, session)
+    else:
+        return await _filter_documentation_items_impl(criteria, session_id, db)
+
+
+async def _filter_documentation_items_impl(
+    criteria: ChunkFilterCriteria, session_id: UUID, db: AsyncSession
+) -> List[Dict[str, Any]]:
+    session_repo = SessionRepository(db)
+    if not await session_repo.session_exists(session_id):
         raise ValueError(f"Session with ID {session_id} does not exist.")
 
-    # Get documentation items which now contain the chunk data
-    doc_items = SessionManager.get_session_data(session_id, "documentationItems")
-    if doc_items is None:
-        raise ValueError(
-            f"Session with ID {session_id} has no documentation items, the session data might be corrupted or the path is wrong."
+    doc_repo = DocumentationRepository(db)
+    raw_items = await doc_repo.get_documentation_items_by_session(session_id)
+    if not raw_items:
+        raise ValueError(f"Session with ID {session_id} has no documentation items stored.")
+
+    doc_items: List[Dict[str, Any]] = []
+    for item in raw_items:
+        doc_items.append(
+            {
+                "uuid": item.get("id"),
+                "pageId": item.get("pageId"),
+                "source": item.get("source"),
+                "url": item.get("url"),
+                "summary": item.get("summary"),
+                "content": item.get("content", ""),
+                "@metadata": item.get("metadata", {}) or {},
+            }
         )
 
     # Filter documentation items based on criteria
@@ -65,7 +91,9 @@ def filter_documentation_items(criteria: ChunkFilterCriteria, session_id: UUID) 
         if criteria.excluded_categories is not None and category in criteria.excluded_categories:
             continue
         if criteria.allowed_tags is not None:
-            if tags is None or not any(tag.lower().strip() in criteria.allowed_tags for tag in tags):
+            if tags is None or not all(
+                any(tag.lower().strip() in allowed_group for tag in tags) for allowed_group in criteria.allowed_tags
+            ):
                 continue
         if criteria.excluded_tags is not None:
             if tags is not None and any(tag.lower().strip() in criteria.excluded_tags for tag in tags):
@@ -74,6 +102,18 @@ def filter_documentation_items(criteria: ChunkFilterCriteria, session_id: UUID) 
             content_type is None or content_type not in criteria.allowed_content_types
         ):
             continue
+        if not criteria.allow_different_app_name:
+            different_app_name = metadata.get("different_app_name", False)
+            if different_app_name:
+                continue
+        if criteria.target_app_versions is not None:
+            application_version = metadata.get("application_version")
+            if application_version is not None and application_version not in criteria.target_app_versions:
+                continue
+        if not criteria.allow_unknown_app_version:
+            application_version = metadata.get("application_version")
+            if application_version is None:
+                continue
 
         filtered_items.append(item)
 

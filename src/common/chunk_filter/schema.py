@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -27,9 +27,13 @@ class ChunkFilterCriteria(BaseModel):
         default=None,
         description="List of excluded categories for chunk filtering, in a case of conflict with allowed_categories, exclusion takes precedence",
     )
-    allowed_tags: List[str] | None = Field(
+    allowed_tags: List[List[str]] | None = Field(
         default=None,
-        description="List of allowed tags for chunk filtering, if None, all tags that are not excluded are allowed",
+        description="""
+        List of lists of allowed tags for chunk filtering, if None, all tags that are not excluded are allowed
+        Inner list represents `or` condition, i.e. at least one tag from the inner list must be present.
+        Lists in the outer list represent `and` condition, i.e. all inner lists `or` conditions must be satisfied.
+        """,
     )
     excluded_tags: List[str] | None = Field(
         default=None,
@@ -38,6 +42,18 @@ class ChunkFilterCriteria(BaseModel):
     allowed_content_types: List[Literal["markdown", "yaml", "yml", "json"]] | None = Field(
         default=None,
         description="List of allowed content types for chunk filtering, if None, all content types that are not excluded are allowed",
+    )
+    allow_different_app_name: bool = Field(
+        default=False,
+        description="Whether to allow chunks that mention a different application name than expected",
+    )
+    allow_unknown_app_version: bool = Field(
+        default=True,
+        description="Whether to allow chunks with unknown application version",
+    )
+    target_app_versions: List[str] | None = Field(
+        default=None,
+        description="List of target application versions to filter chunks by, if None, all versions are allowed",
     )
 
     @field_validator("allowed_categories", "excluded_categories")

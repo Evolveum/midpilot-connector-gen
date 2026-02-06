@@ -1,16 +1,19 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...common.database.config import get_db
+from ...common.database.repositories.session_repository import SessionRepository
 from ...common.enums import JobStatus
 from ...common.jobs import get_job_status, schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusIterationResponse
-from ...common.session.session import SessionManager
+from ...common.session.session import ensure_session_exists, resolve_session_job_id
 from . import service
 from .schema import ScrapeRequest
 
@@ -26,15 +29,16 @@ router = APIRouter()
 async def scrape_documentation(
     req: ScrapeRequest,
     session_id: UUID = Path(..., description="Session ID"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Enqueue a job to scrape documentation from provided URLs.
     The scraped documentation will be stored in the session.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    job_id = schedule_coroutine_job(
+    job_id = await schedule_coroutine_job(
         job_type="scrape.getRelevantDocumentation",
         input_payload=req.model_dump(by_alias=True),
         worker=service.fetch_relevant_documentation,
@@ -45,7 +49,7 @@ async def scrape_documentation(
         session_result_key="scrapeOutput",
     )
 
-    SessionManager.update_session(
+    await repo.update_session(
         session_id,
         {
             "scrapeJobId": str(job_id),
@@ -65,22 +69,23 @@ async def scrape_documentation(
 async def get_scrape_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of documentation scraping job.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        job_id_str = SessionManager.get_session_data(session_id, "scrapeJobId")
-        if not job_id_str:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No scrape job found in session {session_id}"
-            )
-        jobId = UUID(job_id_str)
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="scrapeJobId",
+        job_label="scrape",
+    )
 
-    job_status = get_job_status(jobId)
+    job_status = await get_job_status(jobId)
     raw_status = job_status.get("status", JobStatus.not_found.value)
     enum_status = JobStatus(raw_status)
 

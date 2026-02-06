@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -73,35 +73,3 @@ def make_basic_chain(prompt: BasePromptTemplate, llm: ChatOpenAI, parser: BaseOu
     chain = RunnableParallel(completion=completion_chain, prompt_value=prompt) | RunnableLambda(parse_with_retry)
 
     return chain
-
-
-def get_default_llm_small1(temperature: float = 0.8) -> ChatOpenAI:
-    """
-    Create and return a ChatOpenAI local LLM instance with default parameters.
-
-    :param temperature: Sampling temperature for the LLM (controls randomness).
-    :return: Configured ChatOpenAI instance.
-    """
-    return ChatOpenAI(
-        openai_api_key=config.llm_small1.openai_api_key,
-        openai_api_base=config.llm_small1.openai_api_base,
-        model_name=config.llm_small1.model_name,
-        request_timeout=config.llm_small1.request_timeout,
-        temperature=temperature,
-    )
-
-
-def get_default_llm_small2(temperature: float = 0.8) -> ChatOpenAI:
-    """
-    Create and return a ChatOpenAI local LLM instance with default parameters.
-
-    :param temperature: Sampling temperature for the LLM (controls randomness).
-    :return: Configured ChatOpenAI instance.
-    """
-    return ChatOpenAI(
-        openai_api_key=config.llm_small2.openai_api_key,
-        openai_api_base=config.llm_small2.openai_api_base,
-        model_name=config.llm_small2.model_name,
-        request_timeout=config.llm_small2.request_timeout,
-        temperature=temperature,
-    )

@@ -1,120 +1,34 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
-
-"""
-Digester endpoints for V2 API (session-centric).
-All digester operations are nested under sessions.
-"""
 
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, HTTPException, Path, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...common.chunk_filter.filter import filter_documentation_items
-from ...common.chunk_filter.schema import ChunkFilterCriteria
+from ...common.database.config import get_db
+from ...common.database.repositories.session_repository import SessionRepository
 from ...common.enums import JobStatus
-from ...common.jobs import get_job_status, schedule_coroutine_job
+from ...common.jobs import schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusMultiDocResponse
-from ...common.session.router import get_session_documentation
-from ...common.session.session import SessionManager
+from ...common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
 from . import service
 from .schema import (
+    AttributeResponse,
     AuthResponse,
-    EndpointsResponse,
+    EndpointResponse,
     InfoResponse,
     ObjectClassesResponse,
-    ObjectClassSchemaResponse,
     RelationsResponse,
 )
+from .utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
+from .utils.inputs import auth_input, metadata_input, object_classes_input
+from .utils.status import build_typed_job_status_response
 
 router = APIRouter()
-
-DEFAULT_CRITERIA = ChunkFilterCriteria(  # Apply static category filter to documentation items
-    min_length=None,
-    min_endpoints_num=None,
-    allowed_categories=[
-        "spec_yaml",
-        "spec_json",
-        "reference_api",
-    ],
-)
-
-AUTH_CRITERIA = ChunkFilterCriteria(
-    min_length=None,
-    min_endpoints_num=None,
-    allowed_categories=[
-        "spec_yaml",
-        "spec_json",
-        "overview",
-    ],
-    allowed_tags=[
-        "authentication",
-        "auth",
-        "authorization",
-    ],
-)
-
-ENDPOINT_CRITERIA = ChunkFilterCriteria(
-    min_length=None,
-    min_endpoints_num=1,
-    allowed_categories=[
-        "spec_yaml",
-        "spec_json",
-        "reference_api",
-    ],
-)
-
-
-# Helper Functions
-def _build_typed_job_status_response(job_id: UUID, model_cls) -> JobStatusMultiDocResponse:
-    """Helper to normalize building a JobStatusMultiDocResponse and parsing the result into a given model."""
-    status = get_job_status(job_id)
-    result_payload = None
-    raw_status = status.get("status", JobStatus.not_found.value)
-    if raw_status == JobStatus.finished.value and isinstance(status.get("result"), dict):
-        try:
-            result_dict = status["result"]
-            # Handle new format with chunks metadata
-            if "result" in result_dict and isinstance(result_dict["result"], dict):
-                actual_result = result_dict["result"]
-            else:
-                actual_result = result_dict
-
-            # Special handling for ObjectClassesResponse to ensure proper model validation
-            if model_cls == ObjectClassesResponse:
-                # Ensure objectClasses is a list and each item has the required fields
-                if "objectClasses" in actual_result and isinstance(actual_result["objectClasses"], list):
-                    for obj_class in actual_result["objectClasses"]:
-                        # Ensure relevant_chunks exists and is a list
-                        if "relevant_chunks" not in obj_class:
-                            obj_class["relevant_chunks"] = []
-                        elif not isinstance(obj_class["relevant_chunks"], list):
-                            obj_class["relevant_chunks"] = []
-
-            if hasattr(model_cls, "model_validate"):
-                result_payload = model_cls.model_validate(actual_result)
-            else:
-                result_payload = model_cls(**actual_result)
-        except Exception as e:
-            return JobStatusMultiDocResponse(
-                jobId=status.get("jobId", job_id),
-                status=JobStatus.failed,
-                errors=[f"Corrupted result payload: {str(e)}"],
-            )
-    enum_status = JobStatus(raw_status)
-
-    return JobStatusMultiDocResponse(
-        jobId=status.get("jobId", job_id),
-        status=enum_status,
-        createdAt=status.get("createdAt"),
-        startedAt=status.get("startedAt"),
-        updatedAt=status.get("updatedAt"),
-        progress=status.get("progress"),
-        result=result_payload,
-        errors=status.get("errors"),
-    )
 
 
 # Digester Operations - Object Classes
@@ -127,24 +41,22 @@ async def extract_object_classes(
     session_id: UUID = Path(..., description="Session ID"),
     filter_relevancy: bool = Query(True, description="Filter object classes by relevancy"),
     min_relevancy_level: str = Query("high", description="Minimum relevancy level (low/medium/high)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Extract object classes from documentation stored in or uploaded to the session.
     Optionally filter documentation items based on provided criteria.
     Returns jobId to poll for results.
     """
-    # Apply static category filter to documentation items
-    try:
-        doc_items = filter_documentation_items(DEFAULT_CRITERIA, session_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    total_length = sum(len(item["content"]) for item in doc_items)
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    job_id = schedule_coroutine_job(
+    job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
-        input_payload={"documentationItems": doc_items},
+        input_payload={},
+        dynamic_input_enabled=True,
+        dynamic_input_provider=object_classes_input,
         worker=service.extract_object_classes,
-        worker_args=(doc_items,),
         worker_kwargs={
             "filter_relevancy": filter_relevancy,
             "min_relevancy_level": min_relevancy_level,
@@ -153,16 +65,15 @@ async def extract_object_classes(
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
         session_result_key="objectClassesOutput",
+        await_documentation=True,
+        await_documentation_timeout=750,
     )
 
-    SessionManager.update_session(
+    await repo.update_session(
         session_id,
         {
             "objectClassesJobId": str(job_id),
-            "objectClassesInput": {
-                "documentationItemsCount": len(doc_items),
-                "totalLength": total_length,
-            },
+            "objectClassesInput": {},
         },
     )
 
@@ -177,26 +88,28 @@ async def extract_object_classes(
 async def get_object_classes_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional, will use session's job if not provided)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of object classes extraction job.
     If jobId is not provided, retrieves the job from session.
     Returns the current session data (which may include endpoints added after job completion).
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = SessionManager.get_session_data(session_id, "objectClassesJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No object classes job found in session {session_id}"
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="objectClassesJobId",
+        job_label="object classes",
+    )
 
-    response = _build_typed_job_status_response(jobId, ObjectClassesResponse)
+    response = await build_typed_job_status_response(jobId, ObjectClassesResponse)
 
     if response.status == JobStatus.finished:
-        object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
+        object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
         if object_classes_output:
             try:
                 # Validate and parse the session data
@@ -216,16 +129,17 @@ async def get_object_classes_status(
 async def get_specific_object_class(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get a specific object class by name from the session.
     Returns the object class with all its data including endpoints and attributes.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
     # Get object classes from session
-    object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
+    object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
     if not object_classes_output or not isinstance(object_classes_output, dict):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -243,14 +157,106 @@ async def get_specific_object_class(
     normalized_name = object_class.strip().lower()
     for obj_cls in object_classes:
         if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
-            # Return just this one object class
-            return obj_cls
+            # Merge in attributes and endpoints if they exist
+            result = obj_cls.copy()
+
+            # Get attributes from session
+            attributes_output = await repo.get_session_data(session_id, f"{normalized_name}AttributesOutput")
+            if attributes_output and isinstance(attributes_output, dict):
+                result["attributes"] = attributes_output.get("attributes", {})
+
+            # Get endpoints from session
+            endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
+            if endpoints_output and isinstance(endpoints_output, dict):
+                result["endpoints"] = endpoints_output.get("endpoints", [])
+
+            return result
 
     # If not found, raise 404
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Object class '{object_class}' not found in session {session_id}",
     )
+
+
+@router.put(
+    "/{session_id}/classes",
+    summary="Upload all object classes to session",
+)
+async def upload_all_object_classes(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_classes_data: Dict[str, Any] = Body(..., description="Object classes data as JSON"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload all object classes to the session.
+    Expects a JSON body with objectClasses array.
+    Replaces existing object classes in the session.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    await repo.update_session(session_id, {"objectClassesOutput": object_classes_data})
+
+    return {
+        "message": "All object classes uploaded successfully",
+        "sessionId": session_id,
+    }
+
+
+@router.put(
+    "/{session_id}/classes/{object_class}",
+    summary="Upload one object class to session",
+)
+async def upload_one_object_class(
+    session_id: UUID = Path(..., description="Session ID"),
+    object_class: str = Path(..., description="Object class name"),
+    object_class_data: Dict[str, Any] = Body(..., description="Object class data as JSON"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload or update a specific object class in the session.
+    If the object class already exists, it will be updated.
+    If it doesn't exist, it will be added to the objectClasses array.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    # Get existing object classes
+    object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
+    if not object_classes_output or not isinstance(object_classes_output, dict):
+        # Initialize with empty structure if none exists
+        object_classes_output = {"objectClasses": []}
+
+    object_classes = object_classes_output.get("objectClasses", [])
+    if not isinstance(object_classes, list):
+        object_classes = []
+
+    # Ensure the name field is set from the URL path parameter
+    object_class_data["name"] = object_class
+
+    # Find and update existing object class (case-insensitive)
+    normalized_name = object_class.strip().lower()
+    updated = False
+    for i, obj_cls in enumerate(object_classes):
+        if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
+            # Update existing object class
+            object_classes[i] = object_class_data
+            updated = True
+            break
+
+    # If not found, add new object class
+    if not updated:
+        object_classes.append(object_class_data)
+
+    # Update session
+    object_classes_output["objectClasses"] = object_classes
+    await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
+
+    return {
+        "message": f"Object class '{object_class}' {'updated' if updated else 'added'} successfully",
+        "sessionId": session_id,
+    }
 
 
 # Digester Operations - Object Class Attributes
@@ -262,14 +268,20 @@ async def get_specific_object_class(
 async def extract_class_attributes(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name (e.g., 'User', 'Group')"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Extract attributes schema for a specific object class.
     Only processes chunks that are relevant to the object class (from relevantChunks).
     Updates both {object_class}AttributesOutput and the attributes field in the specific object class.
+
+    NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
     # Get the object class data to find relevant chunks
-    object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
+    object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
     if not object_classes_output or not isinstance(object_classes_output, dict):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -299,10 +311,10 @@ async def extract_class_attributes(
         )
 
     # Get full documentation to extract relevant chunks
-    doc_items = await get_session_documentation(session_id)
+    doc_items = await get_session_documentation(session_id, db=db)
 
     total_chunks = len(relevant_chunks)
-    job_id = schedule_coroutine_job(
+    job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClassSchema",
         input_payload={
             "documentation_items": doc_items,
@@ -317,13 +329,12 @@ async def extract_class_attributes(
         session_result_key=f"{object_class}AttributesOutput",
     )
 
-    SessionManager.update_session(
+    await repo.update_session(
         session_id,
         {
             f"{object_class}AttributesJobId": str(job_id),
             f"{object_class}AttributesInput": {
                 "objectClass": object_class,
-                "documentationItemsCount": len(doc_items),
                 "relevantChunksCount": total_chunks,
             },
         },
@@ -341,32 +352,34 @@ async def get_class_attributes_status(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of attributes extraction job for the specified object class.
     Returns the current session data (which may have been updated after job completion).
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = SessionManager.get_session_data(session_id, f"{object_class}AttributesJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No attributes job found for {object_class} in session {session_id}",
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}AttributesJobId",
+        job_label="attributes",
+        not_found_detail=f"No attributes job found for {object_class} in session {session_id}",
+    )
 
     # Get job status but override result with current session data
-    response = _build_typed_job_status_response(jobId, ObjectClassSchemaResponse)
+    response = await build_typed_job_status_response(jobId, AttributeResponse)
 
     # If job is finished, replace result with current session data (which may have been updated)
     if response.status == JobStatus.finished:
-        attributes_output = SessionManager.get_session_data(session_id, f"{object_class}AttributesOutput")
+        attributes_output = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
         if attributes_output:
             try:
                 # Validate and parse the session data
-                response.result = ObjectClassSchemaResponse.model_validate(attributes_output)
+                response.result = AttributeResponse.model_validate(attributes_output)
             except Exception:
                 # If validation fails, keep the original job result
                 pass
@@ -382,14 +395,16 @@ async def override_class_attributes(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     attributes: Dict[str, Any] = Body(..., description="Attributes schema as JSON"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Manually override the attributes for an object class.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    SessionManager.update_session(session_id, {f"{object_class}AttributesOutput": attributes})
+    object_class = object_class.strip().lower()
+    await repo.update_session(session_id, {f"{object_class}AttributesOutput": attributes})
 
     return {
         "message": f"Attributes for {object_class} overridden successfully",
@@ -407,15 +422,21 @@ async def override_class_attributes(
 async def extract_class_endpoints(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Extract API endpoints for a specific object class.
     Automatically loads base API URL from session metadata if available.
     Updates both {object_class}EndpointsOutput and the endpoints field in the specific object class.
     Only processes chunks that are relevant to the object class (from relevantChunks).
+
+    NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
     # Get the object class data to find relevant chunks
-    object_classes_output = SessionManager.get_session_data(session_id, "objectClassesOutput")
+    object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
     if not object_classes_output or not isinstance(object_classes_output, dict):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -438,18 +459,21 @@ async def extract_class_endpoints(
         )
 
     # relevant_chunks = target_object_class.get("relevantChunks", [])
-    relevant_chunks_from_object_class = target_object_class.get("relevantChunks", [])
+    # relevant_chunks_from_object_class = target_object_class.get("relevantChunks", [])
     criteria = ENDPOINT_CRITERIA.model_copy()
-    criteria.allowed_tags = [object_class.lower().strip()]
-    relevant_chunks_full = filter_documentation_items(criteria, session_id)
-    # TODO: This is idiotic, docUuid and chunkIndex are deprecated with the new architecture
-    # But for now (until office days) I will not refactor this because it is a lot of code to change
+    criteria.allowed_tags = [[object_class.lower().strip()], ["endpoint", "endpoints"]]
+    relevant_chunks_full = await filter_documentation_items(criteria, session_id, db=db)
+
+    # If we dont have relevant chunks with ENDPOINT_CRITERIA, try to find relevant chunks with DEFAULT_CRITERIA
+    if not relevant_chunks_full:
+        criteria = DEFAULT_CRITERIA.model_copy()
+        relevant_chunks_full = await filter_documentation_items(criteria, session_id, db=db)
+
     relevant_chunks = [
-        {"docUuid": chunk["uuid"], "chunkIndex": 0}
+        {"docUuid": chunk["uuid"]}
         for chunk in relevant_chunks_full
-        if chunk["uuid"] in {rc["docUuid"] for rc in relevant_chunks_from_object_class}
+        # if chunk["uuid"] in {rc["docUuid"] for rc in relevant_chunks_from_object_class}
     ]
-    # relevant_chunks = [{"docUuid": rc["uuid"], "chunkIndex": 0} for rc in relevant_chunks_full]
     if not relevant_chunks:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -457,11 +481,11 @@ async def extract_class_endpoints(
         )
 
     # Get full documentation to extract relevant chunks
-    doc_items = await get_session_documentation(session_id)
+    doc_items = await get_session_documentation(session_id, db=db)
 
     # Load base API URL from session metadata
     base_api_url = ""
-    metadata = SessionManager.get_session_data(session_id, "metadataOutput")
+    metadata = await repo.get_session_data(session_id, "metadataOutput")
     if metadata and isinstance(metadata, dict):
         info_about_schema = metadata.get("infoAboutSchema", {})
         base_api_endpoints = info_about_schema.get("baseApiEndpoint", [])
@@ -469,7 +493,7 @@ async def extract_class_endpoints(
             base_api_url = base_api_endpoints[0].get("uri", "")
 
     total_chunks = len(relevant_chunks)
-    job_id = schedule_coroutine_job(
+    job_id = await schedule_coroutine_job(
         job_type="digester.getEndpoints",
         input_payload={
             "documentationItems": doc_items,
@@ -486,13 +510,12 @@ async def extract_class_endpoints(
         session_result_key=f"{object_class}EndpointsOutput",
     )
 
-    SessionManager.update_session(
+    await repo.update_session(
         session_id,
         {
             f"{object_class}EndpointsJobId": str(job_id),
             f"{object_class}EndpointsInput": {
                 "objectClass": object_class,
-                "documentationItemsCount": len(doc_items),
                 "relevantChunksCount": total_chunks,
                 "baseApiUrl": base_api_url,
             },
@@ -511,22 +534,24 @@ async def get_class_endpoints_status(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of endpoints extraction job for the specified object class.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = SessionManager.get_session_data(session_id, f"{object_class}EndpointsJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No endpoints job found for {object_class} in session {session_id}",
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key=f"{object_class}EndpointsJobId",
+        job_label="endpoints",
+        not_found_detail=f"No endpoints job found for {object_class} in session {session_id}",
+    )
 
-    return _build_typed_job_status_response(jobId, EndpointsResponse)
+    return await build_typed_job_status_response(jobId, EndpointResponse)
 
 
 @router.put(
@@ -537,14 +562,16 @@ async def override_class_endpoints(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     endpoints: Dict[str, Any] = Body(..., description="Endpoints data as JSON"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Manually override the endpoints for an object class.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    SessionManager.update_session(session_id, {f"{object_class}EndpointsOutput": endpoints})
+    object_class = object_class.strip().lower()
+    await repo.update_session(session_id, {f"{object_class}EndpointsOutput": endpoints})
 
     return {
         "message": f"Endpoints for {object_class} overridden successfully",
@@ -559,28 +586,30 @@ async def override_class_endpoints(
     response_model=JobCreateResponse,
     summary="Extract relations between object classes",
 )
-async def extract_relations(
-    session_id: UUID = Path(..., description="Session ID"),
-):
+async def extract_relations(session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)):
     """
     Extract relations between object classes from documentation.
     Loads relevant object classes from session (where relevant=true).
+
+    NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
     try:
-        doc_items = filter_documentation_items(DEFAULT_CRITERIA, session_id)
+        doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    total_length = sum(len(item["content"]) for item in doc_items)
 
     # Load object_classes from session
-    relevant = SessionManager.get_session_data(session_id, "objectClassesOutput")
+    relevant = await repo.get_session_data(session_id, "objectClassesOutput")
     if not relevant:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No object classes found in session. Please run /classes endpoint first.",
         )
 
-    job_id = schedule_coroutine_job(
+    job_id = await schedule_coroutine_job(
         job_type="digester.getRelations",
         input_payload={"documentationItems": doc_items, "relevantObjectClasses": relevant},
         worker=service.extract_relations,
@@ -591,14 +620,12 @@ async def extract_relations(
         session_result_key="relationsOutput",
     )
 
-    SessionManager.update_session(
+    await repo.update_session(
         session_id,
         {
             "relationsJobId": str(job_id),
             "relationsInput": {
                 "relevantObjectClasses": relevant,
-                "documentationItemsCount": len(doc_items),
-                "totalLength": total_length,
             },
         },
     )
@@ -614,21 +641,23 @@ async def extract_relations(
 async def get_relations_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of relations extraction job.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = SessionManager.get_session_data(session_id, "relationsJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No relations job found in session {session_id}"
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="relationsJobId",
+        job_label="relations",
+    )
 
-    return _build_typed_job_status_response(jobId, RelationsResponse)
+    return await build_typed_job_status_response(jobId, RelationsResponse)
 
 
 @router.put(
@@ -638,14 +667,15 @@ async def get_relations_status(
 async def override_relations(
     session_id: UUID = Path(..., description="Session ID"),
     relations: Dict[str, Any] = Body(..., description="Relations data as JSON"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Manually override the relations data.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    SessionManager.update_session(session_id, {"relationsOutput": relations})
+    await repo.update_session(session_id, {"relationsOutput": relations})
 
     return {"message": "Relations overridden successfully", "sessionId": session_id}
 
@@ -658,34 +688,34 @@ async def override_relations(
 )
 async def extract_auth(
     session_id: UUID = Path(..., description="Session ID"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Extract authentication information from documentation.
     """
-    # Apply static category filter to documentation items
-    try:
-        doc_items = filter_documentation_items(AUTH_CRITERIA, session_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    total_length = sum(len(item["content"]) for item in doc_items)
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    job_id = schedule_coroutine_job(
+    job_id = await schedule_coroutine_job(
         job_type="digester.getAuth",
-        input_payload={"documentationItems": doc_items},
+        input_payload={},
+        dynamic_input_enabled=True,
+        dynamic_input_provider=auth_input,
         worker=service.extract_auth,
-        worker_args=(doc_items,),
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
         session_result_key="authOutput",
+        await_documentation=True,
+        await_documentation_timeout=750,
     )
 
-    SessionManager.update_session(
+    await repo.update_session(
         session_id,
         {
             "authJobId": str(job_id),
-            "authInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
+            # "authInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
         },
     )
 
@@ -700,21 +730,23 @@ async def extract_auth(
 async def get_auth_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of auth extraction job.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = SessionManager.get_session_data(session_id, "authJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No auth job found in session {session_id}"
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="authJobId",
+        job_label="auth",
+    )
 
-    return _build_typed_job_status_response(jobId, AuthResponse)
+    return await build_typed_job_status_response(jobId, AuthResponse)
 
 
 @router.post(
@@ -724,34 +756,34 @@ async def get_auth_status(
 )
 async def extract_metadata(
     session_id: UUID = Path(..., description="Session ID"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Extract API metadata from documentation.
     """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    try:
-        doc_items = filter_documentation_items(DEFAULT_CRITERIA, session_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    total_length = sum(len(item["content"]) for item in doc_items)
-
-    job_id = schedule_coroutine_job(
+    job_id = await schedule_coroutine_job(
         job_type="digester.getInfoMetadata",
-        input_payload={"documentationItems": doc_items},
+        input_payload={},
+        dynamic_input_enabled=True,
+        dynamic_input_provider=metadata_input,
         worker=service.extract_info_metadata,
-        worker_args=(doc_items,),
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
         session_result_key="metadataOutput",
+        await_documentation=True,
+        await_documentation_timeout=750,
     )
 
-    SessionManager.update_session(
+    await repo.update_session(
         session_id,
         {
             "metadataJobId": str(job_id),
-            "metadataInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
+            # "metadataInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
         },
     )
 
@@ -766,18 +798,20 @@ async def extract_metadata(
 async def get_metadata_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of metadata extraction job.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        jobId = SessionManager.get_session_data(session_id, "metadataJobId")
-        if not jobId:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No metadata job found in session {session_id}"
-            )
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="metadataJobId",
+        job_label="metadata",
+    )
 
-    return _build_typed_job_status_response(jobId, InfoResponse)
+    return await build_typed_job_status_response(jobId, InfoResponse)

@@ -1,21 +1,18 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
-
-"""
-Discovery endpoints for V2 API (session-centric).
-All discovery operations are nested under sessions.
-"""
 
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi import Path as PathParam
+from fastapi import APIRouter, Depends, Path, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...common.database.config import get_db
+from ...common.database.repositories.session_repository import SessionRepository
 from ...common.jobs import schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusStageResponse
-from ...common.session.session import SessionManager
+from ...common.session.session import ensure_session_exists, resolve_session_job_id
 from ...common.status_response import build_stage_status_response
 from . import service
 from .schema import CandidateLinksInput
@@ -31,19 +28,20 @@ router = APIRouter()
 )
 async def discover_candidate_links(
     req: CandidateLinksInput,
-    session_id: UUID = PathParam(..., description="Session ID"),
+    session_id: UUID = Path(..., description="Session ID"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Enqueue a job to discover candidate documentation URLs for the given application.
     The discovered URLs will be stored in the session.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    job_id = schedule_coroutine_job(
+    job_id = await schedule_coroutine_job(
         job_type="discovery.getCandidateLinks",
         input_payload=req.model_dump(by_alias=True),
-        worker=service.fetch_candidate_links,
+        worker=service.discover_candidate_links,
         worker_args=(req,),
         initial_stage="queue",
         initial_message="Queued candidate links discovery",
@@ -51,7 +49,7 @@ async def discover_candidate_links(
         session_result_key="discoveryOutput",
     )
 
-    SessionManager.update_session(
+    await repo.update_session(
         session_id, {"discoveryJobId": str(job_id), "discoveryInput": req.model_dump(by_alias=True)}
     )
 
@@ -65,19 +63,21 @@ async def discover_candidate_links(
     response_model_exclude_none=True,
 )
 async def get_discovery_status(
-    session_id: UUID = PathParam(..., description="Session ID"),
+    session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of candidate links discovery job.
     """
-    if not SessionManager.session_exists(session_id):
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
 
-    if not jobId:
-        job_id_str = SessionManager.get_session_data(session_id, "discoveryJobId")
-        if not job_id_str:
-            raise HTTPException(status_code=404, detail=f"No discovery job found in session {session_id}")
-        return build_stage_status_response(job_id_str)
-
-    return build_stage_status_response(jobId)
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="discoveryJobId",
+        job_label="discovery",
+    )
+    return await build_stage_status_response(jobId)

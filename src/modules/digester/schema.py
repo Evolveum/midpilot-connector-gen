@@ -1,8 +1,8 @@
-# Copyright (c) 2025 Evolveum and contributors
+# Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_serializer
@@ -79,13 +79,13 @@ class ObjectClass(BaseModel):
             "Include key characteristics and usage context. Keep it concise (1-2 sentences)."
         ),
     )
-    relevant_chunks: List[Dict[str, Union[UUID, int]]] = Field(
+    relevant_chunks: List[Dict[str, UUID]] = Field(
         default_factory=list,
         validation_alias="relevantChunks",
         serialization_alias="relevantChunks",
         description=(
             "List of chunks that contain relevant information about this object class. "
-            "Each entry contains 'docUuid' and 'chunkIndex'."
+            "Each entry contains only 'docUuid' (the document UUID is the chunk identifier)."
         ),
     )
     # These fields will be excluded from JSON when None
@@ -102,27 +102,16 @@ class ObjectClass(BaseModel):
 
     @field_validator("relevant_chunks", mode="before")
     @classmethod
-    def validate_relevant_chunks(cls, v: Any) -> List[Dict[str, Union[UUID, int]]]:
+    def validate_relevant_chunks(cls, v: Any) -> List[Dict[str, UUID]]:
         if not isinstance(v, list):
             return []
 
-        validated_chunks: List[Dict[str, Union[UUID, int]]] = []
+        validated_chunks: List[Dict[str, UUID]] = []
         for chunk in v:
             if not isinstance(chunk, dict):
                 continue
-
-            validated: Dict[str, Union[UUID, int]] = {}
             if "docUuid" in chunk:
-                validated["docUuid"] = chunk["docUuid"]
-            if "chunkIndex" in chunk:
-                # Ensure chunkIndex is an integer
-                try:
-                    validated["chunkIndex"] = int(chunk["chunkIndex"])
-                except (TypeError, ValueError):
-                    continue
-
-            if validated:
-                validated_chunks.append(validated)
+                validated_chunks.append({"docUuid": chunk["docUuid"]})
 
         return validated_chunks
 
@@ -322,7 +311,7 @@ class InfoResponse(BaseModel):
 # --- Info about schema ---
 
 
-# --- Object Class Attributes ---
+# --- Attributes ---
 class AttributeInfo(BaseModel):
     """
     Attribute metadata for an object class property as described in OpenAPI/JSON Schema.
@@ -375,7 +364,7 @@ class AttributeInfo(BaseModel):
     )
 
 
-class ObjectClassSchemaResponse(BaseModel):
+class AttributeResponse(BaseModel):
     """
     Attribute map for a specific object class where each key is the property name.
     Return an empty map when the object class has no properties in the fragment.
@@ -387,7 +376,7 @@ class ObjectClassSchemaResponse(BaseModel):
     )
 
 
-# --- Object Class Attributes ---
+# --- Attributes ---
 
 
 # --- Endpoints ---
@@ -434,7 +423,41 @@ class EndpointInfo(BaseModel):
     )
 
 
-class EndpointsResponse(BaseModel):
+class EndpointParamInfo(BaseModel):
+    """
+    EndpointInfo without path and method, so the LLM can only modify other fields.
+    """
+
+    model_config = {"populate_by_name": True}
+
+    description: str = Field(
+        ...,
+        description=(
+            "Short summary of what this method does for the object class (e.g., 'Get user by ID', "
+            "'Add user to group', 'Disable user')."
+        ),
+    )
+    response_content_type: Optional[str] = Field(
+        default=None,
+        validation_alias="responseContentType",
+        serialization_alias="responseContentType",
+        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json').",
+    )
+    request_content_type: Optional[str] = Field(
+        default=None,
+        validation_alias="requestContentType",
+        serialization_alias="requestContentType",
+        description="Primary request media type if specified (often for POST/PUT/PATCH).",
+    )
+    suggested_use: List[str] = Field(
+        default_factory=list,
+        validation_alias="suggestedUse",
+        serialization_alias="suggestedUse",
+        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+    )
+
+
+class EndpointResponse(BaseModel):
     """
     Container for endpoints discovered for a given object class. Return an empty list when none.
     """
@@ -458,15 +481,15 @@ class RelationRecord(BaseModel):
 
     model_config = {"populate_by_name": True}
 
-    name: Optional[str] = Field(
-        default=None,
-        description="Human-readable name of the relation if explicitly provided in docs; otherwise null.",
+    name: str = Field(
+        ...,
+        description="Human-readable name of the relation. ALWAYS provide a meaningful name based on the relationship (e.g., 'User to Group', 'Account to User', etc.). Never leave empty.",
     )
-    short_description: Optional[str] = Field(
+    short_description: str = Field(
         default="",
         validation_alias="shortDescription",
         serialization_alias="shortDescription",
-        description="Short description or summary if present; empty when not available.",
+        description="Short description or summary if present. LLM can propose if documentation do not has description",
     )
     subject: str = Field(
         ...,

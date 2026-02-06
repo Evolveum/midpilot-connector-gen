@@ -1,0 +1,220 @@
+= SCIM User Delete
+
+Write a Groovy script `User.delete.op.groovy` which handles deletion of the
+object class `User` using SCIM 2.0 protocol.
+
+SCIM uses standard HTTP DELETE for resource removal, typically resulting in
+permanent deletion (hard delete).
+
+The Groovy script should look like:
+
+[source,groovy]
+----
+objectClass("User") {
+    delete {
+        endpoint("/Users/{id}") {
+            method "DELETE"
+
+            // No request body required
+            // Expect 204 No Content or 200 OK response
+        }
+    }
+}
+----
+
+== SCIM Delete Pattern
+
+=== Request
+* Method: `DELETE`
+* Endpoint: `/Users/{id}` (resource endpoint with ID)
+* Headers: Standard authentication headers
+* Body: No request body
+
+Example:
+----
+DELETE /Users/2819c223-7f76-453a-919d-413861904646 HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+----
+
+=== Response
+
+==== Success: 204 No Content (Most Common)
+* Status: `204 No Content`
+* Body: Empty (no response body)
+
+This is the standard SCIM delete response indicating successful deletion.
+
+==== Success: 200 OK (Alternative)
+* Status: `200 OK`
+* Body: Optional response body with confirmation or metadata
+
+Some providers return 200 with a response body for auditing purposes.
+
+==== Resource Not Found
+* Status: `404 Not Found`
+* Body: Error details
+
+The resource doesn't exist or was already deleted.
+
+==== Insufficient Permissions
+* Status: `403 Forbidden`
+* Body: Error details indicating lack of permissions
+
+==== Cannot Delete (Conflict)
+* Status: `409 Conflict`
+* Body: Error details
+
+Resource cannot be deleted due to dependencies or constraints.
+
+== Delete Behavior
+
+=== Hard Delete (Standard)
+The resource is permanently removed from the system:
+* Resource is deleted from database
+* Subsequent GET requests return `404 Not Found`
+* Resource ID cannot be reused
+* Related data may be cascaded or orphaned (provider-dependent)
+
+=== Soft Delete (Provider-Specific)
+Some providers implement soft delete using attribute changes instead of DELETE:
+
+[source,json]
+----
+PATCH /Users/{id}
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [
+    {"op": "replace", "path": "active", "value": false}
+  ]
+}
+----
+
+In soft delete:
+* Resource remains in database
+* `active` attribute set to `false`
+* Resource still retrievable but marked as inactive
+* May be excluded from default searches
+
+**Check provider documentation** to determine if soft delete is used.
+
+== Referential Integrity
+
+=== Deleting Users
+When a User is deleted:
+* Group memberships are automatically removed
+* User's owned resources may be reassigned or deleted
+* Historical audit logs typically remain
+
+=== Deleting Groups
+When a Group is deleted:
+* All member associations are removed
+* Users remain in system (not cascaded)
+* Group assignments in other resources may become invalid
+
+=== Cascading Behavior
+SCIM doesn't specify cascading rules. Provider behavior varies:
+* Some cascade delete related resources
+* Some orphan related resources
+* Some prevent deletion if dependencies exist (409 Conflict)
+
+== Implementation Notes
+
+=== Basic Delete
+[source,groovy]
+----
+objectClass("User") {
+    delete {
+        endpoint("/Users/{id}") {
+            method "DELETE"
+        }
+    }
+}
+----
+
+=== With ID Mapping
+[source,groovy]
+----
+objectClass("User") {
+    delete {
+        endpoint("/Users/{id}") {
+            method "DELETE"
+
+            // Map midPoint UID to SCIM ID
+            request.pathParameter("id", uid.uidValue)
+        }
+    }
+}
+----
+
+=== Error Handling Considerations
+* Handle 404 gracefully (already deleted)
+* Log 403 for permission issues
+* Retry logic for transient failures
+* Check for soft delete requirement
+
+== Common Patterns
+
+=== Standard Delete
+----
+DELETE /Users/abc123
+→ 204 No Content
+----
+
+=== Delete with Confirmation
+----
+DELETE /Users/abc123
+→ 200 OK
+{
+  "deleted": true,
+  "id": "abc123",
+  "deletedAt": "2024-01-15T10:30:00Z"
+}
+----
+
+=== Delete Failure - Not Found
+----
+DELETE /Users/nonexistent
+→ 404 Not Found
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+  "status": "404",
+  "detail": "User not found"
+}
+----
+
+=== Delete Failure - Conflict
+----
+DELETE /Users/abc123
+→ 409 Conflict
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+  "status": "409",
+  "detail": "Cannot delete user: active group owner"
+}
+----
+
+== Soft Delete Alternative
+
+If provider uses soft delete pattern:
+
+[source,groovy]
+----
+objectClass("User") {
+    delete {
+        endpoint("/Users/{id}") {
+            method "PATCH"
+
+            // Build PatchOp to set active=false
+            body {
+                schemas = ["urn:ietf:params:scim:api:messages:2.0:PatchOp"]
+                Operations = [
+                    [op: "replace", path: "active", value: false]
+                ]
+            }
+        }
+    }
+}
+----
+
+Check provider documentation to determine if this pattern is required.
