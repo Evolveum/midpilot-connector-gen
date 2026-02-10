@@ -317,49 +317,56 @@ class AttributeInfo(BaseModel):
     Attribute metadata for an object class property as described in OpenAPI/JSON Schema.
     """
 
-    type: str = Field(
-        ...,
+    type: Optional[str] = Field(
+        default=None,
         description=(
-            "JSON Schema type or relation: 'string' | 'integer' | 'number' | 'boolean' | 'object' | 'array' | "
-            "'reference <TargetClass>' when $ref points to another schema."
+            "Type as declared in the documentation (prefer OpenAPI). For simple attributes, use one of: 'string' "
+            "(includes binaries encoded as base64), 'number', 'integer', or 'boolean'. For complex attributes, use "
+            "the object class name. Put additional type details in 'format' (e.g., 'email', 'binary', 'double', "
+            "'embedded', 'reference'). If a complex attribute is relevant, ensure the referenced object class is "
+            "included in extracted object classes. Use null if unknown."
         ),
     )
     format: Optional[str] = Field(
-        default="",
+        default=None,
         description=(
-            "OpenAPI format for primitives (e.g., 'email', 'uri', 'int64', 'date-time'). For arrays, use item format. "
-            "Use 'embedded' for inline object and 'reference' for $ref targets; otherwise empty."
+            "Format of the type with additional detail. For simple attributes, use an OpenAPI format registry value "
+            "(e.g., 'email', 'uri', 'int64', 'date-time'). For complex attributes, use one of: 'embedded' or "
+            "'reference'. Use 'embedded' for object classes directly embedded in JSON/XML. Use 'reference' for a "
+            "reference to another full object class (embedded=false), even if the full object appears embedded in "
+            "the payload. Use null if unknown."
         ),
     )
-    description: str = Field(
-        ...,
-        description="Property description from the schema; empty string if not provided.",
+    description: Optional[str] = Field(
+        default=None,
+        description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
     )
-    mandatory: bool = Field(
-        default=False,
-        description="True when the property name is listed in the object's 'required' array.",
+    mandatory: Optional[bool] = Field(
+        default=None,
+        description="Is attribute required? True if the attribute is required; otherwise false. Use null if unknown.",
     )
-    updatable: bool = Field(
-        default=False,
-        description="False if readOnly=true; otherwise true.",
+    updatable: Optional[bool] = Field(
+        default=None,
+        description="Can be attribute modified? False if readOnly=true; otherwise true. Use null if unknown.",
     )
-    creatable: bool = Field(
-        default=False,
-        description="False if readOnly=true; otherwise true (do not infer from endpoints).",
+    creatable: Optional[bool] = Field(
+        default=None,
+        description="Can attribute be used during create operation? False if readOnly=true; otherwise true (do not infer from endpoints). Use null if unknown.",
     )
-    readable: bool = Field(
-        default=False,
-        description="False if writeOnly=true; otherwise true.",
+    readable: Optional[bool] = Field(
+        default=None,
+        description="Is attribute readable? False if writeOnly=true; otherwise true. Use null if unknown.",
     )
-    multivalue: bool = Field(
-        default=False,
-        description="True if the property's type is 'array'; otherwise false.",
+    multivalue: Optional[bool] = Field(
+        default=None,
+        description="Is attribute multivalue? True if the property's type is 'array'; otherwise false. Use null if unknown.",
     )
-    returnedByDefault: bool = Field(
-        default=False,
+    returnedByDefault: Optional[bool] = Field(
+        default=None,
         description=(
+            "Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should."
             "True if the attribute is returned by default without additional calls; set false when it "
-            "requires extra expansion or separate endpoint fetches."
+            "requires extra expansion or separate endpoint fetches. Use null if unknown."
         ),
     )
 

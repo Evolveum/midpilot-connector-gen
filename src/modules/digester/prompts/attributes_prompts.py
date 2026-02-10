@@ -22,17 +22,19 @@ Rules
   - Use the JSON Schema type if present.
   - If `$ref: '#/components/schemas/Other'`, set: "type": "reference Other", "format": "reference".
   - If inline object (has nested `properties`) → "type": "object", "format": "embedded".
+  - If not explicitly stated in this chunk, set type to null.
 - format:
-  - For primitives, use OpenAPI format registry values if present (e.g., "email", "uri", "int64", "date-time"); otherwise "".
-  - For arrays, set format to the **item** format ("" if none).
+  - For primitives, use OpenAPI format registry values if present (e.g., "email", "uri", "int64", "date-time"); otherwise null.
+  - For arrays, set format to the **item** format (null if none).
   - For object/reference, "embedded" or "reference" as above (no custom values).
-- description: use the property’s description if present, else "".
-- mandatory: true if the property name is in this object’s `required` array.
-- updatable: false if "readOnly": true; otherwise true.
-- creatable: false if "readOnly": true; otherwise true. (Do not guess from endpoints.)
-- readable: false if "writeOnly": true; otherwise true.
-- multivalue: true if property "type" == "array"; otherwise false.
-- returnedByDefault: boolean, Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should.
+  - If not explicitly stated in this chunk, set format to null.
+- description: use the property’s description if present, else null.
+- mandatory: true if the property name is in this object’s `required` array; null if `required` is not present.
+- updatable: false if "readOnly": true; otherwise true. If readOnly is not present, use null.
+- creatable: false if "readOnly": true; otherwise true. If readOnly is not present, use null. (Do not guess from endpoints.)
+- readable: false if "writeOnly": true; otherwise true. If writeOnly is not present, use null.
+- multivalue: true if property "type" == "array"; otherwise false. If type is not present, use null.
+- returnedByDefault: true if explicitly stated that attribute is returned by default; false if explicitly stated otherwise; null if unknown.
 
 Hard constraints
 - Do NOT add attributes from examples, other objects, or unrelated sections.
@@ -77,7 +79,7 @@ attribute name, not to remove attributes.
 
 Use the evidence to choose the best variant:
 - prefer the candidate whose description or path looks closer to the target object class
-- prefer the candidate that is more complete (non-empty description, useful flags)
+- prefer the candidate that is more complete (non-null description, useful flags)
 - if all candidates are generic REST / HAL / HATEOAS-style fields (e.g. "_links", "_embedded")
   you MUST still return one of them
 
@@ -100,4 +102,55 @@ Object Class: {object_class}
 {candidates_json}
 
 </candidates>
+""")
+
+
+get_fill_missing_attributes_system_prompt = textwrap.dedent("""
+<instruction>
+You will receive:
+- the target object class name (e.g., "User")
+- current merged attributes (`attributes_json`) where some fields may be null/empty
+- documentation excerpts (`docs_payload`) from relevant chunks
+
+Task:
+Return the SAME attribute map shape using ObjectClassSchemaResponse -> AttributeInfo.
+Fill only missing values when they are explicitly supported by the provided documentation.
+
+Rules:
+- Keep all existing non-null/non-empty values unchanged.
+- Do NOT add new attribute names.
+- Do NOT remove existing attribute names.
+- For each attribute field currently null/empty, fill it only if documentation clearly supports it.
+- If evidence is missing/unclear, keep that field null.
+- Use these conventions when filling:
+  - mandatory: true if in object's `required`; false if explicitly not required; null if unknown.
+  - updatable/creatable: false if readOnly=true; true only when explicitly supported by schema rules; null if unknown.
+  - readable: false if writeOnly=true; true only when explicitly supported; null if unknown.
+  - multivalue: true for array type; false for non-array type; null if unknown.
+  - type/format/description/returnedByDefault: fill only from explicit evidence.
+
+Hard constraints:
+- Do NOT invent data.
+- Do NOT use knowledge outside the provided docs payload.
+- If nothing can be improved, return the attributes exactly as received.
+</instruction>
+""")
+
+
+get_fill_missing_attributes_user_prompt = textwrap.dedent("""
+Object Class: {object_class}
+
+<attributes_json>
+
+{attributes_json}
+
+</attributes_json>
+
+<docs_payload>
+
+{docs_payload}
+
+</docs_payload>
+
+Fill only missing fields according to the rules and return ObjectClassSchemaResponse.
 """)

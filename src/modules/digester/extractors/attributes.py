@@ -19,6 +19,8 @@ from ....common.jobs import (
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
 from ..prompts.attributes_prompts import (
+    get_fill_missing_attributes_system_prompt,
+    get_fill_missing_attributes_user_prompt,
     get_filter_duplicates_system_prompt,
     get_filter_duplicates_user_prompt,
     get_object_class_schema_system_prompt,
@@ -57,6 +59,21 @@ def _build_dedupe_chain() -> Any:
         [
             ("system", get_filter_duplicates_system_prompt + "\n\n{format_instructions}"),
             ("user", get_filter_duplicates_user_prompt),
+        ]
+    ).partial(format_instructions=parser.get_format_instructions())
+    return make_basic_chain(prompt, llm, parser)
+
+
+def _build_fill_missing_chain() -> Any:
+    """
+    Build the LLM chain used to fill missing attribute information from documentation.
+    """
+    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
+    llm = get_default_llm()
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", get_fill_missing_attributes_system_prompt + "\n\n{format_instructions}"),
+            ("user", get_fill_missing_attributes_user_prompt),
         ]
     ).partial(format_instructions=parser.get_format_instructions())
     return make_basic_chain(prompt, llm, parser)
@@ -149,6 +166,124 @@ async def _extract_attributes_for_doc(
     return results
 
 
+async def _fill_from_single_chunk(
+    chain: Any,
+    *,
+    chunk_text: str,
+    object_class: str,
+    attributes_json: str,
+    job_id: UUID,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Run the fill-missing LLM on a single chunk to fill null attribute values.
+    Returns updated attributes for this chunk.
+    """
+    try:
+        result = await chain.ainvoke(
+            {
+                "object_class": object_class,
+                "attributes_json": attributes_json,
+                "docs_payload": chunk_text,
+            },
+            config={"callbacks": [langfuse_handler]},
+        )
+
+        if isinstance(result, AttributeResponse):
+            parsed = result
+        elif isinstance(result, dict):
+            parsed = AttributeResponse.model_validate(result)
+        else:
+            content = getattr(result, "content", None)
+            if isinstance(content, str) and content.strip():
+                parsed = AttributeResponse.model_validate(json.loads(content))
+            else:
+                return {}
+
+        return {name: info.model_dump() for name, info in parsed.attributes.items()}
+
+    except Exception as exc:
+        logger.error("[Digester:Attributes] Fill from chunk failed: %s", exc)
+        return {}
+
+
+async def fill_missing_attribute_info(
+    *,
+    object_class: str,
+    attributes: Dict[str, Dict[str, Any]],
+    chunks: List[str],
+    job_id: UUID,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Fill missing (null) attribute information by re-analyzing documentation chunks.
+
+    Takes deduplicated attributes and runs them through the LLM again with each
+    chunk individually to fill in any null/missing parameter values.
+
+    Args:
+        object_class: Name of the object class
+        attributes: Deduplicated attributes map with potentially null values
+        chunks: List of documentation chunks to analyze
+        job_id: Job ID for progress tracking
+
+    Returns:
+        Updated attributes dictionary with filled information
+    """
+    if not attributes:
+        return attributes
+
+    # Check if there are any null values that need filling
+    has_nulls = any(value is None for attr_info in attributes.values() for value in attr_info.values())
+
+    if not has_nulls:
+        logger.info("[Digester:Attributes] No null values found, skipping fill step")
+        return attributes
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.processing_chunks,
+        message=f"Filling missing attribute information for {object_class}",
+    )
+
+    # Prepare attributes JSON once
+    attributes_json = json.dumps(attributes, ensure_ascii=False, indent=2)
+
+    fill_chain = _build_fill_missing_chain()
+
+    logger.info("[Digester:Attributes] Processing %d chunks to fill missing info for %s", len(chunks), object_class)
+
+    # Process each chunk in parallel
+    tasks = [
+        _fill_from_single_chunk(
+            fill_chain,
+            chunk_text=chunk_text,
+            object_class=object_class,
+            attributes_json=attributes_json,
+            job_id=job_id,
+        )
+        for chunk_text in chunks
+    ]
+
+    chunk_results = list(await asyncio.gather(*tasks))
+
+    filled_attributes = dict(attributes)
+
+    for chunk_result in chunk_results:
+        if not chunk_result:
+            continue
+
+        for attr_name, attr_info in chunk_result.items():
+            if attr_name not in filled_attributes:
+                continue
+
+            # For each field in the attribute, fill if currently null and chunk has value
+            for field_name, field_value in attr_info.items():
+                if field_value is not None and filled_attributes[attr_name].get(field_name) is None:
+                    filled_attributes[attr_name][field_name] = field_value
+
+    logger.info("[Digester:Attributes] Successfully filled missing info for %s", object_class)
+    return filled_attributes
+
+
 async def extract_attributes(
     chunks: List[str],
     object_class: str,
@@ -234,6 +369,19 @@ async def extract_attributes(
         build_dedupe_chain=_build_dedupe_chain,
     )
 
+    logger.info("[Digester:Attributes] Deduplicated attributes BEFORE fill missing:")
+    logger.info(json.dumps(merged_attributes, indent=2, ensure_ascii=False))
+
+    filled_attributes = await fill_missing_attribute_info(
+        object_class=object_class,
+        attributes=merged_attributes,
+        chunks=chunks,
+        job_id=job_id,
+    )
+
+    logger.info("[Digester:Attributes] Filled attributes AFTER fill missing:")
+    logger.info(json.dumps(filled_attributes, indent=2, ensure_ascii=False))
+
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
-    return {"result": {"attributes": merged_attributes}, "relevantChunks": relevant_docs}
+    return {"result": {"attributes": filled_attributes}, "relevantChunks": relevant_docs}
