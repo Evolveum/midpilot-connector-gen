@@ -53,3 +53,22 @@ Common password policy attribute where the password must be changed every so oft
 
 `LAST_LOGIN_DATE`:: 
 Last login date for an account. This is usually used to determine inactivity.
+
+The Groovy script should look like:
+
+[source,groovy]
+----
+objectClass("User") {
+    /** Mapping from native attributes to connID attributes **/
+    connIdAttribute("UID", "id");
+    connIdAttribute("NAME", "login");
+
+    /*
+    connIdAttribute "ENABLE" "active";
+    connIdAttribute "LAST_LOGIN_DATE" "last_login_date";
+    connIdAttribute "LOCK_OUT" "prohibit_login";
+    connIdAttribute "SHORT_NAME" "full_name";
+    connIdAttribute "DESCRIPTION" "description";
+    */
+}
+----

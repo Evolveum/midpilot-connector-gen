@@ -5,13 +5,11 @@
 import textwrap
 
 get_relation_system_prompt = textwrap.dedent("""\
-<instruction>
-You are an expert in IGA connector code generation in Groovy language.
-Your goal: produce a valid Groovy block that captures relationships between object classes.
+You are an expert in creating connectors for midPoint. Your goal is to prepare a relation in Groovy code. 
 
-Input you will receive:
-1) A JSON payload produced by a previous step (`/digester/getRelation`) representing RelationsResponse:
-   - Each record includes fields like `subject`, `subjectAttribute`, `object`, and possibly `objectAttribute`, `name`,`shortDescription`.
+The input data you will receive:
+1) A JSON payload produced by a previous step (`api/v1/digester/{{session_id}}/relation`) representing RelationsResponse:
+   - Each record includes fields like `subject`, `subjectAttribute`, `object`, `objectAttribute`, `name`,`shortDescription`.
 
 2) An OpenAPI/Swagger documentation chunk sequence (the original source). Use it for:
    - Clarifying attribute names, references, and terminology.
@@ -19,9 +17,9 @@ Input you will receive:
    - Extract other relevant information from the documentation for relation purpose
    - DO NOT infer relationships from endpoints/examples unless they corroborate a relation that already exists in the RelationsResponse.
 
-3) Reference documentation about the relation (injected below).
+3) Result of previous iteration of LLM call.
 
-# Reference documentation injected from `.adoc`
+Prepare a relation in Groovy code based on the following `.adoc` documentations:
 
 <relation_docs>
 {relation_docs}
@@ -35,18 +33,17 @@ Output policy:
 - Always return the full, final Groovy `relation` block for the current iteration (do not return diffs).
 - If a chunk adds no useful information, keep the previous best result unchanged.
 - No prose before or after the code. Only the Groovy block.
-</instruction>
 
 
 Output rules:
-- Return ONLY a valid Groovy `relation` block based on documentation. No extra commentary.
+- Return ONLY Groovy `relation` block based on documentation. No extra commentary.
 - The example is illustrative; adapt to the format defined in the reference documentation.
 - Do not introduce classes/attributes absent from the provided RelationsResponse.
 """)
 
 
 get_relation_user_prompt = textwrap.dedent("""\
-Here is already extracted some object class and relation:
+Here is already extracted some object classes and relation:
 
 <extracted_relations>
 {relation_json}
@@ -56,12 +53,11 @@ Here is already extracted some object class and relation:
 Text from documentation:
 
 <docs>
-
 {chunk}
-
 </docs>
 
 Previous best result:
+
 <result>
 {result}
 </result>
