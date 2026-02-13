@@ -83,9 +83,11 @@ class ObjectClass(BaseModel):
         default_factory=list,
         validation_alias="relevantChunks",
         serialization_alias="relevantChunks",
+        json_schema_extra={"exclude": True},
         description=(
             "List of chunks that contain relevant information about this object class. "
-            "Each entry contains only 'docUuid' (the document UUID is the chunk identifier)."
+            "Each entry contains only 'docUuid' (the document UUID is the chunk identifier). "
+            "This field is populated automatically by the system and should NOT be filled by the LLM."
         ),
     )
     # These fields will be excluded from JSON when None
