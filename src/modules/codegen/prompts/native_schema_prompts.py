@@ -13,7 +13,7 @@ Prepare a native schema in Groovy code based on the following `.adoc` documentat
 {user_schema_docs}
 </user_schema_docs>
 
-Output rules:
+OUTPUT RULES:
 - Return ONLY Groovy code, fenced as a single ```groovy code block```. No text outside the code block. 
 - Check the example in <user_schema_docs></user_schema_docs>.
 - The Groovy structure may vary, but should be consistent and syntactically valid.

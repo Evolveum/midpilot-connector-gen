@@ -5,8 +5,6 @@
 import textwrap
 
 get_object_class_schema_system_prompt = textwrap.dedent("""
-
-<instruction>
 You are an expert IGA/IDM analyst. You will be given:
 - an object class name (e.g. "User", "Group", ...)
 - a fragment, focused excerpt of the application’s OpenAPI schema containing definition and description
@@ -40,23 +38,28 @@ Hard constraints
 - Do NOT add attributes from examples, other objects, or unrelated sections.
 - Do NOT return keys that are not in `properties`.
 - If unsure, omit the attribute or return an empty map.
-</instruction>
 """)
 
 get_object_class_schema_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
 
-Summary: {summary}
+Summary of the chunk:
+ 
+<summary>
+{summary}
+</summary>
 
-Tags: {tags}
+Tags of the chunk:
+ 
+<tags>
+{tags}
+</tags>
 
 Text from documentation:
 
-<docs>
-
+<chunk>
 {chunk}
-
-</docs>
+</chunk>
 
 Extract attributes for {object_class} from this chunk using the structured output schema.
 Follow the Rules from the system prompt. If none are present, return an empty map.
@@ -98,9 +101,7 @@ get_filter_duplicates_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
 
 <candidates>
-
 {candidates_json}
-
 </candidates>
 """)
 
@@ -141,16 +142,12 @@ get_fill_missing_attributes_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
 
 <attributes_json>
-
 {attributes_json}
-
 </attributes_json>
 
-<docs_payload>
-
+<chunk>
 {docs_payload}
-
-</docs_payload>
+</chunk>
 
 Fill only missing fields according to the rules and return ObjectClassSchemaResponse.
 """)

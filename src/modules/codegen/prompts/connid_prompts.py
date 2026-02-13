@@ -15,7 +15,7 @@ Identify which attributes should be used for ConnID attributes based on the foll
 
 - Do not use the every ConnID attribute if you are not completely sure about it. It is not necessary to always use all ConnID attributes.
 
-Output rules:
+OUTPUT RULES:
 - Return ONLY Groovy code, fenced as a single ```groovy code block```. No text outside the code block. 
 - Check the example in <connID_docs></connID_docs>.
 - The Groovy structure may vary, but should be consistent and syntactically valid.

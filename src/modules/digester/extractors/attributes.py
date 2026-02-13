@@ -369,8 +369,8 @@ async def extract_attributes(
         build_dedupe_chain=_build_dedupe_chain,
     )
 
-    logger.info("[Digester:Attributes] Deduplicated attributes BEFORE fill missing:")
-    logger.info(json.dumps(merged_attributes, indent=2, ensure_ascii=False))
+    # logger.info("[Digester:Attributes] Deduplicated attributes BEFORE fill missing:")
+    # logger.info(json.dumps(merged_attributes, indent=2, ensure_ascii=False))
 
     filled_attributes = await fill_missing_attribute_info(
         object_class=object_class,
@@ -379,8 +379,8 @@ async def extract_attributes(
         job_id=job_id,
     )
 
-    logger.info("[Digester:Attributes] Filled attributes AFTER fill missing:")
-    logger.info(json.dumps(filled_attributes, indent=2, ensure_ascii=False))
+    # logger.info("[Digester:Attributes] Filled attributes AFTER fill missing:")
+    # logger.info(json.dumps(filled_attributes, indent=2, ensure_ascii=False))
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 

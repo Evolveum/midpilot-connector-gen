@@ -53,19 +53,28 @@ No prose.
 
 get_relations_user_prompt = textwrap.dedent("""
 Relevant object classes from previous step (exact names and descriptions):
+
+<relevant_list_with_description>
 {relevant_list_with_descriptions}
+</relevant_list_with_description>
 
-Summary: {summary}
+Summary of the chunk:
+ 
+<summary>
+{summary}
+</summary>
 
-Tags: {tags}
+Tags of the chunk:
+ 
+<tags>
+{tags}
+</tags>
 
 Text from documentation:
 
-<docs>
-
+<chunk>
 {chunk}
-
-</docs>
+</chunk>
 
 Task:
 - Extract relations present in this fragment only.

@@ -19,7 +19,7 @@ Prepare a valid Groovy code for create schema in Groovy based on the following `
 {create_docs}
 </create_docs>
 
-Output rules:
+OUTPUT RULES:
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
 - Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the examples in <create_docs>.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it; do not discard or rename previously correct parts.

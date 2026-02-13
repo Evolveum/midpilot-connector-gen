@@ -25,17 +25,17 @@ Prepare a relation in Groovy code based on the following `.adoc` documentations:
 {relation_docs}
 </relation_docs>
 
-## Authoring requirements:
+AUTHORING REQUIREMENTS:
 - Preserve the RelationsResponse semantics: for each relation record, map `subjectAttribute` on `subject` to `object`.
 - Prefer concise, deterministic code. Add short inline comments only when they clarify decisions or cite evidence.
 
-Output policy:
+OUTPUT POLICY:
 - Always return the full, final Groovy `relation` block for the current iteration (do not return diffs).
 - If a chunk adds no useful information, keep the previous best result unchanged.
 - No prose before or after the code. Only the Groovy block.
 
 
-Output rules:
+OUTPUT RULES:
 - Return ONLY Groovy `relation` block based on documentation. No extra commentary.
 - The example is illustrative; adapt to the format defined in the reference documentation.
 - Do not introduce classes/attributes absent from the provided RelationsResponse.
