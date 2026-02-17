@@ -3,7 +3,6 @@
 # Licensed under the EUPL-1.2 or later.
 
 from typing import Any, Dict, List, Literal, Optional
-from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_serializer
 
@@ -79,14 +78,14 @@ class ObjectClass(BaseModel):
             "Include key characteristics and usage context. Keep it concise (1-2 sentences)."
         ),
     )
-    relevant_chunks: List[Dict[str, UUID]] = Field(
+    relevant_chunks: List[Dict[str, str]] = Field(
         default_factory=list,
         validation_alias="relevantChunks",
         serialization_alias="relevantChunks",
         json_schema_extra={"exclude": True},
         description=(
             "List of chunks that contain relevant information about this object class. "
-            "Each entry contains only 'docUuid' (the document UUID is the chunk identifier). "
+            "Each entry contains only 'docUuid' (the document UUID as string is the chunk identifier). "
             "This field is populated automatically by the system and should NOT be filled by the LLM."
         ),
     )
@@ -104,16 +103,18 @@ class ObjectClass(BaseModel):
 
     @field_validator("relevant_chunks", mode="before")
     @classmethod
-    def validate_relevant_chunks(cls, v: Any) -> List[Dict[str, UUID]]:
+    def validate_relevant_chunks(cls, v: Any) -> List[Dict[str, str]]:
         if not isinstance(v, list):
             return []
 
-        validated_chunks: List[Dict[str, UUID]] = []
+        validated_chunks: List[Dict[str, str]] = []
         for chunk in v:
             if not isinstance(chunk, dict):
                 continue
             if "docUuid" in chunk:
-                validated_chunks.append({"docUuid": chunk["docUuid"]})
+                # Ensure docUuid is stored as string, not UUID object
+                doc_uuid = chunk["docUuid"]
+                validated_chunks.append({"docUuid": str(doc_uuid)})
 
         return validated_chunks
 

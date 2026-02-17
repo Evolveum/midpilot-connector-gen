@@ -105,8 +105,8 @@ def merge_object_classes(
             # Add new document UUIDs
             for chunk in class_to_chunks[key]:
                 current_doc_uuids.add(str(chunk["docUuid"]))
-            # Convert back to list of dicts with UUID objects and sort
-            current.relevant_chunks = [{"docUuid": UUID(doc_uuid)} for doc_uuid in sorted(current_doc_uuids)]
+            # Convert back to list of dicts with string UUIDs (not UUID objects) and sort
+            current.relevant_chunks = [{"docUuid": doc_uuid} for doc_uuid in sorted(current_doc_uuids)]
     # Remove duplicates with whitespace-only differences (preferring no-space versions)
     for key in list(by_name.keys()):
         key_no_space = key.replace(" ", "")
