@@ -286,6 +286,38 @@ class InfoMetadata(BaseModel):
 
     model_config = {"populate_by_name": True}
 
+    @field_validator("base_api_endpoint", mode="before")
+    @classmethod
+    def _normalize_base_api_endpoint(cls, v: Any) -> List[Any]:
+        """
+        Keep the field resilient to partial/malformed LLM output.
+        Accept null, a single object, or a list of objects.
+        """
+        if v is None:
+            return []
+        if isinstance(v, dict) or isinstance(v, BaseAPIEndpoint):
+            return [v]
+        if isinstance(v, list):
+            return [item for item in v if isinstance(item, (dict, BaseAPIEndpoint))]
+        return []
+
+    @field_validator("base_api_endpoint", mode="after")
+    @classmethod
+    def _dedupe_and_sort_base_api_endpoint(cls, endpoints: List[BaseAPIEndpoint]) -> List[BaseAPIEndpoint]:
+        unique: Dict[tuple[str, str], BaseAPIEndpoint] = {}
+        for endpoint in endpoints or []:
+            uri = (endpoint.uri or "").strip()
+            if not uri:
+                continue
+            key = (uri.lower(), endpoint.type)
+            if key not in unique:
+                unique[key] = BaseAPIEndpoint(uri=uri, type=endpoint.type)
+
+        return sorted(
+            unique.values(),
+            key=lambda endpoint: (endpoint.uri.lower(), 0 if endpoint.type == "constant" else 1),
+        )
+
 
 class InfoResponse(BaseModel):
     """

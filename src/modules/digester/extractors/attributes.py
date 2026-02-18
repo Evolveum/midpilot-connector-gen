@@ -19,8 +19,8 @@ from ....common.jobs import (
 from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
 from ..prompts.attributes_prompts import (
-    get_fill_missing_attributes_system_prompt,
-    get_fill_missing_attributes_user_prompt,
+    get_fill_missing_details_system_prompt,
+    get_fill_missing_details_user_prompt,
     get_filter_duplicates_system_prompt,
     get_filter_duplicates_user_prompt,
     get_object_class_schema_system_prompt,
@@ -72,8 +72,8 @@ def _build_fill_missing_chain() -> Any:
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", get_fill_missing_attributes_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_fill_missing_attributes_user_prompt),
+            ("system", get_fill_missing_details_system_prompt + "\n\n{format_instructions}"),
+            ("user", get_fill_missing_details_user_prompt),
         ]
     ).partial(format_instructions=parser.get_format_instructions())
     return make_basic_chain(prompt, llm, parser)
@@ -206,7 +206,7 @@ async def _fill_from_single_chunk(
         return {}
 
 
-async def fill_missing_attribute_info(
+async def fill_missing_details(
     *,
     object_class: str,
     attributes: Dict[str, Dict[str, Any]],
@@ -372,7 +372,7 @@ async def extract_attributes(
     # logger.info("[Digester:Attributes] Deduplicated attributes BEFORE fill missing:")
     # logger.info(json.dumps(merged_attributes, indent=2, ensure_ascii=False))
 
-    filled_attributes = await fill_missing_attribute_info(
+    filled_attributes = await fill_missing_details(
         object_class=object_class,
         attributes=merged_attributes,
         chunks=chunks,

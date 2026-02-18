@@ -40,7 +40,7 @@ RULES:
      - If unclear, include "Other" only when the API type is clearly not one of the above.
 
 5) baseApiEndpoint
-   GOAL: Provide a single *base API URL* suitable for connectivity checks or discovery, NOT a specific resource path.
+   GOAL: Provide one or more canonical *base API URLs* suitable for connectivity checks or discovery, NOT specific resource paths.
    - Prefer the global API base root + version if applicable (e.g., "https://<hostname>/api/v3/").
    - Sources (in priority order):
      a) OpenAPI "servers[].url" (respect variables/templates),
@@ -55,11 +55,13 @@ RULES:
    - Classification:
      * "type": "dynamic" if the hostname or tenant can vary (default unless explicitly constant across all deployments).
      * "type": "constant" only if docs assert a single, global, non-tenant URL for everyone.
-   - Return a SINGLE best candidate in the list, unless the docs explicitly require multiple distinct bases.
+   - Return ALL distinct canonical base endpoints supported by evidence in docs.
+   - Deduplicate by (uri, type) and sort the final list by uri ascending, then type (constant before dynamic).
 
 MERGE & CONFIDENCE:
 - You will receive the previously aggregated JSON. Only update fields when the current chunk provides stronger or clearer evidence.
 - Keep previously extracted values if the new chunk is weaker or ambiguous.
+- For baseApiEndpoint specifically, keep existing valid entries and append newly supported distinct entries.
 - When uncertain, prefer leaving the field unchanged rather than guessing.
 
 COMMON PITFALLS TO AVOID
@@ -97,6 +99,6 @@ Result from previous chunks:
 Update the structured output using this fragment:
 - Start from <already_extracted> and only modify fields that this fragment clarifies or corrects.
 - Apply the FIELD RULES for name, applicationVersion, apiVersion, apiType, and baseApiEndpoint.
-- For baseApiEndpoint, select ONE canonical base URL (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless the docs guarantee a single global URL).
+- For baseApiEndpoint, keep a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless the docs guarantee a single global URL).
 - If this fragment adds nothing reliable, return the aggregated object unchanged.
 """)

@@ -106,7 +106,7 @@ Object Class: {object_class}
 """)
 
 
-get_fill_missing_attributes_system_prompt = textwrap.dedent("""
+get_fill_missing_details_system_prompt = textwrap.dedent("""
 <instruction>
 You will receive:
 - the target object class name (e.g., "User")
@@ -138,7 +138,7 @@ Hard constraints:
 """)
 
 
-get_fill_missing_attributes_user_prompt = textwrap.dedent("""
+get_fill_missing_details_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
 
 <attributes_json>

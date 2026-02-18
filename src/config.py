@@ -135,6 +135,9 @@ class ScrapeAndProcessSettings(BaseModel):
             "nl",
             "pl",
             "tr",
+            "internal",
+            "stg",
+            "staging",
         ],
         description="URL substrings to consider irrelevant while scraping",
     )
