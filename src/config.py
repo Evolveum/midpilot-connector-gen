@@ -210,7 +210,7 @@ class DatabaseSettings(BaseModel):
         description="Database URL",
     )
     host: str = ""
-    port: int = 5432
+    port: int = 5433
     name: str = ""
     user: str = ""
     password: str = ""

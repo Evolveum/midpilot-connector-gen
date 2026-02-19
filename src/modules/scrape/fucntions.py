@@ -38,7 +38,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
     logger.info("[Scrape:URLs] Starting to scrape %s URLs", len(links_to_scrape_orig))
     prune_filter = PruningContentFilter(threshold=0.42, threshold_type="dynamic", min_word_threshold=1)
     md_generator = DefaultMarkdownGenerator(content_filter=prune_filter)
-    browser_config = BrowserConfig(accept_downloads=True, browser_type="firefox")
+    browser_config = BrowserConfig(accept_downloads=True)
     run_config = CrawlerRunConfig(
         check_robots_txt=True,
         wait_until="networkidle",
@@ -345,7 +345,7 @@ async def filterOutIrrelevantLinks(
     links_to_remove = []
     for link in current_links_trusted_valid:
         for forbidden_part in forbidden_url_parts:
-            if f"/{forbidden_part}/" in link or f".{forbidden_part}.":
+            if f"/{forbidden_part}/" in link:
                 past_irrelevant_links.append(link)
                 links_to_remove.append(link)
                 break
