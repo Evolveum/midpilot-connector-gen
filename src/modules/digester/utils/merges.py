@@ -13,7 +13,7 @@ from langchain_core.runnables.config import RunnableConfig
 from ....common.enums import JobStage
 from ....common.jobs import update_job_progress
 from ....common.langfuse import langfuse_handler
-from ..schema import AttributeResponse, EndpointInfo, ObjectClass
+from ..schema import AttributeResponse, EndpointInfo, EndpointMethod, ObjectClass
 
 logger = logging.getLogger(__name__)
 
@@ -202,21 +202,17 @@ async def merge_endpoint_candidates(
     """
 
     # HTTP method ordering for consistent sorting
-    _METHOD_ORDER: Dict[str, int] = {"GET": 0, "HEAD": 1, "OPTIONS": 2, "POST": 3, "PUT": 4, "PATCH": 5, "DELETE": 6}
+    _METHOD_ORDER: Dict[EndpointMethod, int] = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4}
 
-    def _normalize_method(method: str) -> str:
-        return (method or "").strip().upper()
+    def _endpoint_key(ep: EndpointInfo) -> tuple[str, EndpointMethod]:
+        return (ep.path.strip(), ep.method)
 
-    def _endpoint_key(ep: EndpointInfo) -> tuple:
-        return (ep.path.strip(), _normalize_method(ep.method))
-
-    by_key: Dict[tuple, EndpointInfo] = {}
+    by_key: Dict[tuple[str, EndpointMethod], EndpointInfo] = {}
 
     for ep in extracted_endpoints:
-        if not ep.path or not ep.method:
+        if not ep.path:
             continue
 
-        ep.method = _normalize_method(ep.method)
         key = _endpoint_key(ep)
 
         if key not in by_key:
@@ -246,7 +242,7 @@ async def merge_endpoint_candidates(
     merged = list(by_key.values())
 
     # Sort by path, then by common HTTP method order
-    merged.sort(key=lambda e: (e.path, _METHOD_ORDER.get(_normalize_method(e.method), 99), e.method))
+    merged.sort(key=lambda e: (e.path, _METHOD_ORDER[e.method], e.method))
 
     # Convert to dicts for JSON serialization
     merged_dicts = [ep.model_dump(by_alias=True) for ep in merged]

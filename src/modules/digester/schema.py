@@ -521,6 +521,9 @@ class AttributeResponse(BaseModel):
 
 
 # --- Endpoints ---
+EndpointMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+
 class EndpointInfo(BaseModel):
     """
     HTTP endpoint associated with a specific object class. Focus on endpoints that
@@ -533,9 +536,9 @@ class EndpointInfo(BaseModel):
         ...,
         description="Concrete URL path template as documented (e.g., '/users/{id}', '/users/{id}/groups').",
     )
-    method: str = Field(
+    method: EndpointMethod = Field(
         ...,
-        description="HTTP method in uppercase (e.g., GET, POST, PUT, PATCH, DELETE).",
+        description="HTTP method (e.g., GET, POST, PUT, PATCH, DELETE).",
     )
     description: str = Field(
         ...,
@@ -548,7 +551,7 @@ class EndpointInfo(BaseModel):
         default=None,
         validation_alias="responseContentType",
         serialization_alias="responseContentType",
-        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json').",
+        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json', 'application/vnd.oracle.resource+json', application/scim+json, other).",
     )
     request_content_type: Optional[str] = Field(
         default=None,
@@ -562,6 +565,14 @@ class EndpointInfo(BaseModel):
         serialization_alias="suggestedUse",
         description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
     )
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def _normalize_method(cls, value: Any) -> Any:
+        """Accept lowercase/mixed-case methods and normalize them before literal validation."""
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
 
 
 class EndpointParamInfo(BaseModel):
@@ -582,7 +593,7 @@ class EndpointParamInfo(BaseModel):
         default=None,
         validation_alias="responseContentType",
         serialization_alias="responseContentType",
-        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json').",
+        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json', 'application/vnd.oracle.resource+json', application/scim+json, other).",
     )
     request_content_type: Optional[str] = Field(
         default=None,
