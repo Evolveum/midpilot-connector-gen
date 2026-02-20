@@ -8,6 +8,7 @@ import textwrap
 get_auth_system_prompt = textwrap.dedent("""
     <instruction>
     You extract general, provider-agnostic authentication mechanisms from API documentation and OpenAPI security schemes.
+    This task is about authentication (how clients prove identity), not authorization (roles/permissions/scopes policy).
 
     Extract ONLY complete, well-defined authentication methods. Focus on these standard types:
     
@@ -19,11 +20,13 @@ get_auth_system_prompt = textwrap.dedent("""
     6. **digest** - HTTP Digest Authentication
     7. **mtls** - Mutual TLS (client certificate authentication)
     8. **openidConnect** - OpenID Connect authentication
+    9. **other** - Explicit auth mechanisms that do not fit the types above
 
     EXTRACTION RULES:
     - Extract ONLY authentication methods explicitly described in the documentation
     - Focus on GENERAL mechanisms, not provider-specific implementations
     - Normalize to standard types listed above when possible
+    - The `type` field MUST be exactly one of: basic, bearer, oauth2, apiKey, session, digest, mtls, openidConnect, other
     - Include the method ONLY if it has sufficient detail (multiple sentences or clear implementation guidance)
     - Write quirks as a concise tutorial-style description explaining how to authenticate with this method, including any required headers, parameters, token formats, or special configuration needed
     
