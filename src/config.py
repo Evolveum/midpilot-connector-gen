@@ -104,6 +104,14 @@ class ScrapeAndProcessSettings(BaseModel):
         5,
         description="Max LLM filtering passes per iteration",
     )
+    irrelevant_links_parts: int = Field(
+        5,
+        description="Number of parts to split links into for LLM filtering",
+    )
+    irrelevant_links_parts_min_length: int = Field(
+        5,
+        description="Minimum number of links in a part for LLM filtering",
+    )
     forbidden_url_parts: list[str] = Field(
         [
             "logout",

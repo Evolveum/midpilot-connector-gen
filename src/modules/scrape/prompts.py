@@ -144,6 +144,8 @@ Example:
 
 If no links are irrelevant, return: {{"links": []}}
 """
+    #It it neccessary to NOT remove more than one quarter of the links in one go, to avoid accidentally removing relevant content. You will be probably called again.
+
 
     user_msg = f"""Evaluate these links and return ONLY the irrelevant ones:
 

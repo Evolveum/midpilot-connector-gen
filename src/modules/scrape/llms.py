@@ -7,7 +7,9 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables.config import RunnableConfig
 
+from ...common.langfuse import langfuse_handler
 from ...common.llm import get_default_llm, make_basic_chain
 from .schema import IrrelevantLinks
 
@@ -53,7 +55,7 @@ async def get_irrelevant_llm_response(prompts: tuple[str, str], max_retries: int
 
     while req_num < max_retries and not done:
         try:
-            result = await chain.ainvoke({})
+            result = await chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler]))
             done = True
             logger.debug("[LLM] LLM call successful on attempt %s", req_num + 1)
         except Exception as e:
