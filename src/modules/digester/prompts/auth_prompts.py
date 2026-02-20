@@ -51,17 +51,23 @@ get_auth_system_prompt = textwrap.dedent("""
 # user prompt for <auth> extraction
 get_auth_user_prompt = textwrap.dedent(
     """
-Summary: {summary}
+Summary of the chunk:
+ 
+<summary>
+{summary}
+</summary>
 
-Tags: {tags}
+Tags of the chunk:
+ 
+<tags>
+{tags}
+</tags>
 
 Text from documentation:
 
-<docs>
-
+<chunk>
 {chunk}
-
-</docs>
+</chunk>
 
 Please extract authentication mechanisms present in this chunk. Use the structured output schema to respond.
 Include the full name as written in the docs, a normalized type when obvious, and any notable quirks.

@@ -545,7 +545,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
                     name="ExampleAPI",
                     api_version="v1.0",
                     application_version="1.0.0",
-                    api_type=["REST", "OpenAPI"],
+                    api_type=["REST", "SCIM"],
                     base_api_endpoint=[],
                 ),
                 True,
@@ -555,7 +555,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
                     name="ExampleAPI",
                     api_version="v1.0",
                     application_version="1.0.0",
-                    api_type=["REST", "OpenAPI"],
+                    api_type=["REST", "SCIM"],
                     base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1", type="constant")],
                 ),
                 True,
@@ -585,6 +585,68 @@ async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_j
 
         assert result["result"] == {}
         assert result["relevantChunks"] == []
+
+
+@pytest.mark.asyncio
+async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, mock_digester_update_job_progress):
+    doc_uuid1 = uuid4()
+    doc_uuid2 = uuid4()
+
+    fake_doc_items = [
+        {
+            "uuid": str(doc_uuid1),
+            "content": "doc 1",
+            "summary": "Summary one",
+            "@metadata": {"llm_tags": ["rest", "users"]},
+        },
+        {
+            "uuid": str(doc_uuid2),
+            "content": "doc 2",
+            "summary": "Summary two",
+            "@metadata": {"llm_tags": "openapi"},
+        },
+    ]
+
+    with (
+        patch("src.modules.digester.service._extract_info_metadata", new_callable=AsyncMock) as mock_extract,
+        patch("src.modules.digester.service.increment_processed_documents", new_callable=AsyncMock),
+    ):
+        mock_extract.side_effect = [
+            (
+                InfoMetadata(
+                    name="ExampleAPI",
+                    api_version="1",
+                    application_version="1.0.0",
+                    api_type=["REST"],
+                    base_api_endpoint=[],
+                ),
+                True,
+            ),
+            (
+                InfoMetadata(
+                    name="ExampleAPI",
+                    api_version="1",
+                    application_version="1.0.0",
+                    api_type=["REST", "SCIM"],
+                    base_api_endpoint=[],
+                ),
+                True,
+            ),
+        ]
+
+        await service.extract_info_metadata(fake_doc_items, uuid4())
+
+        first_call = mock_extract.await_args_list[0]
+        assert first_call.kwargs["doc_metadata"] == {
+            "summary": "Summary one",
+            "@metadata": {"llm_tags": ["rest", "users"]},
+        }
+
+        second_call = mock_extract.await_args_list[1]
+        assert second_call.kwargs["doc_metadata"] == {
+            "summary": "Summary two",
+            "@metadata": {"llm_tags": "openapi"},
+        }
 
 
 # ==================== EXTRACT RELATIONS ====================

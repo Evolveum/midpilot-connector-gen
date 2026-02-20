@@ -16,8 +16,8 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
 
-from ..prompts.info_about_schema_prompts import get_info_system_prompt, get_info_user_prompt
-from ..schema import InfoResponse
+from ..prompts.info_prompts import get_info_system_prompt, get_info_user_prompt
+from ..schema import InfoMetadata, InfoResponse
 from ..utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,18 @@ async def extract_info_metadata(
             return aggregated, False
 
         # Normalize to InfoResponse
-        aggregated = result if isinstance(result, InfoResponse) else InfoResponse.model_validate(result)
+        next_aggregated = result if isinstance(result, InfoResponse) else InfoResponse.model_validate(result)
+
+        # Keep accumulated base endpoints across documents even if a later chunk returns only a subset.
+        merged_base_endpoints = InfoMetadata(
+            base_api_endpoint=[
+                *aggregated.info_about_schema.base_api_endpoint,
+                *next_aggregated.info_about_schema.base_api_endpoint,
+            ]
+        ).base_api_endpoint
+        next_aggregated.info_about_schema.base_api_endpoint = merged_base_endpoints
+
+        aggregated = next_aggregated
 
         logger.info("[Digester:InfoMetadata] Extraction complete for document")
         return aggregated, True

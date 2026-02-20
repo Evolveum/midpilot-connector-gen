@@ -196,6 +196,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     """
     all_relevant_chunks: List[Dict[str, Any]] = []
     total_docs = len(doc_items)
+    doc_metadata_map = build_doc_metadata_map(doc_items)
 
     await update_job_progress(
         job_id, total_processing=total_docs, processing_completed=0, message="Processing documents"
@@ -206,11 +207,16 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     for idx, doc_item in enumerate(doc_items, 1):
         doc_uuid = doc_item["uuid"]
         doc_content = doc_item["content"]
+        doc_metadata = doc_metadata_map.get(str(doc_uuid))
 
         logger.info("[Digester:InfoMetadata] Processing document %s/%s (UUID: %s)", idx, total_docs, doc_uuid)
 
         raw_result, has_relevant_data = await _extract_info_metadata(
-            doc_content, job_id, doc_uuid, initial_aggregated=aggregated_result
+            doc_content,
+            job_id,
+            doc_uuid,
+            initial_aggregated=aggregated_result,
+            doc_metadata=doc_metadata,
         )
 
         aggregated_result = raw_result
