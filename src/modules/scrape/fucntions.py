@@ -3,8 +3,9 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import base64
 import logging
-from typing import List, cast
+from typing import Any, List, cast
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
@@ -24,8 +25,10 @@ from pydantic import HttpUrl
 
 from ...common.chunk_processor.schema import SavedPage
 from ...common.schema import validate_pydantic_object
+from ...config import config
 from .llms import get_irrelevant_llm_response
 from .prompts import get_irrelevant_filter_prompts
+from .schema import IrrelevantLinks
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +41,15 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
     logger.info("[Scrape:URLs] Starting to scrape %s URLs", len(links_to_scrape_orig))
     prune_filter = PruningContentFilter(threshold=0.42, threshold_type="dynamic", min_word_threshold=1)
     md_generator = DefaultMarkdownGenerator(content_filter=prune_filter)
-    browser_config = BrowserConfig(accept_downloads=True)
+    browser_config = BrowserConfig() #accept_downloads=True, browser_type="firefox"
     run_config = CrawlerRunConfig(
+        #user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
+        #simulate_user= True,
         check_robots_txt=True,
+        #magic=True,
         wait_until="networkidle",
+        #delay_before_return_html=10.0,
+        #screenshot=True,
         markdown_generator=md_generator,
     )
 
@@ -112,9 +120,19 @@ async def get_content_type(url: str) -> str:
     outputs:
         str - the content type from the HTTP headers
     """
+    headers = {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',  # We need primarily HTML content for link extraction
+        'Accept-Encoding': 'identity',  # Disable compression for HEAD requests to avoid gzip parsing issues
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36'
+    }
     async with aiohttp.ClientSession() as session:
-        async with session.head(url, allow_redirects=True) as response:
+        try:
+            response = await session.head(url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=10))
+            logger.debug("[Scrape:ContentType] Checked content type for %s: %s", url, response.headers.get("Content-Type", "unknown"))
             return response.headers.get("Content-Type", "")
+        except Exception as e:
+            logger.error("[Scrape:ContentType] Failed to get content type for %s: %s", url, e)
+            return ""
 
 
 async def get_all_content_types(urls: list[str]) -> dict[str, str]:
@@ -136,13 +154,22 @@ async def fetch_data_page(url: str) -> tuple[str, str] | None:
     inputs:
         url: str - the URL to fetch
     outputs:
-        str | None - the content of the page or None if failed
+        tuple[str, str] | None - the tuple of the url and the content of the page or None if failed
     """
     try:
         async with aiohttp.ClientSession() as http_session:
             async with http_session.get(url) as response:
                 if response.status == 200:
-                    return (url, await response.text())
+                    content_type = response.headers.get("Content-Type", "")
+                    # This has to be here because some great admins ignore RFC 7231 and return different content types for HEAD and GET requests...
+                    if "json" in content_type or \
+                        "yaml" in content_type or \
+                        "yml" in content_type or \
+                        "text/plain" in content_type:
+                        return (url, await response.text())
+                    else:
+                        logger.warning("[Scrape:DataPage] URL %s has unsupported content type: %s, defaulting to crawl4ai scraping", url, content_type)
+                        return (url, "error")
                 else:
                     logger.error("[Scrape:DataPage] Failed to fetch %s: HTTP %s", url, response.status)
                     return None
@@ -157,7 +184,7 @@ async def scrape_all_data_pages(links: list[str]) -> list[tuple[str, str]]:
     inputs:
         links: list - list of URLs to scrape
     outputs:
-        dict - dictionary mapping URL to its content
+        list - list of tuples mapping URL to its content
     """
     tasks = [fetch_data_page(link) for link in links]
     results = await asyncio.gather(*tasks)
@@ -229,6 +256,22 @@ async def scraper_loop(
     other_links = [url for url in content_types.keys() if url not in data_links]
 
     http_results = await scrape_all_data_pages(data_links)
+
+    for url, content in http_results:
+        if validate_pydantic_object(url, HttpUrl):
+            if content == "error":
+                other_links.append(url)  # If fetching as data page failed, add to other links for regular scraping
+                continue
+            logger.debug("[Scrape:Loop] Loading %s as data file", str(url))
+            page = SavedPage(
+                url=url,
+                contentType=content_types[str(url)],
+                content=content,
+                links=[],
+            )
+            logger.debug("[Scrape:Loop] Fetched data page %s", str(url))
+            saved_pages[str(url)] = page
+
     scrape_result = await scrape_urls(other_links)
 
     logger.info("[Scrape:Loop] Iteration %s: Scraped %s pages successfully", curr_iteration, len(scrape_result))
@@ -252,20 +295,6 @@ async def scraper_loop(
             logger.debug("[Scrape:Loop] Extracted %s links from page %s", len(link_arr_valid), scraped_link.url)
             saved_pages[str(scraped_link.url)] = page
             new_links_to_scrape.extend(link_arr)
-
-    for url, content in http_results:
-        logger.debug("[Scrape:Loop] Loading %s as data file", str(url))
-        if validate_pydantic_object(url, HttpUrl):
-            page = SavedPage(
-                url=url,
-                contentType=content_types[str(url)],
-                content=content,
-                links=[],
-            )
-            logger.debug("[Scrape:Loop] Fetched data page %s", str(url))
-            saved_pages[str(url)] = page
-            # with open("crawl_all.json", "a") as crawl_all_file:
-            #     crawl_all_file.write(page.model_dump_json() + "\n")
 
     logger.info(
         "[Scrape:Loop] Iteration %s: Extracted %s total new links from scraped pages",
@@ -294,6 +323,10 @@ async def scraper_loop(
     )
 
     return new_links_to_scrape
+
+async def processIrrelevantLinksPart(irrelevant_links_part: list[str], app: str, app_version: str) -> IrrelevantLinks | None:
+    irrelevant_prompts = get_irrelevant_filter_prompts(irrelevant_links_part, app, app_version)
+    return await get_irrelevant_llm_response(irrelevant_prompts)
 
 
 async def filterOutIrrelevantLinks(
@@ -325,12 +358,12 @@ async def filterOutIrrelevantLinks(
         list - list of irrelevant links from this run combined with past irrelevant links
         list - filtered list of relevant links
     """
-    logger.info("[Scrape:Filter] Starting to filter %s links", len(links))
     links_set = set(links)
+    logger.info("[Scrape:Filter] Starting to filter %s unique links", len(links_set))
     current_links = links_set - set(saved_pages.keys())
     logger.info("[Scrape:Filter] After removing already scraped: %s links remain", len(current_links))
 
-    current_links_trusted = [link for link in current_links if get_base_domain(link) in trusted_domains]
+    current_links_trusted = [link for link in current_links if get_base_domain(link) in trusted_domains or "netsuite" in get_base_domain(link)]
     logger.info("[Scrape:Filter] After filtering by trusted domains: %s links remain", len(current_links_trusted))
 
     current_links_trusted_valid = [link for link in current_links_trusted if validate_pydantic_object(link, HttpUrl)]
@@ -338,7 +371,7 @@ async def filterOutIrrelevantLinks(
 
     current_links_trusted_valid = list(set(current_links_trusted_valid) - set(past_irrelevant_links))
     logger.info(
-        "[Scrape:Filter] After removing past irrelevant links and removing duplicates: %s links remain",
+        "[Scrape:Filter] After removing past irrelevant links: %s links remain",
         len(current_links_trusted_valid),
     )
 
@@ -361,15 +394,27 @@ async def filterOutIrrelevantLinks(
     while curr_run < llm_calls and len(current_links_not_forbidden) > 0:
         logger.info("[Scrape:Filter] Starting LLM filtering call %s/%s", curr_run + 1, llm_calls)
 
-        irrelevant_prompts = get_irrelevant_filter_prompts(current_links_not_forbidden, app, app_version)
+        link_parts: List[List[str]] = []
 
-        irrelevant_llm_response = await get_irrelevant_llm_response(irrelevant_prompts)
+        step = len(current_links_not_forbidden) / config.scrape_and_process.irrelevant_links_parts
+        number_of_steps = min(config.scrape_and_process.irrelevant_links_parts_min_length, max(1, int(len(current_links_not_forbidden) / step)))
+        for i in range(number_of_steps):
+            part_links = current_links_not_forbidden[int(i * step) : min(int((i + 1) * step), len(current_links_not_forbidden))]
+            link_parts.append(part_links)
 
-        if irrelevant_llm_response is None:
+        
+        irrelevant_llm_responses = await asyncio.gather(*[processIrrelevantLinksPart(part, app, app_version) for part in link_parts])
+        
+
+        if any(resp is None for resp in irrelevant_llm_responses):
             logger.warning("[Scrape:Filter] LLM filtering call %s/%s failed", curr_run + 1, llm_calls)
         else:
-            logger.debug("[Scrape:Filter] LLM identified %s RAW irrelevant links", len(irrelevant_llm_response.links))
-            irrelevant_llm_links = list(set(irrelevant_llm_response.links) & set(current_links_not_forbidden))
+            irrelevant_llm_links = []
+            for resp in irrelevant_llm_responses:
+                if resp is not None:
+                    irrelevant_llm_links.extend(resp.links)
+            logger.debug("[Scrape:Filter] LLM identified %s RAW irrelevant links", len(irrelevant_llm_links))
+            irrelevant_llm_links = list(set(irrelevant_llm_links) & set(current_links_not_forbidden))
             logger.info("[Scrape:Filter] LLM identified %s irrelevant links", len(irrelevant_llm_links))
             logger.debug("[Scrape:Filter] LLM irrelevant links: %s", irrelevant_llm_links)
 
