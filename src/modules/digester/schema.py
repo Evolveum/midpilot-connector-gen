@@ -271,11 +271,11 @@ class InfoMetadata(BaseModel):
         serialization_alias="apiVersion",
         description="API version string as documented (e.g., 'v1', '2024-05', semantic).",
     )
-    api_type: List[str] = Field(
+    api_type: List[Literal["REST", "SCIM"]] = Field(
         default_factory=list,
         validation_alias="apiType",
         serialization_alias="apiType",
-        description="API technology types (e.g., REST, OpenAPI, SCIM, SOAP, GraphQL, Other).",
+        description=("API technology types. Allowed values: REST, SCIM. OpenAPI/Swagger should be normalized to REST."),
     )
     base_api_endpoint: List[BaseAPIEndpoint] = Field(
         default_factory=list,

@@ -31,13 +31,11 @@ RULES:
    - If not present, leave empty string "".
 
 4) apiType
-   - A list with normalized technology labels, chosen from:
-     REST, OpenAPI, SCIM, SOAP, GraphQL, Other
+   - A list with normalized technology labels, chosen from: REST or SCIM
    - Deduplicate. Examples:
-     - "OpenAPI 3" ⇒ include "OpenAPI"
      - "REST API" ⇒ include "REST"
      - "SCIM 2.0" ⇒ include "SCIM"
-     - If unclear, include "Other" only when the API type is clearly not one of the above.
+   - If unclear, leave empty list.
 
 5) baseApiEndpoint
    GOAL: Provide one or more canonical *base API URLs* suitable for connectivity checks or discovery, NOT specific resource paths.
@@ -99,6 +97,7 @@ Result from previous chunks:
 Update the structured output using this fragment:
 - Start from <already_extracted> and only modify fields that this fragment clarifies or corrects.
 - Apply the FIELD RULES for name, applicationVersion, apiVersion, apiType, and baseApiEndpoint.
+- For apiType, output only REST/SCIM; treat OpenAPI/Swagger evidence as REST.
 - For baseApiEndpoint, keep a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless the docs guarantee a single global URL).
 - If this fragment adds nothing reliable, return the aggregated object unchanged.
 """)
