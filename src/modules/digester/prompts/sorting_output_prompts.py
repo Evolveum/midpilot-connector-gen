@@ -62,9 +62,7 @@ sort_auth_user_prompt = textwrap.dedent("""
     Extracted authentication mechanisms from previous LLM call:
     
     <items>
-    
     {items_json}
-    
     </items>
     
     Task:

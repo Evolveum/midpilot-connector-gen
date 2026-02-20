@@ -1,6 +1,7 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
+import json
 
 from langchain.output_parsers import RetryWithErrorOutputParser
 from langchain.prompts import BasePromptTemplate
@@ -11,7 +12,7 @@ from langchain_openai import ChatOpenAI
 from ..config import config
 
 
-def get_default_llm(temperature: float = 0.8) -> ChatOpenAI:
+def get_default_llm(temperature: float = 1, reasoning_effort: str = "high") -> ChatOpenAI:
     """
     Create and return a ChatOpenAI LLM instance with default parameters.
 
@@ -24,13 +25,9 @@ def get_default_llm(temperature: float = 0.8) -> ChatOpenAI:
         model_name=config.llm.model_name,
         request_timeout=config.llm.request_timeout,
         temperature=temperature,
-        extra_body={
-            "provider": {
-                "order": ["groq"]  # , "parasail", "deepinfra"
-            }
-        },
-        # reasoning_effort="low" # for GTP-OSS
-        # reasoning={"effort": "low", "summary": "auto", "exclude": "false"},
+        # extra_body={"reasoning": {"enabled": True}, "provider": {"order": ["google-ai-studio"]}},
+        extra_body={"provider": {"order": ["groq"]}},
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -54,9 +51,6 @@ def make_basic_chain(prompt: BasePromptTemplate, llm: ChatOpenAI, parser: BaseOu
                 if isinstance(block, dict) and block.get("type") == "text":
                     text_value = block.get("text")
                     if isinstance(text_value, dict):
-                        # Handle nested structure like {'objectClasses': [...]}
-                        import json
-
                         text_content = json.dumps(text_value)
                     else:
                         text_content = text_value
@@ -66,8 +60,6 @@ def make_basic_chain(prompt: BasePromptTemplate, llm: ChatOpenAI, parser: BaseOu
 
     completion_chain = prompt | llm
 
-    # retries once if it fails with an error message
-    # ref: https://python.langchain.com/docs/how_to/output_parser_retry/
     retry_parser = RetryWithErrorOutputParser.from_llm(parser=parser, llm=llm)
 
     chain = RunnableParallel(completion=completion_chain, prompt_value=prompt) | RunnableLambda(parse_with_retry)

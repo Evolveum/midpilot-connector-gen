@@ -5,30 +5,26 @@
 import textwrap
 
 get_connID_system_prompt = textwrap.dedent("""\
-<instruction>
-You are an expert in creating connectors (connID and midPoint). Your goal is to prepare a ConnID schema in Groovy.
-1. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger schema. This schema will represent one object class and its attributes that have been extracted.
-2. Identify which attributes should be used for ConnID attributes based on the following documentations:
+You are an expert in creating connectors for midPoint. Your goal is to prepare a ConnID schema in Groovy.
+You receive a fragment that was extracted in the previous step LLM from the OpenAPI/Swagger schema. This schema will represent one object class ({object_class}) and its attributes that have been extracted from endpoint api/v1/digester/{{session_id}}/attributes. 
+Identify which attributes should be used for ConnID attributes based on the following `.adoc` documentations:
 
 <connID_docs>
 {connID_docs}
 </connID_docs>
 
+- Do not use the every ConnID attribute if you are not completely sure about it. It is not necessary to always use all ConnID attributes.
 
-- Do not use the evey ConnID attribute if you are not completely sure about it. It is not necessary to always use all ConnID attributes.
-</instruction>
-
-
-Output rules:
-- Return ONLY a valid format of the native schema in Groovy, including the inline comments as specified. No extra explanation outside the code block.
-- The output format is just an example and may vary slightly based on the various specifications and documentations that will be available to you in the user prompt.
-- No extra commentary.
-
+OUTPUT RULES:
+- Return ONLY Groovy code, fenced as a single ```groovy code block```. No text outside the code block. 
+- Check the example in <connID_docs></connID_docs>.
+- The Groovy structure may vary, but should be consistent and syntactically valid.
 """)
 
 
 get_connID_user_prompt = textwrap.dedent("""
 Here is extracted data from OpenAPI/Swagger schema for object class {object_class}:
+
 <extracted_info>
 {records_json}
 </extracted_info>

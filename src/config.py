@@ -143,6 +143,9 @@ class ScrapeAndProcessSettings(BaseModel):
             "nl",
             "pl",
             "tr",
+            "internal",
+            "stg",
+            "staging",
         ],
         description="URL substrings to consider irrelevant while scraping",
     )
@@ -215,7 +218,7 @@ class DatabaseSettings(BaseModel):
         description="Database URL",
     )
     host: str = ""
-    port: int = 5432
+    port: int = 5433
     name: str = ""
     user: str = ""
     password: str = ""

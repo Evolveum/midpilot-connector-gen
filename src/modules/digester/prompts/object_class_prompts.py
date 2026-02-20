@@ -7,7 +7,6 @@ import textwrap
 # system prompt for <object class> extraction
 get_object_class_system_prompt = textwrap.dedent(
     """
-<instruction>
 You are a senior Identity Governance & Administration (IGA) / Identity
 Management (IDM) consultant with deep expertise in enterprise schemas.
 You will receive fragments of an OpenAPI/Swagger document or similar
@@ -22,14 +21,14 @@ singular forms that correspond to own endpoints and stable identifiers.
 Use the structured output schema (ObjectClassesResponse with field alias
 "objectClasses"). You will receive explicit format instructions; follow them exactly.
 
-### What to extract (canonical buckets with common aliases)
+WHAT TO EXTRACT (canonical buckets with common aliases):
 Return concrete object/type names from the spec that fall into these buckets,
 accounting for synonyms, prefixes/suffixes, and view variants. Include the
 original names as they appear in the spec.
 
 1) **Identity / User**
  Aliases: user, identity, account holder, principal, member, person, profile,
- userProfile, userIdentity, subject, actor, directoryUser, iamUser, teammember...
+ userProfile, userIdentity, subject, actor, directoryUser, iamUser, team member,...
 
 2) **Group / Team**
  Aliases: group, team, cohort, circle, distributionList, mailingList,
@@ -63,7 +62,7 @@ original names as they appear in the spec.
  trait, schemaField (application-level), profileField, organizationField,
  userField,...
 
-### Inclusion heuristics
+INCLUSION HEURISTICS:
 - Include only if it is a PRIMARY domain concept with its own endpoints and/or
 stable identifier, or a first-class link (membership/assignment).
 - Prefer the canonical, singular class representing the family (e.g., `User`,
@@ -71,7 +70,7 @@ stable identifier, or a first-class link (membership/assignment).
 - Include abstract supertypes only if they are the primary manageable object in
 the API (e.g., documented as the top-level type for endpoints). Otherwise omit.
 
-### Exclude (variants, wrappers, and non-domain)
+EXCLUDE (variants, wrappers, and non-domain):
 - Variants with these suffixes/prefixes: Model, Schema, DTO, Response, Resource,
 ReadModel, WriteModel, Record, Entity, Item, Type, Ref, Info, Base, Lite,
 Summary, View, ForAdmin, Wrapper.
@@ -82,7 +81,7 @@ wrappers (HAL, pagination, links), error/problem/status types.
 - Low-level schema descriptor types (AVRO/JSON schema helpers). Application-level
 field definition objects are OK when they are first-class (e.g., CustomField).
 
-### Deduplicate within a family
+DEDUPLICATE WITHIN A FAMILY:
 If multiple names map to the same concept (e.g., `User`, `Users`, `UserModel`,
 `UserSchema`), return ONLY the main/root one:
 - Choose the singular canonical base without the suffixes above.
@@ -98,21 +97,23 @@ Output must use the structured schema; do not add comments or prose.
 # user prompt for <object class> extraction
 get_object_class_user_prompt = textwrap.dedent(
     """
-# Summary of the chunk:
-
+Summary of the chunk:
+ 
+<summary>
 {summary}
+</summary>
 
-# Tags of the chunk:
-
+Tags of the chunk:
+ 
+<tags>
 {tags}
+</tags>
 
-# Input Documentation Chunk:
+Text from documentation:
 
-<docs>
-
+<chunk>
 {chunk}
-
-</docs>
+</chunk>
 
 Task:
 - Extract ONLY main/root classes (canonical, singular) as defined in the system

@@ -28,7 +28,7 @@ async def get_irrelevant_llm_response(prompts: tuple[str, str], max_retries: int
     logger.debug("[LLM] Starting LLM call for irrelevant links filtering")
     developer_msg, user_msg = prompts
 
-    llm = get_default_llm(temperature=1)
+    llm = get_default_llm(temperature=1, reasoning_effort="medium")
 
     developer_message = SystemMessage(content=developer_msg)
     developer_message.additional_kwargs = {"__openai_role__": "developer"}

@@ -29,10 +29,10 @@ services:
   #     retries: 15
   #   restart: unless-stopped
 
-  wp1-fastapi-ms:
+  midpilot-connector-gen:
     build: .
-    image: wp1-microservice:latest
-    container_name: wp1-fastapi-ms
+    image: midpilot-connector-gen:latest
+    container_name: fastapi-microservice
     # depends_on:
     #   ollama:
     #     condition: service_healthy
@@ -50,8 +50,12 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      POSTGRES_DB: ${DATABASE__NAME}
+      POSTGRES_USER: ${DATABASE__USER}
+      POSTGRES_PASSWORD: ${DATABASE__PASSWORD}
     ports:
-      - ${DATABASE__PORT}:${DATABASE__PORT}
+      - ${DATABASE__EXT_PORT}:${DATABASE__INT_PORT}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

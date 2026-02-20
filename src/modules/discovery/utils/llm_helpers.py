@@ -11,8 +11,10 @@ from langchain.output_parsers import OutputFixingParser
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 
+from ....common.langfuse import langfuse_handler
 from ..schema import PyScrapeFetchReferences, PySearchPrompts
 
 logger = logging.getLogger(__name__)
@@ -78,7 +80,7 @@ def generate_queries_via_llm(
     enriched_user_prompt = f"{user_prompt}\n\nReturn exactly {num_queries} distinct queries."
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=enriched_user_prompt)]
-    response = model.invoke(messages)
+    response = model.invoke(messages, config=RunnableConfig(callbacks=[langfuse_handler]))
 
     logger.info("Parse LLM output into structured search prompts.")
     parsed = _parse_search_prompts(parser_model, str(response.content))

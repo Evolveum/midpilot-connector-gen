@@ -378,7 +378,7 @@ async def filterOutIrrelevantLinks(
     links_to_remove = []
     for link in current_links_trusted_valid:
         for forbidden_part in forbidden_url_parts:
-            if f"/{forbidden_part}/" in link:
+            if f"/{forbidden_part}/" in link or f".{forbidden_part}." in link:
                 past_irrelevant_links.append(link)
                 links_to_remove.append(link)
                 break
