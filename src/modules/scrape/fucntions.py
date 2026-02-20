@@ -3,9 +3,8 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
-import base64
 import logging
-from typing import Any, List, cast
+from typing import List, cast
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
@@ -41,15 +40,15 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
     logger.info("[Scrape:URLs] Starting to scrape %s URLs", len(links_to_scrape_orig))
     prune_filter = PruningContentFilter(threshold=0.42, threshold_type="dynamic", min_word_threshold=1)
     md_generator = DefaultMarkdownGenerator(content_filter=prune_filter)
-    browser_config = BrowserConfig() #accept_downloads=True, browser_type="firefox"
+    browser_config = BrowserConfig()  # accept_downloads=True, browser_type="firefox"
     run_config = CrawlerRunConfig(
-        #user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
-        #simulate_user= True,
+        # user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
+        # simulate_user= True,
         check_robots_txt=True,
-        #magic=True,
+        # magic=True,
         wait_until="networkidle",
-        #delay_before_return_html=10.0,
-        #screenshot=True,
+        # delay_before_return_html=10.0,
+        # screenshot=True,
         markdown_generator=md_generator,
     )
 
@@ -121,14 +120,20 @@ async def get_content_type(url: str) -> str:
         str - the content type from the HTTP headers
     """
     headers = {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',  # We need primarily HTML content for link extraction
-        'Accept-Encoding': 'identity',  # Disable compression for HEAD requests to avoid gzip parsing issues
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36'
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",  # We need primarily HTML content for link extraction
+        "Accept-Encoding": "identity",  # Disable compression for HEAD requests to avoid gzip parsing issues
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
     }
     async with aiohttp.ClientSession() as session:
         try:
-            response = await session.head(url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=10))
-            logger.debug("[Scrape:ContentType] Checked content type for %s: %s", url, response.headers.get("Content-Type", "unknown"))
+            response = await session.head(
+                url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=10)
+            )
+            logger.debug(
+                "[Scrape:ContentType] Checked content type for %s: %s",
+                url,
+                response.headers.get("Content-Type", "unknown"),
+            )
             return response.headers.get("Content-Type", "")
         except Exception as e:
             logger.error("[Scrape:ContentType] Failed to get content type for %s: %s", url, e)
@@ -162,13 +167,19 @@ async def fetch_data_page(url: str) -> tuple[str, str] | None:
                 if response.status == 200:
                     content_type = response.headers.get("Content-Type", "")
                     # This has to be here because some great admins ignore RFC 7231 and return different content types for HEAD and GET requests...
-                    if "json" in content_type or \
-                        "yaml" in content_type or \
-                        "yml" in content_type or \
-                        "text/plain" in content_type:
+                    if (
+                        "json" in content_type
+                        or "yaml" in content_type
+                        or "yml" in content_type
+                        or "text/plain" in content_type
+                    ):
                         return (url, await response.text())
                     else:
-                        logger.warning("[Scrape:DataPage] URL %s has unsupported content type: %s, defaulting to crawl4ai scraping", url, content_type)
+                        logger.warning(
+                            "[Scrape:DataPage] URL %s has unsupported content type: %s, defaulting to crawl4ai scraping",
+                            url,
+                            content_type,
+                        )
                         return (url, "error")
                 else:
                     logger.error("[Scrape:DataPage] Failed to fetch %s: HTTP %s", url, response.status)
@@ -324,7 +335,10 @@ async def scraper_loop(
 
     return new_links_to_scrape
 
-async def processIrrelevantLinksPart(irrelevant_links_part: list[str], app: str, app_version: str) -> IrrelevantLinks | None:
+
+async def processIrrelevantLinksPart(
+    irrelevant_links_part: list[str], app: str, app_version: str
+) -> IrrelevantLinks | None:
     irrelevant_prompts = get_irrelevant_filter_prompts(irrelevant_links_part, app, app_version)
     return await get_irrelevant_llm_response(irrelevant_prompts)
 
@@ -363,7 +377,11 @@ async def filterOutIrrelevantLinks(
     current_links = links_set - set(saved_pages.keys())
     logger.info("[Scrape:Filter] After removing already scraped: %s links remain", len(current_links))
 
-    current_links_trusted = [link for link in current_links if get_base_domain(link) in trusted_domains or "netsuite" in get_base_domain(link)]
+    current_links_trusted = [
+        link
+        for link in current_links
+        if get_base_domain(link) in trusted_domains or "netsuite" in get_base_domain(link)
+    ]
     logger.info("[Scrape:Filter] After filtering by trusted domains: %s links remain", len(current_links_trusted))
 
     current_links_trusted_valid = [link for link in current_links_trusted if validate_pydantic_object(link, HttpUrl)]
@@ -397,14 +415,19 @@ async def filterOutIrrelevantLinks(
         link_parts: List[List[str]] = []
 
         step = len(current_links_not_forbidden) / config.scrape_and_process.irrelevant_links_parts
-        number_of_steps = min(config.scrape_and_process.irrelevant_links_parts_min_length, max(1, int(len(current_links_not_forbidden) / step)))
+        number_of_steps = min(
+            config.scrape_and_process.irrelevant_links_parts_min_length,
+            max(1, int(len(current_links_not_forbidden) / step)),
+        )
         for i in range(number_of_steps):
-            part_links = current_links_not_forbidden[int(i * step) : min(int((i + 1) * step), len(current_links_not_forbidden))]
+            part_links = current_links_not_forbidden[
+                int(i * step) : min(int((i + 1) * step), len(current_links_not_forbidden))
+            ]
             link_parts.append(part_links)
 
-        
-        irrelevant_llm_responses = await asyncio.gather(*[processIrrelevantLinksPart(part, app, app_version) for part in link_parts])
-        
+        irrelevant_llm_responses = await asyncio.gather(
+            *[processIrrelevantLinksPart(part, app, app_version) for part in link_parts]
+        )
 
         if any(resp is None for resp in irrelevant_llm_responses):
             logger.warning("[Scrape:Filter] LLM filtering call %s/%s failed", curr_run + 1, llm_calls)

@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import re
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_serializer
@@ -176,6 +177,9 @@ class ObjectClassesRelevancyResponse(BaseModel):
 
 
 # --- Auth ---
+AuthType = Literal["basic", "bearer", "oauth2", "apiKey", "session", "digest", "mtls", "openidConnect", "other"]
+
+
 class AuthInfo(BaseModel):
     """
     Authentication mechanism discovered in the API documentations/security schemes.
@@ -190,11 +194,11 @@ class AuthInfo(BaseModel):
             "Preserve original casing (e.g., 'BasicAuth', 'Bearer token', 'OAuth 2.0')."
         ),
     )
-    type: str = Field(
+    type: AuthType = Field(
         ...,
         description=(
-            "Normalized auth type when obvious. Common values: 'basic', 'bearer', 'session', 'oauth2', "
-            "'apiKey', 'mtls'. If unclear, use the closest descriptive string from the docs."
+            "Normalized auth type. Allowed values: 'basic', 'bearer', 'oauth2', 'apiKey', "
+            "'session', 'digest', 'mtls', 'openidConnect', 'other'."
         ),
     )
     quirks: Optional[str] = Field(
@@ -204,6 +208,67 @@ class AuthInfo(BaseModel):
             "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
         ),
     )
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _normalize_auth_type(cls, value: Any) -> str:
+        """
+        Normalize auth type variations to a stable, closed vocabulary.
+        """
+        if not isinstance(value, str):
+            return "other"
+
+        normalized = re.sub(r"[^a-z0-9]+", "", value.strip().lower())
+
+        aliases = {
+            # basic
+            "basic": "basic",
+            "basicauth": "basic",
+            "httpbasic": "basic",
+            # bearer
+            "bearer": "bearer",
+            "jwt": "bearer",
+            "token": "bearer",
+            "accesstoken": "bearer",
+            "personalaccesstoken": "bearer",
+            "pat": "bearer",
+            # oauth2
+            "oauth": "oauth2",
+            "oauth2": "oauth2",
+            "oauth2.0": "oauth2",
+            "oauth 2.0": "oauth2",
+            "oauth20": "oauth2",
+            "authorizationcode": "oauth2",
+            "clientcredentials": "oauth2",
+            "devicecode": "oauth2",
+            "pkce": "oauth2",
+            # api key
+            "apikey": "apiKey",
+            "api_key": "apiKey",
+            "apikeyauth": "apiKey",
+            "xapikey": "apiKey",
+            # session
+            "session": "session",
+            "cookie": "session",
+            "cookiesession": "session",
+            "sessioncookie": "session",
+            # digest
+            "digest": "digest",
+            "httpdigest": "digest",
+            # mtls
+            "mtls": "mtls",
+            "mutualtls": "mtls",
+            "clientcertificate": "mtls",
+            # openid connect
+            "openidconnect": "openidConnect",
+            "oidc": "openidConnect",
+            "openid": "openidConnect",
+            # fallback bucket
+            "other": "other",
+            "custom": "other",
+        }
+
+        return aliases.get(normalized, "other")
 
 
 class AuthResponse(BaseModel):
@@ -285,6 +350,40 @@ class InfoMetadata(BaseModel):
     )
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("api_type", mode="before")
+    @classmethod
+    def _normalize_api_type(cls, value: Any) -> List[str]:
+        """
+        Normalize api types from various upstream sources.
+        Keep only supported values and canonicalize their casing.
+        """
+        if value is None:
+            return []
+
+        raw_values: List[Any]
+        if isinstance(value, str):
+            raw_values = [value]
+        elif isinstance(value, list):
+            raw_values = value
+        else:
+            return []
+
+        aliases = {
+            "rest": "REST",
+            "scim": "SCIM",
+        }
+
+        normalized: List[str] = []
+        for item in raw_values:
+            if not isinstance(item, str):
+                continue
+            canonical = aliases.get(item.strip().lower())
+            if canonical:
+                normalized.append(canonical)
+
+        # Preserve the first-seen order while deduplicating.
+        return list(dict.fromkeys(normalized))
 
     @field_validator("base_api_endpoint", mode="before")
     @classmethod
