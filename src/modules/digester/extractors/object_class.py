@@ -47,7 +47,7 @@ async def extract_object_classes_raw(
         schema: The document content to extract from
         job_id: Job ID for progress tracking
         doc_id: Optional document UUID
-        doc_metadata: Optional metadata dict containing summary and @metadata with llm_tags
+        doc_metadata: Optional metadata dict containing summary and @metadata with tags
 
     Returns:
         - List of raw ObjectClass instances (with relevant_chunks populated)

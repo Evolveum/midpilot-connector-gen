@@ -225,8 +225,6 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
     2. Number of endpoints defined in the chunk.
     3. Relevant tags that describe the content (e.g., "endpoints", "authorization", "user management", object classes that are referenced, each as a "<class_name>", you may also include specific endpoints if there are not more than 10).
     4. A category for the chunk from the following options: "spec_yaml", "spec_json", "reference_api", "reference_other", "overview", "index", "tutorial", "non-technical", "other".
-    5. Tags for the chunk that you think best describe its content, this should be in seperate field from point 3
-    6. Category that you think best describes the content in the chunk, not from the predefined list, this should be in seperate field from point 4
 
     Be precise and objective in your analysis.
 
@@ -235,8 +233,6 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
     - num_endpoints: int - number of endpoints defined in the chunk
     - tags: list of strings - relevant tags describing the content
     - category: string - one of the predefined categories
-    - llm_tags: list of strings - tags that best describe the content according to only you
-    - llm_category: string - category that best describes the content according to only you, not from the predefined list
     - application_version: Optional[str] - the application version mentioned in the content, if any
     - api_version: Optional[str] - the API version mentioned in the content, if any
     - api_type: Optional[List[str]] - the API type(s) mentioned in the content, if any
@@ -253,8 +249,6 @@ EXAMPLE OUTPUTS:
         "num_endpoints": 5,
         "tags": ["endpoints", "user management", "provisioning", "User", "Group"],
         "category": "reference_api",
-        "llm_tags": ["user management", "API reference", "provisioning"],
-        "llm_category": "API reference",
         "application_version": "v2.1",
         "api_version": "v1",
         "api_type": ["REST"],
