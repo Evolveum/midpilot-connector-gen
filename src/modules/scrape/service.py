@@ -91,12 +91,12 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             app=input.application_name,
             app_version=input.application_version,
             max_iterations_filter_irrelevant=config.scrape_and_process.max_iterations_filter_irrelevant,
-            max_scraper_iterations=max_iters,
             curr_iteration=curr_iter,
             irrelevant_links=irrelevant_links,
             saved_pages=saved_pages,
             trusted_domains=trusted_domains,
             forbidden_url_parts=forbidden_url_parts,
+            last_iteration=(curr_iter == max_iters),
         )
 
         logger.info(

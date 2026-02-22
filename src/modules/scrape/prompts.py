@@ -151,3 +151,88 @@ If no links are irrelevant, return: {{"links": []}}
 {links}"""
 
     return developer_msg, user_msg
+
+
+# TODO: maybe regex pattern for getting relevant text around links.
+# def get_relevant_filter_prompts() -> tuple[str, str]:
+#    """
+#    Returns developer and user messages for extracting relevant links from text.
+
+#    :args:
+#         text: str - the text content to analyze for relevant links
+#         app: str - application name
+#         app_version: str - application version
+#    :return: Tuple of (developer_message, user_message)
+#    """
+#    developer_msg = """
+#    You are an expert in getting links from text that are relevant for IDM integration of {app} {app_version}.
+#    Our goal is to get to the API documentation, ideally specifications (OpenAPI/Swagger in JSON/YAML format) or REST API documentation, that is relevant for IDM integration.
+#    It is also neccessary to get to the documentation about authentification methods, supported apiTypes, and data schemas, that are relevant for IDM integration.
+#    Don't forget about documentation about SCIM, if there is any.
+
+#    You will be given text from the webpage, they might or might not be relevant or contain relevant links.
+
+#    Your mission: Identify links that are ideally API specifications / documentation, authentification methods, supported apiTypes, and data schemas that are RELEVANT to a developer implementing IDM (Identity Management) integration for {app} {app_version}.
+
+#    Don't ever return links that are not directly about {app} {app_version}, or that describe integration with other products, or that are for completely different versions of {app}.
+#    For example if the app is "Google" report only information about Google APIs, not about other products like "Google Analytics", "Google Ads" or "YouTube", and not about other versions of Google products that are not relevant for IDM integration.
+
+#    {parser_instructions}
+#    """
+
+#    user_msg = """Evaluate this text and return ONLY the links that are relevant for IDM integration:
+
+# {text}"""
+
+#    return developer_msg, user_msg
+
+
+def get_relevant_filter_prompts(text: str, app: str, app_version: str) -> tuple[str, str]:
+    """
+    Returns developer and user messages for extracting relevant links from text.
+
+    :args:
+       text: str - the text content to analyze for relevant links
+       app: str - application name
+       app_version: str - application version
+    :return: Tuple of (developer_message, user_message)
+    """
+    developer_msg = f"""
+**Situation**
+The assistant is working with a developer who needs to identify relevant API documentation and specifications for implementing Identity Management (IDM) integration with a specific application and version. The input consists of markdown text extracted from webpages containing links and descriptions that may or may not be relevant to the integration task.
+
+**Task**
+Analyze the provided markdown text and identify links that are directly relevant for IDM integration of {app} {app_version}. The assistant should extract links that either directly contain the target documentation OR serve as pathways leading to API documentation, specifications, authentication methods, supported API types, data schemas, or SCIM documentation that would be useful for a developer implementing IDM integration.
+
+**Objective**
+Enable developers to quickly locate both the final technical documentation AND the intermediate navigation paths needed to reach that documentation for implementing IDM integration, without wasting time on irrelevant links or documentation for different products or versions.
+
+**Knowledge**
+Priority documentation types to identify (in order of importance):
+1. API specifications in OpenAPI/Swagger format (JSON/YAML files)
+2. REST API documentation specific to IDM integration
+3. Authentication and authorization methods documentation
+4. Supported API types and endpoints
+5. Data schemas and object models
+6. SCIM (System for Cross-domain Identity Management) protocol documentation
+
+The assistant should identify two categories of links:
+- **Direct links**: Links that point directly to the target documentation (API specs, authentication guides, schemas)
+- **Pathway links**: Links that serve as navigation steps toward the target documentation (developer portals, API reference homepages, documentation hubs, getting started guides)
+
+The assistant must apply strict filtering criteria:
+- Links must be directly about {app} {app_version} specifically
+- Links must not describe integrations with other products
+- Links must not be for different versions of {app} unless explicitly relevant to {app_version}
+- Links must not be for related but separate products (e.g., if {app} is "Google", exclude "Google Analytics", "Google Ads", "YouTube")
+
+The markdown text provided is extracted from webpages and may contain irrelevant content, broken formatting, or links unrelated to IDM integration.
+
+{{parser_instructions}}
+   """
+
+    user_msg = f"""Evaluate this text and return ONLY the links that are relevant for IDM integration:
+   
+{text}"""
+
+    return developer_msg, user_msg

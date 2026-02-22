@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from ...config import config
 from ...modules.digester.schema import BaseAPIEndpoint
+from ...modules.scrape.schema import PageReferences
 
 
 class SummaryOutput(BaseModel):
@@ -41,6 +42,7 @@ class SavedPage(BaseModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     contentType: Optional[str] = None
     content: Optional[str] = None
+    pageReferences: Optional[PageReferences] = None
     summary: Optional[SummaryOutput] = None
     links: Optional[List[HttpUrl]] = None
 
@@ -49,7 +51,8 @@ class SavedPage(BaseModel):
             "url": str(self.url),
             "contentType": self.contentType,
             "content": self.content,
-            "summary": self.summary,
+            "pageReferences": self.pageReferences.to_dict() if self.pageReferences else None,
+            "summary": self.summary.to_dict() if self.summary else None,
             "links": [str(link) for link in self.links] if self.links else None,
         }
 

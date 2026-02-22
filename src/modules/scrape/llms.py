@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
+from typing import Tuple
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
@@ -11,12 +12,12 @@ from langchain_core.runnables.config import RunnableConfig
 
 from ...common.langfuse import langfuse_handler
 from ...common.llm import get_default_llm, make_basic_chain
-from .schema import IrrelevantLinks
+from .schema import IrrelevantLinks, RelevantLinks
 
 logger = logging.getLogger(__name__)
 
 
-async def get_irrelevant_llm_response(prompts: tuple[str, str], max_retries: int = 3) -> IrrelevantLinks | None:
+async def get_irrelevant_llm_response(prompts: Tuple[str, str], max_retries: int = 3) -> IrrelevantLinks | None:
     """
     Create and return a ChatOpenAI LLM instance configured for filtering irrelevant links.
 
@@ -67,3 +68,48 @@ async def get_irrelevant_llm_response(prompts: tuple[str, str], max_retries: int
         raise Exception("Failed to get LLM response after maximum retries")
 
     return result
+
+
+async def get_relevant_links_from_text(prompts: Tuple[str, str]) -> RelevantLinks | None:
+    """
+    Get relevant links from text using an LLM.
+
+    :param prompts: Tuple containing the developer and user prompts.
+    :param app: Application name.
+    :param app_version: Application version.
+    :return: RelevantLinks object containing the list of relevant links, or None if an error occurs.
+    """
+    logger.debug("[LLM] Starting LLM call for relevant links extraction")
+    developer_msg, user_msg = prompts
+
+    llm = get_default_llm()
+
+    parser: PydanticOutputParser = PydanticOutputParser(pydantic_object=RelevantLinks)
+    parser_instructions = parser.get_format_instructions()
+
+    developer_message = SystemMessage(content=developer_msg.format(parser_instructions=parser_instructions))
+    developer_message.additional_kwargs = {"__openai_role__": "developer"}
+
+    user_message = HumanMessage(content=user_msg)
+    user_message.additional_kwargs = {"__openai_role__": "user"}
+
+    chat_prompts = ChatPromptTemplate.from_messages(
+        [
+            developer_message,
+            user_message,
+        ]
+    )
+
+    chain = make_basic_chain(
+        prompt=chat_prompts,
+        llm=llm,
+        parser=parser,
+    )
+
+    try:
+        result = await chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler]))
+        logger.debug("[LLM] LLM call successful for relevant links extraction")
+        return result
+    except Exception as e:
+        logger.error("[LLM] Error invoking LLM for relevant links extraction: %s", e)
+        return None
