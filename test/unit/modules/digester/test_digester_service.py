@@ -597,13 +597,13 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
             "uuid": str(doc_uuid1),
             "content": "doc 1",
             "summary": "Summary one",
-            "@metadata": {"llm_tags": ["rest", "users"]},
+            "@metadata": {"tags": ["rest", "users"]},
         },
         {
             "uuid": str(doc_uuid2),
             "content": "doc 2",
             "summary": "Summary two",
-            "@metadata": {"llm_tags": "openapi"},
+            "@metadata": {"tags": "openapi"},
         },
     ]
 
@@ -639,13 +639,13 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
         first_call = mock_extract.await_args_list[0]
         assert first_call.kwargs["doc_metadata"] == {
             "summary": "Summary one",
-            "@metadata": {"llm_tags": ["rest", "users"]},
+            "@metadata": {"tags": ["rest", "users"]},
         }
 
         second_call = mock_extract.await_args_list[1]
         assert second_call.kwargs["doc_metadata"] == {
             "summary": "Summary two",
-            "@metadata": {"llm_tags": "openapi"},
+            "@metadata": {"tags": "openapi"},
         }
 
 

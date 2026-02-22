@@ -48,7 +48,7 @@ class DocumentationItem(BaseModel):
         default_factory=dict,
         serialization_alias="@metadata",
         validation_alias=AliasChoices("@metadata", "metadata"),
-        description="Additional metadata: chunk_number, num_endpoints, length, contentType, tags, category, llm_tags, llm_category",
+        description="Additional metadata: chunk_number, num_endpoints, length, contentType, tags, category",
     )
 
 

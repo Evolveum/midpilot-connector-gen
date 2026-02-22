@@ -68,8 +68,6 @@ class LlmChunkOutput(BaseModel):
         description='List of tags that could describe the content in the chunk, for example: ["endpoints", "authorization"]'
     )
     category: str = Field(description="Type of the content in the chunk")
-    llm_tags: Optional[List[str]] = Field(description="LLM-generated tags, not tags from predefined selection")
-    llm_category: Optional[str] = Field(description="LLM-generated category, not from predefined selection")
     application_version: Optional[str] = Field(description="Application version mentioned in the chunk, if any")
     api_version: Optional[str] = Field(description="API version mentioned in the chunk, if any")
     api_type: Optional[List[str]] = Field(description="API type(s) mentioned in the chunk, if any")

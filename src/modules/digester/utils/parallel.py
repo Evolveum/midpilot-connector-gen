@@ -51,7 +51,7 @@ async def run_extraction_parallel(
         logger_prefix: Optional prefix for log messages
         doc_id: Optional document ID for tracking
         track_chunk_per_item: Deprecated (kept for backward compatibility, always sets index to 0)
-        chunk_metadata: Optional metadata about the document (summary, llm_tags, etc.)
+        chunk_metadata: Optional metadata about the document (summary, tags, etc.)
 
     Returns:
         - Flat list of extracted items

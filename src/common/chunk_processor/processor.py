@@ -54,8 +54,6 @@ async def process_scraped_page(
                 metadata={
                     "category": data.category,
                     "tags": data.tags,
-                    "llm_tags": data.llm_tags,
-                    "llm_category": data.llm_category,
                     "num_endpoints": data.num_endpoints,
                     "length": chunk[1],
                     "contentType": page.contentType,
