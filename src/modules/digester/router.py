@@ -60,6 +60,7 @@ async def extract_object_classes(
         worker_kwargs={
             "filter_relevancy": filter_relevancy,
             "min_relevancy_level": min_relevancy_level,
+            "session_id": session_id,
         },
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",

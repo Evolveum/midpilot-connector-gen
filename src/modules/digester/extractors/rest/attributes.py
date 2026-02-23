@@ -11,14 +11,14 @@ from uuid import UUID
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from ....common.enums import JobStage
-from ....common.jobs import (
+from .....common.enums import JobStage
+from .....common.jobs import (
     append_job_error,
     update_job_progress,
 )
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.attributes_prompts import (
+from .....common.langfuse import langfuse_handler
+from .....common.llm import get_default_llm, make_basic_chain
+from ...prompts.rest.attributes_prompts import (
     get_fill_missing_details_system_prompt,
     get_fill_missing_details_user_prompt,
     get_filter_duplicates_system_prompt,
@@ -26,10 +26,10 @@ from ..prompts.attributes_prompts import (
     get_object_class_schema_system_prompt,
     get_object_class_schema_user_prompt,
 )
-from ..schema import AttributeResponse
-from ..utils.merges import merge_attribute_candidates
-from ..utils.metadata_helper import extract_summary_and_tags
-from ..utils.parallel_docs import process_grouped_chunks_in_parallel
+from ...schema import AttributeResponse
+from ...utils.merges import merge_attribute_candidates
+from ...utils.metadata_helper import extract_summary_and_tags
+from ...utils.parallel_docs import process_grouped_chunks_in_parallel
 
 logger = logging.getLogger(__name__)
 

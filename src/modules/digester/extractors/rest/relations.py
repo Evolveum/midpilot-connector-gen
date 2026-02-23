@@ -10,16 +10,16 @@ from uuid import UUID
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from ....common.chunks import normalize_to_text
-from ....common.jobs import append_job_error, update_job_progress
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.relations_prompts import (
+from .....common.chunks import normalize_to_text
+from .....common.jobs import append_job_error, update_job_progress
+from .....common.langfuse import langfuse_handler
+from .....common.llm import get_default_llm, make_basic_chain
+from ...prompts.rest.relations_prompts import (
     get_relations_system_prompt,
     get_relations_user_prompt,
 )
-from ..schema import RelationRecord, RelationsResponse
-from ..utils.metadata_helper import extract_summary_and_tags
+from ...schema import RelationRecord, RelationsResponse
+from ...utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 

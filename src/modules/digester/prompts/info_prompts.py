@@ -32,9 +32,6 @@ RULES:
 
 4) apiType
    - A list with normalized technology labels, chosen from: REST or SCIM
-   - Deduplicate. Examples:
-     - "REST API" ⇒ include "REST"
-     - "SCIM 2.0" ⇒ include "SCIM"
    - If unclear, leave empty list.
 
 5) baseApiEndpoint
