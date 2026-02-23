@@ -6,7 +6,7 @@ services:
   midpilot-connector-gen:
     build: .
     image: midpilot-connector-gen:latest
-    container_name: fastapi-microservice
+    container_name: api
     depends_on:
       db:
         condition: service_healthy
