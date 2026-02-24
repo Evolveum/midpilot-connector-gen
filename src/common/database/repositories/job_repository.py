@@ -91,9 +91,19 @@ class JobRepository:
                                 )
 
             if chunks_to_save:
+                # Deduplicate chunks_to_save before inserting to avoid constraint violations
+                # within the same batch (multiple object classes may reference same doc)
+                seen = set()
+                unique_chunks = []
+                for chunk in chunks_to_save:
+                    key = (chunk["entity_type"], str(chunk["doc_id"]))
+                    if key not in seen:
+                        seen.add(key)
+                        unique_chunks.append(chunk)
+
                 chunks_saved = await self.relevant_chunk_repo.bulk_add_relevant_chunks(
                     session_id=session_id,
-                    chunks=chunks_to_save,
+                    chunks=unique_chunks,
                 )
                 if chunks_saved > 0:
                     logger.info(f"Saved {chunks_saved} relevant chunks for job {job_id}")

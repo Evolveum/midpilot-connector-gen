@@ -298,7 +298,6 @@ class Settings(BaseSettings):
     app: AppSettings = AppSettings()
     logging: LoggingSettings = LoggingSettings()
     llm: LLMSettings = LLMSettings()
-    # embeddings: EmbeddingsSettings = EmbeddingsSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
     search: SearchSettings = SearchSettings()
     scrape_and_process: ScrapeAndProcessSettings = ScrapeAndProcessSettings()

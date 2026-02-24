@@ -13,7 +13,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from .....common.jobs import increment_processed_documents, update_job_progress
+from .....common.jobs import update_job_progress
 from ...prompts.scim.object_class_prompts import (
     scim_object_class_system_prompt,
     scim_object_class_user_prompt,
@@ -21,6 +21,7 @@ from ...prompts.scim.object_class_prompts import (
 from ...schema import ObjectClass, ObjectClassesResponse
 from ...scim.loader import get_base_scim_object_classes, load_scim_base_schemas
 from ...utils.parallel import run_extraction_parallel
+from ...utils.parallel_docs import process_documents_in_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -76,19 +77,26 @@ async def extract_scim_object_classes(
     # Load base schemas for LLM context
     scim_schemas = load_scim_base_schemas()
 
-    for doc_item in doc_items:
-        doc_uuid = doc_item["uuid"]
-        doc_content = doc_item["content"]
-
-        logger.info("[SCIM:ObjectClasses] Processing document %s", doc_uuid)
-
+    # Create extractor function that includes SCIM schemas
+    async def extractor_with_scim_schemas(content: str, job_id: UUID, doc_uuid: UUID):
         custom_classes, has_relevant_data = await extract_custom_scim_classes(
-            schema=doc_content,
+            schema=content,
             job_id=job_id,
             doc_id=doc_uuid,
             scim_base_schemas=scim_schemas,
         )
+        return custom_classes, has_relevant_data
 
+    # Process all documents in parallel
+    results = await process_documents_in_parallel(
+        doc_items=doc_items,
+        job_id=job_id,
+        extractor=extractor_with_scim_schemas,
+        logger_scope="SCIM:ObjectClasses",
+    )
+
+    # Collect results from all documents
+    for custom_classes, has_relevant_data, doc_uuid in results:
         logger.info(
             "[SCIM:ObjectClasses] Document %s: extracted %d custom classes",
             doc_uuid,
@@ -110,9 +118,6 @@ async def extract_scim_object_classes(
 
         if has_relevant_data:
             all_relevant_chunks.append({"docUuid": str(doc_uuid)})
-
-        # Increment processed documents counter
-        await increment_processed_documents(job_id, delta=1)
 
     logger.info(
         "[SCIM:ObjectClasses] Extracted %d custom classes from %d documents",
