@@ -41,6 +41,12 @@ class DocumentationItem(BaseModel):
         description="Page ID from scraper, null for uploads",
     )
     source: str = Field(..., description="Source type: 'scraper' or 'upload'")
+    scrape_job_ids: Optional[list[UUID]] = Field(
+        None,
+        serialization_alias="scrapeJobIds",
+        validation_alias=AliasChoices("scrapeJobIds", "scrape_job_ids"),
+        description="List of scrape job IDs that created or needed this documentation item",
+    )
     url: Optional[str] = Field(None, description="URL for scraped documentation, null for uploads")
     summary: Optional[str] = Field(None, description="Summary of the content")
     content: str = Field(..., description="The actual documentation text")

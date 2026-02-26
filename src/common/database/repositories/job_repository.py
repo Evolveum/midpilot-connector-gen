@@ -142,6 +142,30 @@ class JobRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
+    async def get_scrape_job_by_input(self, scraper_input: Dict[str, Any], date_since: datetime) -> Optional[Job]:
+        """
+        Get a scrape job by its input payload.
+
+        :param scraper_input: Input payload dict to match
+        :return: Job model or None
+        """
+        # We want to match jobs with the same input, but use_previous_session_data does not affect the actual scraping result, so we ignore it in the query by checking both True and False cases
+        alternate_scraper_input = scraper_input.copy()
+        alternate_scraper_input["usePreviousSessionData"] = False
+        query = (
+            select(Job)
+            .where(
+                Job.job_type == "scrape.getRelevantDocumentation",
+                (Job.input == to_jsonable(scraper_input)) | (Job.input == to_jsonable(alternate_scraper_input)),
+                Job.created_at >= date_since,
+                Job.status == "finished",
+            )
+            .order_by(Job.created_at.desc())
+        )
+        result = await self.db.execute(query)
+
+        return result.scalars().first()
+
     async def set_running(self, job_id: UUID) -> Dict[str, Any]:
         """
         Transition a queued job to running state and return the updated job record.

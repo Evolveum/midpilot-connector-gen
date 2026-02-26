@@ -4,6 +4,8 @@
 
 import asyncio
 import logging
+from typing import Optional
+from uuid import UUID
 
 from ...config import config
 from ..chunks import split_text_with_token_overlap
@@ -16,7 +18,13 @@ logger = logging.getLogger(__name__)
 
 
 async def process_scraped_page(
-    page: SavedPage, semaphore: asyncio.Semaphore, app: str, app_version: str, chunk_length: int, source: str
+    page: SavedPage,
+    semaphore: asyncio.Semaphore,
+    app: str,
+    app_version: str,
+    chunk_length: int,
+    source: str,
+    scraper_job_id: Optional[UUID] = None,
 ) -> list[DocumentationItem]:
     """
     Process a single scraped page:
@@ -50,6 +58,7 @@ async def process_scraped_page(
                 url=str(page.url),
                 # chunk_number=idx,
                 source=source,
+                scrape_job_ids=[scraper_job_id] if scraper_job_id else [],
                 summary=data.summary,
                 metadata={
                     "category": data.category,

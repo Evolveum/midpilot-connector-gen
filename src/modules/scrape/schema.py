@@ -24,7 +24,12 @@ class ScrapeRequest(BaseModel):
         validation_alias="applicationVersion",
         serialization_alias="applicationVersion",
     )
-
+    use_previous_session_data: bool = Field(
+        True,
+        description="Whether to use the already processed data from a different session if the scraper input is the same.",
+        validation_alias="usePreviousSessionData",
+        serialization_alias="usePreviousSessionData",
+    )
     # forbidden_url_parts: List[str] = Field(
     #     default_factory=lambda: [
     #         "logout",

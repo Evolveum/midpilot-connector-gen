@@ -33,6 +33,7 @@ class DocumentationRepository:
         source: str,
         content: str,
         *,
+        original_job_id: Optional[UUID] = None,
         page_id: Optional[UUID] = None,
         url: Optional[str] = None,
         summary: Optional[str] = None,
@@ -44,6 +45,7 @@ class DocumentationRepository:
         :param session_id: Associated session ID
         :param source: Source type ('scraper' or 'upload')
         :param content: Documentation content
+        :param original_job_id: Optional job ID that created this item (for scraper items)
         :param page_id: Optional page ID
         :param url: Optional URL
         :param summary: Optional summary
@@ -53,6 +55,7 @@ class DocumentationRepository:
         doc_item = DocumentationItem(
             session_id=session_id,
             page_id=page_id,
+            scrape_job_ids=[str(original_job_id)] if original_job_id else [],
             source=source,
             url=url,
             summary=summary,
@@ -96,6 +99,91 @@ class DocumentationRepository:
             }
             for item in items
         ]
+
+    async def get_documentation_items_by_session_and_job(self, session_id: UUID, job_id: UUID) -> List[Dict[str, Any]]:
+        """
+        Get documentation items for a session that are related to a specific job.
+
+        :param session_id: Session ID
+        :param job_id: Job ID to filter relevant documentation items
+        :return: List of documentation item dicts
+        """
+        query = select(DocumentationItem).where(
+            DocumentationItem.session_id == session_id,
+            DocumentationItem.scrape_job_ids.is_not(None),
+            DocumentationItem.scrape_job_ids.contains([str(job_id)]),
+        )
+
+        result = await self.db.execute(query)
+        items = result.scalars().all()
+
+        return [
+            {
+                "id": str(item.id),
+                "pageId": str(item.page_id) if item.page_id else None,
+                "source": item.source,
+                "url": item.url,
+                "summary": item.summary,
+                "content": item.content,
+                "metadata": item.doc_metadata,
+            }
+            for item in items
+        ]
+
+    async def update_documentation_item(
+        self,
+        item_id: UUID,
+        *,
+        source: Optional[str] = None,
+        content: Optional[str] = None,
+        original_job_id: Optional[UUID] = None,
+        page_id: Optional[UUID] = None,
+        url: Optional[str] = None,
+        summary: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Update an existing documentation item.
+
+        :param item_id: Documentation item ID
+        :param source: New source (optional)
+        :param content: New content (optional)
+        :param original_job_id: Optional new job ID that created this item (for scraper items)
+        :param page_id: Optional new page ID
+        :param url: Optional new URL
+        :param summary: Optional new summary
+        :param metadata: Optional new metadata dict
+        :return: True if update was successful, False if item not found
+        """
+        query = select(DocumentationItem).where(DocumentationItem.id == item_id)
+        result = await self.db.execute(query)
+        item = result.scalar_one_or_none()
+
+        if item is None:
+            logger.warning(f"Documentation item not found for update: {item_id}")
+            return False
+
+        if content is not None:
+            item.content = content
+        if source is not None:
+            item.source = source
+        if original_job_id is not None:
+            if item.scrape_job_ids is None:
+                item.scrape_job_ids = [str(original_job_id)]
+            elif str(original_job_id) not in item.scrape_job_ids:
+                item.scrape_job_ids.append(str(original_job_id))
+        if page_id is not None:
+            item.page_id = page_id
+        if url is not None:
+            item.url = url
+        if summary is not None:
+            item.summary = summary
+        if metadata is not None:
+            item.doc_metadata = metadata
+
+        await self.db.flush()
+        logger.info(f"Updated documentation item {item_id}")
+        return True
 
     async def get_documentation_item(self, id: UUID) -> Optional[Dict[str, Any]]:
         """
