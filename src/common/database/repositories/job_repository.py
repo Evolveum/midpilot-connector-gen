@@ -166,6 +166,31 @@ class JobRepository:
 
         return result.scalars().first()
 
+    async def get_discovery_job_by_input(self, discovery_input: Dict[str, Any], date_since: datetime) -> Optional[Job]:
+        """
+        Get a discovery job by its input payload.
+
+        :param discovery_input: Input payload dict to match
+        :param date_since: Only include jobs created at or after this timestamp
+        :return: Job model or None
+        """
+        # usePreviousSessionData should not influence whether discovery output can be reused.
+        alternate_discovery_input = discovery_input.copy()
+        alternate_discovery_input["usePreviousSessionData"] = False
+        query = (
+            select(Job)
+            .where(
+                Job.job_type == "discovery.getCandidateLinks",
+                (Job.input == to_jsonable(discovery_input)) | (Job.input == to_jsonable(alternate_discovery_input)),
+                Job.created_at >= date_since,
+                Job.status == "finished",
+            )
+            .order_by(Job.created_at.desc())
+        )
+        result = await self.db.execute(query)
+
+        return result.scalars().first()
+
     async def set_running(self, job_id: UUID) -> Dict[str, Any]:
         """
         Transition a queued job to running state and return the updated job record.

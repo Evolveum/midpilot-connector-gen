@@ -82,6 +82,10 @@ class SearchSettings(BaseModel):
     """Search method specification of Discovery module."""
 
     method_name: str = ""
+    discovery_input_check_interval: timedelta = Field(
+        timedelta(weeks=4),
+        description="Time interval for checking if the same discovery input has been processed before.",
+    )
 
 
 class BraveSettings(BaseModel):
