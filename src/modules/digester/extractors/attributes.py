@@ -25,6 +25,7 @@ from ..prompts.attributes_prompts import (
     get_object_class_schema_user_prompt,
 )
 from ..schema import AttributeResponse
+from ..utils.attribute_filters import filter_ignored_attributes, ignore_attribute_name
 from ..utils.merges import merge_attribute_candidates
 from ..utils.metadata_helper import extract_summary_and_tags
 from ..utils.parallel_docs import process_grouped_chunks_in_parallel
@@ -234,6 +235,15 @@ async def extract_attributes(
         build_dedupe_chain=_build_dedupe_chain,
     )
 
+    filtered_attributes = filter_ignored_attributes(merged_attributes)
+    removed_attributes = [name for name in merged_attributes if ignore_attribute_name(name)]
+    if removed_attributes:
+        logger.info(
+            "[Digester:Attributes] Removed %d ignored attributes during postprocessing: %s",
+            len(removed_attributes),
+            sorted(removed_attributes),
+        )
+
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
-    return {"result": {"attributes": merged_attributes}, "relevantChunks": relevant_docs}
+    return {"result": {"attributes": filtered_attributes}, "relevantChunks": relevant_docs}
