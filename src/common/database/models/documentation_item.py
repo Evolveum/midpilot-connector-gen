@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, List
 from uuid import UUID, uuid4
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text, text
@@ -36,6 +36,14 @@ class DocumentationItem(Base):
         index=True,
     )
     page_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
+
+    scrape_job_ids: Mapped[List[str]] = mapped_column(
+        "scrape_job_ids",
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+        comment="List of scrape job IDs that created or needed this documentation item, WARNING: ids are stored as strings in JSONB for easier querying",
+    )
 
     source: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)

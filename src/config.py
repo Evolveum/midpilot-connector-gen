@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from datetime import timedelta
 from enum import Enum
 from typing import Optional
 
@@ -94,6 +95,10 @@ class ScrapeAndProcessSettings(BaseModel):
     """
     Configuration for Scrape and Process module.
     """
+
+    scrape_input_check_interval: timedelta = Field(
+        timedelta(weeks=4), description="Time interval for checking if the same scrape input has been processed before."
+    )
 
     # Scraper controls
     max_scraper_iterations: int = Field(
