@@ -53,7 +53,10 @@ async def extract_object_classes(
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
-        input_payload={},
+        input_payload={
+            "filter_relevancy": filter_relevancy,
+            "min_relevancy_level": min_relevancy_level,
+        },
         dynamic_input_enabled=True,
         dynamic_input_provider=object_classes_input,
         worker=service.extract_object_classes,
