@@ -12,6 +12,9 @@ def ignore_attribute_name(attribute_name: str) -> bool:
     normalized_name = attribute_name.strip()
     normalized_lower = normalized_name.casefold()
 
+    if normalized_name.startswith("_"):
+        return True
+
     if _CUSTOM_FIELD_PATTERN.fullmatch(normalized_name):
         return True
 
