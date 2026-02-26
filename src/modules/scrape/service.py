@@ -117,9 +117,9 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                     orig_job_result = latest_job.result
                     return ScrapeResult(
                         finish_reason="reused_previous_session_data",
-                        saved_pages_count=orig_job_result.get("saved_pages_count", 0) if orig_job_result else 0,
+                        saved_pages_count=orig_job_result.get("savedPagesCount", 0) if orig_job_result else 0,
                         page_chunks_count=len(updated_chunks_existing),
-                        saved_pages=orig_job_result.get("saved_pages", {}) if orig_job_result else {},
+                        saved_pages=orig_job_result.get("savedPages", {}) if orig_job_result else {},
                     )
                 else:
                     logger.warning(
