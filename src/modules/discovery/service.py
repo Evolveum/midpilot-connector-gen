@@ -5,15 +5,11 @@
 
 import asyncio
 import logging
-from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from ...common.database.config import async_session_maker
-from ...common.database.repositories.job_repository import JobRepository
 from ...common.enums import JobStage
 from ...common.jobs import update_job_progress
-from ...config import config
 from .prompts.prompts import (
     get_discovery_fetch_sys_prompt,
     get_discovery_fetch_user_prompt,
@@ -54,46 +50,6 @@ async def discover_candidate_links(
 
     If filtering is disabled, results are returned as discovered (deduped).
     """
-    if app_data.use_previous_session_data and session_id:
-        logger.info(
-            "[Discovery] Job %s (session %s): use_previous_session_data is True, checking for previous discovery output",
-            str(job_id),
-            str(session_id),
-        )
-        async with async_session_maker() as db:
-            job_repo = JobRepository(db)
-            created_at_limits = datetime.now() - config.search.discovery_input_check_interval
-            latest_job = await job_repo.get_discovery_job_by_input(
-                app_data.model_dump(by_alias=True), created_at_limits
-            )
-            if latest_job and latest_job.result:
-                try:
-                    reused_output = CandidateLinksOutput.model_validate(latest_job.result)
-                    await update_job_progress(
-                        job_id,
-                        stage=JobStage.processing,
-                        message=f"Reused discovery output from job {latest_job.job_id}",
-                    )
-                    logger.info(
-                        "[Discovery] Job %s: Reusing discovery output from job %s created at %s",
-                        str(job_id),
-                        str(latest_job.job_id),
-                        datetime.isoformat(latest_job.created_at),
-                    )
-                    return reused_output
-                except Exception as exc:
-                    logger.warning(
-                        "[Discovery] Job %s: Previous job %s has invalid result payload (%s), running fresh discovery",
-                        str(job_id),
-                        str(latest_job.job_id),
-                        str(exc),
-                    )
-            else:
-                logger.info(
-                    "[Discovery] Job %s: No previous finished discovery job found with same input since %s",
-                    str(job_id),
-                    datetime.isoformat(created_at_limits),
-                )
 
     discovery_model, discovery_parser_model = resolve_discovery_models(app_data)
     enable_filtering, max_filter_llm_calls = resolve_filtering_settings(app_data)

@@ -41,7 +41,10 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
         async with async_session_maker() as db:
             job_repo = JobRepository(db)
             created_at_limits = datetime.now() - config.scrape_and_process.scrape_input_check_interval
-            latest_job = await job_repo.get_scrape_job_by_input(input.model_dump(by_alias=True), created_at_limits)
+            normalized_input = input.model_dump(by_alias=True, exclude={"use_previous_session_data"})
+            latest_job = await job_repo.get_job_by_input(
+                "scrape.getRelevantDocumentation", normalized_input, created_at_limits
+            )
             if latest_job:
                 logger.info(
                     "[Scrape] Job %s: Found previous job %s with same input created at %s, reusing its documentation items",

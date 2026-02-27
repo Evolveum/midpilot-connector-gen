@@ -39,7 +39,7 @@ def select_doc_chunks(
     selected_doc_uuids: List[str] = []
 
     for item in doc_items:
-        doc_uuid = str(item.get("uuid") or item.get("id", "")).strip()
+        doc_uuid = str(item.get("uuid", "")).strip()
         if not doc_uuid or doc_uuid not in wanted:
             continue
 

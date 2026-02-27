@@ -327,7 +327,13 @@ async def filterOutIrrelevantLinks(
     """
     logger.info("[Scrape:Filter] Starting to filter %s links", len(links))
     links_set = set(links)
-    current_links = links_set - set(saved_pages.keys())
+    current_links = [
+        link
+        for link in links_set
+        if link not in saved_pages.keys()
+        and link.rstrip("/") not in saved_pages.keys()
+        and link + "/" not in saved_pages.keys()
+    ]
     logger.info("[Scrape:Filter] After removing already scraped: %s links remain", len(current_links))
 
     current_links_trusted = [link for link in current_links if get_base_domain(link) in trusted_domains]
