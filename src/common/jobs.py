@@ -220,7 +220,11 @@ async def schedule_coroutine_job(
                     result_dict = {"value": repr(result)}
 
             # TODO: implement caching also for codegen, move scraper implementation here
-            if "codegen" not in job_type and "scrape" not in job_type and input_payload["usePreviousSessionData"]:
+            if (
+                "codegen" not in job_type
+                and "scrape" not in job_type
+                and input_payload.get("usePreviousSessionData", False)
+            ):
                 logger.info(
                     "[%s] Job %s (session %s): use_previous_session_data is True, checking for previous job output",
                     job_type,
