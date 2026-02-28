@@ -13,8 +13,16 @@ def normalize_input(input_payload: Dict[str, Any]) -> Dict[str, Any]:
     # Remove fields that are not relevant or harmful for job uniqueness checks
     if "sessionId" in normalized_input:
         normalized_input.pop("sessionId")
+    if "session_id" in normalized_input:
+        normalized_input.pop("session_id")
+    if "page_id" in normalized_input:
+        normalized_input.pop("page_id")
     if "usePreviousSessionData" in normalized_input:
         normalized_input.pop("usePreviousSessionData")
+    if "chunks" in normalized_input:
+        normalized_input["chunks"] = sorted(
+            normalized_input["chunks"], key=lambda x: x[0] if isinstance(x, tuple) and len(x) > 0 else ""
+        )
     if "documentationItems" in normalized_input:
         for doc_item in normalized_input["documentationItems"]:
             if isinstance(doc_item, dict):

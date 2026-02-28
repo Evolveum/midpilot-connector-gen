@@ -234,6 +234,7 @@ async def schedule_coroutine_job(
 
                 async with async_session_maker() as db:
                     job_repo = JobRepository(db)
+                    session_repo = SessionRepository(db)
                     doc_repo = DocumentationRepository(db)
                     created_at_limits = (
                         datetime.now() - config.digester.digester_input_check_interval
@@ -262,7 +263,57 @@ async def schedule_coroutine_job(
                             )
                             reused_output: Dict[str, Any] = copy.deepcopy(latest_job.result)
                             current_doc_items: List[Dict[str, Any]] = input_payload.get("documentationItems", [])
-                            if job_type == "digester.getObjectClass":
+                            if job_type == "documentation.processUpload":
+                                previous_session_id: UUID = latest_job.session_id
+                                latest_job_doc_items: List[
+                                    Dict[str, Any]
+                                ] = await doc_repo.get_documentation_items_by_session_and_job(
+                                    previous_session_id, latest_job.job_id
+                                )
+                                docs_to_reuse: List[Dict[str, Any]] = []
+                                if not latest_job_doc_items:
+                                    logger.warning(
+                                        "[%s] Job %s: Previous job %s has no documentation items associated, cannot reuse processed documentation for current job %s",
+                                        job_type,
+                                        str(job_id),
+                                        str(latest_job.job_id),
+                                        str(job_id),
+                                    )
+                                    await run_normal_worker()
+                                else:
+                                    for item in latest_job_doc_items:
+                                        new_doc = copy.deepcopy(item)
+                                        new_doc["session_id"] = str(session_id)
+                                        new_doc["pageId"] = input_payload.get("page_id")
+                                        doc_id = await doc_repo.create_documentation_item(
+                                            session_id=session_id,
+                                            source="upload",
+                                            content=item["content"],
+                                            original_job_id=job_id,
+                                            page_id=UUID(input_payload.get("page_id"))
+                                            if input_payload.get("page_id")
+                                            else None,
+                                            url=f"upload://{input_payload.get('filename', 'unknown')}",
+                                            summary=item["summary"],
+                                            metadata={
+                                                "filename": input_payload.get("filename", "unknown"),
+                                                "chunk_number": item["metadata"].get("chunk_number"),
+                                                "length": item["metadata"].get("length"),
+                                                "num_endpoints": item["metadata"].get("num_endpoints"),
+                                                "tags": item["metadata"].get("tags"),
+                                                "category": item["metadata"].get("category"),
+                                                "llm_tags": item["metadata"].get("llm_tags"),
+                                                "llm_category": item["metadata"].get("llm_category"),
+                                            },
+                                        )
+                                        new_doc["uuid"] = str(doc_id)
+                                        new_doc["scrape_job_ids"] = [str(job_id)]
+
+                                        docs_to_reuse.append(new_doc)
+
+                                    await session_repo.update_session(session_id, {"documentationItems": docs_to_reuse})
+                                    await db.commit()
+                            elif job_type == "digester.getObjectClass":
                                 rel_repo = RelevantChunkRepository(db)
                                 rel_chunks: List[Dict[str, Any]] = []
                                 object_classes = reused_output.get("result", {}).get("objectClasses", [])
