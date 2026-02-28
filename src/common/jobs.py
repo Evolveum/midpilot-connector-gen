@@ -313,6 +313,7 @@ async def schedule_coroutine_job(
 
                                     await session_repo.update_session(session_id, {"documentationItems": docs_to_reuse})
                                     await db.commit()
+                                    result_dict = reused_output
                             elif job_type == "digester.getObjectClass":
                                 rel_repo = RelevantChunkRepository(db)
                                 rel_chunks: List[Dict[str, Any]] = []
