@@ -72,9 +72,9 @@ Attributes supported by each endpoint can be defined using `supportedAttributes`
 
 [source,groovy]
 ----
-userClass("User") {
+objectClass("User") {
     update {
-        endpoint("api/v3/users") {
+        endpoint("users") {
             httpOperation PATCH
             supportedAttributes "admin", "email", "login", "password",
                     "firstName", "lastName", "status", "language"
@@ -82,7 +82,7 @@ userClass("User") {
                 contentType APPLICATION_JSON
             }
         }
-        endpoint("api/v3/users/{id}/attributes") {
+        endpoint("users/{id}/attributes") {
             httpOperation PUT
             supportedAttributes "customAttribute1", "customAttribute2"
             request {
@@ -94,6 +94,7 @@ userClass("User") {
 ----
 
 Where:
+
 * This script heavily relies on default behavior of connector framework.
 * The `update` block contains two `endpoint` definitions.
 * Each `endpoint` specifies the API endpoint and HTTP operation to be used.
@@ -115,7 +116,7 @@ objectClass("User") {
         // Basic update ommited for clarity
 
         // Handles transition to active state
-        endpoint(POST, "/user/{name}/activate") {
+        endpoint(POST, "user/{name}/activate") {
             supportedAttribute("active") {
                 value true
             }
@@ -124,7 +125,7 @@ objectClass("User") {
             }
         }
         // Handles transition to inactive state
-        endpoint(POST, "api/v3/users/{id}/deactivate") {
+        endpoint(POST, "users/{id}/deactivate") {
             supportedAttribute("active") {
                 value false
             }
