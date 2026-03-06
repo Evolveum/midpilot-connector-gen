@@ -307,11 +307,17 @@ async def schedule_coroutine_job(
                                             },
                                         )
                                         new_doc["uuid"] = str(doc_id)
+                                        new_doc["id"] = str(doc_id)
                                         new_doc["scrape_job_ids"] = [str(job_id)]
 
                                         docs_to_reuse.append(new_doc)
-
-                                    await session_repo.update_session(session_id, {"documentationItems": docs_to_reuse})
+                                    # TODO: maybe we can also solve duplicity
+                                    existing_docs = (
+                                        await session_repo.get_session_data(session_id, "documentationItems") or []
+                                    )
+                                    for item in docs_to_reuse:
+                                        existing_docs.append(item)
+                                    await session_repo.update_session(session_id, {"documentationItems": existing_docs})
                                     await db.commit()
                                     result_dict = reused_output
                             elif job_type == "digester.getObjectClass":
@@ -383,6 +389,7 @@ async def schedule_coroutine_job(
 
                             elif "relevantChunks" in reused_output:
                                 original_relevant_chunks: List[Dict[str, Any]] = reused_output.pop("relevantChunks")
+                                new_relevant_chunks: List[Dict[str, Any]] = []
                                 for rel_chunk in original_relevant_chunks:
                                     origUUID = rel_chunk.get("docUuid")
                                     if origUUID:
@@ -415,7 +422,24 @@ async def schedule_coroutine_job(
                                             )
                                             continue
                                         rel_chunk["docUuid"] = str(current_doc_uuid)
-                                reused_output["relevantChunks"] = original_relevant_chunks
+                                        new_relevant_chunks.append({"docUuid": str(current_doc_uuid)})
+                                    else:
+                                        logger.warning(
+                                            "[%s] Job %s: Corrupted relevant chunk with no docUuid for key %s when trying to reuse output from job %s, skipping this relevant chunk",
+                                            job_type,
+                                            str(job_id),
+                                            rel_chunk,
+                                            str(latest_job.job_id),
+                                        )
+                                logger.info(
+                                    "[%s] Job %s: Reusing output from job %s with %s relevant chunks updated to match current input, first relevant chunk docUuid %s if exists",
+                                    job_type,
+                                    str(job_id),
+                                    str(latest_job.job_id),
+                                    len(new_relevant_chunks),
+                                    new_relevant_chunks[0]["docUuid"] if new_relevant_chunks else None,
+                                )
+                                reused_output["relevantChunks"] = new_relevant_chunks
                                 result_dict = reused_output
                             elif "discovery" in job_type:
                                 result_dict = copy.deepcopy(latest_job.result)
