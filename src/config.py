@@ -4,7 +4,7 @@
 
 from datetime import timedelta
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -58,6 +58,10 @@ class LLMSettings(BaseModel):
     openai_api_base: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-oss-20b"
     request_timeout: int = 120
+    provider_order: List[str] = Field(
+        ["groq", "wandb/fp4", "clarifai/fp4"],
+        description="List of LLM providers in order of preference",
+    )
 
 
 class LangfuseSettings(BaseModel):

@@ -26,7 +26,7 @@ def get_default_llm(temperature: float = 0.8) -> ChatOpenAI:
         temperature=temperature,
         extra_body={
             "provider": {
-                "order": ["groq"]  # , "parasail", "deepinfra"
+                "order": config.llm.provider_order  # , "parasail", "deepinfra" #["groq", "wandb/fp4", "clarifai/fp4"]
             }
         },
         # reasoning_effort="low" # for GTP-OSS
