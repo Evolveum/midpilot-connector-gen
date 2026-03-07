@@ -14,7 +14,7 @@ Your task: extract ONLY attributes that are explicitly defined under that object
 Use the structured output schema (ObjectClassSchemaResponse -> AttributeInfo) to respond.
 Do NOT infer or invent attributes. If the object is not present or has no `properties`, return an empty map.
 
-Rules
+Rules:
 - Include a property **only if it appears under this object's `properties`**.
 - type:
   - Use the JSON Schema type if present.
@@ -34,10 +34,15 @@ Rules
 - multivalue: true if property "type" == "array"; otherwise false. If type is not present, use null.
 - returnedByDefault: true if explicitly stated that attribute is returned by default; false if explicitly stated otherwise; null if unknown.
 
-Hard constraints
+Hard constrains:
 - Do NOT add attributes from examples, other objects, or unrelated sections.
 - Do NOT return keys that are not in `properties`.
 - If unsure, omit the attribute or return an empty map.
+- Ignore ANY keys that appear under `example:`, `examples:`, or `value:` blocks. NEVER extract from examples.
+- Ignore all attribute name matching `customField` with number 
+- Ignore all attribute name matching `mail` - BUT `e-mail` is correct
+- Ignore all attribute name matching `identityUrl` - BUT `identity_url` is correct
+</instruction>
 """)
 
 get_object_class_schema_user_prompt = textwrap.dedent("""

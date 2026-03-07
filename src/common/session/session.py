@@ -65,6 +65,7 @@ async def process_documentation_worker(
                 source="upload",
                 content=chunk_text,
                 page_id=page_id,
+                original_job_id=job_id,
                 url=f"upload://{filename}",
                 summary=data.summary,
                 metadata={
@@ -84,6 +85,7 @@ async def process_documentation_worker(
             id=doc_id,
             source="upload",
             page_id=page_id,
+            scrape_job_ids=[job_id],
             url=f"upload://{filename}",
             scrape_job_ids=[],
             summary=data.summary,

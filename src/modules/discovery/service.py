@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+from typing import Optional
 from uuid import UUID
 
 from ...common.enums import JobStage
@@ -32,7 +33,12 @@ from .utils.filter_helpers import filter_candidate_links, rank_candidate_links
 logger = logging.getLogger(__name__)
 
 
-async def discover_candidate_links(app_data: CandidateLinksInput, job_id: UUID) -> CandidateLinksOutput:
+async def discover_candidate_links(
+    app_data: CandidateLinksInput,
+    session_id: Optional[UUID] = None,
+    *,
+    job_id: UUID,
+) -> CandidateLinksOutput:
     """Job worker: discover candidate links; optionally filter irrelevant links.
 
     Router should schedule THIS function (single entrypoint).
@@ -44,6 +50,7 @@ async def discover_candidate_links(app_data: CandidateLinksInput, job_id: UUID) 
 
     If filtering is disabled, results are returned as discovered (deduped).
     """
+
     discovery_model, discovery_parser_model = resolve_discovery_models(app_data)
     enable_filtering, max_filter_llm_calls = resolve_filtering_settings(app_data)
     enable_ranking = resolve_ranking_settings(app_data)
@@ -127,4 +134,4 @@ async def discover_candidate_links(app_data: CandidateLinksInput, job_id: UUID) 
 
 async def fetch_candidate_links(app_data: CandidateLinksInput, job_id: UUID) -> CandidateLinksOutput:
     """Backward-compatible alias."""
-    return await discover_candidate_links(app_data, job_id)
+    return await discover_candidate_links(app_data, None, job_id=job_id)

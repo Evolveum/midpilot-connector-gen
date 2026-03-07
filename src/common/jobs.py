@@ -3,14 +3,20 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import copy
 import logging
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, Union
+from datetime import datetime
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 from uuid import UUID
 
+from ..config import config
 from .database.config import async_session_maker
+from .database.repositories.documentation_repository import DocumentationRepository
 from .database.repositories.job_repository import JobRepository
+from .database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from .database.repositories.session_repository import SessionRepository
 from .enums import JobStage
+from .normalize_input import normalize_input
 
 logger = logging.getLogger(__name__)
 
@@ -198,16 +204,274 @@ async def schedule_coroutine_job(
             if "job_id" in worker.__code__.co_varnames:  # type: ignore[attr-defined]
                 kwargs.setdefault("job_id", job_id)
 
-            result = await worker(*args, **kwargs)
+            result: Any = None
+            result_dict: Dict[str, Any] = {}
 
-            # Auto-serialize result
-            result_dict: Dict[str, Any]
-            if hasattr(result, "model_dump"):
-                result_dict = result.model_dump(by_alias=True, mode="json")  # type: ignore[attr-defined]
-            elif isinstance(result, dict):
-                result_dict = result
+            async def run_normal_worker() -> None:
+                nonlocal result
+                nonlocal result_dict
+                result = await worker(*args, **kwargs)
+                # Auto-serialize result
+                if hasattr(result, "model_dump"):
+                    result_dict = result.model_dump(by_alias=True, mode="json")  # type: ignore[attr-defined]
+                elif isinstance(result, dict):
+                    result_dict = result
+                else:
+                    result_dict = {"value": repr(result)}
+
+            # TODO: implement caching also for codegen, move scraper implementation here
+            if (
+                "codegen" not in job_type
+                and "scrape" not in job_type
+                and input_payload.get("usePreviousSessionData", False)
+            ):
+                logger.info(
+                    "[%s] Job %s (session %s): use_previous_session_data is True, checking for previous job output",
+                    job_type,
+                    str(job_id),
+                    str(session_id),
+                )
+
+                async with async_session_maker() as db:
+                    job_repo = JobRepository(db)
+                    session_repo = SessionRepository(db)
+                    doc_repo = DocumentationRepository(db)
+                    created_at_limits = (
+                        datetime.now() - config.digester.digester_input_check_interval
+                        if "digester" in job_type
+                        else datetime.now() - config.search.discovery_input_check_interval
+                    )
+                    normalized_input = normalize_input(input_payload)
+                    latest_job = await job_repo.get_job_by_input(
+                        job_type,
+                        normalized_input,
+                        created_at_limits,
+                    )
+                    if latest_job and latest_job.result:
+                        try:
+                            await update_job_progress(
+                                job_id,
+                                stage=JobStage.processing,
+                                message=f"Reused output from job {latest_job.job_id}",
+                            )
+                            logger.info(
+                                "[%s] Job %s: Reusing output from job %s created at %s",
+                                job_type,
+                                str(job_id),
+                                str(latest_job.job_id),
+                                datetime.isoformat(latest_job.created_at),
+                            )
+                            reused_output: Dict[str, Any] = copy.deepcopy(latest_job.result)
+                            current_doc_items: List[Dict[str, Any]] = input_payload.get("documentationItems", [])
+                            if job_type == "documentation.processUpload":
+                                previous_session_id: UUID = latest_job.session_id
+                                latest_job_doc_items: List[
+                                    Dict[str, Any]
+                                ] = await doc_repo.get_documentation_items_by_session_and_job(
+                                    previous_session_id, latest_job.job_id
+                                )
+                                docs_to_reuse: List[Dict[str, Any]] = []
+                                if not latest_job_doc_items:
+                                    logger.warning(
+                                        "[%s] Job %s: Previous job %s has no documentation items associated, cannot reuse processed documentation for current job %s",
+                                        job_type,
+                                        str(job_id),
+                                        str(latest_job.job_id),
+                                        str(job_id),
+                                    )
+                                    await run_normal_worker()
+                                else:
+                                    for item in latest_job_doc_items:
+                                        new_doc = copy.deepcopy(item)
+                                        new_doc["session_id"] = str(session_id)
+                                        new_doc["pageId"] = input_payload.get("page_id")
+                                        doc_id = await doc_repo.create_documentation_item(
+                                            session_id=session_id,
+                                            source="upload",
+                                            content=item["content"],
+                                            original_job_id=job_id,
+                                            page_id=UUID(input_payload.get("page_id"))
+                                            if input_payload.get("page_id")
+                                            else None,
+                                            url=f"upload://{input_payload.get('filename', 'unknown')}",
+                                            summary=item["summary"],
+                                            metadata={
+                                                "filename": input_payload.get("filename", "unknown"),
+                                                "chunk_number": item["metadata"].get("chunk_number"),
+                                                "length": item["metadata"].get("length"),
+                                                "num_endpoints": item["metadata"].get("num_endpoints"),
+                                                "tags": item["metadata"].get("tags"),
+                                                "category": item["metadata"].get("category"),
+                                                "llm_tags": item["metadata"].get("llm_tags"),
+                                                "llm_category": item["metadata"].get("llm_category"),
+                                            },
+                                        )
+                                        new_doc["uuid"] = str(doc_id)
+                                        new_doc["id"] = str(doc_id)
+                                        new_doc["scrape_job_ids"] = [str(job_id)]
+
+                                        docs_to_reuse.append(new_doc)
+                                    # TODO: maybe we can also solve duplicity
+                                    existing_docs = (
+                                        await session_repo.get_session_data(session_id, "documentationItems") or []
+                                    )
+                                    for item in docs_to_reuse:
+                                        existing_docs.append(item)
+                                    await session_repo.update_session(session_id, {"documentationItems": existing_docs})
+                                    await db.commit()
+                                    result_dict = reused_output
+                            elif job_type == "digester.getObjectClass":
+                                rel_repo = RelevantChunkRepository(db)
+                                rel_chunks: List[Dict[str, Any]] = []
+                                object_classes = reused_output.get("result", {}).get("objectClasses", [])
+                                if not object_classes:
+                                    logger.warning(
+                                        "[%s] Job %s: Previous job %s has no object classes in result, cannot reuse chunks for current job %s",
+                                        job_type,
+                                        str(job_id),
+                                        str(latest_job.job_id),
+                                        str(job_id),
+                                    )
+                                    await run_normal_worker()
+                                else:
+                                    for objClass in reused_output.get("result", {}).get("objectClasses", []):
+                                        relevant_chunks_obj_class: List[Dict[str, Any]] = objClass.get(
+                                            "relevantChunks", []
+                                        )
+                                        for rel_chunk in relevant_chunks_obj_class:
+                                            origUUID = rel_chunk.get("docUuid")
+                                            if origUUID:
+                                                orig_doc = await doc_repo.get_documentation_item(UUID(origUUID))
+                                                content = orig_doc["content"] if orig_doc else ""
+                                                url = orig_doc["url"] if orig_doc else ""
+                                                current_doc = [
+                                                    item
+                                                    for item in current_doc_items
+                                                    if item.get("url") == url and item.get("content") == content
+                                                ]
+                                                if not current_doc or len(current_doc) == 0 or len(current_doc) > 1:
+                                                    logger.warning(
+                                                        "[%s] Job %s: Corrupted documentation items for object class %s when trying to reuse output from job %s, cannot find unique match in current input, skipping relevant chunks for this object class",
+                                                        job_type,
+                                                        str(job_id),
+                                                        objClass.get("name"),
+                                                        str(latest_job.job_id),
+                                                    )
+                                                    continue
+                                                current_doc_item = current_doc[0]
+                                                current_doc_uuid = current_doc_item.get("id") or current_doc_item.get(
+                                                    "uuid"
+                                                )
+                                                if not current_doc_uuid:
+                                                    logger.warning(
+                                                        "[%s] Job %s: Corrupted documentation item for object class %s when trying to reuse output from job %s, missing id/uuid in current input, skipping relevant chunks for this object class",
+                                                        job_type,
+                                                        str(job_id),
+                                                        objClass.get("name"),
+                                                        str(latest_job.job_id),
+                                                    )
+                                                    continue
+                                                rel_chunk["docUuid"] = str(current_doc_uuid)
+
+                                                rel_chunks.append(
+                                                    {
+                                                        "entity_type": objClass.get("name"),
+                                                        "doc_id": UUID(str(current_doc_uuid)),
+                                                    }
+                                                )
+
+                                    await rel_repo.bulk_add_relevant_chunks(
+                                        session_id,
+                                        rel_chunks,
+                                    )
+                                    await db.commit()
+                                    result_dict = reused_output
+
+                            elif "relevantChunks" in reused_output:
+                                original_relevant_chunks: List[Dict[str, Any]] = reused_output.pop("relevantChunks")
+                                new_relevant_chunks: List[Dict[str, Any]] = []
+                                for rel_chunk in original_relevant_chunks:
+                                    origUUID = rel_chunk.get("docUuid")
+                                    if origUUID:
+                                        orig_doc = await doc_repo.get_documentation_item(UUID(origUUID))
+                                        content = orig_doc["content"] if orig_doc else ""
+                                        url = orig_doc["url"] if orig_doc else ""
+                                        current_doc = [
+                                            item
+                                            for item in current_doc_items
+                                            if item.get("url") == url and item.get("content") == content
+                                        ]
+                                        if not current_doc or len(current_doc) == 0 or len(current_doc) > 1:
+                                            logger.warning(
+                                                "[%s] Job %s: Corrupted documentation items for key %s when trying to reuse output from job %s, cannot find unique match in current input, skipping relevant chunks for this item",
+                                                job_type,
+                                                str(job_id),
+                                                rel_chunk,
+                                                str(latest_job.job_id),
+                                            )
+                                            continue
+                                        current_doc_item = current_doc[0]
+                                        current_doc_uuid = current_doc_item.get("id") or current_doc_item.get("uuid")
+                                        if not current_doc_uuid:
+                                            logger.warning(
+                                                "[%s] Job %s: Corrupted documentation item for key %s when trying to reuse output from job %s, missing id/uuid in current input, skipping relevant chunks for this item",
+                                                job_type,
+                                                str(job_id),
+                                                rel_chunk,
+                                                str(latest_job.job_id),
+                                            )
+                                            continue
+                                        rel_chunk["docUuid"] = str(current_doc_uuid)
+                                        new_relevant_chunks.append({"docUuid": str(current_doc_uuid)})
+                                    else:
+                                        logger.warning(
+                                            "[%s] Job %s: Corrupted relevant chunk with no docUuid for key %s when trying to reuse output from job %s, skipping this relevant chunk",
+                                            job_type,
+                                            str(job_id),
+                                            rel_chunk,
+                                            str(latest_job.job_id),
+                                        )
+                                logger.info(
+                                    "[%s] Job %s: Reusing output from job %s with %s relevant chunks updated to match current input, first relevant chunk docUuid %s if exists",
+                                    job_type,
+                                    str(job_id),
+                                    str(latest_job.job_id),
+                                    len(new_relevant_chunks),
+                                    new_relevant_chunks[0]["docUuid"] if new_relevant_chunks else None,
+                                )
+                                reused_output["relevantChunks"] = new_relevant_chunks
+                                result_dict = reused_output
+                            elif "discovery" in job_type:
+                                result_dict = copy.deepcopy(latest_job.result)
+                            else:
+                                logger.warning(
+                                    "[%s] Job %s: Previous job %s has no relevant chunks in result, cannot reuse chunks for current job %s",
+                                    job_type,
+                                    str(job_id),
+                                    str(latest_job.job_id),
+                                    str(job_id),
+                                )
+                                await run_normal_worker()
+
+                        except Exception as exc:
+                            logger.warning(
+                                "[%s] Job %s: Previous job %s has invalid result payload (%s), running fresh discovery",
+                                job_type,
+                                str(job_id),
+                                str(latest_job.job_id),
+                                str(exc),
+                            )
+                            await run_normal_worker()
+                    else:
+                        logger.info(
+                            "[%s] Job %s: No previous finished job found with same input since %s",
+                            job_type,
+                            str(job_id),
+                            datetime.isoformat(created_at_limits),
+                        )
+                        await run_normal_worker()
             else:
-                result_dict = {"value": repr(result)}
+                await run_normal_worker()
 
             # Store result in session if requested (before saving to job)
             if session_result_key:

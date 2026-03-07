@@ -61,6 +61,11 @@ class Job(Base):
 
     # JSONB columns for flexible data storage
     input: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    normalized_input: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
     result: Mapped[Dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     # Array of error messages

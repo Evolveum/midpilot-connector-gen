@@ -82,6 +82,10 @@ class SearchSettings(BaseModel):
     """Search method specification of Discovery module."""
 
     method_name: str = ""
+    discovery_input_check_interval: timedelta = Field(
+        timedelta(weeks=4),
+        description="Time interval for checking if the same discovery input has been processed before.",
+    )
 
 
 class BraveSettings(BaseModel):
@@ -203,6 +207,17 @@ class ScrapeAndProcessSettings(BaseModel):
     )
 
 
+class DigesterSettings(BaseModel):
+    """
+    Configuration for Digester module.
+    """
+
+    digester_input_check_interval: timedelta = Field(
+        timedelta(weeks=4),
+        description="Time interval for checking if the same digester input has been processed before.",
+    )
+
+
 class DatabaseSettings(BaseModel):
     """
     Configuration for PostgreSQL database connection.
@@ -307,6 +322,7 @@ class Settings(BaseSettings):
     langfuse: LangfuseSettings = LangfuseSettings()
     search: SearchSettings = SearchSettings()
     scrape_and_process: ScrapeAndProcessSettings = ScrapeAndProcessSettings()
+    digester: DigesterSettings = DigesterSettings()
     brave: BraveSettings = BraveSettings()
     database: DatabaseSettings = DatabaseSettings()
 

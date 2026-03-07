@@ -91,7 +91,7 @@ class SessionRepository:
 
     async def update_session(self, session_id: UUID, data: Dict[str, Any]) -> bool:
         """
-        Update session data. Merges new data with existing data.
+        Update session data. Replaces existing keys with new values or adds new keys.
 
         :param session_id: The session ID to update
         :param data: Dictionary of data to store/update in the session

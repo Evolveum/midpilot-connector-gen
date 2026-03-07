@@ -27,6 +27,7 @@ from ..prompts.attributes_prompts import (
     get_object_class_schema_user_prompt,
 )
 from ..schema import AttributeResponse
+from ..utils.attribute_filters import filter_ignored_attributes, ignore_attribute_name
 from ..utils.merges import merge_attribute_candidates
 from ..utils.metadata_helper import extract_summary_and_tags
 from ..utils.parallel_docs import process_grouped_chunks_in_parallel
