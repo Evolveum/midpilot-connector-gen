@@ -30,4 +30,6 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 EXPOSE 8090
 
 # ---- Run FastAPI ----
-CMD ["python", "server.py"]
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

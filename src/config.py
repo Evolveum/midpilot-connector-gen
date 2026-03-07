@@ -4,7 +4,7 @@
 
 from datetime import timedelta
 from enum import Enum
-from typing import Optional, List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
