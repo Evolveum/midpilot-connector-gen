@@ -302,7 +302,7 @@ async def schedule_coroutine_job(
                                                 "llm_category": item["metadata"].get("llm_category"),
                                             },
                                         )
-                                        new_doc["id"] = str(doc_id)
+                                        new_doc["id"] = doc_id
                                         new_doc["scrape_job_ids"] = [str(job_id)]
 
                                         docs_to_reuse.append(

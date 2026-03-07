@@ -83,6 +83,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                             metadata=chunk["metadata"],
                         )
                         chunk["scrapeJobIds"] = [job_id]
+                        chunk["id"] = doc_id
                         updated_chunks_existing.append(
                             DocumentationItem(**chunk).model_dump(by_alias=True, mode="json")
                         )
