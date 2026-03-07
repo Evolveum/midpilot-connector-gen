@@ -17,6 +17,7 @@ from .database.repositories.relevant_chunk_repository import RelevantChunkReposi
 from .database.repositories.session_repository import SessionRepository
 from .enums import JobStage
 from .normalize_input import normalize_input
+from .session.schema import DocumentationItem
 
 logger = logging.getLogger(__name__)
 
@@ -279,8 +280,7 @@ async def schedule_coroutine_job(
                                 else:
                                     for item in latest_job_doc_items:
                                         new_doc = copy.deepcopy(item)
-                                        new_doc["session_id"] = str(session_id)
-                                        new_doc["pageId"] = input_payload.get("page_id")
+                                        new_doc["page_id"] = input_payload.get("page_id")
                                         doc_id = await doc_repo.create_documentation_item(
                                             session_id=session_id,
                                             source="upload",
@@ -302,11 +302,12 @@ async def schedule_coroutine_job(
                                                 "llm_category": item["metadata"].get("llm_category"),
                                             },
                                         )
-                                        new_doc["uuid"] = str(doc_id)
                                         new_doc["id"] = str(doc_id)
                                         new_doc["scrape_job_ids"] = [str(job_id)]
 
-                                        docs_to_reuse.append(new_doc)
+                                        docs_to_reuse.append(
+                                            DocumentationItem(**new_doc).model_dump(by_alias=True, mode="json")
+                                        )  # type: ignore[attr-defined]
                                     # TODO: maybe we can also solve duplicity
                                     existing_docs = (
                                         await session_repo.get_session_data(session_id, "documentationItems") or []

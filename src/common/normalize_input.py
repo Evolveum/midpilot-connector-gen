@@ -36,6 +36,8 @@ def normalize_input(input_payload: Dict[str, Any]) -> Dict[str, Any]:
                     doc_item.pop("session_id")
                 if "scrape_job_ids" in doc_item:
                     doc_item.pop("scrape_job_ids")
+                if "scrapeJobIds" in doc_item:
+                    doc_item.pop("scrapeJobIds")
         normalized_input["documentationItems"] = sorted(
             normalized_input["documentationItems"],
             key=lambda x: (str(x.get("url") or ""), str(x.get("summary") or ""))

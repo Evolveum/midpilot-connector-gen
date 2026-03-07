@@ -82,13 +82,12 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                             summary=chunk["summary"],
                             metadata=chunk["metadata"],
                         )
-                        # Store with "uuid" key to match the normal scraper path
-                        # (model_dump with by_alias=True uses serialization_alias="uuid")
-                        chunk["uuid"] = str(doc_id)
-                        chunk.pop("id", None)  # remove legacy "id" key to avoid ambiguity
-                        updated_chunks_existing.append(chunk)
+                        chunk["scrapeJobIds"] = [job_id]
+                        updated_chunks_existing.append(
+                            DocumentationItem(**chunk).model_dump(by_alias=True, mode="json")
+                        )
                     for chunk in existing_docs_loaded:
-                        chunk_id = chunk.get("uuid") or chunk.get("id")
+                        chunk_id = chunk.get("uuid", "") or chunk.get("id", "")
                         if chunk_id:
                             update_res = await doc_repo.update_documentation_item(
                                 item_id=UUID(chunk_id), original_job_id=job_id
