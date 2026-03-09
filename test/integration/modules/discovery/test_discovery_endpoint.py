@@ -37,7 +37,7 @@ async def test_discover_candidate_links_success():
             job_type="discovery.getCandidateLinks",
             input_payload=request.model_dump(by_alias=True),
             worker=ANY,
-            worker_args=(request,),
+            worker_args=(request, session_id),
             initial_stage="queue",
             initial_message="Queued candidate links discovery",
             session_id=session_id,

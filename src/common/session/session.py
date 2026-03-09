@@ -65,6 +65,7 @@ async def process_documentation_worker(
                 source="upload",
                 content=chunk_text,
                 page_id=page_id,
+                original_job_id=job_id,
                 url=f"upload://{filename}",
                 summary=data.summary,
                 metadata={
@@ -84,6 +85,7 @@ async def process_documentation_worker(
             id=doc_id,
             source="upload",
             page_id=page_id,
+            scrape_job_ids=[job_id],
             url=f"upload://{filename}",
             summary=data.summary,
             content=chunk_text,
@@ -167,6 +169,7 @@ async def _get_session_documentation_impl(
             page_id=page_id,
             url=None,
             summary=None,
+            scrape_job_ids=[],
             content=doc_text,
             metadata={"filename": documentation.filename or "unknown", "length": len(doc_text)},
         )

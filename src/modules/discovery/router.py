@@ -42,7 +42,7 @@ async def discover_candidate_links(
         job_type="discovery.getCandidateLinks",
         input_payload=req.model_dump(by_alias=True),
         worker=service.discover_candidate_links,
-        worker_args=(req,),
+        worker_args=(req, session_id),
         initial_stage="queue",
         initial_message="Queued candidate links discovery",
         session_id=session_id,

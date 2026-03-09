@@ -61,6 +61,7 @@ async def _build_multi_doc_status_response(job_id: UUID) -> JobStatusMultiDocRes
 async def generate_native_schema(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
+    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -80,7 +81,11 @@ async def generate_native_schema(
 
     job_id = await schedule_coroutine_job(
         job_type="codegen.getNativeSchema",
-        input_payload={"attributes": attrs, "objectClass": object_class},
+        input_payload={
+            "attributes": attrs,
+            "objectClass": object_class,
+            "usePreviousSessionData": usePreviousSessionData,
+        },
         worker=service.create_native_schema,
         worker_args=(attrs, object_class),
         initial_stage="queue",
@@ -164,6 +169,7 @@ async def override_native_schema(
 async def generate_connid(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
+    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -183,7 +189,11 @@ async def generate_connid(
 
     job_id = await schedule_coroutine_job(
         job_type="codegen.getConnID",
-        input_payload={"attributes": attrs, "objectClass": object_class},
+        input_payload={
+            "attributes": attrs,
+            "objectClass": object_class,
+            "usePreviousSessionData": usePreviousSessionData,
+        },
         worker=service.create_conn_id,
         worker_args=(attrs, object_class),
         initial_stage="queue",
@@ -268,6 +278,7 @@ async def generate_search(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     intent: str = Path(..., description="Intent"),
+    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -300,6 +311,7 @@ async def generate_search(
             "attributes": attrs,
             "endpoints": eps,
             "object_class": object_class,
+            "usePreviousSessionData": usePreviousSessionData,
         },
         worker=service.create_search,
         worker_args=(),
@@ -356,6 +368,7 @@ async def get_search_status(
     return await _build_multi_doc_status_response(jobId)
 
 
+# Maybe in the future add to the cache?
 @router.put(
     "/{session_id}/classes/{object_class}/search/{intent}",
     summary="Override search code",
@@ -391,6 +404,7 @@ async def override_search(
 async def generate_create(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
+    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -423,6 +437,7 @@ async def generate_create(
             "attributes": attrs,
             "endpoints": eps,
             "object_class": object_class,
+            "usePreviousSessionData": usePreviousSessionData,
         },
         worker=service.create_create,
         worker_args=(),
@@ -512,6 +527,7 @@ async def override_create(
 async def generate_update(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
+    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -544,6 +560,7 @@ async def generate_update(
             "attributes": attrs,
             "endpoints": eps,
             "object_class": object_class,
+            "usePreviousSessionData": usePreviousSessionData,
         },
         worker=service.create_update,
         worker_args=(),
@@ -633,6 +650,7 @@ async def override_update(
 async def generate_delete(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
+    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -665,6 +683,7 @@ async def generate_delete(
             "attributes": attrs,
             "endpoints": eps,
             "object_class": object_class,
+            "usePreviousSessionData": usePreviousSessionData,
         },
         worker=service.create_delete,
         worker_args=(),
@@ -754,6 +773,7 @@ async def override_delete(
 async def generate_relation_code(
     session_id: UUID = Path(..., description="Session ID"),
     relation_name: str = Path(..., description="Relation name"),
+    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -775,7 +795,12 @@ async def generate_relation_code(
 
     job_id = await schedule_coroutine_job(
         job_type="codegen.getRelation",
-        input_payload={"relations": relations_json, "sessionId": session_id},
+        input_payload={
+            "relations": relations_json,
+            "relationName": relation_name,
+            "sessionId": session_id,
+            "usePreviousSessionData": usePreviousSessionData,
+        },
         worker=service.create_relation,
         worker_kwargs={
             "relations": relations_model,

@@ -27,6 +27,7 @@ from ...prompts.rest.attributes_prompts import (
     get_object_class_schema_user_prompt,
 )
 from ...schema import AttributeResponse
+from ...utils.attribute_filters import filter_ignored_attributes, ignore_attribute_name
 from ...utils.merges import merge_attribute_candidates
 from ...utils.metadata_helper import extract_summary_and_tags
 from ...utils.parallel_docs import process_grouped_chunks_in_parallel
@@ -369,18 +370,21 @@ async def extract_attributes(
         build_dedupe_chain=_build_dedupe_chain,
     )
 
-    # logger.info("[Digester:Attributes] Deduplicated attributes BEFORE fill missing:")
-    # logger.info(json.dumps(merged_attributes, indent=2, ensure_ascii=False))
+    filtered_attributes = filter_ignored_attributes(merged_attributes)
+    removed_attributes = [name for name in merged_attributes if ignore_attribute_name(name)]
+    if removed_attributes:
+        logger.info(
+            "[Digester:Attributes] Removed %d ignored attributes during postprocessing: %s",
+            len(removed_attributes),
+            sorted(removed_attributes),
+        )
 
     filled_attributes = await fill_missing_details(
         object_class=object_class,
-        attributes=merged_attributes,
+        attributes=filtered_attributes,
         chunks=chunks,
         job_id=job_id,
     )
-
-    # logger.info("[Digester:Attributes] Filled attributes AFTER fill missing:")
-    # logger.info(json.dumps(filled_attributes, indent=2, ensure_ascii=False))
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 

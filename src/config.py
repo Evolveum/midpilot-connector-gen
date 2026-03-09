@@ -2,8 +2,9 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from datetime import timedelta
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -57,6 +58,10 @@ class LLMSettings(BaseModel):
     openai_api_base: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-oss-20b"
     request_timeout: int = 120
+    provider_order: List[str] = Field(
+        ["groq", "wandb/fp4", "clarifai/fp4"],
+        description="List of LLM providers in order of preference",
+    )
 
 
 class LangfuseSettings(BaseModel):
@@ -81,6 +86,10 @@ class SearchSettings(BaseModel):
     """Search method specification of Discovery module."""
 
     method_name: str = ""
+    discovery_input_check_interval: timedelta = Field(
+        timedelta(weeks=4),
+        description="Time interval for checking if the same discovery input has been processed before.",
+    )
 
 
 class BraveSettings(BaseModel):
@@ -94,6 +103,10 @@ class ScrapeAndProcessSettings(BaseModel):
     """
     Configuration for Scrape and Process module.
     """
+
+    scrape_input_check_interval: timedelta = Field(
+        timedelta(weeks=4), description="Time interval for checking if the same scrape input has been processed before."
+    )
 
     # Scraper controls
     max_scraper_iterations: int = Field(
@@ -198,6 +211,17 @@ class ScrapeAndProcessSettings(BaseModel):
     )
 
 
+class DigesterSettings(BaseModel):
+    """
+    Configuration for Digester module.
+    """
+
+    digester_input_check_interval: timedelta = Field(
+        timedelta(weeks=4),
+        description="Time interval for checking if the same digester input has been processed before.",
+    )
+
+
 class DatabaseSettings(BaseModel):
     """
     Configuration for PostgreSQL database connection.
@@ -218,7 +242,7 @@ class DatabaseSettings(BaseModel):
         description="Database URL",
     )
     host: str = ""
-    port: int = 5433
+    port: int = 5432
     name: str = ""
     user: str = ""
     password: str = ""
@@ -301,6 +325,7 @@ class Settings(BaseSettings):
     langfuse: LangfuseSettings = LangfuseSettings()
     search: SearchSettings = SearchSettings()
     scrape_and_process: ScrapeAndProcessSettings = ScrapeAndProcessSettings()
+    digester: DigesterSettings = DigesterSettings()
     brave: BraveSettings = BraveSettings()
     database: DatabaseSettings = DatabaseSettings()
 

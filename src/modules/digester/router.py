@@ -41,6 +41,7 @@ async def extract_object_classes(
     session_id: UUID = Path(..., description="Session ID"),
     filter_relevancy: bool = Query(True, description="Filter object classes by relevancy"),
     min_relevancy_level: str = Query("high", description="Minimum relevancy level (low/medium/high)"),
+    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -53,7 +54,11 @@ async def extract_object_classes(
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
-        input_payload={},
+        input_payload={
+            "filterRelevancy": filter_relevancy,
+            "minRelevancyLevel": min_relevancy_level,
+            "usePreviousSessionData": use_previous_session_data,
+        },
         dynamic_input_enabled=True,
         dynamic_input_provider=object_classes_input,
         worker=service.extract_object_classes,
@@ -74,7 +79,11 @@ async def extract_object_classes(
         session_id,
         {
             "objectClassesJobId": str(job_id),
-            "objectClassesInput": {},
+            "objectClassesInput": {
+                "filterRelevancy": filter_relevancy,
+                "minRelevancyLevel": min_relevancy_level,
+                "usePreviousSessionData": use_previous_session_data,
+            },
         },
     )
 
@@ -269,6 +278,7 @@ async def upload_one_object_class(
 async def extract_class_attributes(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name (e.g., 'User', 'Group')"),
+    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -318,9 +328,10 @@ async def extract_class_attributes(
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClassSchema",
         input_payload={
-            "documentation_items": doc_items,
+            "documentationItems": doc_items,
             "objectClass": object_class,
             "relevantChunks": relevant_chunks,
+            "usePreviousSessionData": use_previous_session_data,
         },
         worker=service.extract_attributes,
         worker_args=(doc_items, object_class, session_id, relevant_chunks),
@@ -423,6 +434,7 @@ async def override_class_attributes(
 async def extract_class_endpoints(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
+    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -501,6 +513,7 @@ async def extract_class_endpoints(
             "objectClass": object_class,
             "baseApiUrl": base_api_url,
             "relevantChunks": relevant_chunks,
+            "usePreviousSessionData": use_previous_session_data,
         },
         worker=service.extract_endpoints,
         worker_args=(doc_items, object_class, session_id, relevant_chunks),
@@ -587,7 +600,11 @@ async def override_class_endpoints(
     response_model=JobCreateResponse,
     summary="Extract relations between object classes",
 )
-async def extract_relations(session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)):
+async def extract_relations(
+    session_id: UUID = Path(..., description="Session ID"),
+    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Extract relations between object classes from documentation.
     Loads relevant object classes from session (where relevant=true).
@@ -612,7 +629,11 @@ async def extract_relations(session_id: UUID = Path(..., description="Session ID
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getRelations",
-        input_payload={"documentationItems": doc_items, "relevantObjectClasses": relevant},
+        input_payload={
+            "documentationItems": doc_items,
+            "relevantObjectClasses": relevant,
+            "usePreviousSessionData": use_previous_session_data,
+        },
         worker=service.extract_relations,
         worker_args=(doc_items, relevant),
         initial_stage="chunking",
@@ -627,6 +648,7 @@ async def extract_relations(session_id: UUID = Path(..., description="Session ID
             "relationsJobId": str(job_id),
             "relationsInput": {
                 "relevantObjectClasses": relevant,
+                "usePreviousSessionData": use_previous_session_data,
             },
         },
     )
@@ -689,6 +711,7 @@ async def override_relations(
 )
 async def extract_auth(
     session_id: UUID = Path(..., description="Session ID"),
+    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -699,7 +722,7 @@ async def extract_auth(
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getAuth",
-        input_payload={},
+        input_payload={"usePreviousSessionData": use_previous_session_data},
         dynamic_input_enabled=True,
         dynamic_input_provider=auth_input,
         worker=service.extract_auth,
@@ -716,7 +739,9 @@ async def extract_auth(
         session_id,
         {
             "authJobId": str(job_id),
-            # "authInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
+            "authInput": {
+                "usePreviousSessionData": use_previous_session_data,
+            },
         },
     )
 
@@ -757,6 +782,7 @@ async def get_auth_status(
 )
 async def extract_metadata(
     session_id: UUID = Path(..., description="Session ID"),
+    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -767,7 +793,7 @@ async def extract_metadata(
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getInfoMetadata",
-        input_payload={},
+        input_payload={"usePreviousSessionData": use_previous_session_data},
         dynamic_input_enabled=True,
         dynamic_input_provider=metadata_input,
         worker=service.extract_info_metadata,
@@ -784,7 +810,9 @@ async def extract_metadata(
         session_id,
         {
             "metadataJobId": str(job_id),
-            # "metadataInput": {"documentationItemsCount": len(doc_items), "totalLength": total_length},
+            "metadataInput": {
+                "usePreviousSessionData": use_previous_session_data,
+            },
         },
     )
 

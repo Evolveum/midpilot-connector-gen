@@ -7,11 +7,12 @@ import uuid
 from typing import Any, Dict
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...common.chunks import split_text_with_token_overlap
 from ...common.database.config import get_db
+from ...common.database.repositories.documentation_repository import DocumentationRepository
 from ...common.database.repositories.job_repository import JobRepository
 from ...common.database.repositories.session_repository import SessionRepository
 from ...common.enums import JobStage
@@ -308,6 +309,9 @@ async def get_documentation(
 async def replace_documentation(
     session_id: UUID = Path(..., description="Session ID"),
     documentation: UploadFile = File(..., description="OpenAPI/Swagger YAML or JSON file"),
+    use_previous_session_data: bool = Query(
+        True, description="Whether to use previous session data for processing the new documentation"
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -316,6 +320,7 @@ async def replace_documentation(
     Chunks and processes the documentation with LLM - returns immediately with job_id.
     """
     repo = SessionRepository(db)
+    doc_repo = DocumentationRepository(db)
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
@@ -333,6 +338,7 @@ async def replace_documentation(
 
     # Clear existing documentation first
     await repo.update_session(session_id, {"documentationItems": []})
+    await doc_repo.delete_documentation_items_by_session(session_id)
 
     # Chunk the content
     logger.info("[Upload] Chunking documentation for session %s", session_id)
@@ -351,6 +357,10 @@ async def replace_documentation(
             "filename": filename,
             "page_id": str(page_id),
             "chunks_count": len(chunks),
+            "chunks": chunks,
+            "app": app,
+            "app_version": app_version,
+            "usePreviousSessionData": use_previous_session_data,
         },
         worker=process_documentation_worker,
         worker_kwargs={
@@ -386,6 +396,9 @@ async def upload_documentation_by_id(
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation UUID (used as page_id)"),
     documentation: UploadFile = File(..., description="OpenAPI/Swagger YAML or JSON file"),
+    use_previous_session_data: bool = Query(
+        True, description="Whether to use previous session data for processing the new documentation"
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -427,6 +440,10 @@ async def upload_documentation_by_id(
             "filename": filename,
             "page_id": str(page_id),
             "chunks_count": len(chunks),
+            "chunks": chunks,
+            "app": app,
+            "app_version": app_version,
+            "usePreviousSessionData": use_previous_session_data,
         },
         worker=process_documentation_worker,
         worker_kwargs={
@@ -465,10 +482,12 @@ async def delete_documentation(
     Remove all documentation (both scraped and uploaded) from the session.
     """
     repo = SessionRepository(db)
+    doc_repo = DocumentationRepository(db)
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     await repo.update_session(session_id, {"documentationItems": []})
+    await doc_repo.delete_documentation_items_by_session(session_id)
     return {"message": "All documentation deleted successfully", "sessionId": session_id}
 
 
@@ -518,11 +537,21 @@ async def delete_documentation_item(
     Since uploaded documentation is chunked, this removes all chunks belonging to the same document.
     Returns 404 if the session or any documentation with that page_id is not found.
     """
+    # TODO: Maybe we should handle relevantChunks
     repo = SessionRepository(db)
+    doc_repo = DocumentationRepository(db)
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     doc_items: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
+    doc_items_with_page_id = [item for item in doc_items if str(item.get("pageId")) == str(documentation_id)]
+    source = doc_items_with_page_id[0].get("source") if len(doc_items_with_page_id) > 0 else ""
+    if not source:
+        logger.warning(
+            "Could not determine source for documentation with page_id %s in session %s", documentation_id, session_id
+        )
+    else:
+        await doc_repo.remove_job_ids_from_documentation_items(session_id, source)
     if not doc_items:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"No documentation found in session {session_id}"
@@ -541,6 +570,7 @@ async def delete_documentation_item(
 
     # Update session with filtered items
     await repo.update_session(session_id, {"documentationItems": filtered_items})
+    await doc_repo.remove_documentation_items_by_page_id(session_id, documentation_id)
 
     return {
         "message": f"Documentation deleted successfully ({deleted_count} chunk(s) removed)",

@@ -12,6 +12,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...enums import JobStage, JobStatus
+from ...normalize_input import normalize_input
 from ..models import Job, JobProgress
 from .relevant_chunk_repository import RelevantChunkRepository
 
@@ -120,11 +121,15 @@ class JobRepository:
         :param session_id: Associated session ID
         :return: Job ID
         """
+
+        normalized_input = normalize_input(input_payload)
+
         job = Job(
             session_id=session_id,
             job_type=job_type,
             status=JobStatus.queued.value,
             input=to_jsonable(input_payload),
+            normalized_input=to_jsonable(normalized_input),
         )
         self.db.add(job)
         await self.db.flush()
@@ -151,6 +156,53 @@ class JobRepository:
         query = select(Job).where(Job.job_id == job_id)
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
+
+    async def get_job_by_input(self, job_type: str, input: Dict[str, Any], date_since: datetime) -> Optional[Job]:
+        """
+        Get a job by its input payload.
+
+        :param job_type: Type of job to look for
+        :param input: Input payload dict to match
+        :return: Job model or None
+        """
+        query = (
+            select(Job)
+            .where(
+                Job.job_type == job_type,
+                Job.normalized_input == to_jsonable(input),
+                Job.created_at >= date_since,
+                Job.status == "finished",
+            )
+            .order_by(Job.created_at.desc())
+        )
+        result = await self.db.execute(query)
+
+        return result.scalars().first()
+
+    # async def get_discovery_job_by_input(self, discovery_input: Dict[str, Any], date_since: datetime) -> Optional[Job]:
+    #     """
+    #     Get a discovery job by its input payload.
+
+    #     :param discovery_input: Input payload dict to match
+    #     :param date_since: Only include jobs created at or after this timestamp
+    #     :return: Job model or None
+    #     """
+    #     # usePreviousSessionData should not influence whether discovery output can be reused.
+    #     alternate_discovery_input = discovery_input.copy()
+    #     alternate_discovery_input["usePreviousSessionData"] = False
+    #     query = (
+    #         select(Job)
+    #         .where(
+    #             Job.job_type == "discovery.getCandidateLinks",
+    #             (Job.input == to_jsonable(discovery_input)) | (Job.input == to_jsonable(alternate_discovery_input)),
+    #             Job.created_at >= date_since,
+    #             Job.status == "finished",
+    #         )
+    #         .order_by(Job.created_at.desc())
+    #     )
+    #     result = await self.db.execute(query)
+
+    #     return result.scalars().first()
 
     async def set_running(self, job_id: UUID) -> Dict[str, Any]:
         """
@@ -339,7 +391,10 @@ class JobRepository:
         if job is None:
             raise FileNotFoundError(f"Job {job_id} not found")
 
+        normalized_input = normalize_input(new_input)
+
         job.input = to_jsonable(new_input)
+        job.normalized_input = to_jsonable(normalized_input)
         job.updated_at = datetime.now(timezone.utc)
 
         await self.db.flush()

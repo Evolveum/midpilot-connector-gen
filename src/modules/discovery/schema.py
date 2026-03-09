@@ -46,6 +46,12 @@ class CandidateLinksInput(BaseModel):
         validation_alias="llmGeneratedSearchQuery",
         description="Use LLM to generate web search queries (default to use templates)",
     )
+    use_previous_session_data: bool = Field(
+        default=True,
+        serialization_alias="usePreviousSessionData",
+        validation_alias="usePreviousSessionData",
+        description="Whether to reuse discovery output from a previous session when input is the same.",
+    )
     enable_link_filtering: bool = Field(
         default=True,
         serialization_alias="enableLinkFiltering",
