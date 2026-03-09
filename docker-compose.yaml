@@ -37,7 +37,7 @@ services:
       retries: 20
       start_period: 5s
     ports:
-      - ${DATABASE__PORT}:${DATABASE__PORT}
+      - ${DATABASE__EXT_PORT}:${DATABASE__PORT}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
