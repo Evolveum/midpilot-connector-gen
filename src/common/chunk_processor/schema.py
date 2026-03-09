@@ -68,16 +68,23 @@ class LlmChunkOutput(BaseModel):
         description='List of tags that could describe the content in the chunk, for example: ["endpoints", "authorization"]'
     )
     category: str = Field(description="Type of the content in the chunk")
-    application_version: Optional[str] = Field(description="Application version mentioned in the chunk, if any")
-    api_version: Optional[str] = Field(description="API version mentioned in the chunk, if any")
-    api_type: Optional[List[str]] = Field(description="API type(s) mentioned in the chunk, if any")
+    application_version: Optional[str] = Field(
+        default=None, description="Application version mentioned in the chunk, if any"
+    )
+    api_version: Optional[str] = Field(default=None, description="API version mentioned in the chunk, if any")
+    api_type: Optional[List[str]] = Field(default=None, description="API type(s) mentioned in the chunk, if any")
     base_api_endpoint: Optional[List[BaseAPIEndpoint]] = Field(
-        description="Base API endpoint(s) mentioned in the chunk, if any"
+        default=None, description="Base API endpoint(s) mentioned in the chunk, if any"
     )
     different_app_name: bool = Field(
         description="Indicates if the chunk mentions a different application name than expected"
     )
-    application_name: Optional[str] = Field(description="The application name mentioned in the chunk, if any")
+    application_name: Optional[str] = Field(
+        default=None, description="The application name mentioned in the chunk, if any"
+    )
+    num_defined_object_classes: Optional[int] = Field(
+        default=None, description="The number of defined object classes mentioned in the chunk, if any"
+    )
 
     @field_validator("category")
     @classmethod

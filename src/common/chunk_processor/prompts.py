@@ -50,6 +50,11 @@ CRITICAL RULES - BE PRECISE ABOUT SCOPE AND FORMAT:
 - Content <10,000 tokens or limited depth: always include "overview"
 - Example: "This page contains an overview of REST API authentication methods, covering OAuth 2.0, API keys, and basic auth concepts."
 
+**Number of Defined Object Classes:**
+- If the content defines 3 or more object classes with detailed schemas, mention that in the summary, e.g., "defining 5 object classes with detailed schemas for user and group management
+- Count only object classes that have detailed schemas, not those that are just mentioned in navigation, listed without details or are just described with single sentences without detailed descriptions and schemas.
+- In majority of cases, there isn't going to be a detailed description of an object class.
+
 CRITICAL:
 - Include ONLY what is actually documented with details (descriptions, parameters, responses)
 - Ignore navigation panels, sidebars, table of contents, and repeated header/footer sections
@@ -127,6 +132,15 @@ EXAMPLE OUTPUTS:
     "has_authentication": true,
     "is_overview": false,
     "is_index": false
+}
+
+{
+    "summary": "This page contains a part of OpenAPI specification for the Organizations REST API, defining schemas for user, group, and policy management object classes.",
+    "num_endpoints": 0,
+    "has_authentication": false,
+    "is_overview": false,
+    "is_index": false,
+    "num_defined_object_classes": 3
 }
 
         """
