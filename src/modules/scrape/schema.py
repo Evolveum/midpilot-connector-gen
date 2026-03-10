@@ -4,13 +4,15 @@
 
 from typing import Dict, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ScrapeRequest(BaseModel):
     """
     Input payload to start the scrape job.
     """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     starter_links: List[str] = Field(
         ..., description="Initial URLs to scrape", validation_alias="starterLinks", serialization_alias="starterLinks"
@@ -19,8 +21,8 @@ class ScrapeRequest(BaseModel):
         ..., description="Application name", validation_alias="applicationName", serialization_alias="applicationName"
     )
     application_version: str = Field(
-        ...,
-        description="Application version (e.g., 'current')",
+        default="current",
+        description="Application version. If omitted, discoveryInput.applicationVersion is used when available, otherwise 'current'.",
         validation_alias="applicationVersion",
         serialization_alias="applicationVersion",
     )
