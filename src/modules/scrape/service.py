@@ -1,8 +1,3 @@
-"""
-New scrape service integrating scraperV3 (fucntions.py) to replace the old logic.
-Provides a POST job to start scraping and a GET to poll status via the existing job system.
-"""
-
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
@@ -203,12 +198,12 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             app=input.application_name,
             app_version=input.application_version,
             max_iterations_filter_irrelevant=config.scrape_and_process.max_iterations_filter_irrelevant,
-            max_scraper_iterations=max_iters,
             curr_iteration=curr_iter,
             irrelevant_links=irrelevant_links,
             saved_pages=saved_pages,
             trusted_domains=trusted_domains,
             forbidden_url_parts=forbidden_url_parts,
+            last_iteration=(curr_iter == max_iters),
         )
 
         logger.info(

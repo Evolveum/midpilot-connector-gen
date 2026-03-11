@@ -528,13 +528,13 @@ async def test_extract_auth_success():
         mock_schedule.return_value = job_id
 
         session_id = uuid4()
-        response = await extract_auth(session_id=session_id, db=MagicMock())
+        response = await extract_auth(session_id=session_id, use_previous_session_data=True, db=MagicMock())
 
     assert response.jobId == job_id
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_schedule.assert_awaited_once_with(
         job_type="digester.getAuth",
-        input_payload={},
+        input_payload={"usePreviousSessionData": True},
         dynamic_input_enabled=True,
         dynamic_input_provider=ANY,
         worker=service.extract_auth,
@@ -546,7 +546,13 @@ async def test_extract_auth_success():
         await_documentation=True,
         await_documentation_timeout=750,
     )
-    mock_repo.update_session.assert_awaited_once_with(session_id, {"authJobId": str(job_id)})
+    mock_repo.update_session.assert_awaited_once_with(
+        session_id,
+        {
+            "authJobId": str(job_id),
+            "authInput": {"usePreviousSessionData": True},
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -599,13 +605,13 @@ async def test_extract_metadata_success():
         mock_schedule.return_value = job_id
 
         session_id = uuid4()
-        response = await extract_metadata(session_id=session_id, db=MagicMock())
+        response = await extract_metadata(session_id=session_id, use_previous_session_data=True, db=MagicMock())
 
     assert response.jobId == job_id
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_schedule.assert_awaited_once_with(
         job_type="digester.getInfoMetadata",
-        input_payload={},
+        input_payload={"usePreviousSessionData": True},
         dynamic_input_enabled=True,
         dynamic_input_provider=ANY,
         worker=service.extract_info_metadata,
@@ -617,7 +623,13 @@ async def test_extract_metadata_success():
         await_documentation=True,
         await_documentation_timeout=750,
     )
-    mock_repo.update_session.assert_awaited_once_with(session_id, {"metadataJobId": str(job_id)})
+    mock_repo.update_session.assert_awaited_once_with(
+        session_id,
+        {
+            "metadataJobId": str(job_id),
+            "metadataInput": {"usePreviousSessionData": True},
+        },
+    )
 
 
 @pytest.mark.asyncio

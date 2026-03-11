@@ -13,7 +13,7 @@ from langchain_core.runnables.config import RunnableConfig
 from ....common.enums import JobStage
 from ....common.jobs import update_job_progress
 from ....common.langfuse import langfuse_handler
-from ..schema import AttributeResponse, EndpointInfo, ObjectClass
+from ..schema import AttributeResponse, EndpointInfo, EndpointMethod, ObjectClass
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +101,12 @@ def merge_object_classes(
         # Merge relevant chunks if available
         if class_to_chunks and key in class_to_chunks:
             # Convert to set of docUuids to remove duplicates
-            current_doc_uuids = set(chunk["docUuid"] for chunk in (current.relevant_chunks or []))
+            current_doc_uuids = set(str(chunk["docUuid"]) for chunk in (current.relevant_chunks or []))
             # Add new document UUIDs
             for chunk in class_to_chunks[key]:
-                current_doc_uuids.add(chunk["docUuid"])
-            # Convert back to list of dicts and sort
+                current_doc_uuids.add(str(chunk["docUuid"]))
+            # Convert back to list of dicts with string UUIDs (not UUID objects) and sort
             current.relevant_chunks = [{"docUuid": doc_uuid} for doc_uuid in sorted(current_doc_uuids)]
-
     # Remove duplicates with whitespace-only differences (preferring no-space versions)
     for key in list(by_name.keys()):
         key_no_space = key.replace(" ", "")
@@ -203,21 +202,17 @@ async def merge_endpoint_candidates(
     """
 
     # HTTP method ordering for consistent sorting
-    _METHOD_ORDER: Dict[str, int] = {"GET": 0, "HEAD": 1, "OPTIONS": 2, "POST": 3, "PUT": 4, "PATCH": 5, "DELETE": 6}
+    _METHOD_ORDER: Dict[EndpointMethod, int] = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4}
 
-    def _normalize_method(method: str) -> str:
-        return (method or "").strip().upper()
+    def _endpoint_key(ep: EndpointInfo) -> tuple[str, EndpointMethod]:
+        return (ep.path.strip(), ep.method)
 
-    def _endpoint_key(ep: EndpointInfo) -> tuple:
-        return (ep.path.strip(), _normalize_method(ep.method))
-
-    by_key: Dict[tuple, EndpointInfo] = {}
+    by_key: Dict[tuple[str, EndpointMethod], EndpointInfo] = {}
 
     for ep in extracted_endpoints:
-        if not ep.path or not ep.method:
+        if not ep.path:
             continue
 
-        ep.method = _normalize_method(ep.method)
         key = _endpoint_key(ep)
 
         if key not in by_key:
@@ -247,7 +242,7 @@ async def merge_endpoint_candidates(
     merged = list(by_key.values())
 
     # Sort by path, then by common HTTP method order
-    merged.sort(key=lambda e: (e.path, _METHOD_ORDER.get(_normalize_method(e.method), 99), e.method))
+    merged.sort(key=lambda e: (e.path, _METHOD_ORDER[e.method], e.method))
 
     # Convert to dicts for JSON serialization
     merged_dicts = [ep.model_dump(by_alias=True) for ep in merged]

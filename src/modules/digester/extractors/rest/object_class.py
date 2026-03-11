@@ -13,25 +13,25 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from ....common.enums import JobStage
-from ....common.jobs import append_job_error, update_job_progress
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.object_class_prompts import (
+from .....common.enums import JobStage
+from .....common.jobs import append_job_error, update_job_progress
+from .....common.langfuse import langfuse_handler
+from .....common.llm import get_default_llm, make_basic_chain
+from ...prompts.rest.object_class_prompts import (
     get_object_class_system_prompt,
     get_object_class_user_prompt,
 )
-from ..prompts.object_class_relevancy_prompt import (
+from ...prompts.rest.object_class_relevancy_prompt import (
     get_object_classes_relevancy_system_prompt,
     get_object_classes_relevancy_user_prompt,
 )
-from ..prompts.sorting_output_prompts import (
+from ...prompts.rest.sorting_output_prompts import (
     sort_object_classes_system_prompt,
     sort_object_classes_user_prompt,
 )
-from ..schema import ObjectClass, ObjectClassesRelevancyResponse, ObjectClassesResponse
-from ..utils.merges import merge_object_classes
-from ..utils.parallel import run_extraction_parallel
+from ...schema import ObjectClass, ObjectClassesRelevancyResponse, ObjectClassesResponse
+from ...utils.merges import merge_object_classes
+from ...utils.parallel import run_extraction_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ async def extract_object_classes_raw(
         schema: The document content to extract from
         job_id: Job ID for progress tracking
         doc_id: Optional document UUID
-        doc_metadata: Optional metadata dict containing summary and @metadata with llm_tags
+        doc_metadata: Optional metadata dict containing summary and @metadata with tags
 
     Returns:
         - List of raw ObjectClass instances (with relevant_chunks populated)
@@ -63,7 +63,7 @@ async def extract_object_classes_raw(
         system_prompt=get_object_class_system_prompt,
         user_prompt=get_object_class_user_prompt,
         parse_fn=parse_fn,
-        logger_prefix="[Digester:ObjectClasses] ",
+        logger_prefix="[Digester:REST:ObjectClasses] ",
         job_id=job_id,
         doc_id=doc_id,
         track_chunk_per_item=True,

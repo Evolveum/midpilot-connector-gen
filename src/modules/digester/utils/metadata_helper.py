@@ -28,12 +28,12 @@ def extract_summary_and_tags(doc_metadata: Dict[str, Any] | None) -> Tuple[str, 
 
     # Extract and format tags
     metadata = doc_metadata.get("@metadata", {}) or {}
-    llm_tags = metadata.get("llm_tags")
-    if llm_tags:
-        if isinstance(llm_tags, list):
-            tags = ", ".join(str(tag) for tag in llm_tags)
+    tags_data = metadata.get("tags")
+    if tags_data:
+        if isinstance(tags_data, list):
+            tags = ", ".join(str(tag) for tag in tags_data)
         else:
-            tags = str(llm_tags)
+            tags = str(tags_data)
 
     return summary, tags
 

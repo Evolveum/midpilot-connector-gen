@@ -105,21 +105,35 @@ get_endpoints_system_prompt = textwrap.dedent("""
     """)
 
 get_endpoints_user_prompt = textwrap.dedent("""
-Summary about documentation: {summary}
+Summary of the chunk:
 
-Doc's tags: {tags}
+<summary>
+{summary}
+</summary>
 
-Object class: {object_class}
+Tags of the chunk:
 
-Base API URL: {base_api_url}
+<tags>
+{tags}
+</tags>
+
+Object class:
+
+<object_class> 
+{object_class}
+</object_class>
+
+Base API URL: 
+
+<base_api_url>
+{base_api_url}
+</base_api_url>
 
 Text from documentation:
 
-<docs>
-
+<chunk>
 {chunk}
-
-</docs>
+</chunk>
 
 Please extract endpoints for `{object_class}` from this fragment using the structured output schema.
 
@@ -147,11 +161,15 @@ check_endpoint_params_system_prompt = textwrap.dedent("""
 check_endpoint_params_user_prompt = textwrap.dedent("""
 Endpoint to verify:
 
+<endpoint>
 {endpoint}
+</endpoint>
 
 Text from documentation:
 
+<chunk>
 {chunk}
+</chunk>
                                                     
 For the object class {object_class}.
                                                    

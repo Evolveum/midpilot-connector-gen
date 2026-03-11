@@ -8,7 +8,9 @@ from typing import Any, Dict, List
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables.config import RunnableConfig
 
+from ....common.langfuse import langfuse_handler
 from ....common.llm import get_default_llm, make_basic_chain
 from ...scrape.llms import get_irrelevant_llm_response
 from ..prompts.prompts import get_irrelevant_filter_prompts, get_rank_links_prompts
@@ -181,7 +183,7 @@ async def rank_candidate_links(
     )
 
     try:
-        ranked = await chain.ainvoke({})
+        ranked = await chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler]))
     except Exception as exc:
         logger.error("[Discovery:Rank] LLM ranking call failed: %s", exc)
         ranked = None

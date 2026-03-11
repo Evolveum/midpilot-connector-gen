@@ -75,8 +75,6 @@ async def process_documentation_worker(
                     "num_endpoints": data.num_endpoints,
                     "tags": data.tags,
                     "category": data.category,
-                    "llm_tags": data.tags,
-                    "llm_category": data.category,
                 },
             )
 
@@ -98,8 +96,6 @@ async def process_documentation_worker(
                 "num_endpoints": data.num_endpoints,
                 "tags": data.tags,
                 "category": data.category,
-                "llm_tags": data.tags,
-                "llm_category": data.category,
             },
         )
 

@@ -9,12 +9,21 @@ from uuid import UUID
 from ...common.database.config import async_session_maker
 from ...common.database.repositories.session_repository import SessionRepository
 from ...common.jobs import increment_processed_documents, update_job_progress
-from .extractors.attributes import extract_attributes as _extract_attributes
+
+# Shared extractors
 from .extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
-from .extractors.endpoints import extract_endpoints as _extract_endpoints
 from .extractors.info import extract_info_metadata as _extract_info_metadata
-from .extractors.object_class import deduplicate_and_sort_object_classes, extract_object_classes_raw
-from .extractors.relations import extract_relations as _extract_relations
+
+# REST extractors
+from .extractors.rest.attributes import extract_attributes as _extract_rest_attributes
+from .extractors.rest.endpoints import extract_endpoints as _extract_rest_endpoints
+from .extractors.rest.object_class import deduplicate_and_sort_object_classes, extract_object_classes_raw
+from .extractors.rest.relations import extract_relations as _extract_relations
+
+# SCIM extractors
+from .extractors.scim.attributes import extract_scim_attributes
+from .extractors.scim.endpoints import extract_scim_endpoints
+from .extractors.scim.object_class import extract_scim_object_classes
 from .utils.doc_chunk import select_doc_chunks
 from .utils.merges import (
     merge_relations_results,
@@ -23,6 +32,37 @@ from .utils.metadata_helper import build_doc_metadata_map
 from .utils.parallel_docs import process_documents_in_parallel
 
 logger = logging.getLogger(__name__)
+
+
+async def _get_api_type_from_session(session_id: UUID) -> List[str]:
+    """
+    Retrieve api_type from infoAboutSchema stored in session.
+
+    Args:
+        session_id: Session ID
+
+    Returns:
+        List of API types (e.g., ["REST"], ["SCIM"], ["REST", "SCIM"])
+        Returns empty list if not found
+    """
+    try:
+        async with async_session_maker() as db:
+            repo = SessionRepository(db)
+            info_data = await repo.get_session_data(session_id, "metadataOutput")
+
+            if not info_data or not isinstance(info_data, dict):
+                logger.info("[Digester:Service] No metadataOutput found, defaulting to REST")
+                return []
+
+            info_about_schema = info_data.get("infoAboutSchema", {})
+            api_type = info_about_schema.get("apiType", [])
+
+            logger.info("[Digester:Service] Detected API type from session: %s", api_type)
+            return api_type if isinstance(api_type, list) else []
+
+    except Exception as e:
+        logger.warning("[Digester:Service] Failed to retrieve api_type from session: %s, defaulting to REST", e)
+        return []
 
 
 async def _process_over_documents(
@@ -76,9 +116,50 @@ async def _process_over_documents(
     }
 
 
-async def extract_object_classes(doc_items: List[dict], filter_relevancy: bool, min_relevancy_level: str, job_id: UUID):
+async def extract_object_classes(
+    doc_items: List[dict],
+    filter_relevancy: bool,
+    min_relevancy_level: str,
+    job_id: UUID,
+    session_id: UUID,
+):
     """
     Extract object classes from multiple documentation items and return merged result with metadata.
+
+    This function automatically detects whether to use REST or SCIM extraction based on the
+    api_type from the infoAboutSchema stored in the session.
+
+    Args:
+        doc_items: List of documentation items to process
+        filter_relevancy: Whether to filter by relevancy
+        min_relevancy_level: Minimum relevancy level (low/medium/high)
+        job_id: Job ID for progress tracking
+        session_id: Session ID to retrieve api_type from infoAboutSchema
+
+    Returns:
+        Dictionary with result and relevantChunks
+    """
+    # Step 1: Detect API type from session
+    api_type = await _get_api_type_from_session(session_id)
+
+    # Step 2: Route to appropriate extractor
+    if "SCIM" in api_type:
+        logger.info("[Digester:ObjectClasses] SCIM detected, using guided extraction")
+        return await extract_scim_object_classes(doc_items, job_id)
+
+    # Step 3: Default REST extraction
+    logger.info("[Digester:ObjectClasses] Using standard REST extraction")
+    return await _extract_rest_object_classes(doc_items, filter_relevancy, min_relevancy_level, job_id)
+
+
+async def _extract_rest_object_classes(
+    doc_items: List[dict],
+    filter_relevancy: bool,
+    min_relevancy_level: str,
+    job_id: UUID,
+):
+    """
+    REST-specific object class extraction (original implementation).
 
     Step 1: Extract raw object classes from each document (per UUID) - processes documents in parallel
     Step 2: Merge, deduplicate and sort ALL object classes together
@@ -196,6 +277,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     """
     all_relevant_chunks: List[Dict[str, Any]] = []
     total_docs = len(doc_items)
+    doc_metadata_map = build_doc_metadata_map(doc_items)
 
     await update_job_progress(
         job_id, total_processing=total_docs, processing_completed=0, message="Processing documents"
@@ -206,11 +288,16 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     for idx, doc_item in enumerate(doc_items, 1):
         doc_uuid = doc_item["uuid"]
         doc_content = doc_item["content"]
+        doc_metadata = doc_metadata_map.get(str(doc_uuid))
 
         logger.info("[Digester:InfoMetadata] Processing document %s/%s (UUID: %s)", idx, total_docs, doc_uuid)
 
         raw_result, has_relevant_data = await _extract_info_metadata(
-            doc_content, job_id, doc_uuid, initial_aggregated=aggregated_result
+            doc_content,
+            job_id,
+            doc_uuid,
+            initial_aggregated=aggregated_result,
+            doc_metadata=doc_metadata,
         )
 
         aggregated_result = raw_result
@@ -251,6 +338,9 @@ async def extract_attributes(
     Extract attributes from only the relevant chunks of documentation and update the specific object class
     in objectClassesOutput with the extracted attributes.
 
+    This function automatically detects whether to use REST or SCIM extraction based on the
+    api_type from the infoAboutSchema stored in the session.
+
     Args:
         doc_items: Full documentation items
         object_class: Name of the object class
@@ -266,7 +356,15 @@ async def extract_attributes(
 
     doc_metadata_map = build_doc_metadata_map(doc_items)
 
-    result = await _extract_attributes(selected_docs, object_class, job_id, doc_uuids, doc_metadata_map)
+    # Detect API type and route to appropriate extractor
+    api_type = await _get_api_type_from_session(session_id)
+
+    if "SCIM" in api_type:
+        logger.info(f"[Digester:Attributes] SCIM detected for {object_class}, using guided extraction")
+        result = await extract_scim_attributes(selected_docs, object_class, job_id, doc_uuids, doc_metadata_map)
+    else:
+        logger.info(f"[Digester:Attributes] Using standard REST extraction for {object_class}")
+        result = await _extract_rest_attributes(selected_docs, object_class, job_id, doc_uuids, doc_metadata_map)
 
     try:
         logger.info(f"[Digester:Attributes] Attempting to update object class '{object_class}' with attributes")
@@ -339,6 +437,9 @@ async def extract_endpoints(
     Extract endpoints from only the relevant chunks of documentation and update the specific object class
     in objectClassesOutput with the extracted endpoints.
 
+    This function automatically detects whether to use REST or SCIM extraction based on the
+    api_type from the infoAboutSchema stored in the session.
+
     Args:
         doc_items: Full documentation items
         object_class: Name of the object class
@@ -365,8 +466,19 @@ async def extract_endpoints(
         doc_uuids,
     )
 
-    # Process each selected chunk through endpoint extraction
-    result = await _extract_endpoints(selected_docs, object_class, job_id, base_api_url, doc_uuids, doc_metadata_map)
+    # Detect API type and route to appropriate extractor
+    api_type = await _get_api_type_from_session(session_id)
+
+    if "SCIM" in api_type:
+        logger.info(f"[Digester:Endpoints] SCIM detected for {object_class}, using guided extraction")
+        result = await extract_scim_endpoints(
+            selected_docs, object_class, job_id, base_api_url, doc_uuids, doc_metadata_map
+        )
+    else:
+        logger.info(f"[Digester:Endpoints] Using standard REST extraction for {object_class}")
+        result = await _extract_rest_endpoints(
+            selected_docs, object_class, job_id, base_api_url, doc_uuids, doc_metadata_map
+        )
 
     try:
         logger.info(f"[Digester:Endpoints] Attempting to update object class '{object_class}' with attributes")

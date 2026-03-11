@@ -47,6 +47,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
         patch("src.modules.digester.service.process_documents_in_parallel") as mock_parallel,
+        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = [
             (
@@ -103,7 +104,8 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
         mock_dedupe.return_value = FakeDeduped()
 
         job_id = uuid4()
-        result = await service.extract_object_classes(fake_doc_items, True, "high", job_id)
+        session_id = uuid4()
+        result = await service.extract_object_classes(fake_doc_items, True, "high", job_id, session_id)
 
         assert "result" in result
         assert "relevantChunks" in result
@@ -121,6 +123,7 @@ async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
         patch("src.modules.digester.utils.parallel_docs.process_documents_in_parallel") as mock_parallel,
+        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = []
 
@@ -130,7 +133,7 @@ async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_
 
         mock_dedupe.return_value = EmptyDeduped()
 
-        result = await service.extract_object_classes([], True, "high", uuid4())
+        result = await service.extract_object_classes([], True, "high", uuid4(), uuid4())
 
         assert result["result"]["objectClasses"] == []
         assert result["relevantChunks"] == []
@@ -177,9 +180,10 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service._extract_attributes") as mock_extract_attrs,
+        patch("src.modules.digester.service._extract_rest_attributes") as mock_extract_attrs,
         patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
         patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
         # Setup mocks
         mock_session_maker.return_value.__aenter__.return_value = mock_db_session
@@ -265,9 +269,10 @@ async def test_extract_attributes_session_not_found(mock_llm, mock_digester_upda
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service._extract_attributes") as mock_extract_attrs,
+        patch("src.modules.digester.service._extract_rest_attributes") as mock_extract_attrs,
         patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
         patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
         mock_session_maker.return_value.__aenter__.return_value = mock_db_session
         mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
@@ -323,9 +328,10 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service._extract_endpoints") as mock_extract_endpoints,
+        patch("src.modules.digester.service._extract_rest_endpoints") as mock_extract_endpoints,
         patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
         patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
         mock_session_maker.return_value.__aenter__.return_value = mock_db_session
         mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
@@ -414,9 +420,10 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service._extract_endpoints") as mock_extract_endpoints,
+        patch("src.modules.digester.service._extract_rest_endpoints") as mock_extract_endpoints,
         patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
         patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
         mock_session_maker.return_value.__aenter__.return_value = mock_db_session
         mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
@@ -545,7 +552,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
                     name="ExampleAPI",
                     api_version="v1.0",
                     application_version="1.0.0",
-                    api_type=["REST", "OpenAPI"],
+                    api_type=["REST", "SCIM"],
                     base_api_endpoint=[],
                 ),
                 True,
@@ -555,7 +562,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
                     name="ExampleAPI",
                     api_version="v1.0",
                     application_version="1.0.0",
-                    api_type=["REST", "OpenAPI"],
+                    api_type=["REST", "SCIM"],
                     base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1", type="constant")],
                 ),
                 True,
@@ -585,6 +592,68 @@ async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_j
 
         assert result["result"] == {}
         assert result["relevantChunks"] == []
+
+
+@pytest.mark.asyncio
+async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, mock_digester_update_job_progress):
+    doc_uuid1 = uuid4()
+    doc_uuid2 = uuid4()
+
+    fake_doc_items = [
+        {
+            "uuid": str(doc_uuid1),
+            "content": "doc 1",
+            "summary": "Summary one",
+            "@metadata": {"tags": ["rest", "users"]},
+        },
+        {
+            "uuid": str(doc_uuid2),
+            "content": "doc 2",
+            "summary": "Summary two",
+            "@metadata": {"tags": "openapi"},
+        },
+    ]
+
+    with (
+        patch("src.modules.digester.service._extract_info_metadata", new_callable=AsyncMock) as mock_extract,
+        patch("src.modules.digester.service.increment_processed_documents", new_callable=AsyncMock),
+    ):
+        mock_extract.side_effect = [
+            (
+                InfoMetadata(
+                    name="ExampleAPI",
+                    api_version="1",
+                    application_version="1.0.0",
+                    api_type=["REST"],
+                    base_api_endpoint=[],
+                ),
+                True,
+            ),
+            (
+                InfoMetadata(
+                    name="ExampleAPI",
+                    api_version="1",
+                    application_version="1.0.0",
+                    api_type=["REST", "SCIM"],
+                    base_api_endpoint=[],
+                ),
+                True,
+            ),
+        ]
+
+        await service.extract_info_metadata(fake_doc_items, uuid4())
+
+        first_call = mock_extract.await_args_list[0]
+        assert first_call.kwargs["doc_metadata"] == {
+            "summary": "Summary one",
+            "@metadata": {"tags": ["rest", "users"]},
+        }
+
+        second_call = mock_extract.await_args_list[1]
+        assert second_call.kwargs["doc_metadata"] == {
+            "summary": "Summary two",
+            "@metadata": {"tags": "openapi"},
+        }
 
 
 # ==================== EXTRACT RELATIONS ====================
@@ -685,6 +754,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
             patch(
                 "src.modules.digester.service.deduplicate_and_sort_object_classes", new_callable=AsyncMock
             ) as mock_dedupe_classes,
+            patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
         ):
             mock_parallel.return_value = [
                 (
@@ -716,7 +786,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
 
             mock_dedupe_classes.return_value = ObjectClassResult()
 
-            classes_result = await service.extract_object_classes(doc_items, True, "high", uuid4())
+            classes_result = await service.extract_object_classes(doc_items, True, "high", uuid4(), session_id)
             assert len(classes_result["result"]["objectClasses"]) == 1
 
             mock_parallel.assert_awaited_once()
@@ -731,9 +801,10 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
 
         with (
             patch("src.modules.digester.service.select_doc_chunks") as mock_chunks,
-            patch("src.modules.digester.service._extract_attributes") as mock_attrs,
+            patch("src.modules.digester.service._extract_rest_attributes") as mock_attrs,
             patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
             patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+            patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
         ):
             mock_session_maker.return_value.__aenter__.return_value = mock_db_session
             mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
@@ -753,9 +824,10 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
         # Step 3: Extract endpoints
         with (
             patch("src.modules.digester.service.select_doc_chunks") as mock_chunks,
-            patch("src.modules.digester.service._extract_endpoints") as mock_endpoints,
+            patch("src.modules.digester.service._extract_rest_endpoints") as mock_endpoints,
             patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
             patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
+            patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
         ):
             # Update mock repo to include attributes
             object_classes_output["objectClasses"][0]["attributes"] = attrs_result["result"]["attributes"]

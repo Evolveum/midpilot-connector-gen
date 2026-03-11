@@ -4,7 +4,8 @@
 
 import asyncio
 import logging
-from typing import List, cast
+import re
+from typing import Dict, List, Tuple, cast
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
@@ -24,8 +25,10 @@ from pydantic import HttpUrl
 
 from ...common.chunk_processor.schema import SavedPage
 from ...common.schema import validate_pydantic_object
-from .llms import get_irrelevant_llm_response
-from .prompts import get_irrelevant_filter_prompts
+from ...config import config
+from .llms import get_irrelevant_llm_response, get_relevant_links_from_text
+from .prompts import get_irrelevant_filter_prompts, get_relevant_filter_prompts
+from .schema import IrrelevantLinks, PageReferences, ReferenceItem, RelevantLinks
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +40,19 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
     """
     logger.info("[Scrape:URLs] Starting to scrape %s URLs", len(links_to_scrape_orig))
     prune_filter = PruningContentFilter(threshold=0.42, threshold_type="dynamic", min_word_threshold=1)
-    md_generator = DefaultMarkdownGenerator(content_filter=prune_filter)
-    browser_config = BrowserConfig(accept_downloads=True)
+    md_generator = DefaultMarkdownGenerator(
+        content_filter=prune_filter, options={"ignore_images": True, "skip_internal_links": True}
+    )
+    browser_config = BrowserConfig()  # accept_downloads=True, browser_type="firefox"
     run_config = CrawlerRunConfig(
+        # user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
+        # simulate_user= True,
         check_robots_txt=True,
+        # magic=True,
         wait_until="networkidle",
+        delay_before_return_html=1.5,
+        # delay_before_return_html=10.0,
+        # screenshot=True,
         markdown_generator=md_generator,
     )
 
@@ -112,9 +123,25 @@ async def get_content_type(url: str) -> str:
     outputs:
         str - the content type from the HTTP headers
     """
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",  # We need primarily HTML content for link extraction
+        "Accept-Encoding": "identity",  # Disable compression for HEAD requests to avoid gzip parsing issues
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
+    }
     async with aiohttp.ClientSession() as session:
-        async with session.head(url, allow_redirects=True) as response:
+        try:
+            response = await session.head(
+                url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=10)
+            )
+            logger.debug(
+                "[Scrape:ContentType] Checked content type for %s: %s",
+                url,
+                response.headers.get("Content-Type", "unknown"),
+            )
             return response.headers.get("Content-Type", "")
+        except Exception as e:
+            logger.error("[Scrape:ContentType] Failed to get content type for %s: %s", url, e)
+            return ""
 
 
 async def get_all_content_types(urls: list[str]) -> dict[str, str]:
@@ -136,13 +163,28 @@ async def fetch_data_page(url: str) -> tuple[str, str] | None:
     inputs:
         url: str - the URL to fetch
     outputs:
-        str | None - the content of the page or None if failed
+        tuple[str, str] | None - the tuple of the url and the content of the page or None if failed
     """
     try:
         async with aiohttp.ClientSession() as http_session:
             async with http_session.get(url) as response:
                 if response.status == 200:
-                    return (url, await response.text())
+                    content_type = response.headers.get("Content-Type", "")
+                    # This has to be here because some great admins ignore RFC 7231 and return different content types for HEAD and GET requests...
+                    if (
+                        "json" in content_type
+                        or "yaml" in content_type
+                        or "yml" in content_type
+                        or "text/plain" in content_type
+                    ):
+                        return (url, await response.text())
+                    else:
+                        logger.warning(
+                            "[Scrape:DataPage] URL %s has unsupported content type: %s, defaulting to crawl4ai scraping",
+                            url,
+                            content_type,
+                        )
+                        return (url, "error")
                 else:
                     logger.error("[Scrape:DataPage] Failed to fetch %s: HTTP %s", url, response.status)
                     return None
@@ -157,11 +199,153 @@ async def scrape_all_data_pages(links: list[str]) -> list[tuple[str, str]]:
     inputs:
         links: list - list of URLs to scrape
     outputs:
-        dict - dictionary mapping URL to its content
+        list - list of tuples mapping URL to its content
     """
     tasks = [fetch_data_page(link) for link in links]
     results = await asyncio.gather(*tasks)
     return [result for result in results if result is not None]
+
+
+def process_citations_markdown(markdown_references: str, text_with_citations: str, page_url: str) -> PageReferences:
+    """
+    Parse crawl4ai citation markdown and extract ReferenceItem objects
+    inputs:
+        markdown_references: str - the markdown content with references
+        text_with_citations: str - the text with citations
+        page_url: str - the URL of the page the markdown was generated from.
+    outputs:
+        PageReferences - the PageReferences object containing the extracted references and citation markdown
+    """
+
+    ref_section_match = re.search(r"##\s+References\s*\n(.*)", markdown_references, re.DOTALL)
+    references_markdown = ref_section_match.group(0).strip() if ref_section_match else markdown_references.strip()
+    ref_block = ref_section_match.group(1) if ref_section_match else markdown_references
+
+    pattern = re.compile(r"⟨(\d+)⟩\s+(https?://\S+?):[^\S\r\n]?(.+)?")
+    references: list[ReferenceItem] = []
+    for match in pattern.finditer(ref_block):
+        number, url = int(match.group(1)), match.group(2)
+        description = match.group(3).strip() if match.group(3) else ""
+        references.append(ReferenceItem(number=number, url=url, description=description))
+
+    return PageReferences(
+        page_url=page_url,
+        references=references,
+        references_markdown=references_markdown,
+        text_with_citations=text_with_citations,
+    )
+
+
+def remove_citations(page: PageReferences, urls: List[str]) -> PageReferences:
+    """
+    Remove citations from markdown content and return updated PageReferences.
+    inputs:
+        page: PageReferences - the original PageReferences object containing the markdown with citations
+        urls: list - list of URLs to remove from the markdown
+    outputs:
+        PageReferences - the updated PageReferences object with citations removed from the markdown
+    """
+
+    updated_markdown = page.text_with_citations
+    updated_citations_markdown = page.references_markdown
+    for url in urls:
+        matching = [r.number for r in page.references if r.url == url or r.url == url + "/" or r.url + "/" == url]
+        if not matching:
+            logger.warning("[Scrape:Citations] URL %s not found in references, skipping citation removal", url)
+            continue
+        if len(matching) > 1:
+            logger.warning(
+                "[Scrape:Citations] URL %s has multiple citations in the references, removing only the first one (number %s)",
+                url,
+                matching[0],
+            )
+        url_no = matching[0]
+        updated_citations_markdown = re.sub(rf"⟨{url_no}⟩.*(?:\n|$)", "", updated_citations_markdown)
+        updated_markdown = re.sub(rf"\⟨{url_no}\⟩", "", updated_markdown)
+        page.references = [ref for ref in page.references if ref.url != url]
+
+    return PageReferences(
+        page_url=page.page_url,
+        references=page.references,
+        references_markdown=updated_citations_markdown,
+        text_with_citations=updated_markdown,
+    )
+
+
+def update_references(page: PageReferences, url_mapping: Dict[str, str]) -> PageReferences:
+    """
+    Update citations in markdown content based on a mapping of old URLs to new URLs.
+    inputs:
+        page: PageReferences - the original PageReferences object containing the markdown with citations
+        url_mapping: dict - a mapping of old URLs to new URLs for updating the citations
+    outputs:
+        PageReferences - the updated PageReferences object with citations updated in the markdown content
+    """
+    updated_markdown = page.references_markdown
+    for old_url, new_url in url_mapping.items():
+        pattern = rf"(⟨\d+⟩\s+){re.escape(old_url)}(:\s+)"
+        updated_markdown = re.sub(pattern, rf"\1{new_url}\2", updated_markdown)
+        page.references = [
+            ReferenceItem(
+                number=ref.number, url=new_url if ref.url == old_url else ref.url, description=ref.description
+            )
+            for ref in page.references
+        ]
+
+    return PageReferences(
+        page_url=page.page_url,
+        references=page.references,
+        references_markdown=updated_markdown,
+        text_with_citations=page.text_with_citations,
+    )
+
+
+def remove_anchor_links(urls: list[str]) -> Tuple[List[str], Dict[str, str]]:
+    """
+    TODO: Temporary solution
+    Remove anchor links from a list of URLs and return a mapping of original URLs to cleaned URLs.
+    inputs:
+        urls: list - list of URLs to clean
+    outputs:
+        tuple - (cleaned_urls, url_mapping) where:
+            cleaned_urls: list - list of URLs with anchor links removed
+            url_mapping: dict - mapping of original URLs to cleaned URLs for reference
+    """
+    cleaned_urls = []
+    url_mapping = {}
+    for url in urls:
+        cleaned_url = url.split("#")[0]
+        cleaned_urls.append(cleaned_url)
+        url_mapping[url] = cleaned_url
+    return cleaned_urls, url_mapping
+
+
+def deduplicate_links(page_references: PageReferences):
+    """
+    Remove duplicate links from a PageReferences object.
+    inputs:
+        page_references: PageReferences - the PageReferences object to deduplicate
+    outputs:
+        Updates the PageReference object in place
+    """
+    seen_urls = set()
+    duplitcates: List[ReferenceItem] = []
+    for ref in page_references.references:
+        if ref.url not in seen_urls:
+            seen_urls.add(ref.url)
+        else:
+            duplitcates.append(ref)
+    for dup in duplitcates:
+        min_number = min(ref.number for ref in page_references.references if ref.url == dup.url)
+        other_numbers = [
+            ref.number for ref in page_references.references if ref.url == dup.url and ref.number != min_number
+        ]
+        for num in other_numbers:
+            page_references.references_markdown = re.sub(rf"⟨{num}⟩.*(?:\n|$)", "", page_references.references_markdown)
+            page_references.text_with_citations = re.sub(
+                rf"⟨{num}⟩", f"<{min_number}>", page_references.text_with_citations
+            )
+            page_references.references = [ref for ref in page_references.references if ref.number != num]
 
 
 async def scraper_loop(
@@ -169,13 +353,12 @@ async def scraper_loop(
     app: str,
     app_version: str,
     max_iterations_filter_irrelevant: int = 5,
-    max_scraper_iterations: int = 3,
     curr_iteration: int = 1,
     irrelevant_links: list[str] | None = None,
     saved_pages: dict[str, SavedPage] | None = None,
     trusted_domains: list[str] | None = None,
     forbidden_url_parts: list | None = None,
-    suffixes: tuple = (".yml", ".yaml", ".json"),
+    last_iteration: bool = False,
 ):
     """
     Main scraper loop to scrape links, filter irrelevant ones, and process html content.
@@ -184,12 +367,12 @@ async def scraper_loop(
         app: str - application name
         app_version: str - application version
         max_iterations_filter_irrelevant: int - maximum iterations for filtering irrelevant links
-        max_scraper_iterations: int - maximum scraper iterations
         curr_iteration: int - current iteration count
         irrelevant_links: list - list of already identified irrelevant links
         saved_pages: dict - dictionary of already saved pages
         trusted_domains: list - list of trusted domains
         forbidden_url_parts: list - list of URL parts to filter out
+        last_iteration: bool - flag indicating if this is the last iteration of the scraper loop, on which we dont need to filter out irrelevant links
     outputs:
         new_links_to_scrape: list - list of links to scrape in the next iteration
     updates:
@@ -207,12 +390,12 @@ async def scraper_loop(
         trusted_domains = []
     if forbidden_url_parts is None:
         forbidden_url_parts = [
-            "/get-help/",
-            "about/",
-            "/contact-us/",
-            "/privacy/",
-            "/terms/",
-            "/blog/",
+            "get-help",
+            "about",
+            "contact-us",
+            "privacy",
+            "terms",
+            "blog",
         ]
 
     logger.info("[Scrape:Loop] Iteration %s: Starting to scrape %s links", curr_iteration, len(links_to_scrape))
@@ -229,33 +412,13 @@ async def scraper_loop(
     other_links = [url for url in content_types.keys() if url not in data_links]
 
     http_results = await scrape_all_data_pages(data_links)
-    scrape_result = await scrape_urls(other_links)
-
-    logger.info("[Scrape:Loop] Iteration %s: Scraped %s pages successfully", curr_iteration, len(scrape_result))
-
-    new_links_to_scrape = []
-
-    for scraped_link in scrape_result:
-        if validate_pydantic_object(scraped_link.url, HttpUrl) and scraped_link.markdown is not None:
-            content = scraped_link.markdown.fit_markdown
-            contentType = "text/markdown"
-            # with open("crawl_all.json", "a") as crawl_all_file:
-            #     crawl_all_file.write(scraped_link.model_dump_json() + "\n")
-            link_arr = get_links_for_page(scraped_link)
-            link_arr_valid = [link for link in link_arr if validate_pydantic_object(link, HttpUrl)]
-            page = SavedPage(
-                url=scraped_link.url.rstrip("/"),
-                contentType=contentType,
-                content=content,
-                links=link_arr_valid,
-            )
-            logger.debug("[Scrape:Loop] Extracted %s links from page %s", len(link_arr_valid), scraped_link.url)
-            saved_pages[str(scraped_link.url)] = page
-            new_links_to_scrape.extend(link_arr)
 
     for url, content in http_results:
-        logger.debug("[Scrape:Loop] Loading %s as data file", str(url))
         if validate_pydantic_object(url, HttpUrl):
+            if content == "error":
+                other_links.append(url)  # If fetching as data page failed, add to other links for regular scraping
+                continue
+            logger.debug("[Scrape:Loop] Loading %s as data file", str(url))
             page = SavedPage(
                 url=url,
                 contentType=content_types[str(url)],
@@ -264,8 +427,171 @@ async def scraper_loop(
             )
             logger.debug("[Scrape:Loop] Fetched data page %s", str(url))
             saved_pages[str(url)] = page
+
+    scrape_result = await scrape_urls(other_links)
+
+    logger.info("[Scrape:Loop] Iteration %s: Scraped %s pages successfully", curr_iteration, len(scrape_result))
+
+    new_links_to_scrape: List[str] = []
+
+    current_scraped_urls = [
+        str(result.url)
+        for result in scrape_result
+        if validate_pydantic_object(result.url, HttpUrl) and result.markdown is not None
+    ]
+
+    for scraped_link in scrape_result:
+        if validate_pydantic_object(scraped_link.url, HttpUrl) and scraped_link.markdown is not None:
+            content = scraped_link.markdown.fit_markdown
+            # logger.info(f"[Scrape:Loop] markdown with citations: {scraped_link.markdown.markdown_with_citations}")
+            # logger.info(f"[Scrape:Loop] references: {scraped_link.markdown.references_markdown}")
+            contentType = "text/markdown"
+
             # with open("crawl_all.json", "a") as crawl_all_file:
-            #     crawl_all_file.write(page.model_dump_json() + "\n")
+            #     crawl_all_file.write(scraped_link.model_dump_json() + "\n")
+            page_references = process_citations_markdown(
+                markdown_references=scraped_link.markdown.references_markdown,
+                text_with_citations=scraped_link.markdown.markdown_with_citations,
+                page_url=str(scraped_link.url),
+            )
+
+            link_arr = [ref.url for ref in page_references.references if ref.url]
+            logger.info(f"[Scrape:Loop] Extracted {len(link_arr)} raw links from page %s", str(scraped_link.url))
+            link_arr_clean = clean_reference_list(link_arr)
+            deleted_links = list(set(link_arr) - set(link_arr_clean))
+            if deleted_links:
+                page_references = remove_citations(page_references, deleted_links)
+            link_arr_abs, map_of_links = relative_paths_to_absolute(link_arr_clean, str(scraped_link.url))
+            page_references = update_references(page_references, map_of_links)
+            deduplicate_links(page_references)
+            links_without_anchors, anchor_url_mapping = remove_anchor_links(link_arr_abs)
+            page_references = update_references(page_references, anchor_url_mapping)
+            deduplicate_links(page_references)
+            links_without_trailing_slash, map_without_trailing_slash = remove_trailing_slash(links_without_anchors)
+            page_references = update_references(page_references, map_without_trailing_slash)
+            deduplicate_links(page_references)
+            link_arr_valid = [link for link in links_without_trailing_slash if validate_pydantic_object(link, HttpUrl)]
+            link_arr_valid = list(set(link_arr_valid))
+            removed_invalid_links = list(set(links_without_trailing_slash) - set(link_arr_valid))
+            if removed_invalid_links:
+                page_references = remove_citations(page_references, removed_invalid_links)
+            if len(link_arr_valid) != len(page_references.references):
+                logger.warning(
+                    "[Scrape:Loop] After cleaning and validation, there is a mismatch between references and valid links for page %s. Number of valid links: %s, number of references: %s",
+                    str(scraped_link.url),
+                    len(link_arr_valid),
+                    len(page_references.references),
+                )
+            # Probably we dont need to return the irrelevant links arr
+            new_irrelevant_links, partly_filtered_new_links = await filterOutIrrelevantLinks(
+                links=link_arr_valid,
+                saved_pages=saved_pages,
+                trusted_domains=trusted_domains,
+                app=app,
+                app_version=app_version,
+                past_irrelevant_links=irrelevant_links,
+                forbidden_url_parts=forbidden_url_parts,
+                call_llm=False,
+                current_scraped_urls=current_scraped_urls,
+            )
+
+            if len(partly_filtered_new_links) + len(new_irrelevant_links) != len(page_references.references):
+                logger.warning(
+                    "[Scrape:Loop] After irrelevant link filtering, there is a mismatch between references and valid+irrelevant links for page %s. Number of valid links: %s, number of irrelevant links: %s, number of references: %s",
+                    str(scraped_link.url),
+                    len(partly_filtered_new_links),
+                    len(new_irrelevant_links),
+                    len(page_references.references),
+                )
+
+            page_references_saved = page_references.model_copy()
+
+            not_saved_or_current_irrelevant_links = [
+                link
+                for link in new_irrelevant_links
+                if link not in saved_pages
+                and link + "/" not in saved_pages
+                and link not in current_scraped_urls
+                and link + "/" not in current_scraped_urls
+            ]
+
+            page_references_saved = remove_citations(page_references_saved, not_saved_or_current_irrelevant_links)
+
+            page_references = remove_citations(page_references, new_irrelevant_links)
+
+            if len(partly_filtered_new_links) != len(page_references.references):
+                logger.warning(
+                    "[Scrape:Loop] After initial filtering, %s valid links remain but there are %s references for page %s",
+                    len(partly_filtered_new_links),
+                    len(page_references.references),
+                    str(scraped_link.url),
+                )
+
+            if len(partly_filtered_new_links) > 0 or last_iteration:
+                relevant_prompts = get_relevant_filter_prompts(page_references.references_markdown, app, app_version)
+
+                relevant_links_response: RelevantLinks | None = await get_relevant_links_from_text(relevant_prompts)
+
+                relevant_links: List[str] = []
+                if relevant_links_response:
+                    relevant_links_raw = relevant_links_response.links if relevant_links_response.links else []
+                    relevant_links, _ = remove_trailing_slash(relevant_links_raw)
+                    hallucinated = [link for link in relevant_links if link not in partly_filtered_new_links]
+                    if hallucinated:
+                        logger.warning(
+                            "[Scrape:Loop] LLM returned %s link(s) not present in extracted links on page %s, dropping: %s",
+                            len(hallucinated),
+                            str(scraped_link.url),
+                            hallucinated,
+                        )
+                        relevant_links = [link for link in relevant_links if link in partly_filtered_new_links]
+                        for link in hallucinated:
+                            if link not in new_irrelevant_links:
+                                logger.warning(
+                                    "[Scrape:Loop] There is a mismatch between irrelevant and relevant links for URL %s: %s",
+                                    str(scraped_link.url),
+                                    link,
+                                )
+                    logger.info(
+                        f"[Scrape:Loop] LLM identified {len(relevant_links)} relevant links on page %s",
+                        str(scraped_link.url),
+                    )
+                    llm_irrelevant_links = list(set(partly_filtered_new_links) - set(relevant_links))
+                    new_irrelevant_links.extend(llm_irrelevant_links)
+                    # TODO: maybe we should do this only after all pages are processed
+                    irrelevant_links.extend(llm_irrelevant_links)
+                    new_links_to_scrape.extend(relevant_links)
+                    page_references = remove_citations(page_references, llm_irrelevant_links)
+                    page_references_saved = remove_citations(page_references_saved, llm_irrelevant_links)
+
+                new_links_to_scrape = list(set(new_links_to_scrape))
+
+                logger.debug(
+                    "[Scrape:Loop] Extracted %s valid links from page %s", len(relevant_links), scraped_link.url
+                )
+
+                page = SavedPage(
+                    url=scraped_link.url.rstrip("/"),
+                    contentType=contentType,
+                    content=content,
+                    links=[HttpUrl(url=link) for link in relevant_links],
+                    pageReferences=page_references_saved,
+                )
+                saved_pages[str(scraped_link.url)] = page
+
+            else:
+                logger.info(
+                    "[Scrape:Loop] No valid links found on page %s, skipping link extraction and saving content only",
+                    str(scraped_link.url),
+                )
+                page = SavedPage(
+                    url=scraped_link.url.rstrip("/"),
+                    contentType=contentType,
+                    content=content,
+                    links=[HttpUrl(url=ref.url) for ref in page_references_saved.references if ref.url],
+                    pageReferences=page_references_saved,
+                )
+                saved_pages[str(scraped_link.url)] = page
 
     logger.info(
         "[Scrape:Loop] Iteration %s: Extracted %s total new links from scraped pages",
@@ -273,18 +599,18 @@ async def scraper_loop(
         len(new_links_to_scrape),
     )
 
-    new_irrelevant_links, new_links_to_scrape = await filterOutIrrelevantLinks(
-        links=new_links_to_scrape,
-        saved_pages=saved_pages,
-        trusted_domains=trusted_domains,
-        app=app,
-        app_version=app_version,
-        past_irrelevant_links=irrelevant_links,
-        forbidden_url_parts=forbidden_url_parts,
-        llm_calls=max_iterations_filter_irrelevant,
-    )
+    # new_irrelevant_links, new_links_to_scrape = await filterOutIrrelevantLinks(
+    #     links=new_links_to_scrape,
+    #     saved_pages=saved_pages,
+    #     trusted_domains=trusted_domains,
+    #     app=app,
+    #     app_version=app_version,
+    #     past_irrelevant_links=irrelevant_links,
+    #     forbidden_url_parts=forbidden_url_parts,
+    #     llm_calls=max_iterations_filter_irrelevant,
+    # )
 
-    irrelevant_links = new_irrelevant_links
+    # irrelevant_links = new_irrelevant_links
 
     logger.info(
         "[Scrape:Loop] Iteration %s complete: %s relevant links to scrape next, %s total irrelevant links",
@@ -296,6 +622,13 @@ async def scraper_loop(
     return new_links_to_scrape
 
 
+async def processIrrelevantLinksPart(
+    irrelevant_links_part: list[str], app: str, app_version: str
+) -> IrrelevantLinks | None:
+    irrelevant_prompts = get_irrelevant_filter_prompts(irrelevant_links_part, app, app_version)
+    return await get_irrelevant_llm_response(irrelevant_prompts)
+
+
 async def filterOutIrrelevantLinks(
     links: list[str],
     saved_pages: dict[str, SavedPage],
@@ -304,7 +637,9 @@ async def filterOutIrrelevantLinks(
     app_version: str,
     past_irrelevant_links: list[str],
     forbidden_url_parts: list[str],
+    call_llm: bool = True,
     llm_calls: int = 5,
+    current_scraped_urls: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """
     Filter out irrelevant links using multiple methods.
@@ -321,37 +656,51 @@ async def filterOutIrrelevantLinks(
         past_irrelevant_links: list - list of previously identified irrelevant links
         forbidden_url_parts: list - list of URL parts to filter out
         llm_calls: int - number of LLM calls to make
+        current_scraped_urls: list - list of links already queued for the next iteration (to avoid duplicates)
     outputs:
-        list - list of irrelevant links from this run combined with past irrelevant links
+        list - list of irrelevant links from this run
         list - filtered list of relevant links
     """
-    logger.info("[Scrape:Filter] Starting to filter %s links", len(links))
     links_set = set(links)
+    logger.info("[Scrape:Filter] Starting to filter %s unique links", len(links_set))
     current_links = [
         link
-        for link in links_set
-        if link not in saved_pages.keys()
-        and link.rstrip("/") not in saved_pages.keys()
-        and link + "/" not in saved_pages.keys()
+        for link in list(links_set)
+        if link not in saved_pages
+        and link + "/" not in saved_pages
+        and (
+            current_scraped_urls is None
+            or (link not in current_scraped_urls and link + "/" not in current_scraped_urls)
+        )
     ]
     logger.info("[Scrape:Filter] After removing already scraped: %s links remain", len(current_links))
 
-    current_links_trusted = [link for link in current_links if get_base_domain(link) in trusted_domains]
+    current_links_past_filtered = list(set(current_links) - set(past_irrelevant_links))
+    logger.info(
+        "[Scrape:Filter] After removing past irrelevant links: %s links remain",
+        len(current_links_past_filtered),
+    )
+
+    current_links_trusted = [
+        link
+        for link in current_links_past_filtered
+        if get_base_domain(link) in trusted_domains or "netsuite" in get_base_domain(link)
+    ]
     logger.info("[Scrape:Filter] After filtering by trusted domains: %s links remain", len(current_links_trusted))
 
     current_links_trusted_valid = [link for link in current_links_trusted if validate_pydantic_object(link, HttpUrl)]
     logger.info("[Scrape:Filter] After validating URLs: %s links remain", len(current_links_trusted_valid))
-
-    current_links_trusted_valid = list(set(current_links_trusted_valid) - set(past_irrelevant_links))
-    logger.info(
-        "[Scrape:Filter] After removing past irrelevant links and removing duplicates: %s links remain",
-        len(current_links_trusted_valid),
-    )
+    past_irrelevant_links.extend(list(set(current_links_past_filtered) - set(current_links_trusted_valid)))
 
     links_to_remove = []
     for link in current_links_trusted_valid:
         for forbidden_part in forbidden_url_parts:
-            if f"/{forbidden_part}/" in link:
+            if (
+                f"/{forbidden_part}/" in link
+                or f".{forbidden_part}." in link
+                or link.endswith(f"/{forbidden_part}")
+                or link.endswith(f".{forbidden_part}")
+            ):
                 past_irrelevant_links.append(link)
                 links_to_remove.append(link)
                 break
@@ -363,19 +712,40 @@ async def filterOutIrrelevantLinks(
         len(links_to_remove),
     )
 
+    if not call_llm:
+        new_irrelevant_links = list(links_set - set(current_links_not_forbidden))
+        return new_irrelevant_links, current_links_not_forbidden
+
     curr_run = 0
     while curr_run < llm_calls and len(current_links_not_forbidden) > 0:
         logger.info("[Scrape:Filter] Starting LLM filtering call %s/%s", curr_run + 1, llm_calls)
 
-        irrelevant_prompts = get_irrelevant_filter_prompts(current_links_not_forbidden, app, app_version)
+        link_parts: List[List[str]] = []
 
-        irrelevant_llm_response = await get_irrelevant_llm_response(irrelevant_prompts)
+        step = len(current_links_not_forbidden) / config.scrape_and_process.irrelevant_links_parts
+        number_of_steps = min(
+            config.scrape_and_process.irrelevant_links_parts_min_length,
+            max(1, int(len(current_links_not_forbidden) / step)),
+        )
+        for i in range(number_of_steps):
+            part_links = current_links_not_forbidden[
+                int(i * step) : min(int((i + 1) * step), len(current_links_not_forbidden))
+            ]
+            link_parts.append(part_links)
 
-        if irrelevant_llm_response is None:
+        irrelevant_llm_responses = await asyncio.gather(
+            *[processIrrelevantLinksPart(part, app, app_version) for part in link_parts]
+        )
+
+        if any(resp is None for resp in irrelevant_llm_responses):
             logger.warning("[Scrape:Filter] LLM filtering call %s/%s failed", curr_run + 1, llm_calls)
         else:
-            logger.debug("[Scrape:Filter] LLM identified %s RAW irrelevant links", len(irrelevant_llm_response.links))
-            irrelevant_llm_links = list(set(irrelevant_llm_response.links) & set(current_links_not_forbidden))
+            irrelevant_llm_links = []
+            for resp in irrelevant_llm_responses:
+                if resp is not None:
+                    irrelevant_llm_links.extend(resp.links)
+            logger.debug("[Scrape:Filter] LLM identified %s RAW irrelevant links", len(irrelevant_llm_links))
+            irrelevant_llm_links = list(set(irrelevant_llm_links) & set(current_links_not_forbidden))
             logger.info("[Scrape:Filter] LLM identified %s irrelevant links", len(irrelevant_llm_links))
             logger.debug("[Scrape:Filter] LLM irrelevant links: %s", irrelevant_llm_links)
 
@@ -391,7 +761,9 @@ async def filterOutIrrelevantLinks(
         len(past_irrelevant_links),
     )
 
-    return past_irrelevant_links, current_links_not_forbidden
+    new_irrelevant_links = list(links_set - set(current_links_not_forbidden))
+
+    return new_irrelevant_links, current_links_not_forbidden
 
 
 # For now this function is not used, but may be useful later
@@ -439,20 +811,47 @@ def clean_reference_list(reference_list):
     ]
 
 
-def relative_paths_to_absolute(reference_list, current_url):
+def remove_trailing_slash(urls: List[str]) -> Tuple[List[str], Dict[str, str]]:
+    """
+    Remove trailing slash from references if they exist, to avoid duplicates and inconsistencies in URL formatting.
+
+    """
+    new_urls = []
+    map_of_links = {}
+    for url in urls:
+        if url.endswith("/"):
+            map_of_links[url] = url[:-1]
+            new_urls.append(url[:-1])
+        else:
+            new_urls.append(url)
+    return new_urls, map_of_links
+
+
+def relative_paths_to_absolute(reference_list: List[str], current_url: str) -> Tuple[List[str], Dict[str, str]]:
     """
     Scraped relative references are converted to absolute paths.
     The assumption here is that the current_url (i.e., the absolute path page we are currently scraping)
     is also the prefix of the relative path we are trying to reconstruct. This is a simple process of
     merging this current url (base) with the relative path scraped (using urljoin function).
+
+    inputs:
+        reference_list: list - list of scraped references (links) which may be relative or absolute
+        current_url: str - the URL of the page currently being scraped, used as the base for converting relative paths
+    outputs:
+        tuple - (new_reference_list, map_of_links) where:
+            new_reference_list: list - list of absolute URLs after conversion
+            map_of_links: dict - mapping of original reference to its absolute URL for relative references
     """
 
     new_reference_list = []
 
     # current_base_url = extract_base_url(current_url)
 
+    map_of_links = {}
+
     for link in reference_list:
         if not ("http" in link or "www" in link):
+            map_of_links[link] = urljoin(current_url, urlparse(link).path)
             new_reference_list.append(urljoin(current_url, urlparse(link).path))
             # This is commented out, because for now, it may introduce too many irrelevant links
             # and the benefit may not be worth the additional delay in scraping.
@@ -468,7 +867,7 @@ def relative_paths_to_absolute(reference_list, current_url):
         else:
             new_reference_list.append(link)
 
-    return new_reference_list
+    return new_reference_list, map_of_links
 
 
 def extract_base_url(url: str):
@@ -490,7 +889,7 @@ def get_links_for_page(scraperOutput: CrawlResult) -> list:
     link_arr.extend([link["href"] for link in scraperOutput.links["internal"]])
     link_arr.extend([link["href"] for link in scraperOutput.links["external"]])
     link_arr_clean = clean_reference_list(link_arr)
-    link_arr_abs = relative_paths_to_absolute(link_arr_clean, scraperOutput.url)
+    link_arr_abs, _ = relative_paths_to_absolute(link_arr_clean, scraperOutput.url)
     return link_arr_abs
 
 

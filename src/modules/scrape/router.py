@@ -20,6 +20,30 @@ from .schema import ScrapeRequest
 router = APIRouter()
 
 
+async def _resolve_scrape_request(
+    req: ScrapeRequest,
+    repo: SessionRepository,
+    session_id: UUID,
+) -> ScrapeRequest:
+    explicit_input = req.model_dump(by_alias=True, exclude_unset=True)
+    explicit_version = explicit_input.get("applicationVersion")
+
+    if isinstance(explicit_version, str) and explicit_version.strip():
+        return req.model_copy(update={"application_version": explicit_version.strip()})
+
+    discovery_input = await repo.get_session_data(session_id, "discoveryInput") or {}
+    if isinstance(discovery_input, dict):
+        discovery_version = str(discovery_input.get("applicationVersion") or "").strip()
+        if discovery_version:
+            return req.model_copy(update={"application_version": discovery_version})
+
+    current_version = str(req.application_version or "").strip()
+    if current_version:
+        return req.model_copy(update={"application_version": current_version})
+
+    return req.model_copy(update={"application_version": "current"})
+
+
 # Scrape Operations
 @router.post(
     "/{session_id}/scrape",
@@ -37,12 +61,13 @@ async def scrape_documentation(
     """
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
+    resolved_req = await _resolve_scrape_request(req, repo, session_id)
 
     job_id = await schedule_coroutine_job(
         job_type="scrape.getRelevantDocumentation",
-        input_payload=req.model_dump(by_alias=True),
+        input_payload=resolved_req.model_dump(by_alias=True),
         worker=service.fetch_relevant_documentation,
-        worker_args=(req, session_id),
+        worker_args=(resolved_req, session_id),
         initial_stage="queue",
         initial_message="Queued scraping job",
         session_id=session_id,
@@ -53,7 +78,7 @@ async def scrape_documentation(
         session_id,
         {
             "scrapeJobId": str(job_id),
-            "scrapeInput": req.model_dump(by_alias=True),
+            "scrapeInput": resolved_req.model_dump(by_alias=True),
         },
     )
 

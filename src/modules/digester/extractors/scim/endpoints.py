@@ -1,0 +1,249 @@
+# Copyright (C) 2010-2026 Evolveum and contributors
+#
+# Licensed under the EUPL-1.2 or later.
+
+"""
+SCIM 2.0 guided endpoints extraction.
+
+This module extracts ONLY custom endpoints, unsupported endpoints,
+and deviations from standard SCIM endpoints.
+"""
+
+import logging
+from typing import Any, Dict, List
+from uuid import UUID
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables.config import RunnableConfig
+
+from .....common.jobs import increment_processed_documents, update_job_progress
+from .....common.langfuse import langfuse_handler
+from .....common.llm import get_default_llm, make_basic_chain
+from ...prompts.scim.endpoints_prompts import (
+    scim_endpoints_system_prompt,
+    scim_endpoints_user_prompt,
+)
+from ...schema import EndpointInfo, EndpointResponse
+from ...scim.loader import get_base_scim_endpoints, is_scim_standard_class
+
+logger = logging.getLogger(__name__)
+
+
+async def extract_scim_endpoints(
+    chunks: List[str],
+    object_class: str,
+    job_id: UUID,
+    base_api_url: str = "",
+    chunk_details: List[str] | None = None,
+    doc_metadata_map: Dict[str, Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """
+    Extract endpoints for SCIM object class using guided approach:
+    1. Return base SCIM endpoints
+    2. Extract custom endpoints + deviations from docs
+    3. Merge base + custom
+
+    Args:
+        chunks: List of documentation chunks to analyze
+        object_class: Target object class name
+        job_id: Job ID for progress tracking
+        base_api_url: Base API URL for endpoint paths
+        chunk_details: Optional list of document UUIDs for each chunk
+        doc_metadata_map: Optional metadata mapping for documents
+
+    Returns:
+        Dictionary with:
+        - "result": {"endpoints": [...]} merged endpoints
+        - "relevantChunks": List of chunks with custom endpoints
+    """
+    logger.info("[SCIM:Endpoints] Starting guided extraction for %s", object_class)
+
+    if chunk_details is None:
+        chunk_details = [""] * len(chunks)
+
+    # Step 1: Load base SCIM endpoints (if standard class)
+    base_endpoints_data = []
+    if is_scim_standard_class(object_class):
+        base_endpoints_data = get_base_scim_endpoints(object_class, base_api_url)
+        logger.info(
+            "[SCIM:Endpoints] Loaded %d base endpoints for %s",
+            len(base_endpoints_data),
+            object_class,
+        )
+    else:
+        logger.info(
+            "[SCIM:Endpoints] %s is not a standard SCIM class, skipping base endpoints",
+            object_class,
+        )
+
+    # Convert to EndpointInfo objects
+    base_endpoints = [
+        EndpointInfo(
+            path=ep["path"],
+            method=ep["method"],
+            description=ep["description"],
+            response_content_type=ep.get("responseContentType"),
+            request_content_type=ep.get("requestContentType"),
+            suggested_use=ep.get("suggestedUse", []),
+        )
+        for ep in base_endpoints_data
+    ]
+
+    # Step 2: Extract custom endpoints and deviations from documentation
+    total_chunks = len(chunks)
+    await update_job_progress(
+        job_id,
+        total_processing=total_chunks,
+        processing_completed=0,
+        message=f"Extracting custom endpoints for {object_class}",
+    )
+
+    all_custom_endpoints: List[List[EndpointInfo]] = []
+    relevant_chunks: List[Dict[str, Any]] = []
+
+    for idx, (chunk, doc_uuid) in enumerate(zip(chunks, chunk_details, strict=False), 1):
+        logger.info(
+            "[SCIM:Endpoints] Processing chunk %d/%d for %s (doc: %s)",
+            idx,
+            total_chunks,
+            object_class,
+            doc_uuid,
+        )
+
+        custom_eps = await extract_custom_scim_endpoints(
+            chunk=chunk,
+            object_class=object_class,
+            job_id=job_id,
+            base_api_url=base_api_url,
+            base_endpoints=base_endpoints_data,
+        )
+
+        if custom_eps:
+            all_custom_endpoints.append(custom_eps)
+            if doc_uuid:
+                relevant_chunks.append({"docUuid": doc_uuid})
+
+        await increment_processed_documents(job_id, delta=1)
+
+    # Step 3: Flatten and merge custom endpoints
+    flat_custom_endpoints = [ep for sublist in all_custom_endpoints for ep in sublist]
+
+    # Step 4: Merge base + custom
+    all_endpoints = base_endpoints + flat_custom_endpoints
+
+    logger.info(
+        "[SCIM:Endpoints] Completed for %s. Total endpoints: %d (base: %d, custom: %d)",
+        object_class,
+        len(all_endpoints),
+        len(base_endpoints),
+        len(flat_custom_endpoints),
+    )
+
+    return {
+        "result": {"endpoints": [ep.model_dump(by_alias=True) for ep in all_endpoints]},
+        "relevantChunks": relevant_chunks,
+    }
+
+
+async def extract_custom_scim_endpoints(
+    chunk: str,
+    object_class: str,
+    job_id: UUID,
+    base_api_url: str,
+    base_endpoints: List[Dict[str, Any]],
+) -> List[EndpointInfo]:
+    """
+    Extract ONLY custom endpoints and deviations from a single chunk.
+
+    Args:
+        chunk: Documentation chunk to analyze
+        object_class: Target object class name
+        job_id: Job ID for progress tracking
+        base_api_url: Base API URL
+        base_endpoints: Base SCIM endpoints for context
+
+    Returns:
+        List of custom EndpointInfo objects
+    """
+    # Format base endpoints for LLM prompt
+    formatted_base = _format_endpoints_for_prompt(base_endpoints)
+
+    # Prepare prompts
+    system_prompt = scim_endpoints_system_prompt.replace("{object_class}", object_class).replace(
+        "{scim_base_endpoints}",
+        f"Standard SCIM {object_class} endpoints:\n{formatted_base if base_endpoints else 'None (custom resource)'}",
+    )
+
+    user_prompt = (
+        scim_endpoints_user_prompt.replace("{object_class}", object_class)
+        .replace("{base_api_url}", base_api_url or "{base_api_url}")
+        .replace("{formatted_base_endpoints}", formatted_base if base_endpoints else "None (custom resource)")
+        .replace("{chunk}", chunk)
+    )
+
+    # Call LLM
+    llm = get_default_llm()
+    parser: PydanticOutputParser[EndpointResponse] = PydanticOutputParser(pydantic_object=EndpointResponse)
+
+    developer_message = SystemMessage(content=system_prompt)
+    developer_message.additional_kwargs = {"__openai_role__": "developer"}
+
+    user_message = HumanMessage(content=user_prompt)
+    user_message.additional_kwargs = {"__openai_role__": "user"}
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            developer_message,
+            user_message,
+        ]
+    )
+
+    chain = make_basic_chain(
+        prompt=prompt,
+        llm=llm,
+        parser=parser,
+    )
+
+    config = RunnableConfig(
+        callbacks=[langfuse_handler] if langfuse_handler else [],
+        run_name=f"SCIM Extract Custom Endpoints - {object_class}",
+        tags=["scim", "endpoints", "custom", object_class.lower()],
+    )
+
+    try:
+        result: EndpointResponse = await chain.ainvoke({}, config=config)
+        endpoints = result.endpoints or []
+
+        if endpoints:
+            logger.info(
+                "[SCIM:Endpoints] Extracted %d custom/deviation endpoints for %s",
+                len(endpoints),
+                object_class,
+            )
+
+        return endpoints
+
+    except Exception as e:
+        logger.error(
+            "[SCIM:Endpoints] Failed to extract custom endpoints for %s: %s",
+            object_class,
+            e,
+        )
+        return []
+
+
+def _format_endpoints_for_prompt(endpoints: List[Dict[str, Any]]) -> str:
+    """Format base endpoints for inclusion in LLM prompt."""
+    if not endpoints:
+        return "None"
+
+    lines = []
+    for ep in endpoints:
+        method = ep.get("method", "?")
+        path = ep.get("path", "?")
+        desc = ep.get("description", "")[:80]  # Truncate for brevity
+        lines.append(f"  - {method} {path} - {desc}")
+
+    return "\n".join(lines)
