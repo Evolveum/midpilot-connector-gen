@@ -9,14 +9,13 @@ This module extracts ONLY custom endpoints, unsupported endpoints,
 and deviations from standard SCIM endpoints.
 """
 
+import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables.config import RunnableConfig
 
 from .....common.jobs import increment_processed_documents, update_job_progress
 from .....common.langfuse import langfuse_handler
@@ -27,8 +26,45 @@ from ...prompts.scim.endpoints_prompts import (
 )
 from ...schema import EndpointInfo, EndpointResponse
 from ...scim.loader import get_base_scim_endpoints, is_scim_standard_class
+from ...utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
+
+
+def _build_scim_endpoint_chain(object_class: str, base_api_url: str, base_endpoints: List[Dict[str, Any]]) -> Any:
+    """
+    Build the LLM chain for extracting custom SCIM endpoints from a single chunk.
+
+    Args:
+        object_class: Name of the SCIM object class
+        base_api_url: Base API URL
+        base_endpoints: Base SCIM endpoints for context
+
+    Returns:
+        Configured LangChain runnable
+    """
+    parser: PydanticOutputParser[EndpointResponse] = PydanticOutputParser(pydantic_object=EndpointResponse)
+    llm = get_default_llm()
+
+    formatted_base = _format_endpoints_for_prompt(base_endpoints)
+    base_summary = (
+        f"Standard SCIM {object_class} endpoints:\n{formatted_base if base_endpoints else 'None (custom resource)'}"
+    )
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", scim_endpoints_system_prompt + "\n\n{format_instructions}"),
+            ("user", scim_endpoints_user_prompt),
+        ]
+    ).partial(
+        object_class=object_class,
+        base_api_url=base_api_url or "{base_api_url}",
+        scim_base_endpoints=base_summary,
+        formatted_base_endpoints=formatted_base if base_endpoints else "None (custom resource)",
+        format_instructions=parser.get_format_instructions(),
+    )
+
+    return make_basic_chain(prompt, llm, parser)
 
 
 async def extract_scim_endpoints(
@@ -100,32 +136,37 @@ async def extract_scim_endpoints(
         message=f"Extracting custom endpoints for {object_class}",
     )
 
+    chain = _build_scim_endpoint_chain(object_class, base_api_url, base_endpoints_data)
+
+    logger.info(
+        "[SCIM:Endpoints] Processing %d chunks in parallel for %s",
+        total_chunks,
+        object_class,
+    )
+
+    tasks = []
+    for chunk, doc_uuid in zip(chunks, chunk_details, strict=False):
+        doc_metadata = doc_metadata_map.get(str(doc_uuid)) if doc_metadata_map and doc_uuid else None
+        tasks.append(
+            extract_custom_scim_endpoints(
+                chain=chain,
+                chunk=chunk,
+                object_class=object_class,
+                doc_metadata=doc_metadata,
+            )
+        )
+
+    all_results = list(await asyncio.gather(*tasks))
+    if total_chunks:
+        await increment_processed_documents(job_id, delta=total_chunks)
+
     all_custom_endpoints: List[List[EndpointInfo]] = []
     relevant_chunks: List[Dict[str, Any]] = []
-
-    for idx, (chunk, doc_uuid) in enumerate(zip(chunks, chunk_details, strict=False), 1):
-        logger.info(
-            "[SCIM:Endpoints] Processing chunk %d/%d for %s (doc: %s)",
-            idx,
-            total_chunks,
-            object_class,
-            doc_uuid,
-        )
-
-        custom_eps = await extract_custom_scim_endpoints(
-            chunk=chunk,
-            object_class=object_class,
-            job_id=job_id,
-            base_api_url=base_api_url,
-            base_endpoints=base_endpoints_data,
-        )
-
+    for custom_eps, doc_uuid in zip(all_results, chunk_details, strict=False):
         if custom_eps:
             all_custom_endpoints.append(custom_eps)
             if doc_uuid:
                 relevant_chunks.append({"docUuid": doc_uuid})
-
-        await increment_processed_documents(job_id, delta=1)
 
     # Step 3: Flatten and merge custom endpoints
     flat_custom_endpoints = [ep for sublist in all_custom_endpoints for ep in sublist]
@@ -148,73 +189,43 @@ async def extract_scim_endpoints(
 
 
 async def extract_custom_scim_endpoints(
+    chain: Any,
     chunk: str,
     object_class: str,
-    job_id: UUID,
-    base_api_url: str,
-    base_endpoints: List[Dict[str, Any]],
+    doc_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[EndpointInfo]:
     """
     Extract ONLY custom endpoints and deviations from a single chunk.
 
     Args:
+        chain: Pre-configured LLM chain for extraction
         chunk: Documentation chunk to analyze
         object_class: Target object class name
-        job_id: Job ID for progress tracking
-        base_api_url: Base API URL
-        base_endpoints: Base SCIM endpoints for context
+        doc_metadata: Optional metadata for the document
 
     Returns:
         List of custom EndpointInfo objects
     """
-    # Format base endpoints for LLM prompt
-    formatted_base = _format_endpoints_for_prompt(base_endpoints)
-
-    # Prepare prompts
-    system_prompt = scim_endpoints_system_prompt.replace("{object_class}", object_class).replace(
-        "{scim_base_endpoints}",
-        f"Standard SCIM {object_class} endpoints:\n{formatted_base if base_endpoints else 'None (custom resource)'}",
-    )
-
-    user_prompt = (
-        scim_endpoints_user_prompt.replace("{object_class}", object_class)
-        .replace("{base_api_url}", base_api_url or "{base_api_url}")
-        .replace("{formatted_base_endpoints}", formatted_base if base_endpoints else "None (custom resource)")
-        .replace("{chunk}", chunk)
-    )
-
-    # Call LLM
-    llm = get_default_llm()
-    parser: PydanticOutputParser[EndpointResponse] = PydanticOutputParser(pydantic_object=EndpointResponse)
-
-    developer_message = SystemMessage(content=system_prompt)
-    developer_message.additional_kwargs = {"__openai_role__": "developer"}
-
-    user_message = HumanMessage(content=user_prompt)
-    user_message.additional_kwargs = {"__openai_role__": "user"}
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            developer_message,
-            user_message,
-        ]
-    )
-
-    chain = make_basic_chain(
-        prompt=prompt,
-        llm=llm,
-        parser=parser,
-    )
-
-    config = RunnableConfig(
-        callbacks=[langfuse_handler] if langfuse_handler else [],
-        run_name=f"SCIM Extract Custom Endpoints - {object_class}",
-        tags=["scim", "endpoints", "custom", object_class.lower()],
-    )
-
     try:
-        result: EndpointResponse = await chain.ainvoke({}, config=config)
-        endpoints = result.endpoints or []
+        summary, tags = extract_summary_and_tags(doc_metadata)
+
+        result = await chain.ainvoke(
+            {
+                "chunk": chunk,
+                "summary": summary,
+                "tags": tags,
+            },
+            config={"callbacks": [langfuse_handler] if langfuse_handler else []},
+        )
+
+        if isinstance(result, EndpointResponse):
+            endpoints = result.endpoints or []
+        elif isinstance(result, dict):
+            parsed = EndpointResponse.model_validate(result)
+            endpoints = parsed.endpoints or []
+        else:
+            logger.warning("[SCIM:Endpoints] Unexpected result type: %s", type(result))
+            return []
 
         if endpoints:
             logger.info(
