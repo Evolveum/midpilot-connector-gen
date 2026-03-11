@@ -26,7 +26,7 @@ def get_default_llm(temperature: float = 1, reasoning_effort: str = "high") -> C
         request_timeout=config.llm.request_timeout,
         temperature=temperature,
         # extra_body={"reasoning": {"enabled": True}, "provider": {"order": ["google-ai-studio"]}},
-        extra_body={"provider": {"order": ["groq"]}},
+        extra_body={"provider": {"order": config.llm.provider_order}},
         reasoning_effort=reasoning_effort,
     )
 

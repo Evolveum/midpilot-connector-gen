@@ -168,10 +168,9 @@ class DocumentationRepository:
         if source is not None:
             item.source = source
         if original_job_id is not None:
-            if item.scrape_job_ids is None:
-                item.scrape_job_ids = [str(original_job_id)]
-            elif str(original_job_id) not in item.scrape_job_ids:
-                item.scrape_job_ids.append(str(original_job_id))
+            current_ids = item.scrape_job_ids or []
+            if str(original_job_id) not in current_ids:
+                item.scrape_job_ids = current_ids + [str(original_job_id)]
         if page_id is not None:
             item.page_id = page_id
         if url is not None:
