@@ -125,10 +125,18 @@ async def extract_scim_object_classes(
         len(doc_items),
     )
 
-    # Step 3: Merge base + custom
+    # Step 3: Find relevant chunks for base classes (User, Group)
+    # Search documents for mentions of these standard SCIM classes
+    await _find_relevant_chunks_for_base_classes(
+        base_classes=base_classes,
+        doc_items=doc_items,
+        class_to_chunks=class_to_chunks,
+    )
+
+    # Step 4: Merge base + custom
     all_classes = base_classes + all_custom_classes
 
-    # Step 4: Attach relevant chunks to merged classes
+    # Step 5: Attach relevant chunks to merged classes
     for obj_class in all_classes:
         class_name = obj_class.name.strip().lower()
         if class_name in class_to_chunks:
@@ -143,6 +151,74 @@ async def extract_scim_object_classes(
         "result": result.model_dump(by_alias=True),
         "relevantChunks": all_relevant_chunks,
     }
+
+
+async def _find_relevant_chunks_for_base_classes(
+    base_classes: List[ObjectClass],
+    doc_items: List[dict],
+    class_to_chunks: Dict[str, List[Dict[str, Any]]],
+) -> None:
+    """
+    Find relevant documentation chunks for base SCIM classes (User, Group).
+
+    Searches through documentation to find mentions of standard SCIM resources
+    and adds their doc_uuids to class_to_chunks.
+
+    Args:
+        base_classes: List of base SCIM classes (User, Group)
+        doc_items: List of documentation items
+        class_to_chunks: Dictionary to populate with found chunks
+    """
+    logger.info("[SCIM:ObjectClasses] Finding relevant chunks for %d base classes", len(base_classes))
+
+    for base_class in base_classes:
+        class_name = base_class.name.strip().lower()
+        if class_name not in class_to_chunks:
+            class_to_chunks[class_name] = []
+
+        # Search patterns for this class
+        search_patterns = [
+            f"/{base_class.name}s",  # e.g., /Users, /Groups
+            f'"{base_class.name}"',  # Quoted in JSON/docs
+            f"scim:schemas:core:2.0:{base_class.name}",  # SCIM URN
+            f"{base_class.name} resource",  # Description text
+            f"{base_class.name} endpoint",  # Endpoint documentation
+        ]
+
+        # Check each document for mentions
+        for doc_item in doc_items:
+            doc_content = doc_item.get("content", "").lower()
+            doc_uuid = doc_item.get("uuid")
+
+            if not doc_uuid:
+                continue
+
+            # Check if any search pattern appears in the document
+            found = False
+            for pattern in search_patterns:
+                if pattern.lower() in doc_content:
+                    found = True
+                    break
+
+            if found:
+                chunk_ref = {"docUuid": str(doc_uuid)}
+                if chunk_ref not in class_to_chunks[class_name]:
+                    class_to_chunks[class_name].append(chunk_ref)
+                    logger.debug(
+                        "[SCIM:ObjectClasses] Found reference to %s in document %s",
+                        base_class.name,
+                        doc_uuid,
+                    )
+
+    # Log results
+    for base_class in base_classes:
+        class_name = base_class.name.strip().lower()
+        chunk_count = len(class_to_chunks.get(class_name, []))
+        logger.info(
+            "[SCIM:ObjectClasses] Base class '%s' found in %d documents",
+            base_class.name,
+            chunk_count,
+        )
 
 
 async def extract_custom_scim_classes(

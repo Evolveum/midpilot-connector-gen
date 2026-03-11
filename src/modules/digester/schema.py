@@ -503,6 +503,13 @@ class AttributeInfo(BaseModel):
             "requires extra expansion or separate endpoint fetches. Use null if unknown."
         ),
     )
+    scimAttribute: Optional[str] = Field(
+        default=None,
+        description=(
+            "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
+            "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
+        ),
+    )
 
 
 class AttributeResponse(BaseModel):

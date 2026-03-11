@@ -5,40 +5,117 @@
 """
 SCIM 2.0 guided attributes extraction.
 
-This module extracts ONLY custom attributes, unsupported attributes,
-and deviations from standard SCIM attributes.
+This module extracts explicit application-to-SCIM attribute mappings.
 """
 
+import asyncio
 import logging
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables.config import RunnableConfig
 
 from .....common.jobs import increment_processed_documents, update_job_progress
 from .....common.langfuse import langfuse_handler
 from .....common.llm import get_default_llm, make_basic_chain
 from ...prompts.scim.attributes_prompts import (
-    scim_attributes_system_prompt,
-    scim_attributes_user_prompt,
+    get_scim_attributes_system_prompt,
+    get_scim_attributes_user_prompt,
 )
 from ...schema import AttributeResponse
 from ...scim.loader import get_base_scim_attributes, is_scim_standard_class
+from ...utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 
 
+def _build_scim_attribute_chain(object_class: str, base_attributes: Dict[str, Dict[str, Any]]) -> Any:
+    """
+    Build the LLM chain for extracting custom SCIM attributes from a single chunk.
+
+    Args:
+        object_class: Name of the SCIM object class
+        base_attributes: Base SCIM attributes for context
+
+    Returns:
+        Configured LangChain runnable
+    """
+    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
+    llm = get_default_llm()
+
+    # Format base attributes for prompt context
+    formatted_base = _format_attributes_for_prompt(base_attributes)
+    scim_base_summary = (
+        f"Standard SCIM {object_class} attributes: {', '.join(base_attributes.keys())}"
+        if base_attributes
+        else "None (custom resource)"
+    )
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", get_scim_attributes_system_prompt() + "\n\n{format_instructions}"),
+            ("user", get_scim_attributes_user_prompt()),
+        ]
+    ).partial(
+        object_class=object_class,
+        scim_base_attributes=scim_base_summary,
+        formatted_base_attributes=formatted_base,
+        format_instructions=parser.get_format_instructions(),
+    )
+
+    return make_basic_chain(prompt, llm, parser)
+
+
 def _merge_custom_attributes(results: List[Dict[str, Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
     """
-    Simple merge of custom attributes from multiple chunks.
-    Later attributes override earlier ones if there are conflicts.
+    Merge mapped attributes from multiple chunks.
+    Later values fill gaps from earlier values.
     """
     merged: Dict[str, Dict[str, Any]] = {}
+
     for result in results:
-        merged.update(result)
+        for attr_name, attr_info in result.items():
+            existing = merged.get(attr_name, {})
+            merged_info = dict(existing)
+
+            for key, value in attr_info.items():
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                merged_info[key] = value
+
+            merged[attr_name] = merged_info
+
     return merged
+
+
+def _normalize_attribute_name(name: str) -> str:
+    """Normalize mapped attribute name key for stable deduplication."""
+    return " ".join(str(name).split()).strip()
+
+
+def _infer_scim_attribute_from_description(description: Optional[str]) -> Optional[str]:
+    """Best-effort extraction of SCIM path from mapping description."""
+    if not description:
+        return None
+
+    patterns = [
+        r"SCIM\s*[`'\":]?\s*([A-Za-z0-9_.\[\]\-]+)",
+        r"maps\s+to\s+([A-Za-z0-9_.\[\]\-]+)",
+        r"mapped\s+from\s+([A-Za-z0-9_.\[\]\-]+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, description, flags=re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip().strip("`'\"").rstrip(".,;:)]}")
+            if candidate:
+                return candidate
+
+    return None
 
 
 async def extract_scim_attributes(
@@ -49,10 +126,7 @@ async def extract_scim_attributes(
     doc_metadata_map: Dict[str, Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     """
-    Extract attributes for SCIM object class using guided approach:
-    1. Load base SCIM attributes
-    2. Extract custom attributes + deviations from docs
-    3. Merge base + custom
+    Extract application-to-SCIM attribute mappings for SCIM object class.
 
     Args:
         chunks: List of documentation chunks to analyze
@@ -63,10 +137,10 @@ async def extract_scim_attributes(
 
     Returns:
         Dictionary with:
-        - "result": {"attributes": {...}} merged attributes
-        - "relevantChunks": List of chunks with custom attributes
+        - "result": {"attributes": {...}} mapped attributes
+        - "relevantChunks": List of chunks with mapping evidence
     """
-    logger.info("[SCIM:Attributes] Starting guided extraction for %s", object_class)
+    logger.info("[SCIM:Attributes] Starting mapping extraction for %s", object_class)
 
     if chunk_details is None:
         chunk_details = [""] * len(chunks)
@@ -92,128 +166,151 @@ async def extract_scim_attributes(
         job_id,
         total_processing=total_chunks,
         processing_completed=0,
-        message=f"Extracting custom attributes for {object_class}",
+        message=f"Extracting SCIM attribute mappings for {object_class}",
     )
 
+    # Build extraction chain once for all chunks
+    chain = _build_scim_attribute_chain(object_class, base_attributes)
+
+    logger.info(
+        "[SCIM:Attributes] Processing %d chunks in parallel for %s",
+        total_chunks,
+        object_class,
+    )
+
+    # Create parallel tasks for all chunks
+    tasks = []
+    for chunk, doc_uuid in zip(chunks, chunk_details, strict=False):
+        # Get metadata for this document if available
+        doc_metadata = doc_metadata_map.get(str(doc_uuid)) if doc_metadata_map and doc_uuid else None
+
+        tasks.append(
+            extract_custom_scim_attributes(
+                chain=chain,
+                chunk=chunk,
+                object_class=object_class,
+                doc_metadata=doc_metadata,
+            )
+        )
+
+    # Execute all tasks in parallel
+    all_results = list(await asyncio.gather(*tasks))
+    if total_chunks:
+        await increment_processed_documents(job_id, delta=total_chunks)
+
+    # Collect results and relevant chunks
     all_custom_attributes: List[Dict[str, Dict[str, Any]]] = []
     relevant_chunks: List[Dict[str, Any]] = []
 
-    for idx, (chunk, doc_uuid) in enumerate(zip(chunks, chunk_details, strict=False), 1):
-        logger.info(
-            "[SCIM:Attributes] Processing chunk %d/%d for %s (doc: %s)",
-            idx,
-            total_chunks,
-            object_class,
-            doc_uuid,
-        )
-
-        custom_attrs = await extract_custom_scim_attributes(
-            chunk=chunk,
-            object_class=object_class,
-            job_id=job_id,
-            base_attributes=base_attributes,
-        )
-
+    for custom_attrs, doc_uuid in zip(all_results, chunk_details, strict=False):
         if custom_attrs:
             all_custom_attributes.append(custom_attrs)
             if doc_uuid:
                 relevant_chunks.append({"docUuid": doc_uuid})
 
-        await increment_processed_documents(job_id, delta=1)
+    logger.info(
+        "[SCIM:Attributes] Completed parallel processing. Found mappings in %d/%d chunks",
+        len(all_custom_attributes),
+        total_chunks,
+    )
 
     # Step 3: Merge custom attributes
     merged_custom = _merge_custom_attributes(all_custom_attributes)
 
-    # Step 4: Merge base + custom
-    final_attributes = base_attributes.copy()
-    final_attributes.update(merged_custom)
-
     logger.info(
-        "[SCIM:Attributes] Completed for %s. Total attributes: %d (base: %d, custom: %d)",
+        "[SCIM:Attributes] Completed for %s. Total mappings: %d (base reference attrs: %d)",
         object_class,
-        len(final_attributes),
-        len(base_attributes),
         len(merged_custom),
+        len(base_attributes),
     )
 
     return {
-        "result": {"attributes": final_attributes},
+        "result": {"attributes": merged_custom},
         "relevantChunks": relevant_chunks,
     }
 
 
 async def extract_custom_scim_attributes(
+    chain: Any,
     chunk: str,
     object_class: str,
-    job_id: UUID,
-    base_attributes: Dict[str, Dict[str, Any]],
+    doc_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Extract ONLY custom attributes and deviations from a single chunk.
+    Extract attribute mappings from a single chunk using a pre-built chain.
 
     Args:
+        chain: Pre-configured LLM chain for extraction
         chunk: Documentation chunk to analyze
         object_class: Target object class name
-        job_id: Job ID for progress tracking
-        base_attributes: Base SCIM attributes for context
+        doc_metadata: Optional metadata for the document
 
     Returns:
-        Dictionary of custom attributes
+        Dictionary of mapped attributes (application name -> AttributeInfo)
     """
-    # Format base attributes for LLM prompt
-    formatted_base = _format_attributes_for_prompt(base_attributes)
-
-    # Prepare prompts
-    system_prompt = scim_attributes_system_prompt.replace("{object_class}", object_class).replace(
-        "{scim_base_attributes}",
-        f"Standard SCIM {object_class} attributes: {', '.join(base_attributes.keys()) if base_attributes else 'None (custom resource)'}",
-    )
-
-    user_prompt = (
-        scim_attributes_user_prompt.replace("{object_class}", object_class)
-        .replace("{formatted_base_attributes}", formatted_base)
-        .replace("{chunk}", chunk)
-    )
-
-    # Call LLM
-    llm = get_default_llm()
-    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt + "\n\n{format_instructions}"),
-            ("user", user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-
-    chain = make_basic_chain(
-        prompt=prompt,
-        llm=llm,
-        parser=parser,
-    )
-
-    config = RunnableConfig(
-        callbacks=[langfuse_handler] if langfuse_handler else [],
-        run_name=f"SCIM Extract Custom Attributes - {object_class}",
-        tags=["scim", "attributes", "custom", object_class.lower()],
-    )
-
     try:
-        result: AttributeResponse = await chain.ainvoke({}, config=config)
-        attributes = result.attributes or {}
+        # Extract summary and tags from doc metadata
+        summary, tags = extract_summary_and_tags(doc_metadata)
+
+        result = await chain.ainvoke(
+            {
+                "chunk": chunk,
+                "summary": summary,
+                "tags": tags,
+            },
+            config={"callbacks": [langfuse_handler] if langfuse_handler else []},
+        )
+
+        if isinstance(result, AttributeResponse):
+            attributes = result.attributes or {}
+        elif isinstance(result, dict):
+            parsed = AttributeResponse.model_validate(result)
+            attributes = parsed.attributes or {}
+        else:
+            logger.warning("[SCIM:Attributes] Unexpected result type: %s", type(result))
+            return {}
 
         if attributes:
             logger.info(
-                "[SCIM:Attributes] Extracted %d custom/deviation attributes for %s",
+                "[SCIM:Attributes] Extracted %d raw mapping candidates for %s",
                 len(attributes),
                 object_class,
             )
 
-        return attributes  # type: ignore[return-value]
+        mapped_attributes: Dict[str, Dict[str, Any]] = {}
+
+        for raw_name, info in attributes.items():
+            normalized_name = _normalize_attribute_name(raw_name)
+            if not normalized_name:
+                continue
+
+            info_dict = info.model_dump()
+            scim_attribute = info_dict.get("scimAttribute")
+            if isinstance(scim_attribute, str):
+                scim_attribute = scim_attribute.strip()
+
+            if not scim_attribute:
+                scim_attribute = _infer_scim_attribute_from_description(info_dict.get("description"))
+
+            if not scim_attribute:
+                # Keep only explicit mapping records.
+                continue
+
+            info_dict["scimAttribute"] = scim_attribute
+            mapped_attributes[normalized_name] = info_dict
+
+        if mapped_attributes:
+            logger.info(
+                "[SCIM:Attributes] Accepted %d mapping attributes for %s",
+                len(mapped_attributes),
+                object_class,
+            )
+
+        return mapped_attributes
 
     except Exception as e:
         logger.error(
-            "[SCIM:Attributes] Failed to extract custom attributes for %s: %s",
+            "[SCIM:Attributes] Failed to extract mapping attributes for %s: %s",
             object_class,
             e,
         )

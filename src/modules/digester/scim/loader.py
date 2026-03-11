@@ -129,13 +129,18 @@ def get_base_scim_attributes(class_name: str) -> Dict[str, Dict[str, Any]]:
             ...
         }
     """
-    schema = get_scim_schema(class_name)
+    # Normalize class name to capitalized form (user -> User, group -> Group)
+    normalized_class_name = class_name.strip().capitalize()
+
+    schema = get_scim_schema(normalized_class_name)
     if not schema:
         logger.warning("[SCIM:Loader] Schema not found for class: %s", class_name)
         return {}
 
     attributes = {}
     scim_attributes = schema.get("attributes", [])
+
+    logger.info("[SCIM:Loader] Loading attributes for %s (normalized: %s)", class_name, normalized_class_name)
 
     for attr in scim_attributes:
         attr_name = attr.get("name")

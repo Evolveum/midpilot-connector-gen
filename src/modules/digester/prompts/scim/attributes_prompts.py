@@ -4,147 +4,93 @@
 
 import textwrap
 
-# system prompt for SCIM <attributes> guided extraction
-scim_attributes_system_prompt = textwrap.dedent(
-    """
-You are analyzing SCIM {object_class} attributes for an application that supports SCIM 2.0.
 
-### CONTEXT: SCIM 2.0 Standard Attributes for {object_class}
+def get_scim_attributes_system_prompt() -> str:
+    """Get system prompt for SCIM attributes extraction."""
+    return textwrap.dedent(
+        """
+You are analyzing attribute mappings for SCIM {object_class} in an application that supports SCIM 2.0.
+
+### CONTEXT: SCIM 2.0 Standard Attributes (reference only) for {object_class}
 
 {scim_base_attributes}
 
-These attributes are ALREADY PROVIDED in the base schema. Do NOT extract them unless they have
-deviations from the standard (see below).
+These attributes are only reference context. Do not output a full SCIM schema dump.
 
-### YOUR TASK: Extract ONLY custom attributes and deviations
+### YOUR TASK: Extract ONLY explicit application-to-SCIM mappings
 
-You will receive documentation chunks. Extract ONLY:
+You will receive documentation chunks. Extract ONLY entries where documentation explicitly maps:
+- application/native/profile field name <-> SCIM attribute/path
 
-1) **Custom Attributes** - Attributes NOT in the SCIM 2.0 standard
-   Examples for User extensions:
-   - slack_id, workspace_id (Slack-specific)
-   - okta_id, status_changed (Okta-specific)
-   - employee_status, hire_date (custom enterprise fields)
+Typical mapping evidence:
+- tables with columns like "Profile Field", "SCIM Attribute", "Type", "Notes"
+- sentences like "X maps to SCIM userName"
 
-2) **Unsupported Standard Attributes** - Standard SCIM attributes that are NOT supported
-   Identify if documentation explicitly states attributes are not implemented or unavailable.
-   Examples:
-   - "x509Certificates attribute is not supported"
-   - "ims (instant messaging) is not available"
+### REQUIRED OUTPUT SHAPE
 
-3) **Deviations from Standard** - Standard attributes with different behavior
-   Examples:
-   - userName is immutable (normally mutable)
-   - emails.primary is required (normally optional)
-   - password is readable (normally write-only)
+Use AttributeResponse with:
+- key = application attribute name (not SCIM name), e.g. "Username", "Profile Photo", "Start Date"
+- value = AttributeInfo plus required `scimAttribute`
 
-### WHAT TO EXCLUDE
+For each mapping entry:
+- `scimAttribute` MUST contain SCIM source path (e.g., "userName", "emails[0].value", "profile.startDate")
+- `description` MUST summarize mapping + notes/restrictions/transforms from docs
+- `multivalue` should follow mapping evidence (true for multi-valued, false for singular)
+- other fields may be null when unknown; do not invent unsupported facts
+
+### STRICT FILTERING RULES
 
 DO NOT extract:
-- Standard SCIM attributes that work as documented (we already have them)
-- Metadata fields (id, meta, schemas) - these are automatically handled
-- Fields from other schemas (extract those when analyzing the other schema)
-
-### OUTPUT FORMAT
-
-Use the structured output schema (AttributeResponse with "attributes" field).
-
-For custom attributes, provide full AttributeInfo:
-- **type**: string, number, integer, boolean, object, array
-- **format**: email, uri, date-time, binary, embedded, reference, etc.
-- **description**: Clear description of the attribute
-- **mandatory**: Is it required?
-- **updatable**: Can it be modified after creation?
-- **creatable**: Can it be set during creation?
-- **readable**: Is it returned in responses?
-- **multivalue**: Is it an array?
-- **returnedByDefault**: Returned without explicit request?
-
-For unsupported attributes, include a note in the description:
-"[NOT SUPPORTED by this application]"
-
-For deviations, override the relevant fields and note the difference.
+- full lists of standard SCIM attributes
+- generic app profile fields unless an explicit SCIM mapping is stated
+- metadata-only fields (id, meta, schemas) unless explicitly present in mapping table
 
 ### EXAMPLES
 
-Example 1 - Custom attributes (Slack User extension):
+Example - mapping table row:
 ```json
 {{
   "attributes": {{
-    "slack_id": {{
+    "Username": {{
       "type": "string",
       "format": null,
-      "description": "Unique Slack user identifier",
-      "mandatory": false,
-      "updatable": false,
-      "creatable": false,
-      "readable": true,
-      "multivalue": false,
-      "returnedByDefault": true
-    }},
-    "workspace_id": {{
-      "type": "string",
-      "format": null,
-      "description": "Slack workspace identifier for this user",
-      "mandatory": false,
-      "updatable": false,
-      "creatable": false,
-      "readable": true,
-      "multivalue": false,
-      "returnedByDefault": true
-    }}
-  }}
-}}
-```
-
-Example 2 - Unsupported attribute:
-```json
-{{
-  "attributes": {{
-    "x509Certificates": {{
-      "type": "array",
-      "format": null,
-      "description": "X.509 certificates. [NOT SUPPORTED by this application]",
-      "mandatory": false,
-      "updatable": false,
-      "creatable": false,
-      "readable": false,
-      "multivalue": true,
-      "returnedByDefault": false
-    }}
-  }}
-}}
-```
-
-Example 3 - Deviation (userName immutable):
-```json
-{{
-  "attributes": {{
-    "userName": {{
-      "type": "string",
-      "format": null,
-      "description": "Unique user identifier. NOTE: Immutable after creation in this application.",
+      "description": "Maps application field 'Username' to SCIM 'userName'. Required.",
       "mandatory": true,
-      "updatable": false,
-      "creatable": true,
-      "readable": true,
+      "updatable": null,
+      "creatable": null,
+      "readable": null,
       "multivalue": false,
-      "returnedByDefault": true
+      "returnedByDefault": null,
+      "scimAttribute": "userName"
+    }},
+    "Start Date": {{
+      "type": "string",
+      "format": "date-time",
+      "description": "Maps to SCIM extension attribute 'profile.startDate'. Must be ISO 8601.",
+      "mandatory": false,
+      "updatable": null,
+      "creatable": null,
+      "readable": null,
+      "multivalue": false,
+      "returnedByDefault": null,
+      "scimAttribute": "profile.startDate"
     }}
   }}
 }}
 ```
 
-If no custom attributes, unsupported attributes, or deviations are found, return an empty object.
+If no explicit mapping entries are found, return an empty attributes object.
 
 Output must use the structured schema; do not add comments or prose.
 
 """
-)
+    )
 
-# user prompt for SCIM <attributes> guided extraction
-scim_attributes_user_prompt = textwrap.dedent(
-    """
+
+def get_scim_attributes_user_prompt() -> str:
+    """Get user prompt for SCIM attributes extraction."""
+    return textwrap.dedent(
+        """
 Object Class: {object_class}
 
 Summary of the chunk:
@@ -159,7 +105,7 @@ Tags of the chunk:
 {tags}
 </tags>
 
-SCIM 2.0 Standard Attributes (for reference - do NOT extract these unless there are deviations):
+SCIM 2.0 Standard Attributes (reference only):
 {formatted_base_attributes}
 
 Text from documentation:
@@ -170,10 +116,11 @@ Text from documentation:
 
 Task:
 Extract ONLY:
-1. Custom attributes (not in SCIM standard)
-2. Unsupported standard attributes
-3. Standard attributes with deviations from SCIM 2.0 spec
+1. Explicit application attribute -> SCIM attribute mappings
+2. Mapping notes/restrictions (required, format, transformations) in description
+3. scimAttribute for each returned entry
 
-Use the structured output schema (AttributeResponse). If none found in this chunk, return an empty object via the schema.
+Use the structured output schema (AttributeResponse). Key must be application attribute name; each value must include scimAttribute.
+If none found in this chunk, return an empty object via the schema.
 """
-)
+    )
