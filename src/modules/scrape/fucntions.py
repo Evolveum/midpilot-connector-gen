@@ -43,7 +43,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
     md_generator = DefaultMarkdownGenerator(
         content_filter=prune_filter, options={"ignore_images": True, "skip_internal_links": True}
     )
-    browser_config = BrowserConfig(browser_type="firefox")  # accept_downloads=True, browser_type="firefox"
+    browser_config = BrowserConfig()  # accept_downloads=True, browser_type="firefox"
     run_config = CrawlerRunConfig(
         # user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
         # simulate_user= True,
