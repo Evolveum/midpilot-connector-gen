@@ -22,10 +22,10 @@ You will receive documentation chunks. Extract ONLY:
 
 1) **Custom Endpoints** - Endpoints NOT in SCIM 2.0 standard
    Examples:
-   - GET /{resource}/{{id}}/activate (custom lifecycle operation)
-   - POST /{resource}/{{id}}/suspend (custom action)
-   - GET /{resource}/{{id}}/sessions (additional sub-resources)
-   - POST /{resource}/search (custom search endpoint)
+   - GET /{{resource}}/{{id}}/activate (custom lifecycle operation)
+   - POST /{{resource}}/{{id}}/suspend (custom action)
+   - GET /{{resource}}/{{id}}/sessions (additional sub-resources)
+   - POST /{{resource}}/search (custom search endpoint)
 
 2) **Unsupported Standard Endpoints** - Standard SCIM endpoints that DON'T work
    Examples:
@@ -42,13 +42,13 @@ You will receive documentation chunks. Extract ONLY:
 4) **Deviations from Standard** - Standard endpoints with different behavior
    Examples:
    - PUT requires full resource (differs from partial update semantics)
-   - GET /{resource}?filter= uses different syntax
+   - GET /{{resource}}?filter= uses different syntax
    - Special authentication requirements for certain endpoints
 
 ### WHAT TO EXCLUDE
 
 DO NOT extract:
-- Standard SCIM CRUD endpoints (GET /{resource}, POST /{resource}, etc.) unless they have deviations
+- Standard SCIM CRUD endpoints (GET /{{resource}}, POST /{{resource}}, etc.) unless they have deviations
 - Protocol endpoints (/ServiceProviderConfig, /Schemas, /ResourceTypes, /Bulk) unless custom behavior
 - Standard SCIM filter/pagination that works as documented
 
