@@ -6,8 +6,6 @@ import logging
 from typing import Any, Callable, Dict, List, cast
 from uuid import UUID
 
-from ...common.database.config import async_session_maker
-from ...common.database.repositories.session_repository import SessionRepository
 from ...common.jobs import increment_processed_documents, update_job_progress
 
 # Shared extractors
@@ -22,47 +20,22 @@ from .extractors.rest.relations import extract_relations as _extract_relations
 
 # SCIM extractors
 from .extractors.scim.attributes import extract_scim_attributes
-from .extractors.scim.endpoints import extract_scim_endpoints
+from .extractors.scim.endpoints import pregenerate_scim_endpoints
 from .extractors.scim.object_class import extract_scim_object_classes
+from .utils.api_context import get_api_type_from_session, is_scim_api, protocol_selection_message
 from .utils.doc_chunk import select_doc_chunks
 from .utils.merges import (
     merge_relations_results,
 )
 from .utils.metadata_helper import build_doc_metadata_map
+from .utils.object_classes import (
+    extract_attributes_from_result,
+    extract_endpoints_from_result,
+    update_object_class_field_in_session,
+)
 from .utils.parallel_docs import process_documents_in_parallel
 
 logger = logging.getLogger(__name__)
-
-
-async def _get_api_type_from_session(session_id: UUID) -> List[str]:
-    """
-    Retrieve api_type from infoAboutSchema stored in session.
-
-    Args:
-        session_id: Session ID
-
-    Returns:
-        List of API types (e.g., ["REST"], ["SCIM"], ["REST", "SCIM"])
-        Returns empty list if not found
-    """
-    try:
-        async with async_session_maker() as db:
-            repo = SessionRepository(db)
-            info_data = await repo.get_session_data(session_id, "metadataOutput")
-
-            if not info_data or not isinstance(info_data, dict):
-                logger.info("[Digester:Service] No metadataOutput found, defaulting to REST")
-                return []
-
-            info_about_schema = info_data.get("infoAboutSchema", {})
-            api_type = info_about_schema.get("apiType", [])
-
-            logger.info("[Digester:Service] Detected API type from session: %s", api_type)
-            return api_type if isinstance(api_type, list) else []
-
-    except Exception as e:
-        logger.warning("[Digester:Service] Failed to retrieve api_type from session: %s, defaulting to REST", e)
-        return []
 
 
 async def _process_over_documents(
@@ -139,16 +112,22 @@ async def extract_object_classes(
     Returns:
         Dictionary with result and relevantChunks
     """
-    # Step 1: Detect API type from session
-    api_type = await _get_api_type_from_session(session_id)
+    api_type = await get_api_type_from_session(session_id)
+    is_scim = is_scim_api(api_type)
 
-    # Step 2: Route to appropriate extractor
-    if "SCIM" in api_type:
-        logger.info("[Digester:ObjectClasses] SCIM detected, using guided extraction")
+    logger.info(
+        "%s",
+        protocol_selection_message(
+            "Digester:ObjectClasses",
+            is_scim=is_scim,
+            scim_mode="guided extraction",
+            rest_mode="standard REST extraction",
+        ),
+    )
+
+    if is_scim:
         return await extract_scim_object_classes(doc_items, job_id)
 
-    # Step 3: Default REST extraction
-    logger.info("[Digester:ObjectClasses] Using standard REST extraction")
     return await _extract_rest_object_classes(doc_items, filter_relevancy, min_relevancy_level, job_id)
 
 
@@ -356,68 +335,37 @@ async def extract_attributes(
 
     doc_metadata_map = build_doc_metadata_map(doc_items)
 
-    # Detect API type and route to appropriate extractor
-    api_type = await _get_api_type_from_session(session_id)
+    api_type = await get_api_type_from_session(session_id)
+    is_scim = is_scim_api(api_type)
 
-    if "SCIM" in api_type:
-        logger.info(f"[Digester:Attributes] SCIM detected for {object_class}, using guided extraction")
+    logger.info(
+        "%s",
+        protocol_selection_message(
+            "Digester:Attributes",
+            is_scim=is_scim,
+            scim_mode="guided extraction",
+            rest_mode="standard REST extraction",
+            object_class=object_class,
+        ),
+    )
+
+    if is_scim:
         result = await extract_scim_attributes(selected_docs, object_class, job_id, doc_uuids, doc_metadata_map)
     else:
-        logger.info(f"[Digester:Attributes] Using standard REST extraction for {object_class}")
         result = await _extract_rest_attributes(selected_docs, object_class, job_id, doc_uuids, doc_metadata_map)
 
     try:
-        logger.info(f"[Digester:Attributes] Attempting to update object class '{object_class}' with attributes")
+        attributes_dict = extract_attributes_from_result(result)
+        logger.info("[Digester:Attributes] Extracted %d attributes for %s", len(attributes_dict), object_class)
 
-        async with async_session_maker() as db:
-            repo = SessionRepository(db)
-            object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-
-            if not object_classes_output:
-                logger.warning(f"[Digester:Attributes] No objectClassesOutput found in session {session_id}")
-                return result
-
-            if not isinstance(object_classes_output, dict):
-                logger.warning(
-                    f"[Digester:Attributes] objectClassesOutput is not a dict: {type(object_classes_output)}"
-                )
-                return result
-
-            object_classes = object_classes_output.get("objectClasses", [])
-            if not isinstance(object_classes, list):
-                logger.warning(f"[Digester:Attributes] objectClasses is not a list: {type(object_classes)}")
-                return result
-
-            # Find the matching object class (case-insensitive)
-            normalized_name = object_class.strip().lower()
-            found = False
-
-            for obj_class in object_classes:
-                if isinstance(obj_class, dict) and obj_class.get("name", "").strip().lower() == normalized_name:
-                    found = True
-                    # Update the attributes field
-                    attributes_dict = {}
-                    if result and isinstance(result, dict):
-                        result_data = result.get("result", result)
-                        attributes_dict = result_data.get("attributes", {})
-
-                        logger.info(f"[Digester:Attributes] Found {len(attributes_dict)} attributes in result")
-
-                    obj_class["attributes"] = attributes_dict
-                    logger.info(
-                        f"[Digester:Attributes] Updated object class '{obj_class.get('name')}' with {len(attributes_dict)} attributes"
-                    )
-                    break
-
-            if not found:
-                logger.warning(
-                    f"[Digester:Attributes] Object class '{object_class}' (normalized: '{normalized_name}') not found in objectClasses"
-                )
-                available_classes = [oc.get("name", "?") for oc in object_classes if isinstance(oc, dict)]
-                logger.info(f"[Digester:Attributes] Available classes: {available_classes}")
-                return result
-
-            logger.info("[Digester:Attributes] Successfully saved attributes to session")
+        updated = await update_object_class_field_in_session(
+            session_id=session_id,
+            object_class=object_class,
+            field_name="attributes",
+            field_value=attributes_dict,
+        )
+        if not updated:
+            logger.warning("[Digester:Attributes] Failed to update objectClassesOutput for %s", object_class)
 
     except Exception as e:
         logger.exception(f"[Digester:Attributes] Exception while updating object class with attributes: {e}")
@@ -449,69 +397,62 @@ async def extract_endpoints(
         base_api_url: Base API URL for endpoint extraction
     """
 
-    selected_docs, doc_uuids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
+    api_type = await get_api_type_from_session(session_id)
+    is_scim = is_scim_api(api_type)
 
-    if not selected_docs:
-        logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
-        return {"result": {"endpoints": []}, "relevantChunks": []}
-
-    doc_metadata_map = build_doc_metadata_map(doc_items)
-
-    # Log chunk processing details
-    total_chunks = len(selected_docs)
     logger.info(
-        "[Digester:Endpoints] Processing %d pre-selected chunks for %s (from original indices: %s)",
-        total_chunks,
-        object_class,
-        doc_uuids,
+        "%s",
+        protocol_selection_message(
+            "Digester:Endpoints",
+            is_scim=is_scim,
+            scim_mode="deterministic endpoint pregeneration",
+            rest_mode="standard REST extraction",
+            object_class=object_class,
+        ),
     )
 
-    # Detect API type and route to appropriate extractor
-    api_type = await _get_api_type_from_session(session_id)
-
-    if "SCIM" in api_type:
-        logger.info(f"[Digester:Endpoints] SCIM detected for {object_class}, using guided extraction")
-        result = await extract_scim_endpoints(
-            selected_docs, object_class, job_id, base_api_url, doc_uuids, doc_metadata_map
+    if is_scim:
+        result = await pregenerate_scim_endpoints(
+            session_id=session_id,
+            object_class=object_class,
+            base_api_url=base_api_url,
+            job_id=job_id,
+            relevant_chunks=relevant_chunks,
         )
     else:
-        logger.info(f"[Digester:Endpoints] Using standard REST extraction for {object_class}")
+        selected_docs, doc_uuids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
+
+        if not selected_docs:
+            logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
+            return {"result": {"endpoints": []}, "relevantChunks": []}
+
+        doc_metadata_map = build_doc_metadata_map(doc_items)
+
+        # Log chunk processing details
+        total_chunks = len(selected_docs)
+        logger.info(
+            "[Digester:Endpoints] Processing %d pre-selected chunks for %s (from original indices: %s)",
+            total_chunks,
+            object_class,
+            doc_uuids,
+        )
+
         result = await _extract_rest_endpoints(
             selected_docs, object_class, job_id, base_api_url, doc_uuids, doc_metadata_map
         )
 
     try:
-        logger.info(f"[Digester:Endpoints] Attempting to update object class '{object_class}' with attributes")
+        endpoints_list = extract_endpoints_from_result(result)
+        logger.info("[Digester:Endpoints] Extracted %d endpoints for %s", len(endpoints_list), object_class)
 
-        async with async_session_maker() as db:
-            repo = SessionRepository(db)
-            object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-
-            if object_classes_output and isinstance(object_classes_output, dict):
-                object_classes = object_classes_output.get("objectClasses", [])
-                if isinstance(object_classes, list):
-                    # Find the matching object class (case-insensitive)
-                    normalized_name = object_class.strip().lower()
-                    for obj_class in object_classes:
-                        if isinstance(obj_class, dict) and obj_class.get("name", "").strip().lower() == normalized_name:
-                            # Update the endpoint field - convert Pydantic models to dicts
-                            endpoints_list = []
-                            if result and isinstance(result, dict):
-                                result_data = result.get("result", result)
-                                raw_endpoints = result_data.get("endpoints", [])
-
-                                # Convert each endpoint to dict (handle both Pydantic models and dicts)
-                                for ep in raw_endpoints:
-                                    if hasattr(ep, "model_dump"):
-                                        endpoints_list.append(ep.model_dump(by_alias=True))
-                                    elif isinstance(ep, dict):
-                                        endpoints_list.append(ep)
-
-                            obj_class["endpoints"] = endpoints_list
-                            logger.info(
-                                f"[Digester:Endpoints] Updated object class '{obj_class.get('name')}' with {len(endpoints_list)} endpoints"
-                            )
-                            break
+        updated = await update_object_class_field_in_session(
+            session_id=session_id,
+            object_class=object_class,
+            field_name="endpoints",
+            field_value=endpoints_list,
+        )
+        if not updated:
+            logger.warning("[Digester:Endpoints] Failed to update objectClassesOutput for %s", object_class)
     except Exception as e:
         logger.warning(f"[Digester:Endpoints] Failed to update object class with endpoints: {e}")
 

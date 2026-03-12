@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -47,7 +47,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
         patch("src.modules.digester.service.process_documents_in_parallel") as mock_parallel,
-        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = [
             (
@@ -122,8 +122,8 @@ async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_
     """Test extract_object_classes with no documentation items."""
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
-        patch("src.modules.digester.utils.parallel_docs.process_documents_in_parallel") as mock_parallel,
-        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.service.process_documents_in_parallel") as mock_parallel,
+        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = []
 
@@ -163,33 +163,16 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
         {"docUuid": doc_uuid},
     ]
 
-    object_classes_output = {
-        "objectClasses": [
-            {
-                "name": "User",
-                "relevant": "true",
-                "description": "User object",
-                "relevantChunks": relevant_chunks,
-            }
-        ]
-    }
-
-    mock_db_session = AsyncMock()
-    mock_repo = MagicMock()
-    mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
-
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.service._extract_rest_attributes") as mock_extract_attrs,
-        patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
-        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_update_object_class,
+        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
-        # Setup mocks
-        mock_session_maker.return_value.__aenter__.return_value = mock_db_session
-        mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
-        mock_repo_class.return_value = mock_repo
-
         mock_extract_chunks.return_value = (
             ["chunk-0 text", "chunk-2 text"],
             [(0, doc_uuid), (2, doc_uuid)],
@@ -236,6 +219,7 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
 
         # Verify attribute extraction was called
         mock_extract_attrs.assert_called_once()
+        mock_update_object_class.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -263,21 +247,16 @@ async def test_extract_attributes_session_not_found(mock_llm, mock_digester_upda
     fake_doc_items = [{"uuid": doc_uuid, "content": "test"}]
     relevant_chunks = [{"docUuid": doc_uuid}]
 
-    mock_db_session = AsyncMock()
-    mock_repo = MagicMock()
-    mock_repo.get_session_data = AsyncMock(return_value=None)
-
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.service._extract_rest_attributes") as mock_extract_attrs,
-        patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
-        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_update_object_class,
+        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
-        mock_session_maker.return_value.__aenter__.return_value = mock_db_session
-        mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
-        mock_repo_class.return_value = mock_repo
-
         mock_extract_chunks.return_value = (["chunk text"], [(0, doc_uuid)])
         mock_extract_attrs.return_value = {"result": {"attributes": {"id": {}}}, "relevantChunks": []}
 
@@ -285,7 +264,7 @@ async def test_extract_attributes_session_not_found(mock_llm, mock_digester_upda
 
         # Should return result even if session update fails
         assert "result" in result
-        mock_repo.update_session.assert_not_called()
+        mock_update_object_class.assert_awaited_once()
 
 
 # ==================== EXTRACT ENDPOINTS ====================
@@ -311,32 +290,16 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
 
     relevant_chunks = [{"docUuid": doc_uuid}]
 
-    object_classes_output = {
-        "objectClasses": [
-            {
-                "name": "User",
-                "relevant": "true",
-                "description": "User object",
-                "relevantChunks": relevant_chunks,
-            }
-        ]
-    }
-
-    mock_db_session = AsyncMock()
-    mock_repo = MagicMock()
-    mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
-
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.service._extract_rest_endpoints") as mock_extract_endpoints,
-        patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
-        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_update_object_class,
+        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
-        mock_session_maker.return_value.__aenter__.return_value = mock_db_session
-        mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
-        mock_repo_class.return_value = mock_repo
-
         mock_extract_chunks.return_value = (["chunk-0 text"], [(0, doc_uuid)])
 
         mock_extract_endpoints.return_value = {
@@ -383,6 +346,7 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
         mock_extract_endpoints.assert_called_once()
         call_args = mock_extract_endpoints.call_args
         assert call_args[0][3] == base_api_url
+        mock_update_object_class.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -391,7 +355,10 @@ async def test_extract_endpoints_no_relevant_chunks(mock_llm, mock_digester_upda
     session_id = uuid4()
     job_id = uuid4()
 
-    with patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks:
+    with (
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+    ):
         mock_extract_chunks.return_value = ([], [])
 
         result = await service.extract_endpoints([], "User", session_id, [], job_id, "")
@@ -411,24 +378,16 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
     fake_doc_items = [{"uuid": doc_uuid, "content": "test", "summary": "", "@metadata": {}}]
     relevant_chunks = [{"docUuid": doc_uuid}]
 
-    mock_db_session = AsyncMock()
-    mock_repo = MagicMock()
-    mock_repo.get_session_data = AsyncMock(
-        return_value={"objectClasses": [{"name": "User", "endpoints": [], "relevantChunks": relevant_chunks}]}
-    )
-    mock_repo.update_session = AsyncMock()
-
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.service._extract_rest_endpoints") as mock_extract_endpoints,
-        patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
-        patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_update_object_class,
+        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
     ):
-        mock_session_maker.return_value.__aenter__.return_value = mock_db_session
-        mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
-        mock_repo_class.return_value = mock_repo
-
         mock_extract_chunks.return_value = (["chunk"], [(0, doc_uuid)])
         mock_extract_endpoints.return_value = {"result": {"endpoints": []}, "relevantChunks": []}
 
@@ -437,6 +396,7 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
         # Verify base_api_url was passed correctly
         call_args = mock_extract_endpoints.call_args
         assert call_args[0][3] == base_api_url
+        mock_update_object_class.assert_awaited_once()
 
 
 # ==================== EXTRACT AUTH ====================
@@ -754,7 +714,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
             patch(
                 "src.modules.digester.service.deduplicate_and_sort_object_classes", new_callable=AsyncMock
             ) as mock_dedupe_classes,
-            patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+            patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
         ):
             mock_parallel.return_value = [
                 (
@@ -793,23 +753,16 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
             mock_dedupe_classes.assert_awaited_once()
 
         # Step 2: Extract attributes
-        mock_db_session = AsyncMock()
-        mock_repo = MagicMock()
-        object_classes_output = classes_result["result"]
-        mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
-        mock_repo.update_session = AsyncMock()
-
         with (
             patch("src.modules.digester.service.select_doc_chunks") as mock_chunks,
             patch("src.modules.digester.service._extract_rest_attributes") as mock_attrs,
-            patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
-            patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
-            patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "src.modules.digester.service.update_object_class_field_in_session",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_update_object_class,
+            patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
         ):
-            mock_session_maker.return_value.__aenter__.return_value = mock_db_session
-            mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
-            mock_repo_class.return_value = mock_repo
-
             mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
             mock_attrs.return_value = {
                 "result": {"attributes": {"id": {"type": "string", "description": "ID"}}},
@@ -820,23 +773,19 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                 doc_items, "User", session_id, [{"docUuid": str(doc_uuid)}], uuid4()
             )
             assert "id" in attrs_result["result"]["attributes"]
+            mock_update_object_class.assert_awaited_once()
 
         # Step 3: Extract endpoints
         with (
             patch("src.modules.digester.service.select_doc_chunks") as mock_chunks,
             patch("src.modules.digester.service._extract_rest_endpoints") as mock_endpoints,
-            patch("src.modules.digester.service.async_session_maker") as mock_session_maker,
-            patch("src.modules.digester.service.SessionRepository") as mock_repo_class,
-            patch("src.modules.digester.service._get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "src.modules.digester.service.update_object_class_field_in_session",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_update_object_class,
+            patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
         ):
-            # Update mock repo to include attributes
-            object_classes_output["objectClasses"][0]["attributes"] = attrs_result["result"]["attributes"]
-            mock_repo.get_session_data = AsyncMock(return_value=object_classes_output)
-
-            mock_session_maker.return_value.__aenter__.return_value = mock_db_session
-            mock_session_maker.return_value.__aexit__.return_value = AsyncMock()
-            mock_repo_class.return_value = mock_repo
-
             mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
             mock_endpoints.return_value = {
                 "result": {"endpoints": [{"method": "GET", "path": "/users", "description": "Get users"}]},
@@ -847,3 +796,4 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                 doc_items, "User", session_id, [{"docUuid": str(doc_uuid)}], uuid4(), "https://api.example.com"
             )
             assert len(endpoints_result["result"]["endpoints"]) == 1
+            mock_update_object_class.assert_awaited_once()

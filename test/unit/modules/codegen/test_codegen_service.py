@@ -102,6 +102,7 @@ async def test_generate_search():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.get_api_types_from_session", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.SearchGenerator") as mock_search_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -202,6 +203,7 @@ async def test_generate_create():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.get_api_types_from_session", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -245,6 +247,7 @@ async def test_generate_update():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.get_api_types_from_session", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.UpdateGenerator") as mock_update_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -287,6 +290,7 @@ async def test_generate_delete():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.get_api_types_from_session", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.DeleteGenerator") as mock_delete_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value

@@ -20,7 +20,7 @@ OUTPUT RULES:
 """)
 
 get_native_schema_user_prompt = textwrap.dedent("""
-Here is extracted data from OpenAPI/Swagger schema wrapped into JSON for {object_class}:
+Here is extracted data from OpenAPI/SCIM schema wrapped into JSON for {object_class}:
 
 <extracted_info>
 {records_json}

@@ -17,6 +17,8 @@ from uuid import UUID
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
+from .....common.database.config import async_session_maker
+from .....common.database.repositories.session_repository import SessionRepository
 from .....common.jobs import increment_processed_documents, update_job_progress
 from .....common.langfuse import langfuse_handler
 from .....common.llm import get_default_llm, make_basic_chain
@@ -25,10 +27,66 @@ from ...prompts.scim.endpoints_prompts import (
     scim_endpoints_user_prompt,
 )
 from ...schema import EndpointInfo, EndpointResponse
-from ...scim.loader import get_base_scim_endpoints, is_scim_standard_class
+from ...scim.loader import generate_scim_crud_endpoints, get_base_scim_endpoints, is_scim_standard_class
 from ...utils.metadata_helper import extract_summary_and_tags
+from ...utils.scim_resource import extract_scim_resource_path, infer_scim_resource_path
 
 logger = logging.getLogger(__name__)
+
+
+async def pregenerate_scim_endpoints(
+    *,
+    session_id: UUID,
+    object_class: str,
+    base_api_url: str,
+    job_id: UUID,
+    relevant_chunks: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Generate SCIM endpoints deterministically from object class/resource mapping.
+    """
+    await update_job_progress(
+        job_id,
+        total_processing=1,
+        processing_completed=0,
+        message=f"Pregenerating SCIM endpoints for {object_class}",
+    )
+
+    object_class_data: Dict[str, Any] = {}
+    try:
+        async with async_session_maker() as db:
+            repo = SessionRepository(db)
+            object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
+            if object_classes_output and isinstance(object_classes_output, dict):
+                object_classes = object_classes_output.get("objectClasses", [])
+                if isinstance(object_classes, list):
+                    normalized_name = object_class.strip().lower()
+                    for obj_class in object_classes:
+                        if isinstance(obj_class, dict) and obj_class.get("name", "").strip().lower() == normalized_name:
+                            object_class_data = obj_class
+                            break
+    except Exception as e:
+        logger.warning("[SCIM:Endpoints] Failed to read objectClassesOutput for pregeneration: %s", e)
+
+    endpoints: List[Dict[str, Any]]
+    if is_scim_standard_class(object_class):
+        endpoints = get_base_scim_endpoints(object_class, base_api_url)
+    else:
+        resource_path = extract_scim_resource_path(object_class_data) or infer_scim_resource_path(object_class)
+        endpoints = generate_scim_crud_endpoints(resource_path, object_class)
+
+    await increment_processed_documents(job_id, delta=1)
+
+    logger.info(
+        "[SCIM:Endpoints] Pregenerated %d endpoints for %s",
+        len(endpoints),
+        object_class,
+    )
+
+    return {
+        "result": {"endpoints": endpoints},
+        "relevantChunks": relevant_chunks,
+    }
 
 
 def _build_scim_endpoint_chain(object_class: str, base_api_url: str, base_endpoints: List[Dict[str, Any]]) -> Any:

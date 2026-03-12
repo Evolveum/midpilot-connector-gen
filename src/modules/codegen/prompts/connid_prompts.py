@@ -23,7 +23,7 @@ OUTPUT RULES:
 
 
 get_connID_user_prompt = textwrap.dedent("""
-Here is extracted data from OpenAPI/Swagger schema for object class {object_class}:
+Here is extracted data from OpenAPI/SCIM schema for object class {object_class}:
 
 <extracted_info>
 {records_json}

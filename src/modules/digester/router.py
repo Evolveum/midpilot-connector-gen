@@ -24,8 +24,15 @@ from .schema import (
     ObjectClassesResponse,
     RelationsResponse,
 )
+from .utils.api_context import is_scim_api, load_session_api_context
 from .utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
 from .utils.inputs import auth_input, metadata_input, object_classes_input
+from .utils.object_classes import (
+    find_object_class,
+    get_relevant_chunks,
+    normalize_object_class_name,
+    upsert_object_class,
+)
 from .utils.status import build_typed_job_status_response
 
 router = APIRouter()
@@ -163,24 +170,22 @@ async def get_specific_object_class(
             detail=f"Invalid object classes data in session {session_id}",
         )
 
-    # Find the specific object class (case-insensitive)
-    normalized_name = object_class.strip().lower()
-    for obj_cls in object_classes:
-        if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
-            # Merge in attributes and endpoints if they exist
-            result = obj_cls.copy()
+    target_object_class = find_object_class(object_classes, object_class)
+    if target_object_class:
+        result = target_object_class.copy()
+        normalized_name = normalize_object_class_name(object_class)
 
-            # Get attributes from session
-            attributes_output = await repo.get_session_data(session_id, f"{normalized_name}AttributesOutput")
-            if attributes_output and isinstance(attributes_output, dict):
-                result["attributes"] = attributes_output.get("attributes", {})
+        # Get attributes from session
+        attributes_output = await repo.get_session_data(session_id, f"{normalized_name}AttributesOutput")
+        if attributes_output and isinstance(attributes_output, dict):
+            result["attributes"] = attributes_output.get("attributes", {})
 
-            # Get endpoints from session
-            endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
-            if endpoints_output and isinstance(endpoints_output, dict):
-                result["endpoints"] = endpoints_output.get("endpoints", [])
+        # Get endpoints from session
+        endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
+        if endpoints_output and isinstance(endpoints_output, dict):
+            result["endpoints"] = endpoints_output.get("endpoints", [])
 
-            return result
+        return result
 
     # If not found, raise 404
     raise HTTPException(
@@ -232,35 +237,9 @@ async def upload_one_object_class(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Get existing object classes
     object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-    if not object_classes_output or not isinstance(object_classes_output, dict):
-        # Initialize with empty structure if none exists
-        object_classes_output = {"objectClasses": []}
+    object_classes_output, updated = upsert_object_class(object_classes_output, object_class, object_class_data)
 
-    object_classes = object_classes_output.get("objectClasses", [])
-    if not isinstance(object_classes, list):
-        object_classes = []
-
-    # Ensure the name field is set from the URL path parameter
-    object_class_data["name"] = object_class
-
-    # Find and update existing object class (case-insensitive)
-    normalized_name = object_class.strip().lower()
-    updated = False
-    for i, obj_cls in enumerate(object_classes):
-        if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
-            # Update existing object class
-            object_classes[i] = object_class_data
-            updated = True
-            break
-
-    # If not found, add new object class
-    if not updated:
-        object_classes.append(object_class_data)
-
-    # Update session
-    object_classes_output["objectClasses"] = object_classes
     await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
 
     return {
@@ -299,14 +278,8 @@ async def extract_class_attributes(
             detail=f"No object classes found in session {session_id}. Please run /classes endpoint first.",
         )
 
-    # Find the specific object class (case-insensitive)
     object_classes = object_classes_output.get("objectClasses", [])
-    normalized_name = object_class.strip().lower()
-    target_object_class = None
-    for obj_cls in object_classes:
-        if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
-            target_object_class = obj_cls
-            break
+    target_object_class = find_object_class(object_classes, object_class)
 
     if not target_object_class:
         raise HTTPException(
@@ -314,7 +287,7 @@ async def extract_class_attributes(
             detail=f"Object class '{object_class}' not found in session {session_id}.",
         )
 
-    relevant_chunks = target_object_class.get("relevantChunks", [])
+    relevant_chunks = get_relevant_chunks(target_object_class)
     if not relevant_chunks:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -415,7 +388,7 @@ async def override_class_attributes(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    object_class = object_class.strip().lower()
+    object_class = normalize_object_class_name(object_class)
     await repo.update_session(session_id, {f"{object_class}AttributesOutput": attributes})
 
     return {
@@ -456,14 +429,8 @@ async def extract_class_endpoints(
             detail=f"No object classes found in session {session_id}. Please run /classes endpoint first.",
         )
 
-    # Find the specific object class (case-insensitive)
     object_classes = object_classes_output.get("objectClasses", [])
-    normalized_name = object_class.strip().lower()
-    target_object_class = None
-    for obj_cls in object_classes:
-        if isinstance(obj_cls, dict) and obj_cls.get("name", "").strip().lower() == normalized_name:
-            target_object_class = obj_cls
-            break
+    target_object_class = find_object_class(object_classes, object_class)
 
     if not target_object_class:
         raise HTTPException(
@@ -471,10 +438,11 @@ async def extract_class_endpoints(
             detail=f"Object class '{object_class}' not found in session {session_id}.",
         )
 
-    # relevant_chunks = target_object_class.get("relevantChunks", [])
-    # relevant_chunks_from_object_class = target_object_class.get("relevantChunks", [])
+    api_type, base_api_url = await load_session_api_context(repo, session_id)
+    is_scim = is_scim_api(api_type)
+
     criteria = ENDPOINT_CRITERIA.model_copy()
-    criteria.allowed_tags = [[object_class.lower().strip()], ["endpoint", "endpoints"]]
+    criteria.allowed_tags = [[normalize_object_class_name(object_class)], ["endpoint", "endpoints"]]
     relevant_chunks_full = await filter_documentation_items(criteria, session_id, db=db)
 
     # If we dont have relevant chunks with ENDPOINT_CRITERIA, try to find relevant chunks with DEFAULT_CRITERIA
@@ -487,23 +455,16 @@ async def extract_class_endpoints(
         for chunk in relevant_chunks_full
         # if chunk["uuid"] in {rc["docUuid"] for rc in relevant_chunks_from_object_class}
     ]
-    if not relevant_chunks:
+    if not relevant_chunks and not is_scim:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"No relevant chunks found for object class '{object_class}'. Cannot extract endpoints.",
         )
+    if not relevant_chunks and is_scim:
+        relevant_chunks = get_relevant_chunks(target_object_class)
 
     # Get full documentation to extract relevant chunks
     doc_items = await get_session_documentation(session_id, db=db)
-
-    # Load base API URL from session metadata
-    base_api_url = ""
-    metadata = await repo.get_session_data(session_id, "metadataOutput")
-    if metadata and isinstance(metadata, dict):
-        info_about_schema = metadata.get("infoAboutSchema", {})
-        base_api_endpoints = info_about_schema.get("baseApiEndpoint", [])
-        if base_api_endpoints and isinstance(base_api_endpoints, list) and len(base_api_endpoints) > 0:
-            base_api_url = base_api_endpoints[0].get("uri", "")
 
     total_chunks = len(relevant_chunks)
     job_id = await schedule_coroutine_job(
@@ -584,7 +545,7 @@ async def override_class_endpoints(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    object_class = object_class.strip().lower()
+    object_class = normalize_object_class_name(object_class)
     await repo.update_session(session_id, {f"{object_class}EndpointsOutput": endpoints})
 
     return {

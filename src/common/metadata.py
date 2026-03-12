@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import config
 from ..modules.digester.router import DEFAULT_CRITERIA
-from ..modules.digester.schema import BaseAPIEndpoint, InfoMetadata
+from ..modules.digester.schema import BaseAPIEndpoint, InfoMetadata, InfoResponse
 from .chunk_filter.filter import filter_documentation_items
 from .database.repositories.session_repository import SessionRepository
 
@@ -216,9 +216,10 @@ async def generate_metadata_from_doc_items(session_id: uuid.UUID, db: AsyncSessi
 
     try:
         info_metadata = InfoMetadata(**raw_metadata_output)
+        info_response = InfoResponse(info_about_schema=info_metadata)
         logger.info("[Metadata] Generated InfoMetadata: %s", info_metadata)
-        validated_metadata_output = info_metadata.model_dump()
-        logger.info("[Metadata] Validated InfoMetadata: %s", validated_metadata_output)
+        validated_metadata_output = info_response.model_dump(by_alias=True)
+        logger.info("[Metadata] Validated InfoResponse: %s", validated_metadata_output)
 
     except Exception as e:
         logger.error("[Metadata] Error generating InfoMetadata: %s", e)

@@ -207,13 +207,14 @@ def get_base_scim_endpoints(class_name: str, base_url: str = "") -> List[Dict[st
             ...
         ]
     """
-    # EnterpriseUser doesn't have its own endpoints (it's an extension of User)
     if class_name == "EnterpriseUser":
         return []
 
     # Map class name to SCIM resource path
     resource_path_map = {
+        "user": "/Users",
         "User": "/Users",
+        "group": "/Groups",
         "Group": "/Groups",
     }
 
@@ -222,9 +223,33 @@ def get_base_scim_endpoints(class_name: str, base_url: str = "") -> List[Dict[st
         logger.warning("[SCIM:Loader] No standard endpoints for class: %s", class_name)
         return []
 
-    endpoints = [
+    endpoints = generate_scim_crud_endpoints(resource_path, class_name)
+
+    logger.info("[SCIM:Loader] Generated %d base endpoints for %s", len(endpoints), class_name)
+    return endpoints  # type: ignore[return-value]
+
+
+def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Dict[str, Any]]:
+    """
+    Generate standard SCIM CRUD endpoints for a given resource path.
+
+    Args:
+        resource_path: SCIM resource path (e.g., '/Users', '/Groups', '/Accounts')
+        class_name: Resource class name used for descriptions
+
+    Returns:
+        List of endpoint definitions in digester EndpointInfo format.
+    """
+    clean_path = (resource_path or "").strip()
+    if not clean_path:
+        clean_path = "/Resources"
+    if not clean_path.startswith("/"):
+        clean_path = "/" + clean_path
+    clean_path = "/" + clean_path.strip("/")
+
+    return [
         {
-            "path": resource_path,
+            "path": clean_path,
             "method": "GET",
             "description": f"Retrieve all {class_name}s with optional filtering, sorting, and pagination",
             "responseContentType": "application/scim+json",
@@ -232,7 +257,7 @@ def get_base_scim_endpoints(class_name: str, base_url: str = "") -> List[Dict[st
             "suggestedUse": ["getAll", "search"],
         },
         {
-            "path": resource_path,
+            "path": clean_path,
             "method": "POST",
             "description": f"Create a new {class_name} resource",
             "responseContentType": "application/scim+json",
@@ -240,7 +265,7 @@ def get_base_scim_endpoints(class_name: str, base_url: str = "") -> List[Dict[st
             "suggestedUse": ["create"],
         },
         {
-            "path": f"{resource_path}/{{id}}",
+            "path": f"{clean_path}/{{id}}",
             "method": "GET",
             "description": f"Retrieve a single {class_name} resource by ID",
             "responseContentType": "application/scim+json",
@@ -248,7 +273,7 @@ def get_base_scim_endpoints(class_name: str, base_url: str = "") -> List[Dict[st
             "suggestedUse": ["getById"],
         },
         {
-            "path": f"{resource_path}/{{id}}",
+            "path": f"{clean_path}/{{id}}",
             "method": "PUT",
             "description": f"Replace an existing {class_name} resource completely",
             "responseContentType": "application/scim+json",
@@ -256,7 +281,7 @@ def get_base_scim_endpoints(class_name: str, base_url: str = "") -> List[Dict[st
             "suggestedUse": ["update"],
         },
         {
-            "path": f"{resource_path}/{{id}}",
+            "path": f"{clean_path}/{{id}}",
             "method": "PATCH",
             "description": f"Modify an existing {class_name} resource partially using SCIM PATCH operations",
             "responseContentType": "application/scim+json",
@@ -264,7 +289,7 @@ def get_base_scim_endpoints(class_name: str, base_url: str = "") -> List[Dict[st
             "suggestedUse": ["update"],
         },
         {
-            "path": f"{resource_path}/{{id}}",
+            "path": f"{clean_path}/{{id}}",
             "method": "DELETE",
             "description": f"Delete an existing {class_name} resource",
             "responseContentType": None,
@@ -272,9 +297,6 @@ def get_base_scim_endpoints(class_name: str, base_url: str = "") -> List[Dict[st
             "suggestedUse": ["delete"],
         },
     ]
-
-    logger.info("[SCIM:Loader] Generated %d base endpoints for %s", len(endpoints), class_name)
-    return endpoints  # type: ignore[return-value]
 
 
 def get_scim_protocol_endpoints(base_url: str = "") -> List[Dict[str, Any]]:
