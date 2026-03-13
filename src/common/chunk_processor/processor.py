@@ -83,7 +83,15 @@ async def process_scraped_page(
         return page_chunks
 
 
-async def process_all_pages(pages: list[SavedPage], app: str, app_version: str, source: str) -> list[DocumentationItem]:
+async def process_all_pages(
+    pages: list[SavedPage],
+    app: str,
+    app_version: str,
+    source: str,
+    *,
+    semaphore: Optional[asyncio.Semaphore] = None,
+    chunk_length: Optional[int] = None,
+) -> list[DocumentationItem]:
     """
     Process all scraped pages concurrently with semaphore limiting.
 
@@ -96,16 +104,16 @@ async def process_all_pages(pages: list[SavedPage], app: str, app_version: str, 
     outputs:
         list - list of PageChunk objects for all pages
     """
+    effective_chunk_length = chunk_length or config.scrape_and_process.chunk_length
+    local_semaphore = semaphore or asyncio.Semaphore(config.scrape_and_process.max_concurrent)
     logger.info(
-        "[Scrape:ProcessAll] Starting to process %s pages with max %s concurrent tasks",
+        "[Scrape:ProcessAll] Starting to process %s pages",
         len(pages),
-        config.scrape_and_process.max_concurrent,
     )
-    semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
 
     results = await asyncio.gather(
         *[
-            process_scraped_page(page, semaphore, app, app_version, config.scrape_and_process.chunk_length, source)
+            process_scraped_page(page, local_semaphore, app, app_version, effective_chunk_length, source)
             for page in pages
         ]
     )
