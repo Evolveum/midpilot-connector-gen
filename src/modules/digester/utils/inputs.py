@@ -2,13 +2,17 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import logging
 from typing import Any, Dict
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....common.chunk_filter.filter import filter_documentation_items
-from .criteria import AUTH_CRITERIA, DEFAULT_CRITERIA
+from ....config import config
+from .criteria import DEFAULT_AUTH_CRITERIA, DEFAULT_CRITERIA, EXTENDED_AUTH_CRITERIA
+
+logger = logging.getLogger(__name__)
 
 
 async def object_classes_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
@@ -49,7 +53,11 @@ async def auth_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
             jobInput - dict for job input field
     """
     # Apply static category filter to documentation items
-    doc_items = await filter_documentation_items(AUTH_CRITERIA, session_id, db=db)
+    doc_items = await filter_documentation_items(DEFAULT_AUTH_CRITERIA, session_id, db=db)
+    min_doc_length = config.digester.auth_min_documentation_items
+    if len(doc_items) < min_doc_length:
+        doc_items = await filter_documentation_items(EXTENDED_AUTH_CRITERIA, session_id, db=db)
+        logger.info("[Digester:Auth] Using extended auth criteria")
     return {
         "sessionInput": {},
         "jobInput": {

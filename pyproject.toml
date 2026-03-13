@@ -34,6 +34,7 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "asyncpg>=0.31.0",
     "python-dotenv>=1.1.1",
+    "fuzzysearch>=0.8.0",
 ]
 
 [dependency-groups]

@@ -118,3 +118,9 @@ def normalize_to_text(schema: Union[str, dict, list]) -> str:
         return json.dumps(schema, ensure_ascii=False, indent=2, default=str)
     except (TypeError, ValueError):
         return yaml.safe_dump(schema, allow_unicode=True)
+
+
+def count_tokens(text: str, encoding_type: str = "cl100k_base") -> int:
+    """Count the number of tokens in the given text using the specified encoding."""
+    enc = encoding(encoding_type)
+    return len(enc.encode(text))

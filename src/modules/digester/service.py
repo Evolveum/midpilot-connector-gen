@@ -6,10 +6,11 @@ import logging
 from typing import Any, Callable, Dict, List, cast
 from uuid import UUID
 
+from ...common.enums import JobStage
 from ...common.jobs import increment_processed_documents, update_job_progress
 
 # Shared extractors
-from .extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
+from .extractors.auth import build_auth_items, deduplicate_auth, extract_auth_raw, sort_auth_by_importance
 from .extractors.info import extract_info_metadata as _extract_info_metadata
 
 # REST extractors
@@ -22,6 +23,7 @@ from .extractors.rest.relations import extract_relations as _extract_relations
 from .extractors.scim.attributes import extract_scim_attributes
 from .extractors.scim.endpoints import pregenerate_scim_endpoints
 from .extractors.scim.object_class import extract_scim_object_classes
+from .schema import DiscoveryAuth
 from .utils.api_context import get_api_type_from_session, is_scim_api, protocol_selection_message
 from .utils.doc_chunk import select_doc_chunks
 from .utils.merges import (
@@ -207,7 +209,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     Step 1: Extract raw auth info from each document (per UUID) - processes documents in parallel
     Step 2: Merge, deduplicate and sort ALL auth info together
     """
-    all_auth_info = []
+    all_auth_info: List[DiscoveryAuth] = []
     all_relevant_chunks: List[Dict[str, Any]] = []
 
     doc_metadata_map = build_doc_metadata_map(doc_items)
@@ -216,8 +218,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
         doc_metadata = doc_metadata_map.get(str(doc_uuid))
         return await extract_auth_raw(content, job_id, doc_uuid, doc_metadata)
 
-    # Process all documents in parallel using the generic function
-    results = await process_documents_in_parallel(
+    discovery_results = await process_documents_in_parallel(
         doc_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
@@ -225,7 +226,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     )
 
     # Collect results from all documents
-    for raw_auth, has_relevant_data, doc_uuid in results:
+    for raw_auth, has_relevant_data, doc_uuid in discovery_results:
         logger.info(
             "[Digester:Auth] Document %s: extracted %s auth items",
             doc_uuid,
@@ -236,15 +237,58 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
             all_relevant_chunks.append({"docUuid": str(doc_uuid)})
 
     logger.info(
-        "[Digester:Auth] Processing complete. Total: %s auth items from %s documents. "
-        "Starting deduplication and sorting...",
+        "[Digester:Auth] Auth discovery complete. Total: %s auth items from %s documents. Starting deduplication",
         len(all_auth_info),
         len(doc_items),
     )
-    final_result = await deduplicate_and_sort_auth(all_auth_info, job_id)
+    await update_job_progress(job_id, stage=JobStage.discovery_finished, message="Auth discovery finished")
+    deduplicated_results = await deduplicate_auth(all_auth_info, job_id)
+
+    # TODO: delete
+    logger.debug(
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Result is: %s",
+        len(deduplicated_results),
+        deduplicated_results,
+    )
+
+    built_auth_items = await build_auth_items(deduplicated_results, job_id)
+
+    logger.debug(
+        "[Digester:Auth] Build complete. Total: %s built auth items. Built result is: %s",
+        len(built_auth_items),
+        built_auth_items,
+    )
+
+    final_deduplicated_results = await deduplicate_auth(built_auth_items, job_id)
+
+    # TODO: delete
+    logger.debug(
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Result is: %s",
+        len(final_deduplicated_results),
+        final_deduplicated_results,
+    )
+
+    sorted_auth_items = await sort_auth_by_importance(final_deduplicated_results, job_id)
+
+    # TODO: delete
+    logger.info(
+        "[Digester:Auth] Sorting complete. Total: %s sorted auth items. Final result is: %s",
+        len(sorted_auth_items.auth) if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth else 0,
+        [
+            {
+                "name": item.name,
+                "type": item.type,
+            }
+            for item in sorted_auth_items.auth
+        ]
+        if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth
+        else sorted_auth_items,
+    )
 
     return {
-        "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
+        "result": sorted_auth_items.model_dump(by_alias=True)
+        if hasattr(sorted_auth_items, "model_dump")
+        else sorted_auth_items,
         "relevantChunks": all_relevant_chunks,
     }
 
