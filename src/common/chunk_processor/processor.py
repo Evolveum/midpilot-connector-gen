@@ -106,10 +106,6 @@ async def process_all_pages(
     """
     effective_chunk_length = chunk_length or config.scrape_and_process.chunk_length
     local_semaphore = semaphore or asyncio.Semaphore(config.scrape_and_process.max_concurrent)
-    logger.info(
-        "[Scrape:ProcessAll] Starting to process %s pages",
-        len(pages),
-    )
 
     results = await asyncio.gather(
         *[
@@ -123,6 +119,6 @@ async def process_all_pages(
         all_chunks.extend(page_chunks)
 
     logger.info(
-        "[Scrape:ProcessAll] Processing complete: generated %s total chunks from %s pages", len(all_chunks), len(pages)
+        "[Scrape:Process] Processing complete: generated %s total chunks from %s pages", len(all_chunks), len(pages)
     )
     return all_chunks

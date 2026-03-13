@@ -178,6 +178,27 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
     scheduled_pages: List[SavedPage] = []
     scheduled_page_urls: set[str] = set()
 
+    async def on_page_scraped(page: SavedPage) -> None:
+        normalized_page_url = str(page.url).rstrip("/")
+        if normalized_page_url in existing_page_chunks_urls:
+            return
+        if normalized_page_url in scheduled_page_urls:
+            return
+        scheduled_page_urls.add(normalized_page_url)
+        scheduled_pages.append(page)
+        processing_tasks.append(
+            asyncio.create_task(
+                process_all_pages(
+                    [page],
+                    app=input.application_name,
+                    app_version=input.application_version,
+                    source="scraper",
+                    semaphore=processing_semaphore,
+                    chunk_length=config.scrape_and_process.chunk_length,
+                )
+            )
+        )
+
     max_iters = max(0, config.scrape_and_process.max_scraper_iterations)
     if max_iters <= 0:
         logger.error(
@@ -214,7 +235,6 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                 message=f"running iteration {curr_iter}/{max_iters}",
             )
 
-            known_saved_keys = set(saved_pages.keys())
             new_links = await scraper_loop(
                 links_to_scrape=links,
                 app=input.application_name,
@@ -226,40 +246,8 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                 trusted_domains=trusted_domains,
                 forbidden_url_parts=forbidden_url_parts,
                 last_iteration=(curr_iter == max_iters),
+                on_page_scraped=on_page_scraped,
             )
-
-            iteration_new_pages = [saved_pages[url] for url in saved_pages.keys() if url not in known_saved_keys]
-            pages_to_process: List[SavedPage] = []
-            for page in iteration_new_pages:
-                normalized_page_url = str(page.url).rstrip("/")
-                if normalized_page_url in existing_page_chunks_urls:
-                    continue
-                if normalized_page_url in scheduled_page_urls:
-                    continue
-                scheduled_page_urls.add(normalized_page_url)
-                pages_to_process.append(page)
-
-            if pages_to_process:
-                scheduled_pages.extend(pages_to_process)
-                processing_tasks.append(
-                    asyncio.create_task(
-                        process_all_pages(
-                            pages_to_process,
-                            app=input.application_name,
-                            app_version=input.application_version,
-                            source="scraper",
-                            semaphore=processing_semaphore,
-                            chunk_length=config.scrape_and_process.chunk_length,
-                        )
-                    )
-                )
-                logger.info(
-                    "[Scrape] Job %s: Iteration %s/%s started chunk-processing task for %s new pages",
-                    job_id,
-                    curr_iter,
-                    max_iters,
-                    len(pages_to_process),
-                )
 
             logger.info(
                 "[Scrape] Job %s: Iteration %s/%s complete. New links: %s, total saved pages: %s",

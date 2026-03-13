@@ -5,7 +5,7 @@
 import asyncio
 import logging
 import re
-from typing import Dict, List, Tuple, cast
+from typing import AsyncIterator, Awaitable, Callable, Dict, List, Tuple, cast
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
@@ -33,7 +33,7 @@ from .schema import IrrelevantLinks, PageReferences, ReferenceItem, RelevantLink
 logger = logging.getLogger(__name__)
 
 
-async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
+async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlResult]:
     """
     Scrape URLs and return successful CrawlResult objects.
     Retries failed URLs up to `max_attempts` times.
@@ -51,6 +51,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
         # magic=True,
         wait_until="networkidle",
         delay_before_return_html=1.5,
+        stream=True,
         # delay_before_return_html=10.0,
         # screenshot=True,
         markdown_generator=md_generator,
@@ -58,32 +59,49 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
 
     max_attempts = 3
     links_to_scrape = list(links_to_scrape_orig)
-    scrape_out_success: List[CrawlResult] = []
+    scrape_out_success_count = 0
     # Was possibly unbound before
     new_failed_links: list[str] = []
-    new_failed_results: List[CrawlResult] = []
     last_attempt = 0
 
     for attempt in range(1, max_attempts + 1):
         last_attempt = attempt
         logger.info("[Scrape:URLs] Attempt %s/%s: Scraping %s URLs", attempt, max_attempts, len(links_to_scrape))
+        new_failed_links = []
+        seen_links: set[str] = set()
+
         # create a fresh crawler each attempt and ensure clean shutdown
         async with AsyncWebCrawler(config=browser_config) as crawler:
             raw_results = await crawler.arun_many(urls=links_to_scrape, config=run_config)
 
-        # Tell the type checker exactly what arun_many returns
-        results: List[CrawlResult] = cast(List[CrawlResult], raw_results)
+            if hasattr(raw_results, "__aiter__"):
+                async for result in cast(AsyncIterator[CrawlResult], raw_results):
+                    result_url = str(getattr(result, "url", "") or "")
+                    if result_url:
+                        seen_links.add(result_url.rstrip("/"))
 
-        new_failed_links = []
-        new_failed_results = []
-
-        # Pair each input URL with its corresponding result
-        for link, result in zip(links_to_scrape, results):
-            if getattr(result, "success", False):
-                scrape_out_success.append(result)
+                    if getattr(result, "success", False):
+                        scrape_out_success_count += 1
+                        yield result
+                    else:
+                        if result_url:
+                            new_failed_links.append(result_url.rstrip("/"))
             else:
-                new_failed_links.append(link)
-                new_failed_results.append(result)
+                results: List[CrawlResult] = cast(List[CrawlResult], raw_results)
+                for link, result in zip(links_to_scrape, results):
+                    if getattr(result, "success", False):
+                        scrape_out_success_count += 1
+                        yield result
+                    else:
+                        new_failed_links.append(link.rstrip("/"))
+
+        if seen_links:
+            for link in links_to_scrape:
+                normalized_link = link.rstrip("/")
+                if normalized_link not in seen_links:
+                    new_failed_links.append(normalized_link)
+
+        new_failed_links = list(dict.fromkeys(new_failed_links))
 
         # If everything succeeded, we're done
         if not new_failed_links:
@@ -109,10 +127,10 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> list[CrawlResult]:
 
     logger.info(
         "[Scrape:URLs] Scraping complete: %s successful, %s failed",
-        len(scrape_out_success),
+        scrape_out_success_count,
         len(new_failed_links) if last_attempt == max_attempts else 0,
     )
-    return scrape_out_success
+    return
 
 
 async def get_content_type(url: str) -> str:
@@ -359,6 +377,7 @@ async def scraper_loop(
     trusted_domains: list[str] | None = None,
     forbidden_url_parts: list | None = None,
     last_iteration: bool = False,
+    on_page_scraped: Callable[[SavedPage], Awaitable[None]] | None = None,
 ):
     """
     Main scraper loop to scrape links, filter irrelevant ones, and process html content.
@@ -373,6 +392,7 @@ async def scraper_loop(
         trusted_domains: list - list of trusted domains
         forbidden_url_parts: list - list of URL parts to filter out
         last_iteration: bool - flag indicating if this is the last iteration of the scraper loop, on which we dont need to filter out irrelevant links
+        on_page_scraped: optional async callback called immediately after a page is scraped and prepared for processing
     outputs:
         new_links_to_scrape: list - list of links to scrape in the next iteration
     updates:
@@ -427,28 +447,27 @@ async def scraper_loop(
             )
             logger.debug("[Scrape:Loop] Fetched data page %s", str(url))
             saved_pages[str(url)] = page
-
-    scrape_result = await scrape_urls(other_links)
-
-    logger.info("[Scrape:Loop] Iteration %s: Scraped %s pages successfully", curr_iteration, len(scrape_result))
+            if on_page_scraped:
+                await on_page_scraped(page)
 
     new_links_to_scrape: List[str] = []
+    scraped_pages_count = 0
+    current_scraped_urls = [url.rstrip("/") for url in other_links]
 
-    current_scraped_urls = [
-        str(result.url)
-        for result in scrape_result
-        if validate_pydantic_object(result.url, HttpUrl) and result.markdown is not None
-    ]
-
-    for scraped_link in scrape_result:
+    async for scraped_link in scrape_urls(other_links):
+        scraped_pages_count += 1
         if validate_pydantic_object(scraped_link.url, HttpUrl) and scraped_link.markdown is not None:
             content = scraped_link.markdown.fit_markdown
-            # logger.info(f"[Scrape:Loop] markdown with citations: {scraped_link.markdown.markdown_with_citations}")
-            # logger.info(f"[Scrape:Loop] references: {scraped_link.markdown.references_markdown}")
             contentType = "text/markdown"
+            page = SavedPage(
+                url=scraped_link.url.rstrip("/"),
+                contentType=contentType,
+                content=content,
+                links=[],
+            )
+            if on_page_scraped:
+                await on_page_scraped(page)
 
-            # with open("crawl_all.json", "a") as crawl_all_file:
-            #     crawl_all_file.write(scraped_link.model_dump_json() + "\n")
             page_references = process_citations_markdown(
                 markdown_references=scraped_link.markdown.references_markdown,
                 text_with_citations=scraped_link.markdown.markdown_with_citations,
@@ -570,13 +589,8 @@ async def scraper_loop(
                     "[Scrape:Loop] Extracted %s valid links from page %s", len(relevant_links), scraped_link.url
                 )
 
-                page = SavedPage(
-                    url=scraped_link.url.rstrip("/"),
-                    contentType=contentType,
-                    content=content,
-                    links=[HttpUrl(url=link) for link in relevant_links],
-                    pageReferences=page_references_saved,
-                )
+                page.links = [HttpUrl(url=link) for link in relevant_links]
+                page.pageReferences = page_references_saved
                 saved_pages[str(scraped_link.url)] = page
 
             else:
@@ -584,14 +598,11 @@ async def scraper_loop(
                     "[Scrape:Loop] No valid links found on page %s, skipping link extraction and saving content only",
                     str(scraped_link.url),
                 )
-                page = SavedPage(
-                    url=scraped_link.url.rstrip("/"),
-                    contentType=contentType,
-                    content=content,
-                    links=[HttpUrl(url=ref.url) for ref in page_references_saved.references if ref.url],
-                    pageReferences=page_references_saved,
-                )
+                page.links = [HttpUrl(url=ref.url) for ref in page_references_saved.references if ref.url]
+                page.pageReferences = page_references_saved
                 saved_pages[str(scraped_link.url)] = page
+
+    logger.info("[Scrape:Loop] Iteration %s: Scraped %s pages successfully", curr_iteration, scraped_pages_count)
 
     logger.info(
         "[Scrape:Loop] Iteration %s: Extracted %s total new links from scraped pages",
