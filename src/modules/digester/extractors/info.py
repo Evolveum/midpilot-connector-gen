@@ -23,6 +23,18 @@ from ..utils.metadata_helper import extract_summary_and_tags
 logger = logging.getLogger(__name__)
 
 
+def _has_non_empty_info(response: InfoResponse) -> bool:
+    """Return True when any high-level metadata field has a concrete value."""
+    info = response.info_metadata
+    return bool(
+        (info.name or "").strip()
+        or (info.application_version or "").strip()
+        or (info.api_version or "").strip()
+        or info.api_type
+        or info.base_api_endpoint
+    )
+
+
 async def extract_info_metadata(
     schema: str,
     job_id: UUID,
@@ -93,16 +105,28 @@ async def extract_info_metadata(
         # Keep accumulated base endpoints across documents even if a later chunk returns only a subset.
         merged_base_endpoints = InfoMetadata(
             base_api_endpoint=[
-                *aggregated.info_about_schema.base_api_endpoint,
-                *next_aggregated.info_about_schema.base_api_endpoint,
+                *aggregated.info_metadata.base_api_endpoint,
+                *next_aggregated.info_metadata.base_api_endpoint,
             ]
         ).base_api_endpoint
-        next_aggregated.info_about_schema.base_api_endpoint = merged_base_endpoints
+        next_aggregated.info_metadata.base_api_endpoint = merged_base_endpoints
+
+        previous_has_info = _has_non_empty_info(aggregated)
+        next_has_info = _has_non_empty_info(next_aggregated)
+
+        # Guard against weaker outputs that erase previously extracted metadata.
+        if previous_has_info and not next_has_info:
+            logger.info("[Digester:InfoMetadata] Ignoring empty overwrite for document %s", doc_id)
+            return aggregated, False
+
+        if next_aggregated.model_dump(by_alias=True) == aggregated.model_dump(by_alias=True):
+            logger.info("[Digester:InfoMetadata] No metadata change for document %s", doc_id)
+            return aggregated, False
 
         aggregated = next_aggregated
 
         logger.info("[Digester:InfoMetadata] Extraction complete for document")
-        return aggregated, True
+        return aggregated, next_has_info
 
     except Exception as e:
         logger.error("[Digester:InfoMetadata] Document processing failed. Error: %s", e)

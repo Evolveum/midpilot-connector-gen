@@ -14,6 +14,7 @@ from src.modules.digester.schema import (
     BaseAPIEndpoint,
     EndpointInfo,
     InfoMetadata,
+    InfoResponse,
     ObjectClass,
     RelationRecord,
 )
@@ -508,22 +509,26 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
     ):
         mock_extract.side_effect = [
             (
-                InfoMetadata(
-                    name="ExampleAPI",
-                    api_version="v1.0",
-                    application_version="1.0.0",
-                    api_type=["REST", "SCIM"],
-                    base_api_endpoint=[],
+                InfoResponse(
+                    info_metadata=InfoMetadata(
+                        name="ExampleAPI",
+                        api_version="v1.0",
+                        application_version="1.0.0",
+                        api_type=["REST", "SCIM"],
+                        base_api_endpoint=[],
+                    )
                 ),
                 True,
             ),
             (
-                InfoMetadata(
-                    name="ExampleAPI",
-                    api_version="v1.0",
-                    application_version="1.0.0",
-                    api_type=["REST", "SCIM"],
-                    base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1", type="constant")],
+                InfoResponse(
+                    info_metadata=InfoMetadata(
+                        name="ExampleAPI",
+                        api_version="v1.0",
+                        application_version="1.0.0",
+                        api_type=["REST", "SCIM"],
+                        base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1", type="constant")],
+                    )
                 ),
                 True,
             ),
@@ -535,7 +540,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
         assert "result" in result
         assert "relevantChunks" in result
 
-        metadata = result["result"]
+        metadata = result["result"]["infoMetadata"]
         assert metadata["name"] == "ExampleAPI"
         assert metadata["apiVersion"] == "v1.0"
         assert len(metadata["baseApiEndpoint"]) == 1
@@ -550,7 +555,7 @@ async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_j
     with patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock):
         result = await service.extract_info_metadata([], uuid4())
 
-        assert result["result"] == {}
+        assert result["result"] == {"infoMetadata": None}
         assert result["relevantChunks"] == []
 
 
@@ -580,22 +585,26 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
     ):
         mock_extract.side_effect = [
             (
-                InfoMetadata(
-                    name="ExampleAPI",
-                    api_version="1",
-                    application_version="1.0.0",
-                    api_type=["REST"],
-                    base_api_endpoint=[],
+                InfoResponse(
+                    info_metadata=InfoMetadata(
+                        name="ExampleAPI",
+                        api_version="1",
+                        application_version="1.0.0",
+                        api_type=["REST"],
+                        base_api_endpoint=[],
+                    )
                 ),
                 True,
             ),
             (
-                InfoMetadata(
-                    name="ExampleAPI",
-                    api_version="1",
-                    application_version="1.0.0",
-                    api_type=["REST", "SCIM"],
-                    base_api_endpoint=[],
+                InfoResponse(
+                    info_metadata=InfoMetadata(
+                        name="ExampleAPI",
+                        api_version="1",
+                        application_version="1.0.0",
+                        api_type=["REST", "SCIM"],
+                        base_api_endpoint=[],
+                    )
                 ),
                 True,
             ),

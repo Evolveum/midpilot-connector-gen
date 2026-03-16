@@ -295,7 +295,7 @@ async def test_extract_class_endpoints_success():
     }
 
     # Mock metadataOutput for baseApiUrl
-    mock_metadata_output = {"infoAboutSchema": {"baseApiEndpoint": [{"uri": "https://api.example.com"}]}}
+    mock_metadata_output = {"infoMetadata": {"baseApiEndpoint": [{"uri": "https://api.example.com"}]}}
 
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)

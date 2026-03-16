@@ -38,6 +38,25 @@ from .utils.parallel_docs import process_documents_in_parallel
 logger = logging.getLogger(__name__)
 
 
+def _is_empty_info_result_payload(payload: Dict[str, Any]) -> bool:
+    """Detect if InfoResponse-like payload has no extracted metadata."""
+    info = (payload or {}).get("infoMetadata")
+    if info is None:
+        info = (payload or {}).get("InfoMetadata")
+    if info is None:
+        info = (payload or {}).get("infoAboutSchema")
+    if info is None:
+        return True
+
+    return not bool(
+        str(info.get("name") or "").strip()
+        or str(info.get("applicationVersion") or "").strip()
+        or str(info.get("apiVersion") or "").strip()
+        or info.get("apiType")
+        or info.get("baseApiEndpoint")
+    )
+
+
 async def _process_over_documents(
     *,
     doc_items: List[dict],
@@ -100,14 +119,14 @@ async def extract_object_classes(
     Extract object classes from multiple documentation items and return merged result with metadata.
 
     This function automatically detects whether to use REST or SCIM extraction based on the
-    api_type from the infoAboutSchema stored in the session.
+    api_type from the infoMetadata stored in the session.
 
     Args:
         doc_items: List of documentation items to process
         filter_relevancy: Whether to filter by relevancy
         min_relevancy_level: Minimum relevancy level (low/medium/high)
         job_id: Job ID for progress tracking
-        session_id: Session ID to retrieve api_type from infoAboutSchema
+        session_id: Session ID to retrieve api_type from infoMetadata
 
     Returns:
         Dictionary with result and relevantChunks
@@ -300,6 +319,9 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     else:
         merged_result = cast(Dict[str, Any], aggregated_result or {})
 
+    if _is_empty_info_result_payload(merged_result):
+        merged_result = {"infoMetadata": None}
+
     return {
         "result": merged_result,
         "relevantChunks": all_relevant_chunks,
@@ -318,7 +340,7 @@ async def extract_attributes(
     in objectClassesOutput with the extracted attributes.
 
     This function automatically detects whether to use REST or SCIM extraction based on the
-    api_type from the infoAboutSchema stored in the session.
+    api_type from the infoMetadata stored in the session.
 
     Args:
         doc_items: Full documentation items
@@ -386,7 +408,7 @@ async def extract_endpoints(
     in objectClassesOutput with the extracted endpoints.
 
     This function automatically detects whether to use REST or SCIM extraction based on the
-    api_type from the infoAboutSchema stored in the session.
+    api_type from the infoMetadata stored in the session.
 
     Args:
         doc_items: Full documentation items

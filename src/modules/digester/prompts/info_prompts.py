@@ -10,7 +10,7 @@ You are an expert IGA/IDM analyst. Extract *high-level* application and API meta
 You will receive explicit format instructions; follow them exactly.
 
 You MUST produce output that fits the structured schema (InfoResponse - InfoMetadata - BaseAPIEndpoint).
-If the fragment provides nothing relevant, return InfoResponse with info_about_schema = null.
+If the fragment provides nothing relevant, do not invent values.
 
 Populate fields ONLY when clearly supported by the fragment. Do not copy ambiguous values.
 
@@ -57,6 +57,8 @@ MERGE & CONFIDENCE:
 - You will receive the previously aggregated JSON. Only update fields when the current chunk provides stronger or clearer evidence.
 - Keep previously extracted values if the new chunk is weaker or ambiguous.
 - For baseApiEndpoint specifically, keep existing valid entries and append newly supported distinct entries.
+- If <already_extracted> is empty and this fragment adds nothing reliable, keep fields empty.
+- If <already_extracted> already has values and this fragment adds nothing reliable, return it unchanged.
 - When uncertain, prefer leaving the field unchanged rather than guessing.
 
 COMMON PITFALLS TO AVOID
@@ -96,5 +98,6 @@ Update the structured output using this fragment:
 - Apply the FIELD RULES for name, applicationVersion, apiVersion, apiType, and baseApiEndpoint.
 - For apiType, output only REST/SCIM; treat OpenAPI/Swagger evidence as REST.
 - For baseApiEndpoint, keep a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless the docs guarantee a single global URL).
-- If this fragment adds nothing reliable, return the aggregated object unchanged.
+- If this fragment adds nothing reliable and <already_extracted> is empty, keep fields empty.
+- If this fragment adds nothing reliable and <already_extracted> has values, return it unchanged.
 """)

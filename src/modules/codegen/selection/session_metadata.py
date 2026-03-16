@@ -37,8 +37,12 @@ async def get_api_types_from_session(session_id: UUID) -> List[str]:
                 logger.debug("[APITypeHelper] No metadata found in session %s", session_id)
                 return []
 
-            info_about_schema = metadata.get("infoAboutSchema", {})
-            api_types = info_about_schema.get("apiType", [])
+            info_metadata = (
+                metadata.get("infoMetadata") or metadata.get("InfoMetadata") or metadata.get("infoAboutSchema") or {}
+            )
+            api_types = info_metadata.get("apiType", [])
+            if not isinstance(api_types, list):
+                return []
 
             logger.info("[APITypeHelper] Detected api_types for session %s: %s", session_id, api_types)
             return api_types

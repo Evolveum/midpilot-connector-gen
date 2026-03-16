@@ -8,7 +8,7 @@ from uuid import UUID
 from ....common.enums import JobStatus
 from ....common.jobs import get_job_status
 from ....common.schema import JobStatusMultiDocResponse
-from ..schema import ObjectClassesResponse
+from ..schema import InfoResponse, ObjectClassesResponse
 
 
 async def build_typed_job_status_response(job_id: UUID, model_cls: Type[Any]) -> JobStatusMultiDocResponse:
@@ -36,7 +36,17 @@ async def build_typed_job_status_response(job_id: UUID, model_cls: Type[Any]) ->
                         elif not isinstance(obj_class["relevant_chunks"], list):
                             obj_class["relevant_chunks"] = []
 
-            if hasattr(model_cls, "model_validate"):
+            if (
+                model_cls == InfoResponse
+                and isinstance(actual_result, dict)
+                and (
+                    ("infoMetadata" in actual_result and actual_result.get("infoMetadata") is None)
+                    or ("InfoMetadata" in actual_result and actual_result.get("InfoMetadata") is None)
+                    or ("info_metadata" in actual_result and actual_result.get("info_metadata") is None)
+                )
+            ):
+                result_payload = {"infoMetadata": None}
+            elif hasattr(model_cls, "model_validate"):
                 result_payload = model_cls.model_validate(actual_result)
             else:
                 result_payload = model_cls(**actual_result)

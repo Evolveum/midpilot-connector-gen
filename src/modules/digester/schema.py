@@ -421,20 +421,20 @@ class InfoMetadata(BaseModel):
 class InfoResponse(BaseModel):
     """
     Container for high-level API metadata. Return null/empty fields when unknown.
-    Use the alias 'infoAboutSchema' for serialization if needed.
+    Use the alias 'InfoMetadata' for serialization if needed.
     """
 
-    info_about_schema: InfoMetadata = Field(
+    info_metadata: InfoMetadata = Field(
         default_factory=InfoMetadata,
-        validation_alias="infoAboutSchema",
-        serialization_alias="infoAboutSchema",
+        validation_alias="infoMetadata",
+        serialization_alias="infoMetadata",
         description="High-level application and API metadata if discovered in the documentations.",
     )
 
     model_config = {"populate_by_name": True}
 
     # Accept null incoming payloads by converting them to an empty object
-    @field_validator("info_about_schema", mode="before")
+    @field_validator("info_metadata", mode="before")
     @classmethod
     def _normalize_info(cls, v):
         if v is None:
