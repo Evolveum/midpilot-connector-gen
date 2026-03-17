@@ -6,7 +6,7 @@ import logging
 from typing import Any, Callable, Dict, List, cast
 from uuid import UUID
 
-from ...common.jobs import increment_processed_documents, update_job_progress
+from ...common.jobs import update_job_progress
 
 # Shared extractors
 from .extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
@@ -22,9 +22,11 @@ from .extractors.rest.relations import extract_relations as _extract_relations
 from .extractors.scim.attributes import extract_scim_attributes
 from .extractors.scim.endpoints import pregenerate_scim_endpoints
 from .extractors.scim.object_class import extract_scim_object_classes
+from .schema import InfoMetadata, InfoResponse
 from .utils.api_context import get_api_type_from_session, is_scim_api, protocol_selection_message
 from .utils.doc_chunk import select_doc_chunks
 from .utils.merges import (
+    merge_info_metadata,
     merge_relations_results,
 )
 from .utils.metadata_helper import build_doc_metadata_map
@@ -36,25 +38,6 @@ from .utils.object_classes import (
 from .utils.parallel_docs import process_documents_in_parallel
 
 logger = logging.getLogger(__name__)
-
-
-def _is_empty_info_result_payload(payload: Dict[str, Any]) -> bool:
-    """Detect if InfoResponse-like payload has no extracted metadata."""
-    info = (payload or {}).get("infoMetadata")
-    if info is None:
-        info = (payload or {}).get("InfoMetadata")
-    if info is None:
-        info = (payload or {}).get("infoAboutSchema")
-    if info is None:
-        return True
-
-    return not bool(
-        str(info.get("name") or "").strip()
-        or str(info.get("applicationVersion") or "").strip()
-        or str(info.get("apiVersion") or "").strip()
-        or info.get("apiType")
-        or info.get("baseApiEndpoint")
-    )
 
 
 async def _process_over_documents(
@@ -270,57 +253,78 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
 
 async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     """
-    Extract metadata from multiple documentation items, aggregating sequentially across documents.
-    The final aggregated result from doc N is used as the initial state for doc N+1.
+    Extract metadata from multiple documentation items in parallel.
+
+    Step 1: Extract raw InfoMetadata candidates from each document (per UUID) in parallel.
+    Step 2: Merge all candidates using threshold-based heuristics into one final InfoResponse payload.
     """
+    all_info_candidates: List[InfoMetadata] = []
     all_relevant_chunks: List[Dict[str, Any]] = []
-    total_docs = len(doc_items)
     doc_metadata_map = build_doc_metadata_map(doc_items)
 
-    await update_job_progress(
-        job_id, total_processing=total_docs, processing_completed=0, message="Processing documents"
+    async def extractor_with_metadata(content: str, job_id: UUID, doc_uuid: UUID):
+        doc_metadata = doc_metadata_map.get(str(doc_uuid))
+        return await _extract_info_metadata(content, job_id, doc_uuid, doc_metadata)
+
+    results = await process_documents_in_parallel(
+        doc_items=doc_items,
+        job_id=job_id,
+        extractor=extractor_with_metadata,
+        logger_scope="Digester:InfoMetadata",
     )
 
-    aggregated_result: Any = None
+    for raw_infos, has_relevant_data, doc_uuid in results:
+        normalized_infos: List[InfoMetadata] = []
 
-    for idx, doc_item in enumerate(doc_items, 1):
-        doc_uuid = doc_item["uuid"]
-        doc_content = doc_item["content"]
-        doc_metadata = doc_metadata_map.get(str(doc_uuid))
-
-        logger.info("[Digester:InfoMetadata] Processing document %s/%s (UUID: %s)", idx, total_docs, doc_uuid)
-
-        raw_result, has_relevant_data = await _extract_info_metadata(
-            doc_content,
-            job_id,
-            doc_uuid,
-            initial_aggregated=aggregated_result,
-            doc_metadata=doc_metadata,
-        )
-
-        aggregated_result = raw_result
+        if isinstance(raw_infos, list):
+            for item in raw_infos:
+                if isinstance(item, InfoMetadata):
+                    normalized_infos.append(item)
+                    continue
+                if isinstance(item, InfoResponse):
+                    normalized_infos.append(item.info_metadata)
+                    continue
+                if isinstance(item, dict):
+                    try:
+                        normalized_infos.append(InfoResponse.model_validate(item).info_metadata)
+                        continue
+                    except Exception:
+                        try:
+                            normalized_infos.append(InfoMetadata.model_validate(item))
+                        except Exception:
+                            continue
+        elif isinstance(raw_infos, InfoMetadata):
+            normalized_infos.append(raw_infos)
+        elif isinstance(raw_infos, InfoResponse):
+            normalized_infos.append(raw_infos.info_metadata)
+        elif isinstance(raw_infos, dict):
+            try:
+                normalized_infos.append(InfoResponse.model_validate(raw_infos).info_metadata)
+            except Exception:
+                try:
+                    normalized_infos.append(InfoMetadata.model_validate(raw_infos))
+                except Exception:
+                    pass
 
         logger.info(
-            "[Digester:InfoMetadata] Document %s: processed",
+            "[Digester:InfoMetadata] Document %s: extracted %s metadata candidates",
             doc_uuid,
+            len(normalized_infos),
         )
+        all_info_candidates.extend(normalized_infos)
 
         if has_relevant_data:
             all_relevant_chunks.append({"docUuid": str(doc_uuid)})
 
-        await increment_processed_documents(job_id, delta=1)
+    logger.info(
+        "[Digester:InfoMetadata] Processing complete. Total: %s candidates from %s documents. "
+        "Starting heuristic merge...",
+        len(all_info_candidates),
+        len(doc_items),
+    )
 
-    # All documents processed, now finalizing
-    logger.info("[Digester:InfoMetadata] All documents processed. Finalizing aggregated result.")
+    merged_result = merge_info_metadata(all_info_candidates, total_items=len(doc_items))
     await update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
-
-    if hasattr(aggregated_result, "model_dump"):
-        merged_result: Dict[str, Any] = cast(Dict[str, Any], aggregated_result.model_dump(by_alias=True))
-    else:
-        merged_result = cast(Dict[str, Any], aggregated_result or {})
-
-    if _is_empty_info_result_payload(merged_result):
-        merged_result = {"infoMetadata": None}
 
     return {
         "result": merged_result,

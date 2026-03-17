@@ -5,7 +5,7 @@
 import json
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, cast
 from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
@@ -13,7 +13,16 @@ from langchain_core.runnables.config import RunnableConfig
 from ....common.enums import JobStage
 from ....common.jobs import update_job_progress
 from ....common.langfuse import langfuse_handler
-from ..schema import AttributeResponse, EndpointInfo, EndpointMethod, ObjectClass
+from ....config import config
+from ..schema import (
+    AttributeResponse,
+    BaseAPIEndpoint,
+    EndpointInfo,
+    EndpointMethod,
+    InfoMetadata,
+    InfoResponse,
+    ObjectClass,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -256,3 +265,149 @@ async def merge_endpoint_candidates(
     )
 
     return merged_dicts
+
+
+def is_empty_info_result_payload(payload: Dict[str, Any]) -> bool:
+    """Detect if InfoResponse-like payload has no extracted metadata."""
+    info = (payload or {}).get("infoMetadata")
+    if info is None:
+        return True
+
+    return not bool(
+        str(info.get("name") or "").strip()
+        or str(info.get("applicationVersion") or "").strip()
+        or str(info.get("apiVersion") or "").strip()
+        or info.get("apiType")
+        or info.get("baseApiEndpoint")
+    )
+
+
+def merge_info_metadata(
+    info_candidates: List[InfoMetadata],
+    total_items: int,
+) -> Dict[str, Any]:
+    """
+    Merge per-document InfoMetadata candidates into a single payload using frequency heuristics.
+
+    This mirrors the threshold-based strategy previously used for processor metadata:
+    - keep values that occur frequently enough across all processed documents
+    - ignore sparse/noisy values
+    """
+    if total_items <= 0:
+        logger.info("[Digester:InfoMetadata] Heuristic merge skipped: total_items=%s", total_items)
+        return {"infoMetadata": None}
+
+    threshold = total_items * config.scrape_and_process.metadata_uncertainty_threshold
+
+    name_distribution: Dict[str, int] = {}
+    app_version_distribution: Dict[str, int] = {}
+    api_version_distribution: Dict[str, int] = {}
+    api_type_distribution: Dict[str, int] = {}
+    base_api_endpoints_url_distribution: Dict[str, int] = {}
+    base_api_endpoints_type_distribution: Dict[tuple[str, str], int] = {}
+
+    for info in info_candidates:
+        name = (info.name or "").strip()
+        if name:
+            name_distribution[name] = name_distribution.get(name, 0) + 1
+
+        application_version = (info.application_version or "").strip()
+        if application_version:
+            app_version_distribution[application_version] = app_version_distribution.get(application_version, 0) + 1
+
+        api_version = (info.api_version or "").strip()
+        if api_version:
+            api_version_distribution[api_version] = api_version_distribution.get(api_version, 0) + 1
+
+        for api_type in info.api_type or []:
+            normalized_type = str(api_type).upper().strip()
+            if normalized_type in {"REST", "SCIM"}:
+                api_type_distribution[normalized_type] = api_type_distribution.get(normalized_type, 0) + 1
+
+        for endpoint in info.base_api_endpoint or []:
+            uri = (endpoint.uri or "").strip().lower()
+            endpoint_type: Literal["constant", "dynamic"] = endpoint.type
+            if not uri:
+                continue
+            base_api_endpoints_url_distribution[uri] = base_api_endpoints_url_distribution.get(uri, 0) + 1
+            key = (uri, endpoint_type)
+            base_api_endpoints_type_distribution[key] = base_api_endpoints_type_distribution.get(key, 0) + 1
+
+    found_name = ""
+    if name_distribution:
+        candidate_name = max(name_distribution.keys(), key=lambda value: name_distribution[value])
+        if name_distribution[candidate_name] > threshold:
+            found_name = candidate_name
+
+    found_application_version = ""
+    if app_version_distribution:
+        candidate_version = max(app_version_distribution.keys(), key=lambda value: app_version_distribution[value])
+        if app_version_distribution[candidate_version] > threshold:
+            found_application_version = candidate_version
+
+    found_api_version = ""
+    if api_version_distribution:
+        candidate_api_version = max(api_version_distribution.keys(), key=lambda value: api_version_distribution[value])
+        if api_version_distribution[candidate_api_version] > threshold:
+            found_api_version = candidate_api_version
+
+    found_api_types: List[Literal["REST", "SCIM"]] = [
+        cast(Literal["REST", "SCIM"], api_type)
+        for api_type, count in api_type_distribution.items()
+        if count > threshold
+    ]
+    found_api_types = sorted(found_api_types)
+
+    found_base_api_endpoints: List[BaseAPIEndpoint] = []
+    for uri, count in base_api_endpoints_url_distribution.items():
+        if count <= threshold:
+            continue
+
+        constant_count = base_api_endpoints_type_distribution.get((uri, "constant"), 0)
+        dynamic_count = base_api_endpoints_type_distribution.get((uri, "dynamic"), 0)
+        selected_endpoint_type: Literal["constant", "dynamic"] = (
+            "constant" if constant_count >= dynamic_count else "dynamic"
+        )
+        found_base_api_endpoints.append(BaseAPIEndpoint(uri=uri, type=selected_endpoint_type))
+
+    logger.info(
+        "[Digester:InfoMetadata] Heuristic threshold: total_docs=%s threshold_count=%s",
+        total_items,
+        threshold,
+    )
+    logger.info("[Digester:InfoMetadata] Name distribution: %s", name_distribution)
+    logger.info("[Digester:InfoMetadata] Application version distribution: %s", app_version_distribution)
+    logger.info("[Digester:InfoMetadata] API version distribution: %s", api_version_distribution)
+    logger.info("[Digester:InfoMetadata] API type distribution: %s", api_type_distribution)
+    logger.info("[Digester:InfoMetadata] Base API endpoint URI distribution: %s", base_api_endpoints_url_distribution)
+    logger.info(
+        "[Digester:InfoMetadata] Base API endpoint (URI, type) distribution: %s",
+        base_api_endpoints_type_distribution,
+    )
+    logger.info(
+        "[Digester:InfoMetadata] Heuristic selected values: name=%r applicationVersion=%r apiVersion=%r "
+        "apiType=%s baseApiEndpoint=%s",
+        found_name,
+        found_application_version,
+        found_api_version,
+        found_api_types,
+        [endpoint.model_dump() for endpoint in found_base_api_endpoints],
+    )
+
+    merged_response = InfoResponse(
+        info_metadata=InfoMetadata(
+            name=found_name,
+            application_version=found_application_version,
+            api_version=found_api_version,
+            api_type=found_api_types,
+            base_api_endpoint=found_base_api_endpoints,
+        )
+    )
+    merged_payload = cast(Dict[str, Any], merged_response.model_dump(by_alias=True))
+
+    if is_empty_info_result_payload(merged_payload):
+        logger.info("[Digester:InfoMetadata] Heuristic result is empty -> returning infoMetadata=null")
+        return {"infoMetadata": None}
+
+    logger.info("[Digester:InfoMetadata] Heuristic merge produced non-empty infoMetadata")
+    return merged_payload

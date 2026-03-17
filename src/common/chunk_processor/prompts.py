@@ -240,43 +240,18 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
     - num_endpoints: int - number of documented endpoints in this chunk
     - tags: list of strings - relevant tags describing the content
     - category: string - one of "spec_yaml", "spec_json", "reference_api", "reference_other", "overview", "index", "tutorial", "non-technical", "other"
-    - application_version: Optional[str] - product/application version only (null if unknown)
-    - api_version: Optional[str] - API version only (null if unknown)
-    - api_type: List[Literal["REST", "SCIM"]] - allowed values are only "REST" and "SCIM"; use [] if unknown (never null)
-    - base_api_endpoint: List[BaseAPIEndpoint] - canonical base endpoint objects; each item must have:
-      * uri: string
-      * type: "constant" or "dynamic"
-      Use [] if unknown (never null)
     - different_app_name: bool - true only if chunk is clearly about a different product than {app}
-    - application_name: Optional[str] - product/application name in this chunk (null if unknown)
     - num_defined_object_classes: Optional[int] - number of clearly defined object classes, otherwise null
 
-    PROTOCOL RULES:
-    - api_type must contain only REST or SCIM.
-    - If the chunk contains SCIM evidence, include "SCIM":
-      * path or URL contains "/scim"
-      * SCIM terms (SCIM, RFC7643, RFC7644, ServiceProviderConfig, SCIM Users/Groups)
-      * SCIM schema URNs (e.g., "urn:ietf:params:scim")
-    - If the chunk contains REST/OpenAPI/Swagger evidence, include "REST".
-    - If both are present, include both.
-
-    API VERSION RULES:
-    - application_version is product version (e.g., "15.2", "2024.2"), not OpenAPI/SCIM version.
-    - api_version is API version (e.g., "v2", "2", "2024-05"), not product version.
-
-    BASE ENDPOINT RULES:
-    - Return canonical API roots only, not resource paths.
-    - Keep only root + optional version segment (examples: "/api/", "/api/v3/", "/scim/v2/").
-    - Remove query string and fragment.
-    - Ensure exactly one trailing slash.
-    - Prefer template host "https://<hostname>" unless docs explicitly prove one global fixed hostname.
-    - Type is "dynamic" by default; use "constant" only with explicit proof.
-    - Do not return both constant and dynamic for the same uri.
-    - Deduplicate entries and keep the most canonical set (max 3 endpoints).
+    TAGGING RULES:
+    - Add protocol/context tags only when explicitly supported by the chunk content.
+    - If SCIM evidence exists (e.g., "/scim", RFC7643/RFC7644, SCIM Users/Groups, SCIM URNs), include tag "SCIM".
+    - If REST/OpenAPI/Swagger evidence exists, include tag "REST".
+    - Keep tags concise and deduplicated.
 
     IMPORTANT:
     - Do not invent values.
-    - If unsure, keep nullable fields as null and list fields as [].
+    - If unsure, keep nullable fields as null.
     - Return JSON only.
 
     EXAMPLE OUTPUT:
@@ -285,12 +260,7 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
       "num_endpoints": 2,
       "tags": ["SCIM", "provisioning", "User", "Group"],
       "category": "reference_api",
-      "application_version": null,
-      "api_version": "2",
-      "api_type": ["SCIM"],
-      "base_api_endpoint": [{{"uri": "https://<hostname>/scim/v2/", "type": "dynamic"}}],
       "different_app_name": false,
-      "application_name": "ExampleApp",
       "num_defined_object_classes": 2
     }}
 
@@ -298,14 +268,9 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
     {{
       "summary": "This chunk contains detailed documentation for user management endpoints, including creating, retrieving, updating, and deleting users.",
       "num_endpoints": 5,
-      "tags": ["endpoints", "user management", "provisioning", "User", "Group"],
+      "tags": ["REST", "endpoints", "user management", "provisioning", "User", "Group"],
       "category": "reference_api",
-      "application_version": "v2.1",
-      "api_version": "v1",
-      "api_type": ["REST"],
-      "base_api_endpoint": [{{"uri": "https://<hostname>/api/v3/", "type": "dynamic"}}],
       "different_app_name": false,
-      "application_name": "ExampleApp",
       "num_defined_object_classes": null
     }}
     """

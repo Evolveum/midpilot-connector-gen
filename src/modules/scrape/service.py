@@ -18,7 +18,6 @@ from ...common.database.repositories.job_repository import JobRepository
 from ...common.database.repositories.session_repository import SessionRepository
 from ...common.enums import JobStage
 from ...common.jobs import update_job_progress
-from ...common.metadata import generate_metadata_from_doc_items
 from ...common.session.schema import DocumentationItem
 from ...config import config
 from .fucntions import scraper_loop
@@ -364,9 +363,6 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                     len(page_chunks),
                     len(all_docs),
                 )
-
-                logger.info("[Scrape] Job %s: Generating metadata from documentation items", job_id)
-                await generate_metadata_from_doc_items(session_id=session_id, db=db)
             elif updated_existing_chunks:
                 await db.commit()
 

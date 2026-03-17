@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -14,7 +14,6 @@ from src.modules.digester.schema import (
     BaseAPIEndpoint,
     EndpointInfo,
     InfoMetadata,
-    InfoResponse,
     ObjectClass,
     RelationRecord,
 )
@@ -504,33 +503,34 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
     ]
 
     with (
-        patch("src.modules.digester.service._extract_info_metadata", new_callable=AsyncMock) as mock_extract,
-        patch("src.modules.digester.service.increment_processed_documents", new_callable=AsyncMock) as mock_increment,
+        patch("src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock) as mock_parallel,
     ):
-        mock_extract.side_effect = [
+        mock_parallel.return_value = [
             (
-                InfoResponse(
-                    info_metadata=InfoMetadata(
+                [
+                    InfoMetadata(
                         name="ExampleAPI",
                         api_version="v1.0",
                         application_version="1.0.0",
                         api_type=["REST", "SCIM"],
                         base_api_endpoint=[],
                     )
-                ),
+                ],
                 True,
+                doc_uuid1,
             ),
             (
-                InfoResponse(
-                    info_metadata=InfoMetadata(
+                [
+                    InfoMetadata(
                         name="ExampleAPI",
                         api_version="v1.0",
                         application_version="1.0.0",
                         api_type=["REST", "SCIM"],
                         base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1", type="constant")],
                     )
-                ),
+                ],
                 True,
+                doc_uuid2,
             ),
         ]
 
@@ -545,8 +545,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
         assert metadata["apiVersion"] == "v1.0"
         assert len(metadata["baseApiEndpoint"]) == 1
 
-        assert mock_extract.call_count == 2
-        assert mock_increment.call_count == 2
+        mock_parallel.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -581,45 +580,54 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
 
     with (
         patch("src.modules.digester.service._extract_info_metadata", new_callable=AsyncMock) as mock_extract,
-        patch("src.modules.digester.service.increment_processed_documents", new_callable=AsyncMock),
+        patch("src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_extract.side_effect = [
             (
-                InfoResponse(
-                    info_metadata=InfoMetadata(
+                [
+                    InfoMetadata(
                         name="ExampleAPI",
                         api_version="1",
                         application_version="1.0.0",
                         api_type=["REST"],
                         base_api_endpoint=[],
                     )
-                ),
+                ],
                 True,
             ),
             (
-                InfoResponse(
-                    info_metadata=InfoMetadata(
+                [
+                    InfoMetadata(
                         name="ExampleAPI",
                         api_version="1",
                         application_version="1.0.0",
                         api_type=["REST", "SCIM"],
                         base_api_endpoint=[],
                     )
-                ),
+                ],
                 True,
             ),
         ]
 
+        async def run_extractor_for_docs(*, doc_items, job_id, extractor, logger_scope):
+            out = []
+            for item in doc_items:
+                result, has_relevant = await extractor(item["content"], job_id, UUID(item["uuid"]))
+                out.append((result, has_relevant, UUID(item["uuid"])))
+            return out
+
+        mock_parallel.side_effect = run_extractor_for_docs
+
         await service.extract_info_metadata(fake_doc_items, uuid4())
 
         first_call = mock_extract.await_args_list[0]
-        assert first_call.kwargs["doc_metadata"] == {
+        assert first_call.args[3] == {
             "summary": "Summary one",
             "@metadata": {"tags": ["rest", "users"]},
         }
 
         second_call = mock_extract.await_args_list[1]
-        assert second_call.kwargs["doc_metadata"] == {
+        assert second_call.args[3] == {
             "summary": "Summary two",
             "@metadata": {"tags": "openapi"},
         }
@@ -713,7 +721,6 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
 
     with (
         patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.service.increment_processed_documents", new_callable=AsyncMock),
     ):
         # Step 1: Extract object classes
         with (
@@ -732,7 +739,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                             name="User",
                             relevant="true",
                             description="User entity",
-                            relevant_chunks=[{"docUuid": doc_uuid}],
+                            relevant_chunks=[{"docUuid": str(doc_uuid)}],
                         )
                     ],
                     True,
