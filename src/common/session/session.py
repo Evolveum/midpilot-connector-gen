@@ -23,6 +23,9 @@ from .schema import DocumentationItem
 
 logger = logging.getLogger(__name__)
 
+_UPLOAD_WORKER_LIMIT = max(1, min(config.database.pool_size, 8))
+_UPLOAD_WORKER_SEMAPHORE = asyncio.Semaphore(_UPLOAD_WORKER_LIMIT)
+
 
 # Helper Functions
 async def process_documentation_worker(
@@ -34,64 +37,36 @@ async def process_documentation_worker(
     app_version: str,
     job_id: UUID,
 ) -> Dict[str, Any]:
-    semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
+    async with _UPLOAD_WORKER_SEMAPHORE:
+        semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
 
-    async with async_session_maker() as db_init:
-        job_repo = JobRepository(db_init)
-        await job_repo.update_job_progress(
-            job_id,
-            stage=JobStage.processing,
-            message=f"Processing {len(chunks)} chunks",
-            total_processing=len(chunks),
-            processing_completed=0,
-        )
-        await db_init.commit()
-
-    logger.info("[Upload:Job] Processing %s chunks for session %s (job %s)", len(chunks), session_id, job_id)
-
-    async def process_chunk(idx: int, chunk_data: tuple[str, int]) -> DocumentationItem:
-        chunk_text, chunk_length = chunk_data
-
-        async with semaphore:
-            prompts = get_llm_chunk_process_prompt(chunk_text, filename, app, app_version)
-            data = await get_llm_processed_chunk(prompts)
-
-        async with async_session_maker() as db_chunk:
-            doc_repo = DocumentationRepository(db_chunk)
-            job_repo = JobRepository(db_chunk)
-
-            doc_id = await doc_repo.create_documentation_item(
-                session_id=session_id,
-                source="upload",
-                content=chunk_text,
-                page_id=page_id,
-                original_job_id=job_id,
-                url=f"upload://{filename}",
-                summary=data.summary,
-                metadata={
-                    "filename": filename,
-                    "chunk_number": idx,
-                    "length": chunk_length,
-                    "num_endpoints": data.num_endpoints,
-                    "tags": data.tags,
-                    "category": data.category,
-                    "llm_tags": data.tags,
-                    "llm_category": data.category,
-                },
+        async with async_session_maker() as db_init:
+            job_repo = JobRepository(db_init)
+            await job_repo.update_job_progress(
+                job_id,
+                stage=JobStage.processing,
+                message=f"Processing {len(chunks)} chunks",
+                total_processing=len(chunks),
+                processing_completed=0,
             )
+            await db_init.commit()
 
-            await job_repo.increment_processed_documents(job_id, 1)
-            await db_chunk.commit()
+        logger.info(
+            "[Upload:Job] Processing %s chunks for session %s (job %s) [worker_limit=%s]",
+            len(chunks),
+            session_id,
+            job_id,
+            _UPLOAD_WORKER_LIMIT,
+        )
 
-        return DocumentationItem(
-            id=doc_id,
-            source="upload",
-            page_id=page_id,
-            scrape_job_ids=[job_id],
-            url=f"upload://{filename}",
-            summary=data.summary,
-            content=chunk_text,
-            metadata={
+        async def process_chunk(idx: int, chunk_data: tuple[str, int]) -> Dict[str, Any]:
+            chunk_text, chunk_length = chunk_data
+
+            async with semaphore:
+                prompts = get_llm_chunk_process_prompt(chunk_text, filename, app, app_version)
+                data = await get_llm_processed_chunk(prompts)
+
+            metadata = {
                 "filename": filename,
                 "chunk_number": idx,
                 "length": chunk_length,
@@ -100,33 +75,65 @@ async def process_documentation_worker(
                 "category": data.category,
                 "llm_tags": data.tags,
                 "llm_category": data.category,
-            },
+            }
+            return {
+                "idx": idx,
+                "chunk_text": chunk_text,
+                "summary": data.summary,
+                "metadata": metadata,
+            }
+
+        processed_chunks = await asyncio.gather(*[process_chunk(i, ch) for i, ch in enumerate(chunks)])
+
+        doc_items: List[DocumentationItem] = []
+        async with async_session_maker() as db_persist:
+            doc_repo = DocumentationRepository(db_persist)
+            job_repo = JobRepository(db_persist)
+            session_repo = SessionRepository(db_persist)
+
+            existing_docs = await session_repo.get_session_data(session_id, "documentationItems") or []
+
+            for item in processed_chunks:
+                doc_id = await doc_repo.create_documentation_item(
+                    session_id=session_id,
+                    source="upload",
+                    content=item["chunk_text"],
+                    page_id=page_id,
+                    original_job_id=job_id,
+                    url=f"upload://{filename}",
+                    summary=item["summary"],
+                    metadata=item["metadata"],
+                )
+                await job_repo.increment_processed_documents(job_id, 1)
+
+                doc_item = DocumentationItem(
+                    id=doc_id,
+                    source="upload",
+                    page_id=page_id,
+                    scrape_job_ids=[job_id],
+                    url=f"upload://{filename}",
+                    summary=item["summary"],
+                    content=item["chunk_text"],
+                    metadata=item["metadata"],
+                )
+                doc_items.append(doc_item)
+                existing_docs.append(doc_item.model_dump(by_alias=True, mode="json"))
+
+            await session_repo.update_session(session_id, {"documentationItems": existing_docs})
+            await db_persist.commit()
+
+        logger.info(
+            "[Upload:Job] Completed processing for session %s (job %s): generated %s chunks",
+            session_id,
+            job_id,
+            len(doc_items),
         )
 
-    doc_items = await asyncio.gather(*[process_chunk(i, ch) for i, ch in enumerate(chunks)])
-
-    async with async_session_maker() as db_final:
-        session_repo = SessionRepository(db_final)
-
-        existing_docs = await session_repo.get_session_data(session_id, "documentationItems") or []
-        for item in doc_items:
-            existing_docs.append(item.model_dump(by_alias=True, mode="json"))
-
-        await session_repo.update_session(session_id, {"documentationItems": existing_docs})
-        await db_final.commit()
-
-    logger.info(
-        "[Upload:Job] Completed processing for session %s (job %s): generated %s chunks",
-        session_id,
-        job_id,
-        len(doc_items),
-    )
-
-    return {
-        "chunks_processed": len(doc_items),
-        "page_id": page_id,
-        "filename": filename,
-    }
+        return {
+            "chunks_processed": len(doc_items),
+            "page_id": page_id,
+            "filename": filename,
+        }
 
 
 async def get_session_documentation(
