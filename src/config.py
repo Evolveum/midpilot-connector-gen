@@ -231,7 +231,7 @@ class DatabaseSettings(BaseModel):
         description="Database URL",
     )
     host: str = ""
-    port: int = 5433
+    port: int = 5432
     name: str = ""
     user: str = ""
     password: str = ""
@@ -298,7 +298,7 @@ class Settings(BaseSettings):
 
     Example: LOGGING__LEVEL=error
              DATABASE__HOST=localhost
-             DATABASE__PORT=5432
+             DATABASE__PORT=5433
     """
 
     model_config = SettingsConfigDict(

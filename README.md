@@ -115,7 +115,7 @@ DATABASE__PASSWORD=password
 DATABASE__NAME=db
 
 # Full connection string for Alembic and SQLAlchemy
-DATABASE_URL=postgresql+asyncpg://${DATABASE__USER}:${DATABASE__PASSWORD}@${DATABASE__HOST}:${DATABASE__PORT}/${DATABASE__NAME}
+DATABASE_URL=postgresql+asyncpg://${DATABASE__USER}:${DATABASE__PASSWORD}@${DATABASE__HOST}:${DATABASE__INT_PORT}/${DATABASE__NAME}
 ```
 
 #### 4. Run Database Migrations
