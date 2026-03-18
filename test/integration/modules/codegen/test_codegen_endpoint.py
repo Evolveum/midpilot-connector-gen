@@ -38,14 +38,23 @@ async def test_generate_native_schema_success():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_native_schema(session_id, "User", db=MagicMock())
+        response = await generate_native_schema(
+            session_id,
+            "User",
+            usePreviousSessionData=True,
+            db=MagicMock(),
+        )
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "UserAttributesOutput")
         mock_schedule.assert_awaited_once_with(
             job_type="codegen.getNativeSchema",
-            input_payload={"attributes": {"username": {"type": "string"}}, "objectClass": "User"},
+            input_payload={
+                "attributes": {"username": {"type": "string"}},
+                "objectClass": "User",
+                "usePreviousSessionData": True,
+            },
             worker=ANY,
             worker_args=({"username": {"type": "string"}}, "User"),
             initial_stage="queue",
