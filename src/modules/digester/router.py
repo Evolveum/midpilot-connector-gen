@@ -451,9 +451,9 @@ async def extract_class_endpoints(
         relevant_chunks_full = await filter_documentation_items(criteria, session_id, db=db)
 
     relevant_chunks = [
-        {"docUuid": chunk["uuid"]}
+        {"docUuid": chunk["chunkId"]}
         for chunk in relevant_chunks_full
-        # if chunk["uuid"] in {rc["docUuid"] for rc in relevant_chunks_from_object_class}
+        # if chunk["chunkId"] in {rc["docUuid"] for rc in relevant_chunks_from_object_class}
     ]
     if not relevant_chunks and not is_scim:
         raise HTTPException(

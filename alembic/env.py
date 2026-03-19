@@ -25,7 +25,7 @@ if env_path.exists():
 config = context.config
 
 # Override sqlalchemy.url from environment variable if available
-database_url = os.getenv("DATABASE_URL")
+database_url = os.getenv("DATABASE__URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 

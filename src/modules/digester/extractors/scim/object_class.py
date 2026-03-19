@@ -188,7 +188,7 @@ async def _find_relevant_chunks_for_base_classes(
         # Check each document for mentions
         for doc_item in doc_items:
             doc_content = doc_item.get("content", "").lower()
-            doc_uuid = doc_item.get("uuid")
+            doc_uuid = doc_item.get("chunkId")
 
             if not doc_uuid:
                 continue

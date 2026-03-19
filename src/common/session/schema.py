@@ -28,17 +28,17 @@ class Session(BaseModel):
 class DocumentationItem(BaseModel):
     """Unified documentation item that can come from scraper or user upload."""
 
-    id: UUID = Field(
+    chunk_id: UUID = Field(
         default_factory=uuid.uuid4,
-        serialization_alias="uuid",
-        validation_alias=AliasChoices("uuid", "id"),
-        description="Unique identifier for this documentation piece",
+        serialization_alias="chunkId",
+        validation_alias=AliasChoices("chunkId", "chunk_id"),
+        description="Unique identifier for this documentation chunk",
     )
-    page_id: Optional[UUID] = Field(
+    doc_id: Optional[UUID] = Field(
         None,
-        serialization_alias="pageId",
-        validation_alias=AliasChoices("pageId", "page_id"),
-        description="Page ID from scraper, null for uploads",
+        serialization_alias="docId",
+        validation_alias=AliasChoices("docId", "doc_id"),
+        description="Document identifier shared across chunks from the same source document",
     )
     source: str = Field(..., description="Source type: 'scraper' or 'upload'")
     scrape_job_ids: Optional[list[UUID]] = Field(

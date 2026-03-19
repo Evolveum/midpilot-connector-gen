@@ -280,14 +280,14 @@ async def schedule_coroutine_job(
                                 else:
                                     for item in latest_job_doc_items:
                                         new_doc = copy.deepcopy(item)
-                                        new_doc["page_id"] = input_payload.get("page_id")
-                                        doc_id = await doc_repo.create_documentation_item(
+                                        new_doc["doc_id"] = input_payload.get("doc_id")
+                                        chunk_id = await doc_repo.create_documentation_item(
                                             session_id=session_id,
                                             source="upload",
                                             content=item["content"],
                                             original_job_id=job_id,
-                                            page_id=UUID(input_payload.get("page_id"))
-                                            if input_payload.get("page_id")
+                                            doc_id=UUID(input_payload.get("doc_id"))
+                                            if input_payload.get("doc_id")
                                             else None,
                                             url=f"upload://{input_payload.get('filename', 'unknown')}",
                                             summary=item["summary"],
@@ -302,7 +302,7 @@ async def schedule_coroutine_job(
                                                 "llm_category": item["metadata"].get("llm_category"),
                                             },
                                         )
-                                        new_doc["id"] = doc_id
+                                        new_doc["chunk_id"] = chunk_id
                                         new_doc["scrape_job_ids"] = [str(job_id)]
 
                                         docs_to_reuse.append(
@@ -356,12 +356,10 @@ async def schedule_coroutine_job(
                                                     )
                                                     continue
                                                 current_doc_item = current_doc[0]
-                                                current_doc_uuid = current_doc_item.get("id") or current_doc_item.get(
-                                                    "uuid"
-                                                )
+                                                current_doc_uuid = current_doc_item.get("chunkId")
                                                 if not current_doc_uuid:
                                                     logger.warning(
-                                                        "[%s] Job %s: Corrupted documentation item for object class %s when trying to reuse output from job %s, missing id/uuid in current input, skipping relevant chunks for this object class",
+                                                        "[%s] Job %s: Corrupted documentation item for object class %s when trying to reuse output from job %s, missing chunkId in current input, skipping relevant chunks for this object class",
                                                         job_type,
                                                         str(job_id),
                                                         objClass.get("name"),
@@ -408,10 +406,10 @@ async def schedule_coroutine_job(
                                             )
                                             continue
                                         current_doc_item = current_doc[0]
-                                        current_doc_uuid = current_doc_item.get("id") or current_doc_item.get("uuid")
+                                        current_doc_uuid = current_doc_item.get("chunkId")
                                         if not current_doc_uuid:
                                             logger.warning(
-                                                "[%s] Job %s: Corrupted documentation item for key %s when trying to reuse output from job %s, missing id/uuid in current input, skipping relevant chunks for this item",
+                                                "[%s] Job %s: Corrupted documentation item for key %s when trying to reuse output from job %s, missing chunkId in current input, skipping relevant chunks for this item",
                                                 job_type,
                                                 str(job_id),
                                                 rel_chunk,

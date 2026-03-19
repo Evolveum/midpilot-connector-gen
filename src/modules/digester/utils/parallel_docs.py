@@ -29,7 +29,7 @@ async def process_documents_in_parallel(
     function which returns the result and a relevance flag.
 
     Args:
-        doc_items: List of document dictionaries containing 'uuid' and 'content' keys
+        doc_items: List of document dictionaries containing 'chunkId' and 'content' keys
         job_id: UUID for job tracking and progress updates
         extractor: Async function that processes document content and returns (result, has_relevant_data)
         logger_scope: String prefix for logging messages
@@ -42,7 +42,7 @@ async def process_documents_in_parallel(
 
     async def _process_single_doc(doc_item: dict) -> Tuple[T, bool, UUID]:
         """Process a single document and return its results."""
-        doc_uuid = UUID(doc_item["uuid"])
+        doc_uuid = UUID(doc_item["chunkId"])
         doc_content = doc_item["content"]
 
         logger.info(f"[{logger_scope}] Processing document (UUID: {doc_uuid})")

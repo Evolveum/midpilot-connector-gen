@@ -35,7 +35,7 @@ class RelevantChunk(Base):
     entity_type: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     doc_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("documentation_items.id", ondelete="CASCADE"),
+        ForeignKey("documentation_items.chunk_id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

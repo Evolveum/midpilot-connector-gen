@@ -14,8 +14,12 @@ from src.modules.digester.schema import RelationsResponse
 
 
 def test_collect_pairs_new_format():
-    """Test _collect_pairs with new format containing only docUuid."""
-    input_data = [{"docUuid": "uuid1"}, {"docUuid": "uuid2"}, {"docUuid": "uuid3"}]
+    """Test _collect_pairs with format containing docUuid."""
+    input_data = [
+        {"docUuid": "uuid1"},
+        {"docUuid": "uuid2"},
+        {"docUuid": "uuid3"},
+    ]
 
     result = service._collect_pairs(input_data)
 

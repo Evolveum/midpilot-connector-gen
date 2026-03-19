@@ -565,13 +565,13 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
 
     fake_doc_items = [
         {
-            "uuid": str(doc_uuid1),
+            "chunkId": str(doc_uuid1),
             "content": "doc 1",
             "summary": "Summary one",
             "@metadata": {"tags": ["rest", "users"]},
         },
         {
-            "uuid": str(doc_uuid2),
+            "chunkId": str(doc_uuid2),
             "content": "doc 2",
             "summary": "Summary two",
             "@metadata": {"tags": "openapi"},
@@ -612,8 +612,8 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
         async def run_extractor_for_docs(*, doc_items, job_id, extractor, logger_scope):
             out = []
             for item in doc_items:
-                result, has_relevant = await extractor(item["content"], job_id, UUID(item["uuid"]))
-                out.append((result, has_relevant, UUID(item["uuid"])))
+                result, has_relevant = await extractor(item["content"], job_id, UUID(item["chunkId"]))
+                out.append((result, has_relevant, UUID(item["chunkId"])))
             return out
 
         mock_parallel.side_effect = run_extractor_for_docs

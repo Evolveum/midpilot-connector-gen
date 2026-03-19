@@ -52,7 +52,7 @@ def build_doc_metadata_map(doc_items: list[dict]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
 
     for item in doc_items:
-        doc_uuid = item.get("uuid")
+        doc_uuid = item.get("chunkId")
         if not doc_uuid:
             continue
 

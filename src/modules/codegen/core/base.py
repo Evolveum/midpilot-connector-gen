@@ -73,7 +73,7 @@ class ChunkProcessor:
         chunks_by_uuid: Dict[str, Dict[str, Any]] = {}
         for item in documentation_items:
             try:
-                uid = item.get("uuid") or item.get("id")
+                uid = item.get("chunkId")
                 if isinstance(uid, str):
                     chunks_by_uuid[uid] = item
             except Exception:
@@ -233,7 +233,7 @@ class BaseGroovyGenerator(ABC):
         else:
             # Use all documentation items directly
             chunks = [normalize_to_text(item.get("content", "")) for item in documentation_items]
-            provenance = [item.get("uuid") or item.get("id") for item in documentation_items]
+            provenance = [item.get("chunkId") for item in documentation_items]
             logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
             return chunks, provenance, {}, []
 
