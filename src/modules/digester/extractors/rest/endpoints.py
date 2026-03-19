@@ -60,7 +60,7 @@ async def extract_endpoints(
     Returns:
         Dict containing:
         - "result": Dict with "endpoints" key containing extracted endpoint information
-        - "relevantChunks": List of chunks that contained relevant endpoint information
+        - "relevantDocumentations": List of chunks that contained relevant endpoint information
     """
 
     if chunk_details is None:
@@ -252,4 +252,4 @@ async def extract_endpoints(
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Endpoint extraction complete")
 
-    return {"result": {"endpoints": merged_dicts}, "relevantChunks": relevant_chunk_info}
+    return {"result": {"endpoints": merged_dicts}, "relevantDocumentations": relevant_chunk_info}

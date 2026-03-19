@@ -43,7 +43,7 @@ async def extract_scim_object_classes(
     Returns:
         Dictionary with:
         - "result": ObjectClassesResponse with merged classes
-        - "relevantChunks": List of chunks containing custom extensions
+        - "relevantDocumentations": List of chunks containing custom extensions
     """
     logger.info("[SCIM:ObjectClasses] Starting guided extraction")
 
@@ -149,7 +149,7 @@ async def extract_scim_object_classes(
 
     return {
         "result": result.model_dump(by_alias=True),
-        "relevantChunks": all_relevant_chunks,
+        "relevantDocumentations": all_relevant_chunks,
     }
 
 

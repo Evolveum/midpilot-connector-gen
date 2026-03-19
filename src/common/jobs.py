@@ -333,7 +333,7 @@ async def schedule_coroutine_job(
                                 else:
                                     for objClass in reused_output.get("result", {}).get("objectClasses", []):
                                         relevant_chunks_obj_class: List[Dict[str, Any]] = objClass.get(
-                                            "relevantChunks", []
+                                            "relevantDocumentations", []
                                         )
                                         for rel_chunk in relevant_chunks_obj_class:
                                             origUUID = rel_chunk.get("docUuid")
@@ -382,8 +382,10 @@ async def schedule_coroutine_job(
                                     await db.commit()
                                     result_dict = reused_output
 
-                            elif "relevantChunks" in reused_output:
-                                original_relevant_chunks: List[Dict[str, Any]] = reused_output.pop("relevantChunks")
+                            elif "relevantDocumentations" in reused_output:
+                                original_relevant_chunks: List[Dict[str, Any]] = reused_output.pop(
+                                    "relevantDocumentations"
+                                )
                                 new_relevant_chunks: List[Dict[str, Any]] = []
                                 for rel_chunk in original_relevant_chunks:
                                     origUUID = rel_chunk.get("docUuid")
@@ -434,7 +436,7 @@ async def schedule_coroutine_job(
                                     len(new_relevant_chunks),
                                     new_relevant_chunks[0]["docUuid"] if new_relevant_chunks else None,
                                 )
-                                reused_output["relevantChunks"] = new_relevant_chunks
+                                reused_output["relevantDocumentations"] = new_relevant_chunks
                                 result_dict = reused_output
                             elif "discovery" in job_type or "codegen" in job_type:
                                 result_dict = copy.deepcopy(latest_job.result)
@@ -478,12 +480,12 @@ async def schedule_coroutine_job(
                         if (
                             isinstance(result_dict, dict)
                             and "result" in result_dict
-                            and ("relevant_chunk_indices" in result_dict or "relevantChunks" in result_dict)
+                            and ("relevant_chunk_indices" in result_dict or "relevantDocumentations" in result_dict)
                         ):
                             # New format: store result and relevant chunks separately
                             actual_result = result_dict["result"]
                             # Support both old format (relevant_chunk_indices) and new format (relevant_chunks)
-                            relevant_chunks = result_dict.get("relevantChunks") or result_dict.get(
+                            relevant_chunks = result_dict.get("relevantDocumentations") or result_dict.get(
                                 "relevant_chunk_indices", []
                             )
 
@@ -492,9 +494,11 @@ async def schedule_coroutine_job(
                             # Store relevant chunks for this specific extraction
                             if relevant_chunks:
                                 # Get existing relevant_chunks dict or create new one
-                                existing_relevant = await repo.get_session_data(session_id, "relevantChunks") or {}
+                                existing_relevant = (
+                                    await repo.get_session_data(session_id, "relevantDocumentations") or {}
+                                )
                                 existing_relevant[session_result_key] = relevant_chunks
-                                session_updates["relevantChunks"] = existing_relevant
+                                session_updates["relevantDocumentations"] = existing_relevant
 
                             await repo.update_session(session_id, session_updates)
                         else:

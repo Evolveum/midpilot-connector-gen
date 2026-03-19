@@ -96,13 +96,13 @@ async def test_get_object_classes_status_found():
                 "name": "User",
                 "relevant": "true",
                 "description": "User's description",
-                "relevantDocumentation": [],
+                "relevantDocumentations": [],
             },
             {
                 "name": "Group",
                 "relevant": "true",
                 "description": "Group's description",
-                "relevantDocumentation": [],
+                "relevantDocumentations": [],
             },
         ]
     }
@@ -155,7 +155,7 @@ async def test_extract_class_attributes_success():
                 "abstract": False,
                 "embedded": False,
                 "description": "Represents a user",
-                "relevantChunks": [
+                "relevantDocumentations": [
                     {"docUuid": doc_uuid},
                     {"docUuid": doc_uuid},
                 ],
@@ -286,7 +286,7 @@ async def test_extract_class_endpoints_success():
                 "abstract": False,
                 "embedded": False,
                 "description": "Represents a user",
-                "relevantDocumentation": [
+                "relevantDocumentations": [
                     {"docId": "page-1", "chunkId": "doc-1"},
                     {"docId": "page-1", "chunkId": "doc-1"},
                 ],

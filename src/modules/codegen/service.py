@@ -102,7 +102,7 @@ async def _collect_relevant_chunks(
     """
     async with async_session_maker() as db:
         repo = SessionRepository(db)
-        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+        relevant_map = await repo.get_session_data(session_id, "relevantDocumentations")
 
     if not relevant_map:
         return None, None
@@ -368,7 +368,7 @@ async def create_relation(
 
     async with async_session_maker() as db:
         repo = SessionRepository(db)
-        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+        relevant_map = await repo.get_session_data(session_id, "relevantDocumentations")
 
     if relevant_map:
         raw = relevant_map.get("relationsOutput")

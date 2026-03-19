@@ -30,8 +30,8 @@ def find_object_class(object_classes: List[Any], object_class: str) -> Optional[
 
 
 def get_relevant_chunks(object_class_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return normalized relevantChunks list with valid docUuid objects only."""
-    chunks = object_class_data.get("relevantChunks", [])
+    """Return normalized relevantDocumentations list with valid docUuid objects only."""
+    chunks = object_class_data.get("relevantDocumentations", [])
     if not isinstance(chunks, list):
         return []
     return [chunk for chunk in chunks if isinstance(chunk, dict) and "docUuid" in chunk]

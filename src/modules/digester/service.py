@@ -87,7 +87,7 @@ async def _process_over_documents(
 
     return {
         "result": merged_result,
-        "relevantChunks": all_relevant_chunks,
+        "relevantDocumentations": all_relevant_chunks,
     }
 
 
@@ -112,7 +112,7 @@ async def extract_object_classes(
         session_id: Session ID to retrieve api_type from infoMetadata
 
     Returns:
-        Dictionary with result and relevantChunks
+        Dictionary with result and relevantDocumentations
     """
     api_type = await get_api_type_from_session(session_id)
     is_scim = is_scim_api(api_type)
@@ -198,7 +198,7 @@ async def _extract_rest_object_classes(
 
     return {
         "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
-        "relevantChunks": all_relevant_chunks,
+        "relevantDocumentations": all_relevant_chunks,
     }
 
 
@@ -247,7 +247,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
 
     return {
         "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
-        "relevantChunks": all_relevant_chunks,
+        "relevantDocumentations": all_relevant_chunks,
     }
 
 
@@ -334,7 +334,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
 
     return {
         "result": merged_result,
-        "relevantChunks": all_relevant_chunks,
+        "relevantDocumentations": all_relevant_chunks,
     }
 
 
@@ -363,7 +363,7 @@ async def extract_attributes(
 
     if not selected_docs:
         logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
-        return {"result": {"attributes": {}}, "relevantChunks": []}
+        return {"result": {"attributes": {}}, "relevantDocumentations": []}
 
     doc_metadata_map = build_doc_metadata_map(doc_items)
 
@@ -456,7 +456,7 @@ async def extract_endpoints(
 
         if not selected_docs:
             logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
-            return {"result": {"endpoints": []}, "relevantChunks": []}
+            return {"result": {"endpoints": []}, "relevantDocumentations": []}
 
         doc_metadata_map = build_doc_metadata_map(doc_items)
 

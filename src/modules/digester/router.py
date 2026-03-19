@@ -262,7 +262,7 @@ async def extract_class_attributes(
 ):
     """
     Extract attributes schema for a specific object class.
-    Only processes chunks that are relevant to the object class (from relevantChunks).
+    Only processes chunks that are relevant to the object class (from relevantDocumentations).
     Updates both {object_class}AttributesOutput and the attributes field in the specific object class.
 
     NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
@@ -303,7 +303,7 @@ async def extract_class_attributes(
         input_payload={
             "documentationItems": doc_items,
             "objectClass": object_class,
-            "relevantChunks": relevant_chunks,
+            "relevantDocumentations": relevant_chunks,
             "usePreviousSessionData": use_previous_session_data,
         },
         worker=service.extract_attributes,
@@ -320,7 +320,7 @@ async def extract_class_attributes(
             f"{object_class}AttributesJobId": str(job_id),
             f"{object_class}AttributesInput": {
                 "objectClass": object_class,
-                "relevantChunksCount": total_chunks,
+                "relevantDocumentationsCount": total_chunks,
             },
         },
     )
@@ -414,7 +414,7 @@ async def extract_class_endpoints(
     Extract API endpoints for a specific object class.
     Automatically loads base API URL from session metadata if available.
     Updates both {object_class}EndpointsOutput and the endpoints field in the specific object class.
-    Only processes chunks that are relevant to the object class (from relevantChunks).
+    Only processes chunks that are relevant to the object class (from relevantDocumentations).
 
     NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
@@ -473,7 +473,7 @@ async def extract_class_endpoints(
             "documentationItems": doc_items,
             "objectClass": object_class,
             "baseApiUrl": base_api_url,
-            "relevantChunks": relevant_chunks,
+            "relevantDocumentations": relevant_chunks,
             "usePreviousSessionData": use_previous_session_data,
         },
         worker=service.extract_endpoints,
@@ -491,7 +491,7 @@ async def extract_class_endpoints(
             f"{object_class}EndpointsJobId": str(job_id),
             f"{object_class}EndpointsInput": {
                 "objectClass": object_class,
-                "relevantChunksCount": total_chunks,
+                "relevantDocumentationsCount": total_chunks,
                 "baseApiUrl": base_api_url,
             },
         },

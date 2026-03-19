@@ -138,7 +138,7 @@ async def extract_scim_attributes(
     Returns:
         Dictionary with:
         - "result": {"attributes": {...}} mapped attributes
-        - "relevantChunks": List of chunks with mapping evidence
+        - "relevantDocumentations": List of chunks with mapping evidence
     """
     logger.info("[SCIM:Attributes] Starting mapping extraction for %s", object_class)
 
@@ -226,7 +226,7 @@ async def extract_scim_attributes(
 
     return {
         "result": {"attributes": merged_custom},
-        "relevantChunks": relevant_chunks,
+        "relevantDocumentations": relevant_chunks,
     }
 
 

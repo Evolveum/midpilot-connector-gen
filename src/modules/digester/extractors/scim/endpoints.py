@@ -85,7 +85,7 @@ async def pregenerate_scim_endpoints(
 
     return {
         "result": {"endpoints": endpoints},
-        "relevantChunks": relevant_chunks,
+        "relevantDocumentations": relevant_chunks,
     }
 
 
@@ -150,7 +150,7 @@ async def extract_scim_endpoints(
     Returns:
         Dictionary with:
         - "result": {"endpoints": [...]} merged endpoints
-        - "relevantChunks": List of chunks with custom endpoints
+        - "relevantDocumentations": List of chunks with custom endpoints
     """
     logger.info("[SCIM:Endpoints] Starting guided extraction for %s", object_class)
 
@@ -242,7 +242,7 @@ async def extract_scim_endpoints(
 
     return {
         "result": {"endpoints": [ep.model_dump(by_alias=True) for ep in all_endpoints]},
-        "relevantChunks": relevant_chunks,
+        "relevantDocumentations": relevant_chunks,
     }
 
 

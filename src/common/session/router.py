@@ -537,7 +537,7 @@ async def delete_documentation_item(
     Since uploaded documentation is chunked, this removes all chunks belonging to the same document.
     Returns 404 if the session or any documentation with that doc_id is not found.
     """
-    # TODO: Maybe we should handle relevantChunks
+    # TODO: Maybe we should handle relevantDocumentations
     repo = SessionRepository(db)
     doc_repo = DocumentationRepository(db)
     if not await repo.session_exists(session_id):

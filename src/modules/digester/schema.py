@@ -81,8 +81,8 @@ class ObjectClass(BaseModel):
     )
     relevant_chunks: List[Dict[str, str]] = Field(
         default_factory=list,
-        validation_alias="relevantChunks",
-        serialization_alias="relevantChunks",
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
         json_schema_extra={"exclude": True},
         description=(
             "List of chunks that contain relevant information about this object class. "

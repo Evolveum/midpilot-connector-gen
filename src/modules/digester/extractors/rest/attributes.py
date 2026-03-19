@@ -309,7 +309,7 @@ async def extract_attributes(
     Returns:
         Dict containing:
         - "result": Dict with "attributes" key containing extracted attribute information
-        - "relevantChunks": List of chunks that contained relevant attribute information
+        - "relevantDocumentations": List of chunks that contained relevant attribute information
     """
     if chunk_details is None:
         chunk_details = [""] * len(chunks)
@@ -388,4 +388,4 @@ async def extract_attributes(
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
-    return {"result": {"attributes": filled_attributes}, "relevantChunks": relevant_docs}
+    return {"result": {"attributes": filled_attributes}, "relevantDocumentations": relevant_docs}
