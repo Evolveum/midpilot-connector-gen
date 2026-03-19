@@ -424,21 +424,20 @@ class InfoResponse(BaseModel):
     Use the alias 'InfoMetadata' for serialization if needed.
     """
 
-    info_metadata: InfoMetadata = Field(
-        default_factory=InfoMetadata,
+    info_metadata: Optional[InfoMetadata] = Field(
+        default=None,
         validation_alias="infoMetadata",
         serialization_alias="infoMetadata",
-        description="High-level application and API metadata if discovered in the documentations.",
+        description="High-level application and API metadata if discovered in the documentations. Null when unavailable.",
     )
 
     model_config = {"populate_by_name": True}
 
-    # Accept null incoming payloads by converting them to an empty object
     @field_validator("info_metadata", mode="before")
     @classmethod
     def _normalize_info(cls, v):
         if v is None:
-            return {}
+            return None
         return v
 
 

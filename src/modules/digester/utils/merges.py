@@ -272,6 +272,8 @@ def is_empty_info_result_payload(payload: Dict[str, Any]) -> bool:
     info = (payload or {}).get("infoMetadata")
     if info is None:
         return True
+    if not isinstance(info, dict):
+        return True
 
     return not bool(
         str(info.get("name") or "").strip()
@@ -280,6 +282,11 @@ def is_empty_info_result_payload(payload: Dict[str, Any]) -> bool:
         or info.get("apiType")
         or info.get("baseApiEndpoint")
     )
+
+
+def _empty_info_metadata_payload() -> Dict[str, Any]:
+    """Standard empty metadata payload for API responses."""
+    return cast(Dict[str, Any], InfoResponse(info_metadata=None).model_dump(by_alias=True))
 
 
 def merge_info_metadata(
@@ -295,9 +302,9 @@ def merge_info_metadata(
     """
     if total_items <= 0:
         logger.info("[Digester:InfoMetadata] Heuristic merge skipped: total_items=%s", total_items)
-        return {"infoMetadata": None}
+        return _empty_info_metadata_payload()
 
-    threshold = total_items * config.scrape_and_process.metadata_uncertainty_threshold
+    threshold = total_items * config.digester.info_metadata_uncertainty_threshold
 
     name_distribution: Dict[str, int] = {}
     app_version_distribution: Dict[str, int] = {}
@@ -407,7 +414,7 @@ def merge_info_metadata(
 
     if is_empty_info_result_payload(merged_payload):
         logger.info("[Digester:InfoMetadata] Heuristic result is empty -> returning infoMetadata=null")
-        return {"infoMetadata": None}
+        return _empty_info_metadata_payload()
 
     logger.info("[Digester:InfoMetadata] Heuristic merge produced non-empty infoMetadata")
     return merged_payload

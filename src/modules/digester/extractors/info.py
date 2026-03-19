@@ -31,7 +31,9 @@ async def extract_info_metadata(
 
     def parse_fn(result: InfoResponse) -> List[InfoMetadata]:
         payload = result.model_dump(by_alias=True)
-        return [result.info_metadata] if not is_empty_info_result_payload(payload) else []
+        if is_empty_info_result_payload(payload) or result.info_metadata is None:
+            return []
+        return [result.info_metadata]
 
     extracted, has_relevant_data = await run_extraction_parallel(
         schema=schema,

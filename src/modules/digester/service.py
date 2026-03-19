@@ -282,11 +282,14 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
                     normalized_infos.append(item)
                     continue
                 if isinstance(item, InfoResponse):
-                    normalized_infos.append(item.info_metadata)
+                    if item.info_metadata is not None:
+                        normalized_infos.append(item.info_metadata)
                     continue
                 if isinstance(item, dict):
                     try:
-                        normalized_infos.append(InfoResponse.model_validate(item).info_metadata)
+                        parsed_info = InfoResponse.model_validate(item).info_metadata
+                        if parsed_info is not None:
+                            normalized_infos.append(parsed_info)
                         continue
                     except Exception:
                         try:
@@ -296,10 +299,13 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
         elif isinstance(raw_infos, InfoMetadata):
             normalized_infos.append(raw_infos)
         elif isinstance(raw_infos, InfoResponse):
-            normalized_infos.append(raw_infos.info_metadata)
+            if raw_infos.info_metadata is not None:
+                normalized_infos.append(raw_infos.info_metadata)
         elif isinstance(raw_infos, dict):
             try:
-                normalized_infos.append(InfoResponse.model_validate(raw_infos).info_metadata)
+                parsed_info = InfoResponse.model_validate(raw_infos).info_metadata
+                if parsed_info is not None:
+                    normalized_infos.append(parsed_info)
             except Exception:
                 try:
                     normalized_infos.append(InfoMetadata.model_validate(raw_infos))
