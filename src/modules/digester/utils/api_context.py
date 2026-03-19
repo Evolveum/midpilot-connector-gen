@@ -14,21 +14,21 @@ logger = logging.getLogger(__name__)
 
 def extract_api_type(metadata: Dict[str, Any] | None) -> List[str]:
     """Extract apiType list from metadataOutput payload."""
-    if not metadata or not isinstance(metadata, dict):
+    if not metadata:
         return []
 
-    info_about_schema = metadata.get("infoAboutSchema", {})
-    api_type = info_about_schema.get("apiType", [])
+    info_metadata = metadata.get("infoMetadata") or {}
+    api_type = info_metadata.get("apiType", [])
     return api_type if isinstance(api_type, list) else []
 
 
 def extract_base_api_url(metadata: Dict[str, Any] | None) -> str:
     """Extract first base API URL from metadataOutput payload."""
-    if not metadata or not isinstance(metadata, dict):
+    if not metadata:
         return ""
 
-    info_about_schema = metadata.get("infoAboutSchema", {})
-    base_api_endpoints = info_about_schema.get("baseApiEndpoint", [])
+    info_metadata = metadata.get("infoMetadata") or {}
+    base_api_endpoints = info_metadata.get("baseApiEndpoint", [])
     if base_api_endpoints and isinstance(base_api_endpoints, list):
         first = base_api_endpoints[0]
         if isinstance(first, dict):

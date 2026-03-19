@@ -220,6 +220,13 @@ class DigesterSettings(BaseModel):
         timedelta(weeks=4),
         description="Time interval for checking if the same digester input has been processed before.",
     )
+    info_metadata_uncertainty_threshold: float = Field(
+        0.05,
+        description=(
+            "Threshold ratio used by digester metadata merge. "
+            "Values below this evidence ratio across processed documents are ignored as uncertain."
+        ),
+    )
 
 
 class DatabaseSettings(BaseModel):

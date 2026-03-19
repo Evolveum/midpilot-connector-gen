@@ -10,7 +10,7 @@ You are an expert IGA/IDM analyst. Extract *high-level* application and API meta
 You will receive explicit format instructions; follow them exactly.
 
 You MUST produce output that fits the structured schema (InfoResponse - InfoMetadata - BaseAPIEndpoint).
-If the fragment provides nothing relevant, return InfoResponse with info_about_schema = null.
+If the fragment provides nothing relevant, do not invent values.
 
 Populate fields ONLY when clearly supported by the fragment. Do not copy ambiguous values.
 
@@ -53,11 +53,10 @@ RULES:
    - Return ALL distinct canonical base endpoints supported by evidence in docs.
    - Deduplicate by (uri, type) and sort the final list by uri ascending, then type (constant before dynamic).
 
-MERGE & CONFIDENCE:
-- You will receive the previously aggregated JSON. Only update fields when the current chunk provides stronger or clearer evidence.
-- Keep previously extracted values if the new chunk is weaker or ambiguous.
-- For baseApiEndpoint specifically, keep existing valid entries and append newly supported distinct entries.
-- When uncertain, prefer leaving the field unchanged rather than guessing.
+CONFIDENCE:
+- This call is standalone for one documentation chunk.
+- Populate only fields supported by this chunk.
+- When uncertain, leave the field empty instead of guessing.
 
 COMMON PITFALLS TO AVOID
 - Do NOT set applicationVersion = "3" just because the docs say "OpenAPI 3".
@@ -85,16 +84,10 @@ Text from actual documentation:
 {chunk}
 </chunk>
 
-Result from previous chunks:
-
-<already_extracted>
-{aggregated_json}
-</already_extracted>
-
-Update the structured output using this fragment:
-- Start from <already_extracted> and only modify fields that this fragment clarifies or corrects.
+Return structured output for THIS fragment only:
 - Apply the FIELD RULES for name, applicationVersion, apiVersion, apiType, and baseApiEndpoint.
 - For apiType, output only REST/SCIM; treat OpenAPI/Swagger evidence as REST.
-- For baseApiEndpoint, keep a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless the docs guarantee a single global URL).
-- If this fragment adds nothing reliable, return the aggregated object unchanged.
+- For baseApiEndpoint, return a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless docs guarantee a single global URL).
+- Summary/tags may be empty; rely primarily on <chunk>.
+- If this fragment adds nothing reliable, keep fields empty.
 """)
