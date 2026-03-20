@@ -59,7 +59,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
                         abstract=False,
                         embedded=False,
                         description="Represents a user in the system",
-                        relevant_chunks=[{"docUuid": doc_uuid1}],
+                        relevant_documentations=[{"doc_id": str(doc_uuid1), "chunk_id": str(doc_uuid1)}],
                     ),
                 ],
                 True,
@@ -74,7 +74,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
                         abstract=False,
                         embedded=False,
                         description="Represents a group of users",
-                        relevant_chunks=[{"docUuid": doc_uuid2}],
+                        relevant_documentations=[{"doc_id": str(doc_uuid2), "chunk_id": str(doc_uuid2)}],
                     ),
                 ],
                 True,
@@ -90,13 +90,13 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
                             "name": "User",
                             "relevant": "true",
                             "description": "Represents a user in the system",
-                            "relevantDocumentations": [{"docUuid": doc_uuid1}],
+                            "relevantDocumentations": [{"docId": str(doc_uuid1), "chunkId": str(doc_uuid1)}],
                         },
                         {
                             "name": "Group",
                             "relevant": "true",
                             "description": "Represents a group of users",
-                            "relevantDocumentations": [{"docUuid": doc_uuid2}],
+                            "relevantDocumentations": [{"docId": str(doc_uuid2), "chunkId": str(doc_uuid2)}],
                         },
                     ]
                 }
@@ -160,7 +160,7 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
     ]
 
     relevant_chunks = [
-        {"docUuid": doc_uuid},
+        {"doc_id": doc_uuid, "chunk_id": doc_uuid},
     ]
 
     with (
@@ -245,7 +245,7 @@ async def test_extract_attributes_session_not_found(mock_llm, mock_digester_upda
     doc_uuid = str(uuid4())
 
     fake_doc_items = [{"uuid": doc_uuid, "content": "test"}]
-    relevant_chunks = [{"docUuid": doc_uuid}]
+    relevant_chunks = [{"doc_id": doc_uuid, "chunk_id": doc_uuid}]
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
@@ -288,7 +288,7 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
         }
     ]
 
-    relevant_chunks = [{"docUuid": doc_uuid}]
+    relevant_chunks = [{"doc_id": doc_uuid, "chunk_id": doc_uuid}]
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
@@ -376,7 +376,7 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
     base_api_url = "https://custom-api.example.com/v2"
 
     fake_doc_items = [{"uuid": doc_uuid, "content": "test", "summary": "", "@metadata": {}}]
-    relevant_chunks = [{"docUuid": doc_uuid}]
+    relevant_chunks = [{"doc_id": doc_uuid, "chunk_id": doc_uuid}]
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
@@ -609,9 +609,9 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
             ),
         ]
 
-        async def run_extractor_for_docs(*, doc_items, job_id, extractor, logger_scope):
+        async def run_extractor_for_docs(*, chunk_items, job_id, extractor, logger_scope):
             out = []
-            for item in doc_items:
+            for item in chunk_items:
                 result, has_relevant = await extractor(item["content"], job_id, UUID(item["chunkId"]))
                 out.append((result, has_relevant, UUID(item["chunkId"])))
             return out
@@ -655,7 +655,7 @@ async def test_extract_relations_success(mock_llm, mock_digester_update_job_prog
     with (
         patch("src.modules.digester.service._extract_relations"),
         patch("src.modules.digester.service.merge_relations_results"),
-        patch("src.modules.digester.service._process_over_documents") as mock_process,
+        patch("src.modules.digester.service._process_over_chunks") as mock_process,
     ):
         mock_process.return_value = {
             "result": {
@@ -670,7 +670,7 @@ async def test_extract_relations_success(mock_llm, mock_digester_update_job_prog
                     ).model_dump(by_alias=True)
                 ]
             },
-            "relevantDocumentations": [{"docUuid": str(doc_uuid)}],
+            "relevantDocumentations": [{"doc_id": str(doc_uuid), "chunk_id": str(doc_uuid)}],
         }
 
         job_id = uuid4()
@@ -690,7 +690,7 @@ async def test_extract_relations_no_relations_found(mock_llm, mock_digester_upda
     """Test extract_relations when no relations are discovered."""
     fake_doc_items = [{"uuid": str(uuid4()), "content": "No relations", "summary": "", "@metadata": {}}]
 
-    with patch("src.modules.digester.service._process_over_documents") as mock_process:
+    with patch("src.modules.digester.service._process_over_chunks") as mock_process:
         mock_process.return_value = {"result": {"relations": []}, "relevantDocumentations": []}
 
         result = await service.extract_relations(fake_doc_items, "User", uuid4())
@@ -739,7 +739,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                             name="User",
                             relevant="true",
                             description="User entity",
-                            relevant_chunks=[{"docUuid": str(doc_uuid)}],
+                            relevant_documentations=[{"doc_id": str(doc_uuid), "chunk_id": str(doc_uuid)}],
                         )
                     ],
                     True,
@@ -755,7 +755,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                                 "name": "User",
                                 "relevant": "true",
                                 "description": "User entity",
-                                "relevantDocumentations": [{"docUuid": str(doc_uuid)}],
+                                "relevantDocumentations": [{"docId": str(doc_uuid), "chunkId": str(doc_uuid)}],
                             }
                         ]
                     }
@@ -786,7 +786,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
             }
 
             attrs_result = await service.extract_attributes(
-                doc_items, "User", session_id, [{"docUuid": str(doc_uuid)}], uuid4()
+                doc_items, "User", session_id, [{"doc_id": str(doc_uuid), "chunk_id": str(doc_uuid)}], uuid4()
             )
             assert "id" in attrs_result["result"]["attributes"]
             mock_update_object_class.assert_awaited_once()
@@ -809,7 +809,12 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
             }
 
             endpoints_result = await service.extract_endpoints(
-                doc_items, "User", session_id, [{"docUuid": str(doc_uuid)}], uuid4(), "https://api.example.com"
+                doc_items,
+                "User",
+                session_id,
+                [{"doc_id": str(doc_uuid), "chunk_id": str(doc_uuid)}],
+                uuid4(),
+                "https://api.example.com",
             )
             assert len(endpoints_result["result"]["endpoints"]) == 1
             mock_update_object_class.assert_awaited_once()

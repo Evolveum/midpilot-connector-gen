@@ -14,37 +14,30 @@ def select_doc_chunks(
     doc_items: List[dict], relevant_chunks: List[Dict[str, Any]], log_prefix: str
 ) -> Tuple[List[str], List[str]]:
     """
-    Select chunk texts from doc_items by docUuid.
-
-    Input relevant_chunks format:
-      [{"docUuid": "<uuid>"}, ...]
-
-    Returns:
-      - selected_chunks: list[str] (chunk texts)
-      - selected_doc_uuids: list[str] aligned with selected_chunks
+    TODO
     """
     wanted: Set[str] = set()
     for rc in relevant_chunks:
-        doc_uuid = str(rc.get("docUuid", "")).strip()
-        if doc_uuid:
-            wanted.add(doc_uuid)
+        chunk_id = str(rc.get("chunk_id") or rc.get("chunkId") or "").strip()
+        if chunk_id:
+            wanted.add(chunk_id)
 
     if not wanted:
-        logger.info("[%s] No docUuid found in relevant_chunks", log_prefix)
+        logger.info("[%s] No chunk_id found in relevant_documentations", log_prefix)
         return [], []
 
-    logger.info("[%s] Selecting %d doc chunks by docUuid", log_prefix, len(wanted))
+    logger.info("[%s] Selecting %d doc chunks by chunk_id", log_prefix, len(wanted))
 
     selected_chunks: List[str] = []
-    selected_doc_uuids: List[str] = []
+    selected_chunk_ids: List[str] = []
 
     for item in doc_items:
-        doc_uuid = str(item.get("chunkId", "")).strip()
-        if not doc_uuid or doc_uuid not in wanted:
+        chunk_id = str(item.get("chunkId", "")).strip()
+        if not chunk_id or chunk_id not in wanted:
             continue
 
-        # doc_uuid == one chunk; keep content as-is (normalize only)
+        # chunk_id == one chunk; keep content as-is (normalize only)
         selected_chunks.append(normalize_to_text(item.get("content", "")))
-        selected_doc_uuids.append(doc_uuid)
+        selected_chunk_ids.append(chunk_id)
 
-    return selected_chunks, selected_doc_uuids
+    return selected_chunks, selected_chunk_ids

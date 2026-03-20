@@ -73,33 +73,43 @@ async def extract_scim_object_classes(
     all_custom_classes: List[ObjectClass] = []
     all_relevant_chunks: List[Dict[str, Any]] = []
     class_to_chunks: Dict[str, List[Dict[str, Any]]] = {}
+    chunk_id_to_doc_id: Dict[str, str] = {}
+
+    for item in doc_items:
+        raw_chunk_id = item.get("chunkId")
+        raw_doc_id = item.get("docId")
+        if raw_chunk_id and raw_doc_id:
+            chunk_id_to_doc_id[str(raw_chunk_id).strip()] = str(raw_doc_id).strip()
 
     # Load base schemas for LLM context
     scim_schemas = load_scim_base_schemas()
 
     # Create extractor function that includes SCIM schemas
-    async def extractor_with_scim_schemas(content: str, job_id: UUID, doc_uuid: UUID):
+    async def extractor_with_scim_schemas(content: str, job_id: UUID, chunk_id: UUID):
         custom_classes, has_relevant_data = await extract_custom_scim_classes(
             schema=content,
             job_id=job_id,
-            doc_id=doc_uuid,
+            chunk_id=chunk_id,
             scim_base_schemas=scim_schemas,
         )
         return custom_classes, has_relevant_data
 
-    # Process all documents in parallel
+    # Process all chunks in parallel
     results = await process_documents_in_parallel(
-        doc_items=doc_items,
+        chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_scim_schemas,
         logger_scope="SCIM:ObjectClasses",
     )
 
-    # Collect results from all documents
-    for custom_classes, has_relevant_data, doc_uuid in results:
+    # Collect results from all chunks
+    for custom_classes, has_relevant_data, chunk_uuid in results:
+        chunk_id = str(chunk_uuid)
+        doc_id = chunk_id_to_doc_id.get(chunk_id)
+
         logger.info(
-            "[SCIM:ObjectClasses] Document %s: extracted %d custom classes",
-            doc_uuid,
+            "[SCIM:ObjectClasses] Chunk %s: extracted %d custom classes",
+            chunk_id,
             len(custom_classes),
         )
 
@@ -109,18 +119,29 @@ async def extract_scim_object_classes(
             if class_name not in class_to_chunks:
                 class_to_chunks[class_name] = []
 
-            if obj_class.relevant_chunks:
-                class_to_chunks[class_name].extend(obj_class.relevant_chunks)
+            if obj_class.relevant_documentations:
+                class_to_chunks[class_name].extend(obj_class.relevant_documentations)
+            elif doc_id:
+                class_to_chunks[class_name].append({"doc_id": doc_id, "chunk_id": chunk_id})
             else:
-                class_to_chunks[class_name].append({"docUuid": str(doc_uuid)})
+                logger.warning(
+                    "[SCIM:ObjectClasses] Missing docId for chunk %s, skipping relevant chunk mapping for class %s",
+                    chunk_id,
+                    obj_class.name,
+                )
 
         all_custom_classes.extend(custom_classes)
 
-        if has_relevant_data:
-            all_relevant_chunks.append({"docUuid": str(doc_uuid)})
+        if has_relevant_data and doc_id:
+            all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id})
+        elif has_relevant_data:
+            logger.warning(
+                "[SCIM:ObjectClasses] Missing docId for chunk %s, skipping top-level relevant chunk mapping",
+                chunk_id,
+            )
 
     logger.info(
-        "[SCIM:ObjectClasses] Extracted %d custom classes from %d documents",
+        "[SCIM:ObjectClasses] Extracted %d custom classes from %d chunks",
         len(all_custom_classes),
         len(doc_items),
     )
@@ -140,7 +161,7 @@ async def extract_scim_object_classes(
     for obj_class in all_classes:
         class_name = obj_class.name.strip().lower()
         if class_name in class_to_chunks:
-            obj_class.relevant_chunks = class_to_chunks[class_name]
+            obj_class.relevant_documentations = class_to_chunks[class_name]
 
     # Create response
     result = ObjectClassesResponse(object_classes=all_classes)
@@ -162,7 +183,7 @@ async def _find_relevant_chunks_for_base_classes(
     Find relevant documentation chunks for base SCIM classes (User, Group).
 
     Searches through documentation to find mentions of standard SCIM resources
-    and adds their doc_uuids to class_to_chunks.
+    and adds their {doc_id, chunk_id} references to class_to_chunks.
 
     Args:
         base_classes: List of base SCIM classes (User, Group)
@@ -185,29 +206,30 @@ async def _find_relevant_chunks_for_base_classes(
             f"{base_class.name} endpoint",  # Endpoint documentation
         ]
 
-        # Check each document for mentions
+        # Check each chunk for mentions
         for doc_item in doc_items:
-            doc_content = doc_item.get("content", "").lower()
-            doc_uuid = doc_item.get("chunkId")
+            chunk_content = doc_item.get("content", "").lower()
+            chunk_id = doc_item.get("chunkId")
+            doc_id = doc_item.get("docId")
 
-            if not doc_uuid:
+            if not chunk_id or not doc_id:
                 continue
 
-            # Check if any search pattern appears in the document
+            # Check if any search pattern appears in the chunk content
             found = False
             for pattern in search_patterns:
-                if pattern.lower() in doc_content:
+                if pattern.lower() in chunk_content:
                     found = True
                     break
 
             if found:
-                chunk_ref = {"docUuid": str(doc_uuid)}
+                chunk_ref = {"doc_id": str(doc_id), "chunk_id": str(chunk_id)}
                 if chunk_ref not in class_to_chunks[class_name]:
                     class_to_chunks[class_name].append(chunk_ref)
                     logger.debug(
-                        "[SCIM:ObjectClasses] Found reference to %s in document %s",
+                        "[SCIM:ObjectClasses] Found reference to %s in chunk %s",
                         base_class.name,
-                        doc_uuid,
+                        chunk_id,
                     )
 
     # Log results
@@ -215,7 +237,7 @@ async def _find_relevant_chunks_for_base_classes(
         class_name = base_class.name.strip().lower()
         chunk_count = len(class_to_chunks.get(class_name, []))
         logger.info(
-            "[SCIM:ObjectClasses] Base class '%s' found in %d documents",
+            "[SCIM:ObjectClasses] Base class '%s' found in %d chunks",
             base_class.name,
             chunk_count,
         )
@@ -224,18 +246,18 @@ async def _find_relevant_chunks_for_base_classes(
 async def extract_custom_scim_classes(
     schema: str,
     job_id: UUID,
-    doc_id: Optional[UUID] = None,
-    doc_metadata: Optional[Dict[str, Any]] = None,
+    chunk_id: Optional[UUID] = None,
+    chunk_metadata: Optional[Dict[str, Any]] = None,
     scim_base_schemas: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[ObjectClass], bool]:
     """
-    Extract ONLY custom SCIM extensions and additional resources from a document.
+    Extract ONLY custom SCIM extensions and additional resources from a chunk.
     Does NOT extract standard User, Group, EnterpriseUser.
 
     Args:
-        schema: The document content to extract from
+        schema: The chunk content to extract from
         job_id: Job ID for progress tracking
-        doc_id: Optional document UUID
+        chunk_id: Optional chunk UUID
         scim_base_schemas: Optional SCIM base schemas for LLM context
 
     Returns:
@@ -254,9 +276,9 @@ async def extract_custom_scim_classes(
         parse_fn=parse_fn,
         logger_prefix="[SCIM:ObjectClasses] ",
         job_id=job_id,
-        doc_id=doc_id,
+        chunk_id=chunk_id,
         track_chunk_per_item=True,
-        chunk_metadata=doc_metadata,
+        chunk_metadata=chunk_metadata,
     )
 
     # Filter out any standard SCIM classes that LLM might have mistakenly extracted

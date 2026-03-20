@@ -49,7 +49,7 @@ def _attrs_map_from_payload(payload: AttributesPayload) -> Dict[str, Dict[str, A
 
 def _collect_pairs(val: Any) -> List[Tuple[int, Optional[str]]]:
     """
-    TODO
+    Normalize relevant chunk references to ordered (index, chunk_id) tuples.
     """
     out: List[Tuple[int, Optional[str]]] = []
     if not val:
@@ -57,13 +57,12 @@ def _collect_pairs(val: Any) -> List[Tuple[int, Optional[str]]]:
     if isinstance(val, list) and val:
         first = val[0]
         if isinstance(first, dict):
-            if "docUuid" in first:
-                for item in val:
-                    if isinstance(item, dict) and "docUuid" in item:
-                        doc_uuid = item.get("docUuid")
-                        if isinstance(doc_uuid, str):
-                            # Use sequential index
-                            out.append((len(out), doc_uuid))
+            for item in val:
+                if not isinstance(item, dict):
+                    continue
+                chunk_id = item.get("chunk_id") or item.get("chunkId")
+                if isinstance(chunk_id, str):
+                    out.append((len(out), chunk_id))
         else:
             for idx in val:
                 if isinstance(idx, int):
@@ -78,8 +77,8 @@ def _merge_unique_pairs(*seqs: Iterable[Tuple[int, Optional[str]]]) -> List[Tupl
     merged: List[Tuple[int, Optional[str]]] = []
     seen: set[Tuple[int, Optional[str]]] = set()
     for seq in seqs:
-        for idx, du in seq:
-            pair = (idx, du)
+        for idx, chunk_id in seq:
+            pair = (idx, chunk_id)
             if pair not in seen:
                 seen.add(pair)
                 merged.append(pair)
@@ -118,7 +117,7 @@ async def _collect_relevant_chunks(
         return None, None
 
     relevant_indices = [i for i, _ in merged_pairs]
-    relevant_pairs = [{"docUuid": du} for _, du in merged_pairs]
+    relevant_pairs = [{"chunk_id": chunk_id} for _, chunk_id in merged_pairs if chunk_id]
 
     logger.info(
         "[Codegen:%s] Relevant chunks for endpoints=%d, for attributes=%d, merged=%d for %s",
@@ -375,7 +374,7 @@ async def create_relation(
         pairs = _collect_pairs(raw)
         if pairs:
             relevant_indices = [i for i, _ in pairs]
-            relevant_pairs = [{"docUuid": du} for _, du in pairs]
+            relevant_pairs = [{"chunk_id": chunk_id} for _, chunk_id in pairs if chunk_id]
             logger.info(
                 "[Codegen:Relation] Relevant chunks for indices_only=%d, pairs_with_uuid=%d",
                 len(relevant_indices or []),

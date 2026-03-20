@@ -123,7 +123,8 @@ async def extract_scim_attributes(
     object_class: str,
     job_id: UUID,
     chunk_details: List[str] | None = None,
-    doc_metadata_map: Dict[str, Dict[str, Any]] | None = None,
+    chunk_metadata_map: Dict[str, Dict[str, Any]] | None = None,
+    chunk_id_to_doc_id: Dict[str, str] | None = None,
 ) -> Dict[str, Any]:
     """
     Extract application-to-SCIM attribute mappings for SCIM object class.
@@ -132,8 +133,9 @@ async def extract_scim_attributes(
         chunks: List of documentation chunks to analyze
         object_class: Target object class name
         job_id: Job ID for progress tracking
-        chunk_details: Optional list of document UUIDs for each chunk
-        doc_metadata_map: Optional metadata mapping for documents
+        chunk_details: Optional list of chunk IDs for each chunk
+        chunk_metadata_map: Optional metadata mapping for chunks
+        chunk_id_to_doc_id: Optional mapping of chunk ID to doc ID
 
     Returns:
         Dictionary with:
@@ -178,18 +180,16 @@ async def extract_scim_attributes(
         object_class,
     )
 
-    # Create parallel tasks for all chunks
     tasks = []
-    for chunk, doc_uuid in zip(chunks, chunk_details, strict=False):
-        # Get metadata for this document if available
-        doc_metadata = doc_metadata_map.get(str(doc_uuid)) if doc_metadata_map and doc_uuid else None
+    for chunk, chunk_id in zip(chunks, chunk_details, strict=False):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map and chunk_id else None
 
         tasks.append(
             extract_custom_scim_attributes(
                 chain=chain,
                 chunk=chunk,
                 object_class=object_class,
-                doc_metadata=doc_metadata,
+                chunk_metadata=chunk_metadata,
             )
         )
 
@@ -202,11 +202,19 @@ async def extract_scim_attributes(
     all_custom_attributes: List[Dict[str, Dict[str, Any]]] = []
     relevant_chunks: List[Dict[str, Any]] = []
 
-    for custom_attrs, doc_uuid in zip(all_results, chunk_details, strict=False):
+    for custom_attrs, chunk_id in zip(all_results, chunk_details, strict=False):
         if custom_attrs:
             all_custom_attributes.append(custom_attrs)
-            if doc_uuid:
-                relevant_chunks.append({"docUuid": doc_uuid})
+            if chunk_id:
+                chunk_id_str = str(chunk_id)
+                doc_id = chunk_id_to_doc_id.get(chunk_id_str) if chunk_id_to_doc_id else None
+                if doc_id:
+                    relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+                else:
+                    logger.warning(
+                        "[SCIM:Attributes] Missing docId for chunk %s, skipping relevant chunk mapping",
+                        chunk_id_str,
+                    )
 
     logger.info(
         "[SCIM:Attributes] Completed parallel processing. Found mappings in %d/%d chunks",
@@ -234,7 +242,7 @@ async def extract_custom_scim_attributes(
     chain: Any,
     chunk: str,
     object_class: str,
-    doc_metadata: Optional[Dict[str, Any]] = None,
+    chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Extract attribute mappings from a single chunk using a pre-built chain.
@@ -243,14 +251,13 @@ async def extract_custom_scim_attributes(
         chain: Pre-configured LLM chain for extraction
         chunk: Documentation chunk to analyze
         object_class: Target object class name
-        doc_metadata: Optional metadata for the document
+        chunk_metadata: Optional metadata for the chunk
 
     Returns:
         Dictionary of mapped attributes (application name -> AttributeInfo)
     """
     try:
-        # Extract summary and tags from doc metadata
-        summary, tags = extract_summary_and_tags(doc_metadata)
+        summary, tags = extract_summary_and_tags(chunk_metadata)
 
         result = await chain.ainvoke(
             {

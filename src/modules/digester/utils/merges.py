@@ -72,7 +72,7 @@ def merge_object_classes(
     Deduplicate and merge object classes across documents.
 
     - Merges class metadata (superclass/abstract/embedded/description).
-    - Merges relevant chunks by docUuid when provided.
+    - Merges relevant chunks by (doc_id, chunk_id) when provided.
     - Removes duplicates that differ only by whitespace.
     """
     by_name: Dict[str, ObjectClass] = {}
@@ -84,16 +84,22 @@ def merge_object_classes(
         if key not in by_name:
             # If we have chunk information for this class, set it
             if class_to_chunks and key in class_to_chunks:
-                # Remove duplicate documents (same docUuid)
                 unique_chunks: List[Dict[str, Any]] = []
-                seen: set[str] = set()
+                seen: set[tuple[str, str]] = set()
                 for chunk in class_to_chunks[key]:
-                    doc_uuid = str(chunk["docUuid"])
-                    if doc_uuid not in seen:
-                        seen.add(doc_uuid)
-                        unique_chunks.append(chunk)
-                # Sort chunks by docUuid
-                obj_class.relevant_chunks = sorted(unique_chunks, key=lambda x: str(x["docUuid"]))
+                    doc_id = str(chunk.get("doc_id", "")).strip()
+                    chunk_id = str(chunk.get("chunk_id", "")).strip()
+                    if not doc_id or not chunk_id:
+                        continue
+
+                    pair = (doc_id, chunk_id)
+                    if pair in seen:
+                        continue
+
+                    seen.add(pair)
+                    unique_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id})
+
+                obj_class.relevant_documentations = sorted(unique_chunks, key=lambda x: (x["doc_id"], x["chunk_id"]))
             by_name[key] = obj_class
             continue
 
@@ -109,13 +115,23 @@ def merge_object_classes(
             current.description = obj_class.description
         # Merge relevant chunks if available
         if class_to_chunks and key in class_to_chunks:
-            # Convert to set of docUuids to remove duplicates
-            current_doc_uuids = set(str(chunk["docUuid"]) for chunk in (current.relevant_chunks or []))
-            # Add new document UUIDs
+            current_chunk_pairs = {
+                (str(chunk.get("doc_id", "")).strip(), str(chunk.get("chunk_id", "")).strip())
+                for chunk in (current.relevant_documentations or [])
+                if str(chunk.get("doc_id", "")).strip() and str(chunk.get("chunk_id", "")).strip()
+            }
+
             for chunk in class_to_chunks[key]:
-                current_doc_uuids.add(str(chunk["docUuid"]))
-            # Convert back to list of dicts with string UUIDs (not UUID objects) and sort
-            current.relevant_chunks = [{"docUuid": doc_uuid} for doc_uuid in sorted(current_doc_uuids)]
+                doc_id = str(chunk.get("doc_id", "")).strip()
+                chunk_id = str(chunk.get("chunk_id", "")).strip()
+                if not doc_id or not chunk_id:
+                    continue
+                current_chunk_pairs.add((doc_id, chunk_id))
+
+            current.relevant_documentations = [
+                {"doc_id": doc_id, "chunk_id": chunk_id}
+                for doc_id, chunk_id in sorted(current_chunk_pairs, key=lambda pair: (pair[0], pair[1]))
+            ]
     # Remove duplicates with whitespace-only differences (preferring no-space versions)
     for key in list(by_name.keys()):
         key_no_space = key.replace(" ", "")

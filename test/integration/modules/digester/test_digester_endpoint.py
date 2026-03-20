@@ -141,9 +141,10 @@ async def test_extract_class_attributes_success():
     """Test successful extraction of class attributes."""
     session_id = uuid4()
     job_id = uuid4()
-    doc_uuid = str(uuid4())
+    chunk_id = str(uuid4())
+    doc_id = str(uuid4())
 
-    fake_docs = [{"chunkId": doc_uuid, "content": "fake content for testing"}]
+    fake_docs = [{"chunkId": chunk_id, "docId": doc_id, "content": "fake content for testing"}]
 
     # Mock objectClassesOutput with relevant chunks for the User class
     mock_object_classes_output = {
@@ -156,8 +157,8 @@ async def test_extract_class_attributes_success():
                 "embedded": False,
                 "description": "Represents a user",
                 "relevantDocumentations": [
-                    {"docUuid": doc_uuid},
-                    {"docUuid": doc_uuid},
+                    {"docId": doc_id, "chunkId": chunk_id},
+                    {"docId": doc_id, "chunkId": chunk_id},
                 ],
                 "endpoints": [],
                 "attributes": {},

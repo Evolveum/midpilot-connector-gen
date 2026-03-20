@@ -82,12 +82,12 @@ class JobRepository:
                     if class_name and class_chunks:
                         # Prepare chunks for bulk insert
                         for chunk_info in class_chunks:
-                            doc_uuid_str = chunk_info.get("docUuid")
-                            if doc_uuid_str:
+                            chunk_id_str = chunk_info.get("chunk_id") or chunk_info.get("chunkId")
+                            if chunk_id_str:
                                 chunks_to_save.append(
                                     {
                                         "entity_type": class_name,
-                                        "doc_id": doc_uuid_str,
+                                        "doc_id": chunk_id_str,
                                     }
                                 )
 

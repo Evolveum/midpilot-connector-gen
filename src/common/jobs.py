@@ -320,6 +320,8 @@ async def schedule_coroutine_job(
                             elif job_type == "digester.getObjectClass":
                                 rel_repo = RelevantChunkRepository(db)
                                 rel_chunks: List[Dict[str, Any]] = []
+                                new_relevant_chunks: List[Dict[str, Any]] = []
+                                seen_relevant_chunks: set[tuple[str, str]] = set()
                                 object_classes = reused_output.get("result", {}).get("objectClasses", [])
                                 if not object_classes:
                                     logger.warning(
@@ -332,48 +334,87 @@ async def schedule_coroutine_job(
                                     await run_normal_worker()
                                 else:
                                     for objClass in reused_output.get("result", {}).get("objectClasses", []):
+                                        class_name = objClass.get("name")
                                         relevant_chunks_obj_class: List[Dict[str, Any]] = objClass.get(
                                             "relevantDocumentations", []
                                         )
-                                        for rel_chunk in relevant_chunks_obj_class:
-                                            origUUID = rel_chunk.get("docUuid")
-                                            if origUUID:
-                                                orig_doc = await doc_repo.get_documentation_item(UUID(origUUID))
-                                                content = orig_doc["content"] if orig_doc else ""
-                                                url = orig_doc["url"] if orig_doc else ""
-                                                current_doc = [
-                                                    item
-                                                    for item in current_doc_items
-                                                    if item.get("url") == url and item.get("content") == content
-                                                ]
-                                                if not current_doc or len(current_doc) == 0 or len(current_doc) > 1:
-                                                    logger.warning(
-                                                        "[%s] Job %s: Corrupted documentation items for object class %s when trying to reuse output from job %s, cannot find unique match in current input, skipping relevant chunks for this object class",
-                                                        job_type,
-                                                        str(job_id),
-                                                        objClass.get("name"),
-                                                        str(latest_job.job_id),
-                                                    )
-                                                    continue
-                                                current_doc_item = current_doc[0]
-                                                current_doc_uuid = current_doc_item.get("chunkId")
-                                                if not current_doc_uuid:
-                                                    logger.warning(
-                                                        "[%s] Job %s: Corrupted documentation item for object class %s when trying to reuse output from job %s, missing chunkId in current input, skipping relevant chunks for this object class",
-                                                        job_type,
-                                                        str(job_id),
-                                                        objClass.get("name"),
-                                                        str(latest_job.job_id),
-                                                    )
-                                                    continue
-                                                rel_chunk["docUuid"] = str(current_doc_uuid)
+                                        remapped_obj_class_chunks: List[Dict[str, Any]] = []
 
+                                        for rel_chunk in relevant_chunks_obj_class:
+                                            original_chunk_id = rel_chunk.get("chunk_id") or rel_chunk.get("chunkId")
+                                            if not original_chunk_id:
+                                                logger.warning(
+                                                    "[%s] Job %s: Corrupted relevant chunk with no chunk_id for object class %s when trying to reuse output from job %s, skipping this relevant chunk",
+                                                    job_type,
+                                                    str(job_id),
+                                                    class_name,
+                                                    str(latest_job.job_id),
+                                                )
+                                                continue
+
+                                            orig_doc = await doc_repo.get_documentation_item(
+                                                UUID(str(original_chunk_id))
+                                            )
+                                            content = orig_doc["content"] if orig_doc else ""
+                                            url = orig_doc["url"] if orig_doc else ""
+                                            current_doc = [
+                                                item
+                                                for item in current_doc_items
+                                                if item.get("url") == url and item.get("content") == content
+                                            ]
+                                            if not current_doc or len(current_doc) == 0 or len(current_doc) > 1:
+                                                logger.warning(
+                                                    "[%s] Job %s: Corrupted documentation items for object class %s when trying to reuse output from job %s, cannot find unique match in current input, skipping relevant chunks for this object class",
+                                                    job_type,
+                                                    str(job_id),
+                                                    class_name,
+                                                    str(latest_job.job_id),
+                                                )
+                                                continue
+
+                                            current_doc_item = current_doc[0]
+                                            current_chunk_id = current_doc_item.get("chunkId")
+                                            current_doc_id = current_doc_item.get("docId")
+                                            if not current_chunk_id or not current_doc_id:
+                                                logger.warning(
+                                                    "[%s] Job %s: Corrupted documentation item for object class %s when trying to reuse output from job %s, missing chunkId/docId in current input, skipping relevant chunks for this object class",
+                                                    job_type,
+                                                    str(job_id),
+                                                    class_name,
+                                                    str(latest_job.job_id),
+                                                )
+                                                continue
+
+                                            mapped_chunk_for_object_class = {
+                                                "chunkId": str(current_chunk_id),
+                                                "docId": str(current_doc_id),
+                                            }
+                                            remapped_obj_class_chunks.append(mapped_chunk_for_object_class)
+
+                                            mapped_chunk_for_output = {
+                                                "chunk_id": str(current_chunk_id),
+                                                "doc_id": str(current_doc_id),
+                                            }
+
+                                            dedupe_key = (
+                                                mapped_chunk_for_output["doc_id"],
+                                                mapped_chunk_for_output["chunk_id"],
+                                            )
+                                            if dedupe_key not in seen_relevant_chunks:
+                                                seen_relevant_chunks.add(dedupe_key)
+                                                new_relevant_chunks.append(mapped_chunk_for_output)
+
+                                            if class_name:
                                                 rel_chunks.append(
                                                     {
-                                                        "entity_type": objClass.get("name"),
-                                                        "doc_id": UUID(str(current_doc_uuid)),
+                                                        "entity_type": class_name,
+                                                        "doc_id": UUID(str(current_chunk_id)),
                                                     }
                                                 )
+
+                                        objClass["relevantDocumentations"] = remapped_obj_class_chunks
+
+                                    reused_output["relevantDocumentations"] = new_relevant_chunks
 
                                     await rel_repo.bulk_add_relevant_chunks(
                                         session_id,
@@ -386,55 +427,64 @@ async def schedule_coroutine_job(
                                 original_relevant_chunks: List[Dict[str, Any]] = reused_output.pop(
                                     "relevantDocumentations"
                                 )
-                                new_relevant_chunks: List[Dict[str, Any]] = []
+
+                                new_relevant_chunks = []
                                 for rel_chunk in original_relevant_chunks:
-                                    origUUID = rel_chunk.get("docUuid")
-                                    if origUUID:
-                                        orig_doc = await doc_repo.get_documentation_item(UUID(origUUID))
-                                        content = orig_doc["content"] if orig_doc else ""
-                                        url = orig_doc["url"] if orig_doc else ""
-                                        current_doc = [
-                                            item
-                                            for item in current_doc_items
-                                            if item.get("url") == url and item.get("content") == content
-                                        ]
-                                        if not current_doc or len(current_doc) == 0 or len(current_doc) > 1:
-                                            logger.warning(
-                                                "[%s] Job %s: Corrupted documentation items for key %s when trying to reuse output from job %s, cannot find unique match in current input, skipping relevant chunks for this item",
-                                                job_type,
-                                                str(job_id),
-                                                rel_chunk,
-                                                str(latest_job.job_id),
-                                            )
-                                            continue
-                                        current_doc_item = current_doc[0]
-                                        current_doc_uuid = current_doc_item.get("chunkId")
-                                        if not current_doc_uuid:
-                                            logger.warning(
-                                                "[%s] Job %s: Corrupted documentation item for key %s when trying to reuse output from job %s, missing chunkId in current input, skipping relevant chunks for this item",
-                                                job_type,
-                                                str(job_id),
-                                                rel_chunk,
-                                                str(latest_job.job_id),
-                                            )
-                                            continue
-                                        rel_chunk["docUuid"] = str(current_doc_uuid)
-                                        new_relevant_chunks.append({"docUuid": str(current_doc_uuid)})
-                                    else:
+                                    original_chunk_id = rel_chunk.get("chunk_id") or rel_chunk.get("chunkId")
+                                    if not original_chunk_id:
                                         logger.warning(
-                                            "[%s] Job %s: Corrupted relevant chunk with no docUuid for key %s when trying to reuse output from job %s, skipping this relevant chunk",
+                                            "[%s] Job %s: Corrupted relevant chunk with no chunk_id for key %s when trying to reuse output from job %s, skipping this relevant chunk",
                                             job_type,
                                             str(job_id),
                                             rel_chunk,
                                             str(latest_job.job_id),
                                         )
+                                        continue
+
+                                    orig_doc = await doc_repo.get_documentation_item(UUID(str(original_chunk_id)))
+                                    content = orig_doc["content"] if orig_doc else ""
+                                    url = orig_doc["url"] if orig_doc else ""
+                                    current_doc = [
+                                        item
+                                        for item in current_doc_items
+                                        if item.get("url") == url and item.get("content") == content
+                                    ]
+                                    if not current_doc or len(current_doc) == 0 or len(current_doc) > 1:
+                                        logger.warning(
+                                            "[%s] Job %s: Corrupted documentation items for key %s when trying to reuse output from job %s, cannot find unique match in current input, skipping relevant chunks for this item",
+                                            job_type,
+                                            str(job_id),
+                                            rel_chunk,
+                                            str(latest_job.job_id),
+                                        )
+                                        continue
+
+                                    current_doc_item = current_doc[0]
+                                    current_chunk_id = current_doc_item.get("chunkId")
+                                    current_doc_id = current_doc_item.get("docId")
+                                    if not current_chunk_id or not current_doc_id:
+                                        logger.warning(
+                                            "[%s] Job %s: Corrupted documentation item for key %s when trying to reuse output from job %s, missing chunkId/docId in current input, skipping relevant chunks for this item",
+                                            job_type,
+                                            str(job_id),
+                                            rel_chunk,
+                                            str(latest_job.job_id),
+                                        )
+                                        continue
+
+                                    new_relevant_chunks.append(
+                                        {
+                                            "doc_id": str(current_doc_id),
+                                            "chunk_id": str(current_chunk_id),
+                                        }
+                                    )
                                 logger.info(
-                                    "[%s] Job %s: Reusing output from job %s with %s relevant chunks updated to match current input, first relevant chunk docUuid %s if exists",
+                                    "[%s] Job %s: Reusing output from job %s with %s relevant chunks updated to match current input, first relevant chunk_id %s if exists",
                                     job_type,
                                     str(job_id),
                                     str(latest_job.job_id),
                                     len(new_relevant_chunks),
-                                    new_relevant_chunks[0]["docUuid"] if new_relevant_chunks else None,
+                                    new_relevant_chunks[0]["chunk_id"] if new_relevant_chunks else None,
                                 )
                                 reused_output["relevantDocumentations"] = new_relevant_chunks
                                 result_dict = reused_output

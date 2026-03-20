@@ -131,7 +131,8 @@ async def extract_scim_endpoints(
     job_id: UUID,
     base_api_url: str = "",
     chunk_details: List[str] | None = None,
-    doc_metadata_map: Dict[str, Dict[str, Any]] | None = None,
+    chunk_metadata_map: Dict[str, Dict[str, Any]] | None = None,
+    chunk_id_to_doc_id: Dict[str, str] | None = None,
 ) -> Dict[str, Any]:
     """
     Extract endpoints for SCIM object class using guided approach:
@@ -144,8 +145,9 @@ async def extract_scim_endpoints(
         object_class: Target object class name
         job_id: Job ID for progress tracking
         base_api_url: Base API URL for endpoint paths
-        chunk_details: Optional list of document UUIDs for each chunk
-        doc_metadata_map: Optional metadata mapping for documents
+        chunk_details: Optional list of chunk IDs for each chunk
+        chunk_metadata_map: Optional metadata mapping for chunks
+        chunk_id_to_doc_id: Optional mapping of chunk ID to doc ID
 
     Returns:
         Dictionary with:
@@ -203,14 +205,14 @@ async def extract_scim_endpoints(
     )
 
     tasks = []
-    for chunk, doc_uuid in zip(chunks, chunk_details, strict=False):
-        doc_metadata = doc_metadata_map.get(str(doc_uuid)) if doc_metadata_map and doc_uuid else None
+    for chunk, chunk_id in zip(chunks, chunk_details, strict=False):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map and chunk_id else None
         tasks.append(
             extract_custom_scim_endpoints(
                 chain=chain,
                 chunk=chunk,
                 object_class=object_class,
-                doc_metadata=doc_metadata,
+                chunk_metadata=chunk_metadata,
             )
         )
 
@@ -220,11 +222,19 @@ async def extract_scim_endpoints(
 
     all_custom_endpoints: List[List[EndpointInfo]] = []
     relevant_chunks: List[Dict[str, Any]] = []
-    for custom_eps, doc_uuid in zip(all_results, chunk_details, strict=False):
+    for custom_eps, chunk_id in zip(all_results, chunk_details, strict=False):
         if custom_eps:
             all_custom_endpoints.append(custom_eps)
-            if doc_uuid:
-                relevant_chunks.append({"docUuid": doc_uuid})
+            if chunk_id:
+                chunk_id_str = str(chunk_id)
+                doc_id = chunk_id_to_doc_id.get(chunk_id_str) if chunk_id_to_doc_id else None
+                if doc_id:
+                    relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+                else:
+                    logger.warning(
+                        "[SCIM:Endpoints] Missing docId for chunk %s, skipping relevant chunk mapping",
+                        chunk_id_str,
+                    )
 
     # Step 3: Flatten and merge custom endpoints
     flat_custom_endpoints = [ep for sublist in all_custom_endpoints for ep in sublist]
@@ -250,7 +260,7 @@ async def extract_custom_scim_endpoints(
     chain: Any,
     chunk: str,
     object_class: str,
-    doc_metadata: Optional[Dict[str, Any]] = None,
+    chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[EndpointInfo]:
     """
     Extract ONLY custom endpoints and deviations from a single chunk.
@@ -259,13 +269,13 @@ async def extract_custom_scim_endpoints(
         chain: Pre-configured LLM chain for extraction
         chunk: Documentation chunk to analyze
         object_class: Target object class name
-        doc_metadata: Optional metadata for the document
+        chunk_metadata: Optional metadata for the chunk
 
     Returns:
         List of custom EndpointInfo objects
     """
     try:
-        summary, tags = extract_summary_and_tags(doc_metadata)
+        summary, tags = extract_summary_and_tags(chunk_metadata)
 
         result = await chain.ainvoke(
             {
