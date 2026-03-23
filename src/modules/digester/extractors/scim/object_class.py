@@ -20,6 +20,7 @@ from ...prompts.scim.object_class_prompts import (
 )
 from ...schema import ObjectClass, ObjectClassesResponse
 from ...scim.loader import get_base_scim_object_classes, load_scim_base_schemas
+from ...utils.metadata_helper import build_doc_metadata_map
 from ...utils.parallel import run_extraction_parallel
 from ...utils.parallel_docs import process_documents_in_parallel
 
@@ -74,6 +75,7 @@ async def extract_scim_object_classes(
     all_relevant_chunks: List[Dict[str, Any]] = []
     class_to_chunks: Dict[str, List[Dict[str, Any]]] = {}
     chunk_id_to_doc_id: Dict[str, str] = {}
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
 
     for item in doc_items:
         raw_chunk_id = item.get("chunkId")
@@ -86,11 +88,13 @@ async def extract_scim_object_classes(
 
     # Create extractor function that includes SCIM schemas
     async def extractor_with_scim_schemas(content: str, job_id: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
         custom_classes, has_relevant_data = await extract_custom_scim_classes(
             schema=content,
             job_id=job_id,
             chunk_id=chunk_id,
             scim_base_schemas=scim_schemas,
+            chunk_metadata=chunk_metadata,
         )
         return custom_classes, has_relevant_data
 
