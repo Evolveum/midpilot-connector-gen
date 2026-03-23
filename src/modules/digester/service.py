@@ -40,54 +40,75 @@ from .utils.parallel_docs import process_documents_in_parallel
 logger = logging.getLogger(__name__)
 
 
-async def _process_over_documents(
+def _build_chunk_id_to_doc_id(chunk_items: List[dict]) -> Dict[str, str]:
+    """Build chunk_id -> doc_id mapping from documentation items."""
+    mapping: Dict[str, str] = {}
+    for item in chunk_items:
+        raw_chunk_id = item.get("chunkId")
+        raw_doc_id = item.get("docId")
+        if raw_chunk_id and raw_doc_id:
+            mapping[str(raw_chunk_id).strip()] = str(raw_doc_id).strip()
+    return mapping
+
+
+async def _process_over_chunks(
     *,
-    doc_items: List[dict],
+    chunk_items: List[dict],
     job_id: UUID,
     extractor: Callable[[str, UUID, UUID], Any],
     merger: Callable[[List[Dict[str, Any]]], Dict[str, Any]],
     logger_scope: str,
-    per_doc_count: Callable[[Dict[str, Any]], int] | None = None,
+    per_chunk_count: Callable[[Dict[str, Any]], int] | None = None,
 ) -> Dict[str, Any]:
     """
-    Generic pipeline to process docs in parallel, call extractor, collect results/chunks, merge, and return.
+    Generic pipeline to process chunks in parallel, call extractor, collect results/chunks, merge, and return.
     """
     all_results: List[Dict[str, Any]] = []
     all_relevant_chunks: List[Dict[str, Any]] = []
+    chunk_id_to_doc_id = _build_chunk_id_to_doc_id(chunk_items)
 
-    # Process all documents in parallel using the generic function
+    # Process all chunks in parallel using the generic function
     results = await process_documents_in_parallel(
-        doc_items=doc_items,
+        chunk_items=chunk_items,
         job_id=job_id,
         extractor=extractor,
         logger_scope=logger_scope,
     )
 
-    # Collect results from all documents
-    for raw_result, has_relevant_data, doc_uuid in results:
+    # Collect results from all chunks
+    for raw_result, has_relevant_data, chunk_id in results:
         # Accept Pydantic models or dicts; normalize to dict
         if hasattr(raw_result, "model_dump"):
             result_data = cast(Dict[str, Any], raw_result.model_dump(by_alias=True))
         else:
             result_data = cast(Dict[str, Any], raw_result or {})
 
-        if per_doc_count is not None:
+        if per_chunk_count is not None:
             try:
-                count = per_doc_count(result_data)
+                count = per_chunk_count(result_data)
             except Exception:
                 count = 0
-            logger.info(f"[{logger_scope}] Document {doc_uuid}: extracted {count} items")
+            logger.info("[%s] Chunk %s: extracted %s items", logger_scope, chunk_id, count)
 
         if result_data:
             all_results.append(result_data)
         if has_relevant_data:
-            all_relevant_chunks.append({"docUuid": str(doc_uuid)})
+            chunk_id_str = str(chunk_id)
+            doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+            if doc_id:
+                all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+            else:
+                logger.warning(
+                    "[%s] Missing docId for chunk %s, skipping relevant chunk mapping",
+                    logger_scope,
+                    chunk_id_str,
+                )
 
     merged_result: Dict[str, Any] = merger(all_results)
 
     return {
         "result": merged_result,
-        "relevantChunks": all_relevant_chunks,
+        "relevantDocumentations": all_relevant_chunks,
     }
 
 
@@ -112,7 +133,7 @@ async def extract_object_classes(
         session_id: Session ID to retrieve api_type from infoMetadata
 
     Returns:
-        Dictionary with result and relevantChunks
+        Dictionary with result and relevantDocumentations
     """
     api_type = await get_api_type_from_session(session_id)
     is_scim = is_scim_api(api_type)
@@ -142,32 +163,36 @@ async def _extract_rest_object_classes(
     """
     REST-specific object class extraction (original implementation).
 
-    Step 1: Extract raw object classes from each document (per UUID) - processes documents in parallel
+    Step 1: Extract raw object classes from each chunk (by chunkId) - processes chunks in parallel
     Step 2: Merge, deduplicate and sort ALL object classes together
     """
     all_object_classes = []
     all_relevant_chunks: List[Dict[str, Any]] = []
     class_to_chunks: Dict[str, List[Dict[str, Any]]] = {}
+    chunk_id_to_doc_id = _build_chunk_id_to_doc_id(doc_items)
 
-    doc_metadata_map = build_doc_metadata_map(doc_items)
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
 
-    async def extractor_with_metadata(content: str, job_id: UUID, doc_uuid: UUID):
-        doc_metadata = doc_metadata_map.get(str(doc_uuid))
-        return await extract_object_classes_raw(content, job_id, doc_uuid, doc_metadata)
+    async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
+        return await extract_object_classes_raw(content, job_id, chunk_id, chunk_metadata)
 
-    # Process all documents in parallel using the generic function
+    # Process all chunks in parallel using the generic function
     results = await process_documents_in_parallel(
-        doc_items=doc_items,
+        chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
         logger_scope="Digester:ObjectClasses",
     )
 
-    # Collect results from all documents
-    for raw_classes, has_relevant_data, doc_uuid in results:
+    # Collect results from all chunks
+    for raw_classes, has_relevant_data, chunk_uuid in results:
+        chunk_id = str(chunk_uuid)
+        doc_id = chunk_id_to_doc_id.get(chunk_id)
+
         logger.info(
-            "[Digester:ObjectClasses] Document %s: extracted %s object classes",
-            doc_uuid,
+            "[Digester:ObjectClasses] Chunk %s: extracted %s object classes",
+            chunk_id,
             len(raw_classes),
         )
         # For each object class, track which document chunks it appears in
@@ -177,17 +202,28 @@ async def _extract_rest_object_classes(
             if class_name not in class_to_chunks:
                 class_to_chunks[class_name] = []
 
-            if obj_class.relevant_chunks:
-                class_to_chunks[class_name].extend(obj_class.relevant_chunks)
+            if obj_class.relevant_documentations:
+                class_to_chunks[class_name].extend(obj_class.relevant_documentations)
+            elif doc_id:
+                class_to_chunks[class_name].append({"doc_id": doc_id, "chunk_id": chunk_id})
             else:
-                class_to_chunks[class_name].append({"docUuid": str(doc_uuid)})
+                logger.warning(
+                    "[Digester:ObjectClasses] Missing docId for chunk %s, skipping relevant chunk mapping for class %s",
+                    chunk_id,
+                    obj_class.name,
+                )
 
         all_object_classes.extend(raw_classes)
-        if has_relevant_data:
-            all_relevant_chunks.append({"docUuid": str(doc_uuid)})
+        if has_relevant_data and doc_id:
+            all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id})
+        elif has_relevant_data:
+            logger.warning(
+                "[Digester:ObjectClasses] Missing docId for chunk %s, skipping top-level relevant chunk mapping",
+                chunk_id,
+            )
 
     logger.info(
-        "[Digester:ObjectClasses] Processing complete. Total: %s object classes from %s documents. "
+        "[Digester:ObjectClasses] Processing complete. Total: %s object classes from %s chunks. "
         "Starting deduplication and sorting...",
         len(all_object_classes),
         len(doc_items),
@@ -198,7 +234,7 @@ async def _extract_rest_object_classes(
 
     return {
         "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
-        "relevantChunks": all_relevant_chunks,
+        "relevantDocumentations": all_relevant_chunks,
     }
 
 
@@ -206,39 +242,48 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     """
     Extract authentication info from multiple documentation items and return merged result with metadata.
 
-    Step 1: Extract raw auth info from each document (per UUID) - processes documents in parallel
+    Step 1: Extract raw auth info from each chunk (by chunkId) - processes chunks in parallel
     Step 2: Merge, deduplicate and sort ALL auth info together
     """
     all_auth_info = []
     all_relevant_chunks: List[Dict[str, Any]] = []
+    chunk_id_to_doc_id = _build_chunk_id_to_doc_id(doc_items)
 
-    doc_metadata_map = build_doc_metadata_map(doc_items)
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
 
-    async def extractor_with_metadata(content: str, job_id: UUID, doc_uuid: UUID):
-        doc_metadata = doc_metadata_map.get(str(doc_uuid))
-        return await extract_auth_raw(content, job_id, doc_uuid, doc_metadata)
+    async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
+        return await extract_auth_raw(content, job_id, chunk_id, chunk_metadata)
 
-    # Process all documents in parallel using the generic function
+    # Process all chunks in parallel using the generic function
     results = await process_documents_in_parallel(
-        doc_items=doc_items,
+        chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
         logger_scope="Digester:Auth",
     )
 
-    # Collect results from all documents
-    for raw_auth, has_relevant_data, doc_uuid in results:
+    # Collect results from all chunks
+    for raw_auth, has_relevant_data, chunk_id in results:
         logger.info(
-            "[Digester:Auth] Document %s: extracted %s auth items",
-            doc_uuid,
+            "[Digester:Auth] Chunk %s: extracted %s auth items",
+            chunk_id,
             len(raw_auth),
         )
         all_auth_info.extend(raw_auth)
         if has_relevant_data:
-            all_relevant_chunks.append({"docUuid": str(doc_uuid)})
+            chunk_id_str = str(chunk_id)
+            doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+            if doc_id:
+                all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+            else:
+                logger.warning(
+                    "[Digester:Auth] Missing docId for chunk %s, skipping relevant chunk mapping",
+                    chunk_id_str,
+                )
 
     logger.info(
-        "[Digester:Auth] Processing complete. Total: %s auth items from %s documents. "
+        "[Digester:Auth] Processing complete. Total: %s auth items from %s chunks. "
         "Starting deduplication and sorting...",
         len(all_auth_info),
         len(doc_items),
@@ -247,7 +292,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
 
     return {
         "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
-        "relevantChunks": all_relevant_chunks,
+        "relevantDocumentations": all_relevant_chunks,
     }
 
 
@@ -255,25 +300,26 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     """
     Extract metadata from multiple documentation items in parallel.
 
-    Step 1: Extract raw InfoMetadata candidates from each document (per UUID) in parallel.
+    Step 1: Extract raw InfoMetadata candidates from each chunk (by chunkId) in parallel.
     Step 2: Merge all candidates using threshold-based heuristics into one final InfoResponse payload.
     """
     all_info_candidates: List[InfoMetadata] = []
     all_relevant_chunks: List[Dict[str, Any]] = []
-    doc_metadata_map = build_doc_metadata_map(doc_items)
+    chunk_id_to_doc_id = _build_chunk_id_to_doc_id(doc_items)
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
 
-    async def extractor_with_metadata(content: str, job_id: UUID, doc_uuid: UUID):
-        doc_metadata = doc_metadata_map.get(str(doc_uuid))
-        return await _extract_info_metadata(content, job_id, doc_uuid, doc_metadata)
+    async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
+        return await _extract_info_metadata(content, job_id, chunk_id, chunk_metadata)
 
     results = await process_documents_in_parallel(
-        doc_items=doc_items,
+        chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
         logger_scope="Digester:InfoMetadata",
     )
 
-    for raw_infos, has_relevant_data, doc_uuid in results:
+    for raw_infos, has_relevant_data, chunk_id in results:
         normalized_infos: List[InfoMetadata] = []
 
         if isinstance(raw_infos, list):
@@ -313,18 +359,25 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
                     pass
 
         logger.info(
-            "[Digester:InfoMetadata] Document %s: extracted %s metadata candidates",
-            doc_uuid,
+            "[Digester:InfoMetadata] Chunk %s: extracted %s metadata candidates",
+            chunk_id,
             len(normalized_infos),
         )
         all_info_candidates.extend(normalized_infos)
 
         if has_relevant_data:
-            all_relevant_chunks.append({"docUuid": str(doc_uuid)})
+            chunk_id_str = str(chunk_id)
+            doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+            if doc_id:
+                all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+            else:
+                logger.warning(
+                    "[Digester:InfoMetadata] Missing docId for chunk %s, skipping relevant chunk mapping",
+                    chunk_id_str,
+                )
 
     logger.info(
-        "[Digester:InfoMetadata] Processing complete. Total: %s candidates from %s documents. "
-        "Starting heuristic merge...",
+        "[Digester:InfoMetadata] Processing complete. Total: %s candidates from %s chunks. Starting heuristic merge...",
         len(all_info_candidates),
         len(doc_items),
     )
@@ -334,7 +387,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
 
     return {
         "result": merged_result,
-        "relevantChunks": all_relevant_chunks,
+        "relevantDocumentations": all_relevant_chunks,
     }
 
 
@@ -356,16 +409,17 @@ async def extract_attributes(
         doc_items: Full documentation items
         object_class: Name of the object class
         session_id: Session ID
-        relevant_chunks: List of {docUuid} dicts indicating which documents to process
+        relevant_chunks: List of {doc_id, chunk_id} dicts indicating which chunks to process
         job_id: Job ID for progress tracking
     """
-    selected_docs, doc_uuids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
+    selected_docs, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
 
     if not selected_docs:
         logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
-        return {"result": {"attributes": {}}, "relevantChunks": []}
+        return {"result": {"attributes": {}}, "relevantDocumentations": []}
 
-    doc_metadata_map = build_doc_metadata_map(doc_items)
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
+    chunk_id_to_doc_id = _build_chunk_id_to_doc_id(doc_items)
 
     api_type = await get_api_type_from_session(session_id)
     is_scim = is_scim_api(api_type)
@@ -382,9 +436,23 @@ async def extract_attributes(
     )
 
     if is_scim:
-        result = await extract_scim_attributes(selected_docs, object_class, job_id, doc_uuids, doc_metadata_map)
+        result = await extract_scim_attributes(
+            selected_docs,
+            object_class,
+            job_id,
+            chunk_ids,
+            chunk_metadata_map,
+            chunk_id_to_doc_id,
+        )
     else:
-        result = await _extract_rest_attributes(selected_docs, object_class, job_id, doc_uuids, doc_metadata_map)
+        result = await _extract_rest_attributes(
+            selected_docs,
+            object_class,
+            job_id,
+            chunk_ids,
+            chunk_metadata_map,
+            chunk_id_to_doc_id,
+        )
 
     try:
         attributes_dict = extract_attributes_from_result(result)
@@ -424,7 +492,7 @@ async def extract_endpoints(
         doc_items: Full documentation items
         object_class: Name of the object class
         session_id: Session ID
-        relevant_chunks: List of {docUuid} dicts indicating which documents to process
+        relevant_chunks: List of {doc_id, chunk_id} dicts indicating which chunks to process
         job_id: Job ID for progress tracking
         base_api_url: Base API URL for endpoint extraction
     """
@@ -452,13 +520,14 @@ async def extract_endpoints(
             relevant_chunks=relevant_chunks,
         )
     else:
-        selected_docs, doc_uuids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
+        selected_docs, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
 
         if not selected_docs:
             logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
-            return {"result": {"endpoints": []}, "relevantChunks": []}
+            return {"result": {"endpoints": []}, "relevantDocumentations": []}
 
-        doc_metadata_map = build_doc_metadata_map(doc_items)
+        chunk_metadata_map = build_doc_metadata_map(doc_items)
+        chunk_id_to_doc_id = _build_chunk_id_to_doc_id(doc_items)
 
         # Log chunk processing details
         total_chunks = len(selected_docs)
@@ -466,11 +535,17 @@ async def extract_endpoints(
             "[Digester:Endpoints] Processing %d pre-selected chunks for %s (from original indices: %s)",
             total_chunks,
             object_class,
-            doc_uuids,
+            chunk_ids,
         )
 
         result = await _extract_rest_endpoints(
-            selected_docs, object_class, job_id, base_api_url, doc_uuids, doc_metadata_map
+            selected_docs,
+            object_class,
+            job_id,
+            base_api_url,
+            chunk_ids,
+            chunk_metadata_map,
+            chunk_id_to_doc_id,
         )
 
     try:
@@ -494,20 +569,20 @@ async def extract_endpoints(
 async def extract_relations(doc_items: List[dict], relevant_object_class: str, job_id: UUID):
     """Extract relations from multiple documentation items."""
 
-    doc_metadata_map = build_doc_metadata_map(doc_items)
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
 
-    def extractor(content: str, jid: UUID, doc_id: UUID):
-        doc_metadata = doc_metadata_map.get(str(doc_id))
-        return _extract_relations(content, relevant_object_class, jid, doc_id, doc_metadata)
+    def extractor(content: str, jid: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
+        return _extract_relations(content, relevant_object_class, jid, chunk_id, chunk_metadata)
 
-    def per_doc_count(d: Dict[str, Any]) -> int:
+    def per_chunk_count(d: Dict[str, Any]) -> int:
         return len(cast(List[dict], d.get("relations", [])))
 
-    return await _process_over_documents(
-        doc_items=doc_items,
+    return await _process_over_chunks(
+        chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor,
         merger=merge_relations_results,
         logger_scope="Digester:Relations",
-        per_doc_count=per_doc_count,
+        per_chunk_count=per_chunk_count,
     )

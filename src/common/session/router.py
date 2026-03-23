@@ -244,7 +244,7 @@ async def upload_documentation(
     )
     logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
 
-    page_id = uuid.uuid4()  # Single page_id for the entire uploaded file
+    doc_id = uuid.uuid4()  # Single doc_id for the entire uploaded file
 
     # Create job with the processing logic
     job_id = await schedule_coroutine_job(
@@ -252,7 +252,7 @@ async def upload_documentation(
         input_payload={
             "session_id": str(session_id),
             "filename": filename,
-            "page_id": str(page_id),
+            "doc_id": str(doc_id),
             "chunks_count": len(chunks),
         },
         worker=process_documentation_worker,
@@ -260,7 +260,7 @@ async def upload_documentation(
             "session_id": session_id,
             "chunks": chunks,
             "filename": filename,
-            "page_id": page_id,
+            "doc_id": doc_id,
             "app": app,
             "app_version": app_version,
         },
@@ -270,7 +270,7 @@ async def upload_documentation(
     )
 
     # Store job_id in session
-    job_key = f"documentation.processUpload_{page_id}_job_id"
+    job_key = f"documentation.processUpload_{doc_id}_job_id"
     await repo.update_session(session_id, {job_key: str(job_id)})
 
     # Return immediately with job info
@@ -278,7 +278,7 @@ async def upload_documentation(
         "message": "Documentation upload queued for processing",
         "sessionId": session_id,
         "jobId": job_id,
-        "pageId": str(page_id),
+        "docId": str(doc_id),
         "chunksToProcess": len(chunks),
         "status": "queued",
     }
@@ -347,7 +347,7 @@ async def replace_documentation(
     )
     logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
 
-    page_id = uuid.uuid4()  # Single page_id for the entire uploaded file
+    doc_id = uuid.uuid4()  # Single doc_id for the entire uploaded file
 
     # Create job with the processing logic
     job_id = await schedule_coroutine_job(
@@ -355,7 +355,7 @@ async def replace_documentation(
         input_payload={
             "session_id": str(session_id),
             "filename": filename,
-            "page_id": str(page_id),
+            "doc_id": str(doc_id),
             "chunks_count": len(chunks),
             "chunks": chunks,
             "app": app,
@@ -367,7 +367,7 @@ async def replace_documentation(
             "session_id": session_id,
             "chunks": chunks,
             "filename": filename,
-            "page_id": page_id,
+            "doc_id": doc_id,
             "app": app,
             "app_version": app_version,
         },
@@ -377,7 +377,7 @@ async def replace_documentation(
     )
 
     # Store job_id in session
-    job_key = f"documentation.processUpload_{page_id}_job_id"
+    job_key = f"documentation.processUpload_{doc_id}_job_id"
     await repo.update_session(session_id, {job_key: str(job_id)})
 
     # Return immediately with job info
@@ -385,7 +385,7 @@ async def replace_documentation(
         "message": "Documentation replacement queued for processing",
         "sessionId": session_id,
         "jobId": job_id,
-        "pageId": str(page_id),
+        "docId": str(doc_id),
         "chunksToProcess": len(chunks),
         "status": "queued",
     }
@@ -394,7 +394,7 @@ async def replace_documentation(
 @router.put("/{session_id}/documentation/{documentation_id}", summary="Upload documentation to session")
 async def upload_documentation_by_id(
     session_id: UUID = Path(..., description="Session ID"),
-    documentation_id: UUID = Path(..., description="Documentation UUID (used as page_id)"),
+    documentation_id: UUID = Path(..., description="Documentation UUID (used as doc_id)"),
     documentation: UploadFile = File(..., description="OpenAPI/Swagger YAML or JSON file"),
     use_previous_session_data: bool = Query(
         True, description="Whether to use previous session data for processing the new documentation"
@@ -402,9 +402,9 @@ async def upload_documentation_by_id(
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
-    Upload, chunk, and process documentation in the session with a specific page_id.
+    Upload, chunk, and process documentation in the session with a specific doc_id.
     Creates a job and queues it for processing - returns immediately with job_id.
-    Each chunk becomes a separate DocumentationItem with source='upload' and the provided documentation_id as page_id.
+    Each chunk becomes a separate DocumentationItem with source='upload' and the provided documentation_id as doc_id.
     Application name and version are loaded from session's discoveryInput or scrapeInput.
     """
     repo = SessionRepository(db)
@@ -424,13 +424,13 @@ async def upload_documentation_by_id(
     filename = documentation.filename or "unknown"
 
     # Chunk the content
-    logger.info("[Upload] Chunking documentation for session %s with page_id %s", session_id, documentation_id)
+    logger.info("[Upload] Chunking documentation for session %s with doc_id %s", session_id, documentation_id)
     chunks = split_text_with_token_overlap(
         doc_text, max_tokens=config.scrape_and_process.chunk_length, overlap_ratio=0.05
     )
     logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
 
-    page_id = documentation_id  # Use the provided documentation_id as page_id
+    doc_id = documentation_id  # Use the provided documentation_id as doc_id
 
     # Create job with the processing logic
     job_id = await schedule_coroutine_job(
@@ -438,7 +438,7 @@ async def upload_documentation_by_id(
         input_payload={
             "session_id": str(session_id),
             "filename": filename,
-            "page_id": str(page_id),
+            "doc_id": str(doc_id),
             "chunks_count": len(chunks),
             "chunks": chunks,
             "app": app,
@@ -450,7 +450,7 @@ async def upload_documentation_by_id(
             "session_id": session_id,
             "chunks": chunks,
             "filename": filename,
-            "page_id": page_id,
+            "doc_id": doc_id,
             "app": app,
             "app_version": app_version,
         },
@@ -460,7 +460,7 @@ async def upload_documentation_by_id(
     )
 
     # Store job_id in session
-    job_key = f"documentation.processUpload_{page_id}_job_id"
+    job_key = f"documentation.processUpload_{doc_id}_job_id"
     await repo.update_session(session_id, {job_key: str(job_id)})
 
     # Return immediately with job info
@@ -468,7 +468,7 @@ async def upload_documentation_by_id(
         "message": "Documentation upload queued for processing",
         "sessionId": session_id,
         "jobId": job_id,
-        "pageId": str(page_id),
+        "docId": str(doc_id),
         "chunksToProcess": len(chunks),
         "status": "queued",
     }
@@ -516,7 +516,7 @@ async def check_documentation_item(
         )
 
     # Find item by UUID
-    index_to_check = next((i for i, d in enumerate(doc_items) if str(d.get("pageId")) == str(documentation_id)), None)
+    index_to_check = next((i for i, d in enumerate(doc_items) if str(d.get("docId")) == str(documentation_id)), None)
     if index_to_check is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -529,26 +529,26 @@ async def check_documentation_item(
 @router.delete("/{session_id}/documentation/{documentation_id}", summary="Delete all documentation chunks by UUID")
 async def delete_documentation_item(
     session_id: UUID = Path(..., description="Session ID"),
-    documentation_id: UUID = Path(..., description="Documentation page_id (deletes all chunks with this page_id)"),
+    documentation_id: UUID = Path(..., description="Documentation doc_id (deletes all chunks with this doc_id)"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
-    Delete all documentation chunks with the specified page_id from the session.
+    Delete all documentation chunks with the specified doc_id from the session.
     Since uploaded documentation is chunked, this removes all chunks belonging to the same document.
-    Returns 404 if the session or any documentation with that page_id is not found.
+    Returns 404 if the session or any documentation with that doc_id is not found.
     """
-    # TODO: Maybe we should handle relevantChunks
+    # TODO: Maybe we should handle relevantDocumentations
     repo = SessionRepository(db)
     doc_repo = DocumentationRepository(db)
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     doc_items: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
-    doc_items_with_page_id = [item for item in doc_items if str(item.get("pageId")) == str(documentation_id)]
-    source = doc_items_with_page_id[0].get("source") if len(doc_items_with_page_id) > 0 else ""
+    doc_items_with_doc_id = [item for item in doc_items if str(item.get("docId")) == str(documentation_id)]
+    source = doc_items_with_doc_id[0].get("source") if len(doc_items_with_doc_id) > 0 else ""
     if not source:
         logger.warning(
-            "Could not determine source for documentation with page_id %s in session %s", documentation_id, session_id
+            "Could not determine source for documentation with doc_id %s in session %s", documentation_id, session_id
         )
     else:
         await doc_repo.remove_job_ids_from_documentation_items(session_id, source)
@@ -557,9 +557,9 @@ async def delete_documentation_item(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"No documentation found in session {session_id}"
         )
 
-    # Filter out all items with the specified page_id
+    # Filter out all items with the specified doc_id
     initial_count = len(doc_items)
-    filtered_items = [item for item in doc_items if item.get("pageId") != str(documentation_id)]
+    filtered_items = [item for item in doc_items if item.get("docId") != str(documentation_id)]
     deleted_count = initial_count - len(filtered_items)
 
     if deleted_count == 0:
@@ -570,7 +570,7 @@ async def delete_documentation_item(
 
     # Update session with filtered items
     await repo.update_session(session_id, {"documentationItems": filtered_items})
-    await doc_repo.remove_documentation_items_by_page_id(session_id, documentation_id)
+    await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
 
     return {
         "message": f"Documentation deleted successfully ({deleted_count} chunk(s) removed)",

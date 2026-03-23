@@ -11,7 +11,7 @@ and deviations from standard SCIM endpoints.
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -32,6 +32,45 @@ from ...utils.metadata_helper import extract_summary_and_tags
 from ...utils.scim_resource import extract_scim_resource_path, infer_scim_resource_path
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
+    if not isinstance(chunk, dict):
+        return None
+
+    doc_id = chunk.get("docId") or chunk.get("doc_id")
+    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
+    if not doc_id or not chunk_id:
+        return None
+
+    return str(doc_id), str(chunk_id)
+
+
+def _endpoint_key(path: Any, method: Any) -> Optional[Tuple[str, str]]:
+    """Build normalized endpoint key from path + method."""
+    path_str = str(path or "").strip()
+    method_str = str(method or "").strip().upper()
+    if not path_str or not method_str:
+        return None
+    return path_str, method_str
+
+
+def _attach_relevant_documentations_per_endpoint(
+    endpoints: List[Dict[str, Any]],
+    endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]],
+) -> List[Dict[str, Any]]:
+    """Attach per-endpoint relevantDocumentations in camelCase."""
+    enriched: List[Dict[str, Any]] = []
+
+    for endpoint in endpoints:
+        endpoint_copy = dict(endpoint)
+        key = _endpoint_key(endpoint_copy.get("path"), endpoint_copy.get("method"))
+        pairs = sorted(endpoint_chunk_pairs.get(key, set()), key=lambda pair: (pair[0], pair[1])) if key else []
+        endpoint_copy["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in pairs]
+        enriched.append(endpoint_copy)
+
+    return enriched
 
 
 async def pregenerate_scim_endpoints(
@@ -83,9 +122,14 @@ async def pregenerate_scim_endpoints(
         object_class,
     )
 
+    normalized_pairs = [_normalize_chunk_pair(chunk_ref) for chunk_ref in relevant_chunks]
+    valid_pairs = sorted({pair for pair in normalized_pairs if pair is not None}, key=lambda pair: (pair[0], pair[1]))
+    endpoint_relevant = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in valid_pairs]
+    endpoints_with_references = [dict(endpoint, relevantDocumentations=endpoint_relevant) for endpoint in endpoints]
+
     return {
-        "result": {"endpoints": endpoints},
-        "relevantChunks": relevant_chunks,
+        "result": {"endpoints": endpoints_with_references},
+        "relevantDocumentations": relevant_chunks,
     }
 
 
@@ -131,7 +175,8 @@ async def extract_scim_endpoints(
     job_id: UUID,
     base_api_url: str = "",
     chunk_details: List[str] | None = None,
-    doc_metadata_map: Dict[str, Dict[str, Any]] | None = None,
+    chunk_metadata_map: Dict[str, Dict[str, Any]] | None = None,
+    chunk_id_to_doc_id: Dict[str, str] | None = None,
 ) -> Dict[str, Any]:
     """
     Extract endpoints for SCIM object class using guided approach:
@@ -144,13 +189,14 @@ async def extract_scim_endpoints(
         object_class: Target object class name
         job_id: Job ID for progress tracking
         base_api_url: Base API URL for endpoint paths
-        chunk_details: Optional list of document UUIDs for each chunk
-        doc_metadata_map: Optional metadata mapping for documents
+        chunk_details: Optional list of chunk IDs for each chunk
+        chunk_metadata_map: Optional metadata mapping for chunks
+        chunk_id_to_doc_id: Optional mapping of chunk ID to doc ID
 
     Returns:
         Dictionary with:
         - "result": {"endpoints": [...]} merged endpoints
-        - "relevantChunks": List of chunks with custom endpoints
+        - "relevantDocumentations": List of chunks with custom endpoints
     """
     logger.info("[SCIM:Endpoints] Starting guided extraction for %s", object_class)
 
@@ -203,14 +249,14 @@ async def extract_scim_endpoints(
     )
 
     tasks = []
-    for chunk, doc_uuid in zip(chunks, chunk_details, strict=False):
-        doc_metadata = doc_metadata_map.get(str(doc_uuid)) if doc_metadata_map and doc_uuid else None
+    for chunk, chunk_id in zip(chunks, chunk_details, strict=False):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map and chunk_id else None
         tasks.append(
             extract_custom_scim_endpoints(
                 chain=chain,
                 chunk=chunk,
                 object_class=object_class,
-                doc_metadata=doc_metadata,
+                chunk_metadata=chunk_metadata,
             )
         )
 
@@ -220,11 +266,30 @@ async def extract_scim_endpoints(
 
     all_custom_endpoints: List[List[EndpointInfo]] = []
     relevant_chunks: List[Dict[str, Any]] = []
-    for custom_eps, doc_uuid in zip(all_results, chunk_details, strict=False):
+    endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]] = {}
+    for custom_eps, chunk_id in zip(all_results, chunk_details, strict=False):
         if custom_eps:
             all_custom_endpoints.append(custom_eps)
-            if doc_uuid:
-                relevant_chunks.append({"docUuid": doc_uuid})
+            chunk_pair: Optional[Tuple[str, str]] = None
+            if chunk_id:
+                chunk_id_str = str(chunk_id)
+                doc_id = chunk_id_to_doc_id.get(chunk_id_str) if chunk_id_to_doc_id else None
+                if doc_id:
+                    chunk_ref = {"doc_id": doc_id, "chunk_id": chunk_id_str}
+                    relevant_chunks.append(chunk_ref)
+                    chunk_pair = _normalize_chunk_pair(chunk_ref)
+                else:
+                    logger.warning(
+                        "[SCIM:Endpoints] Missing docId for chunk %s, skipping relevant chunk mapping",
+                        chunk_id_str,
+                    )
+            if chunk_pair:
+                for endpoint in custom_eps:
+                    key = _endpoint_key(endpoint.path, endpoint.method)
+                    if not key:
+                        continue
+                    seen_pairs = endpoint_chunk_pairs.setdefault(key, set())
+                    seen_pairs.add(chunk_pair)
 
     # Step 3: Flatten and merge custom endpoints
     flat_custom_endpoints = [ep for sublist in all_custom_endpoints for ep in sublist]
@@ -240,9 +305,12 @@ async def extract_scim_endpoints(
         len(flat_custom_endpoints),
     )
 
+    endpoint_dicts = [ep.model_dump(by_alias=True, exclude={"relevant_documentations"}) for ep in all_endpoints]
+    endpoint_dicts = _attach_relevant_documentations_per_endpoint(endpoint_dicts, endpoint_chunk_pairs)
+
     return {
-        "result": {"endpoints": [ep.model_dump(by_alias=True) for ep in all_endpoints]},
-        "relevantChunks": relevant_chunks,
+        "result": {"endpoints": endpoint_dicts},
+        "relevantDocumentations": relevant_chunks,
     }
 
 
@@ -250,7 +318,7 @@ async def extract_custom_scim_endpoints(
     chain: Any,
     chunk: str,
     object_class: str,
-    doc_metadata: Optional[Dict[str, Any]] = None,
+    chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[EndpointInfo]:
     """
     Extract ONLY custom endpoints and deviations from a single chunk.
@@ -259,13 +327,13 @@ async def extract_custom_scim_endpoints(
         chain: Pre-configured LLM chain for extraction
         chunk: Documentation chunk to analyze
         object_class: Target object class name
-        doc_metadata: Optional metadata for the document
+        chunk_metadata: Optional metadata for the chunk
 
     Returns:
         List of custom EndpointInfo objects
     """
     try:
-        summary, tags = extract_summary_and_tags(doc_metadata)
+        summary, tags = extract_summary_and_tags(chunk_metadata)
 
         result = await chain.ainvoke(
             {

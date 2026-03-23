@@ -5,7 +5,7 @@
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -80,24 +80,67 @@ def _build_fill_missing_chain() -> Any:
     return make_basic_chain(prompt, llm, parser)
 
 
+def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
+    if not isinstance(chunk, dict):
+        return None
+
+    doc_id = chunk.get("docId") or chunk.get("doc_id")
+    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
+    if not doc_id or not chunk_id:
+        return None
+
+    return str(doc_id), str(chunk_id)
+
+
+def _attach_relevant_documentations_per_attribute(
+    attributes: Dict[str, Dict[str, Any]],
+    attribute_chunk_pairs: Dict[str, Set[Tuple[str, str]]],
+) -> Dict[str, Dict[str, Any]]:
+    """Attach per-attribute relevantDocumentations in camelCase."""
+    enriched: Dict[str, Dict[str, Any]] = {}
+    normalized_pairs: Dict[str, Set[Tuple[str, str]]] = {}
+
+    for raw_name, pairs in attribute_chunk_pairs.items():
+        normalized = str(raw_name).strip().lower()
+        if not normalized:
+            continue
+        if normalized not in normalized_pairs:
+            normalized_pairs[normalized] = set()
+        normalized_pairs[normalized].update(pairs)
+
+    for attr_name, attr_info in attributes.items():
+        info = dict(attr_info)
+        direct_pairs = attribute_chunk_pairs.get(attr_name, set())
+        if direct_pairs:
+            sorted_pairs = sorted(direct_pairs, key=lambda pair: (pair[0], pair[1]))
+        else:
+            fallback_pairs = normalized_pairs.get(str(attr_name).strip().lower(), set())
+            sorted_pairs = sorted(fallback_pairs, key=lambda pair: (pair[0], pair[1]))
+        info["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in sorted_pairs]
+        enriched[attr_name] = info
+
+    return enriched
+
+
 async def _extract_from_single_chunk(
     chain: Any,
     *,
     chunk_text: str,
     object_class: str,
     job_id: UUID,
-    doc_id: Optional[UUID] = None,
-    doc_metadata: Optional[Dict[str, Any]] = None,
+    chunk_id: Optional[UUID] = None,
+    chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Run the attribute-extraction LLM on a single chunk and normalize the result to:
         { attribute_name: attribute_info_dict }
     """
     try:
-        logger.info("[Digester:Attributes] LLM call for document %s", doc_id)
+        logger.info("[Digester:Attributes] LLM call for chunk %s", chunk_id)
 
-        # Extract summary and tags from doc metadata
-        summary, tags = extract_summary_and_tags(doc_metadata)
+        # Extract summary and tags from chunk metadata
+        summary, tags = extract_summary_and_tags(chunk_metadata)
 
         result = await chain.ainvoke(
             {
@@ -120,28 +163,28 @@ async def _extract_from_single_chunk(
             else:
                 return {}
 
-        return {name: info.model_dump() for name, info in parsed.attributes.items()}
+        return {name: info.model_dump(exclude={"relevant_documentations"}) for name, info in parsed.attributes.items()}
 
     except Exception as exc:
-        logger.error("[Digester:Attributes] Document %s call failed: %s", doc_id, exc)
-        msg = f"[Digester:Attributes] Document {doc_id} call failed: {exc}"
-        append_job_error(job_id, msg)
+        error_message = f"[Digester:Attributes] Failed to process chunk {chunk_id}: {exc}"
+        logger.exception(error_message)
+        append_job_error(job_id, error_message)
         return {}
 
 
-async def _extract_attributes_for_doc(
+async def _extract_attributes_from_chunks(
     *,
     object_class: str,
-    doc_chunks: List[str],
+    chunks_for_chunk_id: List[str],
     job_id: UUID,
-    doc_id: UUID,
-    doc_metadata: Optional[Dict[str, Any]] = None,
+    chunk_id: UUID,
+    chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Dict[str, Any]]]:
     """
-    Extract attribute maps for all chunks belonging to a single document.
-    Returns a list aligned with doc_chunks: index -> {attribute_name: info}
+    Extract attribute maps from all chunks associated with one chunk_id.
+    Returns a list aligned with chunks_for_chunk_id: index -> {attribute_name: info}
     """
-    total_chunks = len(doc_chunks)
+    total_chunks = len(chunks_for_chunk_id)
     await update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
@@ -156,14 +199,14 @@ async def _extract_attributes_for_doc(
             chunk_text=chunk_text,
             object_class=object_class,
             job_id=job_id,
-            doc_id=doc_id,
-            doc_metadata=doc_metadata,
+            chunk_id=chunk_id,
+            chunk_metadata=chunk_metadata,
         )
-        for i, chunk_text in enumerate(doc_chunks)
+        for i, chunk_text in enumerate(chunks_for_chunk_id)
     ]
     results = list(await asyncio.gather(*tasks))
 
-    logger.info("[Digester:Attributes] Extraction completed for document %s", doc_id)
+    logger.info("[Digester:Attributes] Extraction completed for chunk %s", chunk_id)
     return results
 
 
@@ -200,7 +243,7 @@ async def _fill_from_single_chunk(
             else:
                 return {}
 
-        return {name: info.model_dump() for name, info in parsed.attributes.items()}
+        return {name: info.model_dump(exclude={"relevant_documentations"}) for name, info in parsed.attributes.items()}
 
     except Exception as exc:
         logger.error("[Digester:Attributes] Fill from chunk failed: %s", exc)
@@ -290,7 +333,8 @@ async def extract_attributes(
     object_class: str,
     job_id: UUID,
     chunk_details: List[str] | None = None,
-    doc_metadata_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    chunk_metadata_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    chunk_id_to_doc_id: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Extract object class attributes from document chunks using LLM analysis.
@@ -303,65 +347,91 @@ async def extract_attributes(
         chunks: List of text chunks to analyze for attribute information
         object_class: Target object class for attribute extraction context
         job_id: UUID for job tracking and progress updates
-        chunk_details: Optional list of document UUIDs for each chunk (default: None)
-        doc_metadata_map: Optional metadata mapping for documents (default: None)
+        chunk_details: Optional list of chunk IDs for each chunk (default: None)
+        chunk_metadata_map: Optional metadata mapping for chunk IDs (default: None)
+        chunk_id_to_doc_id: Optional mapping of chunk ID to doc ID
 
     Returns:
         Dict containing:
         - "result": Dict with "attributes" key containing extracted attribute information
-        - "relevantChunks": List of chunks that contained relevant attribute information
+        - "relevantDocumentations": List of chunks that contained relevant attribute information
     """
     if chunk_details is None:
         chunk_details = [""] * len(chunks)
 
     logger.info(
-        "[Digester:Attributes] Processing %d pre-selected chunks for %s (docs UUIDs: %s)",
+        "[Digester:Attributes] Processing %d pre-selected chunks for %s (chunk IDs: %s)",
         len(chunks),
         object_class,
         chunk_details,
     )
-    doc_to_chunks: Dict[str, List[str]] = {}
-    for chunk_text, doc_uuid in zip(chunks, chunk_details, strict=False):
-        doc_to_chunks.setdefault(doc_uuid, []).append(chunk_text)
+    chunks_by_id: Dict[str, List[str]] = {}
+    for chunk_text, chunk_id in zip(chunks, chunk_details, strict=False):
+        chunks_by_id.setdefault(chunk_id, []).append(chunk_text)
 
-    total_documents = len(doc_to_chunks)
+    total_chunk_ids = len(chunks_by_id)
 
     await update_job_progress(
         job_id,
-        total_processing=total_documents,
+        total_processing=total_chunk_ids,
         processing_completed=0,
         message="Processing chunks and try to extract relevant information",
     )
 
     all_per_chunk: List[Dict[str, Dict[str, Any]]] = []
-    relevant_docs: List[Dict[str, Any]] = []
+    relevant_chunks: List[Dict[str, Any]] = []
+    attribute_chunk_pairs: Dict[str, Set[Tuple[str, str]]] = {}
 
-    async def _extract_for_doc(doc_uuid: UUID, doc_chunks: List[str]):
-        doc_metadata = doc_metadata_map.get(str(doc_uuid)) if doc_metadata_map else None
+    async def _extract_for_chunk_id(chunk_id: UUID, chunks_for_chunk_id: List[str]):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map else None
 
-        per_chunk_for_doc = await _extract_attributes_for_doc(
+        per_chunk_results = await _extract_attributes_from_chunks(
             object_class=object_class,
-            doc_chunks=doc_chunks,
+            chunks_for_chunk_id=chunks_for_chunk_id,
             job_id=job_id,
-            doc_id=doc_uuid,
-            doc_metadata=doc_metadata,
+            chunk_id=chunk_id,
+            chunk_metadata=chunk_metadata,
         )
 
-        if any(bool(x) for x in per_chunk_for_doc):
-            return per_chunk_for_doc, [{"docUuid": str(doc_uuid)}]
-        return per_chunk_for_doc, []
+        if any(bool(x) for x in per_chunk_results):
+            chunk_id_str = str(chunk_id)
+            doc_id = chunk_id_to_doc_id.get(chunk_id_str) if chunk_id_to_doc_id else None
+            if doc_id:
+                return per_chunk_results, [{"doc_id": doc_id, "chunk_id": chunk_id_str}]
+            logger.warning(
+                "[Digester:Attributes] Missing docId for chunk %s, skipping relevant chunk mapping",
+                chunk_id_str,
+            )
+        return per_chunk_results, []
 
     results = await process_grouped_chunks_in_parallel(
-        doc_to_chunks=doc_to_chunks,
+        chunks_by_id=chunks_by_id,
         job_id=job_id,
-        extractor=_extract_for_doc,
+        extractor=_extract_for_chunk_id,
         logger_scope="Digester:Attributes",
-        total_documents=total_documents,
+        total_groups=total_chunk_ids,
     )
 
-    for doc_per_chunk, doc_relevant in results:
-        all_per_chunk.extend(doc_per_chunk)
-        relevant_docs.extend(doc_relevant)
+    for chunk_per_group, chunk_relevant in results:
+        all_per_chunk.extend(chunk_per_group)
+        relevant_chunks.extend(chunk_relevant)
+
+        normalized_pairs = [_normalize_chunk_pair(chunk_ref) for chunk_ref in chunk_relevant]
+        valid_pairs = [pair for pair in normalized_pairs if pair is not None]
+        if not valid_pairs:
+            continue
+
+        extracted_attribute_names = {
+            str(attr_name).strip()
+            for partial in chunk_per_group
+            if isinstance(partial, dict)
+            for attr_name in partial.keys()
+            if isinstance(attr_name, str) and attr_name.strip()
+        }
+        for attr_name in extracted_attribute_names:
+            seen_pairs = attribute_chunk_pairs.setdefault(attr_name, set())
+            for doc_id, chunk_id in valid_pairs:
+                seen_pairs.add((doc_id, chunk_id))
 
     merged_attributes = await merge_attribute_candidates(
         object_class=object_class,
@@ -385,7 +455,11 @@ async def extract_attributes(
         chunks=chunks,
         job_id=job_id,
     )
+    attributes_with_references = _attach_relevant_documentations_per_attribute(
+        filled_attributes,
+        attribute_chunk_pairs,
+    )
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
-    return {"result": {"attributes": filled_attributes}, "relevantChunks": relevant_docs}
+    return {"result": {"attributes": attributes_with_references}, "relevantDocumentations": relevant_chunks}

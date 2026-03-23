@@ -30,11 +30,11 @@ async def build_typed_job_status_response(job_id: UUID, model_cls: Type[Any]) ->
                 # Ensure objectClasses is a list and each item has the required fields
                 if "objectClasses" in actual_result and isinstance(actual_result["objectClasses"], list):
                     for obj_class in actual_result["objectClasses"]:
-                        # Ensure relevant_chunks exists and is a list
-                        if "relevant_chunks" not in obj_class:
-                            obj_class["relevant_chunks"] = []
-                        elif not isinstance(obj_class["relevant_chunks"], list):
-                            obj_class["relevant_chunks"] = []
+                        # Ensure relevantDocumentations exists and is a list
+                        if "relevantDocumentations" not in obj_class:
+                            obj_class["relevantDocumentations"] = []
+                        elif not isinstance(obj_class["relevantDocumentations"], list):
+                            obj_class["relevantDocumentations"] = []
 
             if hasattr(model_cls, "model_validate"):
                 result_payload = model_cls.model_validate(actual_result)

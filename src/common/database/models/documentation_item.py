@@ -22,7 +22,7 @@ class DocumentationItem(Base):
 
     __tablename__ = "documentation_items"
 
-    id: Mapped[UUID] = mapped_column(
+    chunk_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
@@ -35,7 +35,7 @@ class DocumentationItem(Base):
         nullable=False,
         index=True,
     )
-    page_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
+    doc_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
 
     scrape_job_ids: Mapped[List[str]] = mapped_column(
         "scrape_job_ids",
@@ -74,7 +74,7 @@ class DocumentationItem(Base):
     __table_args__ = (
         CheckConstraint("source IN ('scraper', 'upload')", name="check_doc_source"),
         Index("idx_doc_items_session_id", "session_id"),
-        Index("idx_doc_items_page_id", "page_id"),
+        Index("idx_doc_items_doc_id", "doc_id"),
         Index("idx_doc_items_source", "source"),
         Index("idx_doc_items_created_at", "created_at"),
         Index("idx_doc_items_metadata_gin", "metadata", postgresql_using="gin"),  # GIN index for JSONB queries

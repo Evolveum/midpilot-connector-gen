@@ -49,7 +49,7 @@ async def test_extract_object_classes_success():
     session_id = uuid4()
     job_id = uuid4()
 
-    fake_docs = [{"uuid": str(uuid4()), "content": "fake content for testing"}]
+    fake_docs = [{"docId": str(uuid4()), "chunkId": str(uuid4()), "content": "fake content for testing"}]
 
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
@@ -96,13 +96,13 @@ async def test_get_object_classes_status_found():
                 "name": "User",
                 "relevant": "true",
                 "description": "User's description",
-                "relevantChunks": [],
+                "relevantDocumentations": [],
             },
             {
                 "name": "Group",
                 "relevant": "true",
                 "description": "Group's description",
-                "relevantChunks": [],
+                "relevantDocumentations": [],
             },
         ]
     }
@@ -141,8 +141,10 @@ async def test_extract_class_attributes_success():
     """Test successful extraction of class attributes."""
     session_id = uuid4()
     job_id = uuid4()
+    chunk_id = str(uuid4())
+    doc_id = str(uuid4())
 
-    fake_docs = [{"uuid": "doc-1", "content": "fake content for testing"}]
+    fake_docs = [{"chunkId": chunk_id, "docId": doc_id, "content": "fake content for testing"}]
 
     # Mock objectClassesOutput with relevant chunks for the User class
     mock_object_classes_output = {
@@ -154,9 +156,9 @@ async def test_extract_class_attributes_success():
                 "abstract": False,
                 "embedded": False,
                 "description": "Represents a user",
-                "relevantChunks": [
-                    {"docUuid": "doc-1"},
-                    {"docUuid": "doc-1"},
+                "relevantDocumentations": [
+                    {"docId": doc_id, "chunkId": chunk_id},
+                    {"docId": doc_id, "chunkId": chunk_id},
                 ],
                 "endpoints": [],
                 "attributes": {},
@@ -273,7 +275,7 @@ async def test_extract_class_endpoints_success():
     session_id = uuid4()
     job_id = uuid4()
 
-    fake_docs = [{"uuid": "doc-1", "content": "fake content for testing"}]
+    fake_docs = [{"docId": "page-1", "chunkId": "doc-1", "content": "fake content for testing"}]
 
     # Mock objectClassesOutput with relevant chunks for the User class
     mock_object_classes_output = {
@@ -285,9 +287,9 @@ async def test_extract_class_endpoints_success():
                 "abstract": False,
                 "embedded": False,
                 "description": "Represents a user",
-                "relevantChunks": [
-                    {"docUuid": "doc-1"},
-                    {"docUuid": "doc-1"},
+                "relevantDocumentations": [
+                    {"docId": "page-1", "chunkId": "doc-1"},
+                    {"docId": "page-1", "chunkId": "doc-1"},
                 ],
                 "endpoints": [],
             }
@@ -307,7 +309,7 @@ async def test_extract_class_endpoints_success():
         patch(
             "src.modules.digester.router.filter_documentation_items",
             new_callable=AsyncMock,
-            return_value=[{"uuid": "doc-1"}],
+            return_value=[{"docId": "page-1", "chunkId": "doc-1"}],
         ),
         patch(
             "src.modules.digester.router.get_session_documentation",
@@ -403,7 +405,7 @@ async def test_extract_relations_success():
     session_id = uuid4()
     job_id = uuid4()
 
-    fake_docs = [{"uuid": "doc-1", "content": "fake content for testing"}]
+    fake_docs = [{"docId": "page-1", "chunkId": "doc-1", "content": "fake content for testing"}]
 
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)

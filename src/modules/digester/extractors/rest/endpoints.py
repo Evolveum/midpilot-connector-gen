@@ -5,7 +5,7 @@
 import asyncio
 import logging
 import re
-from typing import Any, Dict, List, Tuple, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -34,13 +34,53 @@ from ...utils.parallel_docs import process_grouped_chunks_in_parallel
 logger = logging.getLogger(__name__)
 
 
+def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
+    if not isinstance(chunk, dict):
+        return None
+
+    doc_id = chunk.get("docId") or chunk.get("doc_id")
+    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
+    if not doc_id or not chunk_id:
+        return None
+
+    return str(doc_id), str(chunk_id)
+
+
+def _endpoint_key(path: Any, method: Any) -> Optional[Tuple[str, str]]:
+    """Build normalized endpoint key from path + method."""
+    path_str = str(path or "").strip()
+    method_str = str(method or "").strip().upper()
+    if not path_str or not method_str:
+        return None
+    return path_str, method_str
+
+
+def _attach_relevant_documentations_per_endpoint(
+    endpoints: List[Dict[str, Any]],
+    endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]],
+) -> List[Dict[str, Any]]:
+    """Attach per-endpoint relevantDocumentations in camelCase."""
+    enriched: List[Dict[str, Any]] = []
+
+    for endpoint in endpoints:
+        endpoint_copy = dict(endpoint)
+        key = _endpoint_key(endpoint_copy.get("path"), endpoint_copy.get("method"))
+        pairs = sorted(endpoint_chunk_pairs.get(key, set()), key=lambda pair: (pair[0], pair[1])) if key else []
+        endpoint_copy["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in pairs]
+        enriched.append(endpoint_copy)
+
+    return enriched
+
+
 async def extract_endpoints(
     chunks: List[str],
     object_class: str,
     job_id: UUID,
     base_api_url: str = "",
     chunk_details: List[str] | None = None,
-    doc_metadata_map: Dict[str, Dict[str, Any]] | None = None,
+    chunk_metadata_map: Dict[str, Dict[str, Any]] | None = None,
+    chunk_id_to_doc_id: Dict[str, str] | None = None,
 ) -> Dict[str, Any]:
     """
     Extract API endpoints from document chunks using LLM analysis.
@@ -54,13 +94,14 @@ async def extract_endpoints(
         object_class: Target object class for endpoint extraction context
         job_id: UUID for job tracking and progress updates
         base_api_url: Base URL for API endpoints (default: "")
-        chunk_details: Optional list of document UUIDs for each chunk (default: None)
-        doc_metadata_map: Optional metadata mapping for documents (default: None)
+        chunk_details: Optional list of chunk IDs for each chunk (default: None)
+        chunk_metadata_map: Optional metadata mapping for chunks (default: None)
+        chunk_id_to_doc_id: Optional mapping of chunk ID to doc ID
 
     Returns:
         Dict containing:
         - "result": Dict with "endpoints" key containing extracted endpoint information
-        - "relevantChunks": List of chunks that contained relevant endpoint information
+        - "relevantDocumentations": List of chunks that contained relevant endpoint information
     """
 
     if chunk_details is None:
@@ -68,28 +109,28 @@ async def extract_endpoints(
 
     total_chunks = len(chunks)
     logger.info(
-        "[Digester:Endpoints] Processing %d pre-selected chunks for %s (docs UUIDs: %s)",
+        "[Digester:Endpoints] Processing %d pre-selected chunks for %s (chunk IDs: %s)",
         len(chunks),
         object_class,
         chunk_details,
     )
 
-    # Group chunks by document
-    doc_to_chunks: Dict[str, List[str]] = {}
-    for chunk_text, doc_uuid in zip(chunks, chunk_details, strict=False):
-        doc_to_chunks.setdefault(doc_uuid, []).append(chunk_text)
+    # Group chunks by chunk_id
+    chunks_by_id: Dict[str, List[str]] = {}
+    for chunk_text, chunk_id in zip(chunks, chunk_details, strict=False):
+        chunks_by_id.setdefault(chunk_id, []).append(chunk_text)
 
-    total_documents = len(doc_to_chunks)
+    total_chunk_ids = len(chunks_by_id)
     logger.info(
-        "[Digester:Endpoints] Processing chunks from %d documents for %s",
-        total_documents,
+        "[Digester:Endpoints] Processing chunks from %d groups for %s",
+        total_chunk_ids,
         object_class,
     )
 
-    # Initialize document-level progress tracking
+    # Initialize grouped progress tracking
     await update_job_progress(
         job_id,
-        total_processing=total_documents,
+        total_processing=total_chunk_ids,
         processing_completed=0,
         message="Processing chunks and try to extract relevant information",
     )
@@ -120,36 +161,37 @@ async def extract_endpoints(
     # Process each chunk
     extracted_endpoints: List[EndpointInfo] = []
     relevant_chunk_info: List[Dict[str, Any]] = []
+    endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]] = {}
 
-    async def _extract_for_doc(
-        doc_uuid: UUID, doc_chunks: List[str]
+    async def _extract_for_chunk_id(
+        chunk_id: UUID, chunks_for_chunk_id: List[str]
     ) -> Tuple[List[EndpointInfo], List[Dict[str, Any]]]:
-        """Extract endpoints from chunks of a single document."""
+        """Extract endpoints from chunks associated with one chunk_id."""
         await update_job_progress(
             job_id,
             stage=JobStage.processing_chunks,
             message="Processing chunks and try to extract relevant information",
         )
 
-        # Get metadata for this document
-        doc_metadata = None
-        if doc_metadata_map:
-            doc_metadata = doc_metadata_map.get(str(doc_uuid))
+        # Get metadata for this chunk_id
+        chunk_metadata = None
+        if chunk_metadata_map:
+            chunk_metadata = chunk_metadata_map.get(str(chunk_id))
 
-        doc_relevant_chunks: List[Dict[str, Any]] = []
+        relevant_chunks_for_id: List[Dict[str, Any]] = []
 
         async def _process_chunk(chunk_idx: int, chunk: str) -> List[EndpointInfo]:
             one_based = chunk_idx + 1
             try:
-                logger.info("[Digester:Endpoints] LLM call for document %s", doc_uuid)
+                logger.info("[Digester:Endpoints] LLM call for chunk %s", chunk_id)
 
-                # Extract summary and tags from doc metadata
-                summary, tags = extract_summary_and_tags(doc_metadata)
+                # Extract summary and tags from chunk metadata
+                summary, tags = extract_summary_and_tags(chunk_metadata)
 
                 result = cast(
                     EndpointResponse,
                     await chain.ainvoke(
-                        {"chunk": chunk, "summary": summary, "tags": tags},  # , "summary": summary, "tags": tags
+                        {"chunk": chunk, "summary": summary, "tags": tags},
                         config=RunnableConfig(callbacks=[langfuse_handler]),
                     ),
                 )
@@ -159,8 +201,8 @@ async def extract_endpoints(
 
                 valid_endpoints: List[EndpointInfo] = []
 
-                # Mark this document as relevant if we got endpoints
-                if result.endpoints and doc_uuid:
+                # Mark this chunk_id as relevant if we got endpoints
+                if result.endpoints and chunk_id:
                     for endpoint in result.endpoints:
                         if endpoint.path:
                             if re.search(re.escape(endpoint.path) + r'[\s\n\t.,;:!?\-\)\]\}"\']', chunk, re.IGNORECASE):
@@ -173,14 +215,22 @@ async def extract_endpoints(
                                 )
 
                 if valid_endpoints:
-                    # Only add once per document
-                    if not doc_relevant_chunks or doc_relevant_chunks[0]["docUuid"] != str(doc_uuid):
-                        doc_relevant_chunks.append({"docUuid": str(doc_uuid)})
+                    # Only add once per chunk_id
+                    if not relevant_chunks_for_id:
+                        chunk_id_str = str(chunk_id)
+                        doc_id = chunk_id_to_doc_id.get(chunk_id_str) if chunk_id_to_doc_id else None
+                        if doc_id:
+                            relevant_chunks_for_id.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+                        else:
+                            logger.warning(
+                                "[Digester:Endpoints] Missing docId for chunk %s, skipping relevant chunk mapping",
+                                chunk_id_str,
+                            )
 
                 logger.info(
-                    "[Digester:Endpoints] got endpoint %s (doc_uuid: %s)",
+                    "[Digester:Endpoints] got endpoint %s (chunk_id: %s)",
                     [ep.path for ep in valid_endpoints],
-                    doc_uuid,
+                    chunk_id,
                 )
 
                 # In this step, we are validating parameters of the extracted endpoints
@@ -196,7 +246,7 @@ async def extract_endpoints(
                         EndpointParamInfo,
                         await param_chain.ainvoke(
                             {
-                                "endpoint": endpoint.model_dump(by_alias=True),
+                                "endpoint": endpoint.model_dump(by_alias=True, exclude={"relevant_documentations"}),
                                 "chunk": context_snippet,
                             },
                             config=RunnableConfig(callbacks=[langfuse_handler]),
@@ -208,36 +258,49 @@ async def extract_endpoints(
 
                 return valid_endpoints
 
-            except Exception as e:
-                logger.error("[Digester:Endpoints] Document %s call failed: %s", doc_uuid, e)
-                append_job_error(job_id, f"[Digester:Endpoints] Document {doc_uuid} call failed: {e}")
+            except Exception as exc:
+                error_message = f"[Digester:Endpoints] Failed to process chunk {chunk_id}: {exc}"
+                logger.exception(error_message)
+                append_job_error(job_id, error_message)
                 return []
 
-        # Process all chunks in this document in parallel
-        tasks = [_process_chunk(i, chunk_text) for i, chunk_text in enumerate(doc_chunks)]
+        tasks = [_process_chunk(i, chunk_text) for i, chunk_text in enumerate(chunks_for_chunk_id)]
         results = await asyncio.gather(*tasks)
 
-        # Collect results from this document
-        doc_endpoints: List[EndpointInfo] = []
+        # Collect results for this chunk_id
+        endpoints_for_id: List[EndpointInfo] = []
         for endpoints_list in results:
-            doc_endpoints.extend(endpoints_list)
+            endpoints_for_id.extend(endpoints_list)
 
-        logger.info("[Digester:Endpoints] Extraction completed for document %s", doc_uuid)
-        return doc_endpoints, doc_relevant_chunks
+        logger.info("[Digester:Endpoints] Extraction completed for chunk %s", chunk_id)
+        return endpoints_for_id, relevant_chunks_for_id
 
-    # Process all documents in parallel using the generic function
+    # Process all chunk-id groups in parallel using the generic function
     results = await process_grouped_chunks_in_parallel(
-        doc_to_chunks=doc_to_chunks,
+        chunks_by_id=chunks_by_id,
         job_id=job_id,
-        extractor=_extract_for_doc,
+        extractor=_extract_for_chunk_id,
         logger_scope="Digester:Endpoints",
-        total_documents=total_documents,
+        total_groups=total_chunk_ids,
     )
 
-    # Collect results from all documents
-    for doc_endpoints, doc_relevant_chunks in results:
-        extracted_endpoints.extend(doc_endpoints)
-        relevant_chunk_info.extend(doc_relevant_chunks)
+    # Collect results from all groups
+    for endpoints_for_id, relevant_chunks_for_id in results:
+        extracted_endpoints.extend(endpoints_for_id)
+        relevant_chunk_info.extend(relevant_chunks_for_id)
+
+        normalized_pairs = [_normalize_chunk_pair(chunk_ref) for chunk_ref in relevant_chunks_for_id]
+        valid_pairs = [pair for pair in normalized_pairs if pair is not None]
+        if not valid_pairs:
+            continue
+
+        for endpoint in endpoints_for_id:
+            key = _endpoint_key(endpoint.path, endpoint.method)
+            if not key:
+                continue
+            seen_pairs = endpoint_chunk_pairs.setdefault(key, set())
+            for doc_id, chunk_id in valid_pairs:
+                seen_pairs.add((doc_id, chunk_id))
 
     # Deduplicate and merge
     await update_job_progress(
@@ -247,9 +310,10 @@ async def extract_endpoints(
     )
 
     merged_dicts: List[Dict[str, Any]] = await merge_endpoint_candidates(extracted_endpoints, object_class, job_id)
+    merged_with_references = _attach_relevant_documentations_per_endpoint(merged_dicts, endpoint_chunk_pairs)
 
-    logger.info("[Digester:Endpoints] Extraction complete. Unique endpoints: %d", len(merged_dicts))
+    logger.info("[Digester:Endpoints] Extraction complete. Unique endpoints: %d", len(merged_with_references))
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Endpoint extraction complete")
 
-    return {"result": {"endpoints": merged_dicts}, "relevantChunks": relevant_chunk_info}
+    return {"result": {"endpoints": merged_with_references}, "relevantDocumentations": relevant_chunk_info}

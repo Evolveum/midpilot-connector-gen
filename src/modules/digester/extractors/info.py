@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 async def extract_info_metadata(
     schema: str,
     job_id: UUID,
-    doc_id: Optional[UUID] = None,
-    doc_metadata: Optional[Dict[str, Any]] = None,
+    chunk_id: Optional[UUID] = None,
+    chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[InfoMetadata], bool]:
     """
-    Extract raw info metadata from a single document with a standalone LLM call.
-    Does NOT aggregate across documents - aggregation is handled in the service layer.
+    Extract raw info metadata from a single chunk with a standalone LLM call.
+    Does NOT aggregate across chunks - aggregation is handled in the service layer.
 
     Returns:
         - List of extracted InfoMetadata candidates (0 or 1 item)
@@ -43,9 +43,9 @@ async def extract_info_metadata(
         parse_fn=parse_fn,
         logger_prefix="[Digester:InfoMetadata] ",
         job_id=job_id,
-        doc_id=doc_id,
-        chunk_metadata=doc_metadata,
+        chunk_id=chunk_id,
+        chunk_metadata=chunk_metadata,
     )
 
-    logger.info("[Digester:InfoMetadata] Raw extraction complete from document. Count: %d", len(extracted))
+    logger.info("[Digester:InfoMetadata] Raw extraction complete from chunk. Count: %d", len(extracted))
     return extracted, has_relevant_data

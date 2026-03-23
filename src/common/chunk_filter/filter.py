@@ -49,8 +49,8 @@ async def _filter_documentation_items_impl(
     for item in raw_items:
         doc_items.append(
             {
-                "uuid": item.get("id"),
-                "pageId": item.get("pageId"),
+                "chunkId": item.get("chunkId"),
+                "docId": item.get("docId"),
                 "source": item.get("source"),
                 "url": item.get("url"),
                 "summary": item.get("summary"),

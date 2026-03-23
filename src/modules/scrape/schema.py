@@ -71,9 +71,9 @@ class ScrapeRequest(BaseModel):
 
 class ScrapeResult(BaseModel):
     finish_reason: str = Field(serialization_alias="finishReason")
-    saved_pages_count: int = Field(serialization_alias="savedPagesCount")
-    page_chunks_count: int = Field(serialization_alias="pageChunksCount")
-    saved_pages: Dict[str, dict] = Field(serialization_alias="savedPages")
+    saved_documentations_count: int = Field(serialization_alias="savedDocumentationsCount")
+    documentation_chunks_count: int = Field(serialization_alias="documentationChunksCount")
+    saved_documentations: Dict[str, dict] = Field(serialization_alias="savedDocumentations")
 
 
 class IrrelevantLinks(BaseModel):
@@ -94,7 +94,7 @@ class RelevantLinks(BaseModel):
 
 class ReferenceItem(BaseModel):
     """
-    Individual reference item extracted from a page
+    Individual reference item extracted from a documentation
     """
 
     url: str = Field(description="The URL of the reference")
@@ -109,12 +109,12 @@ class ReferenceItem(BaseModel):
         }
 
 
-class PageReferences(BaseModel):
+class DocumentationReferences(BaseModel):
     """
-    References extracted from a page using crawl4ai markdown generator
+    References extracted from a documentation using crawl4ai markdown generator
     """
 
-    page_url: str = Field(description="The URL of the page from which references were extracted")
+    documentation_url: str = Field(description="The URL of the documentation from which references were extracted")
     references: List[ReferenceItem] = Field(
         description="List of structured reference items with URL, description, and number"
     )
@@ -123,7 +123,7 @@ class PageReferences(BaseModel):
 
     def to_dict(self) -> dict:
         return {
-            "page_url": self.page_url,
+            "documentation_url": self.documentation_url,
             "references": [ref.to_dict() for ref in self.references],
             "references_markdown": self.references_markdown,
             "text_with_citations": self.text_with_citations,

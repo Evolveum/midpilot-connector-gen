@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 
 
 async def extract_auth_raw(
-    schema: str, job_id: UUID, doc_id: Optional[UUID] = None, doc_metadata: Optional[Dict] = None
+    schema: str, job_id: UUID, chunk_id: Optional[UUID] = None, chunk_metadata: Optional[Dict] = None
 ) -> Tuple[List[AuthInfo], bool]:
     """
-    Extract raw auth info from a single document with per-chunk parallel LLM calls.
-    Does NOT deduplicate or sort - that's done later across all documents.
+    Extract raw auth info from a single chunk with one LLM call.
+    Does NOT deduplicate or sort - that's done later across all chunks.
 
     Returns:
         - List of raw AuthInfo instances
@@ -46,13 +46,13 @@ async def extract_auth_raw(
         parse_fn=parse_fn,
         logger_prefix="[Digester:Auth] ",
         job_id=job_id,
-        doc_id=doc_id,
-        chunk_metadata=doc_metadata,
+        chunk_id=chunk_id,
+        chunk_metadata=chunk_metadata,
     )
 
-    logger.info("[Digester:Auth] Auth extracted: %s from document: %s", extracted, doc_id)
+    logger.info("[Digester:Auth] Auth extracted: %s from chunk: %s", extracted, chunk_id)
 
-    logger.info("[Digester:Auth] Raw extraction complete from document. Count: %d", len(extracted))
+    logger.info("[Digester:Auth] Raw extraction complete from chunk. Count: %d", len(extracted))
     return extracted, has_relevant_data
 
 
@@ -194,9 +194,10 @@ async def deduplicate_and_sort_auth(
 
         return AuthResponse(auth=dedup_list)
 
-    except Exception as e:
-        logger.error("[Digester:Auth] Sorting pass failed. Error: %s", e)
-        await update_job_progress(job_id, stage=JobStage.sorting_failed, message=f"Sorting failed: {e}")
-        append_job_error(job_id, f"[Digester:Auth] Sorting failed: {e}")
+    except Exception as exc:
+        error_message = f"[Digester:Auth] Sorting failed: {exc}"
+        logger.exception(error_message)
+        await update_job_progress(job_id, stage=JobStage.sorting_failed, message=error_message)
+        append_job_error(job_id, error_message)
 
         return AuthResponse(auth=dedup_list)

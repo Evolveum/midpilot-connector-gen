@@ -54,5 +54,7 @@ async def generate_groovy(
         return strip_markdown_fences(text)
 
     except Exception as exc:
-        append_job_error(job_id, f"[Codegen:{logger_prefix}] Generation failed: {exc}")
+        error_message = f"[Codegen:{logger_prefix}] Generation failed: {exc}"
+        logger.exception(error_message)
+        append_job_error(job_id, error_message)
         return f'objectClass("{object_class}") {{}}'

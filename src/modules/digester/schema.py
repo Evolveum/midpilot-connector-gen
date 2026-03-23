@@ -5,7 +5,7 @@
 import re
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
 
 
 # --- Object Classes ---
@@ -79,14 +79,14 @@ class ObjectClass(BaseModel):
             "Include key characteristics and usage context. Keep it concise (1-2 sentences)."
         ),
     )
-    relevant_chunks: List[Dict[str, str]] = Field(
+    relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
-        validation_alias="relevantChunks",
-        serialization_alias="relevantChunks",
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
         json_schema_extra={"exclude": True},
         description=(
             "List of chunks that contain relevant information about this object class. "
-            "Each entry contains only 'docUuid' (the document UUID as string is the chunk identifier). "
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
             "This field is populated automatically by the system and should NOT be filled by the LLM."
         ),
     )
@@ -102,9 +102,9 @@ class ObjectClass(BaseModel):
         description="Dictionary of attributes for this object class. Only present when explicitly extracted.",
     )
 
-    @field_validator("relevant_chunks", mode="before")
+    @field_validator("relevant_documentations", mode="before")
     @classmethod
-    def validate_relevant_chunks(cls, v: Any) -> List[Dict[str, str]]:
+    def validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
         if not isinstance(v, list):
             return []
 
@@ -112,12 +112,29 @@ class ObjectClass(BaseModel):
         for chunk in v:
             if not isinstance(chunk, dict):
                 continue
-            if "docUuid" in chunk:
-                # Ensure docUuid is stored as string, not UUID object
-                doc_uuid = chunk["docUuid"]
-                validated_chunks.append({"docUuid": str(doc_uuid)})
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            if chunk_id and doc_id:
+                validated_chunks.append(
+                    {
+                        "chunk_id": str(chunk_id),
+                        "doc_id": str(doc_id),
+                    }
+                )
 
         return validated_chunks
+
+    @field_serializer("relevant_documentations", when_used="always")
+    def serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """Expose relevantDocumentations in camelCase while keeping internal snake_case."""
+        serialized: List[Dict[str, str]] = []
+        for chunk in value or []:
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            if not doc_id or not chunk_id:
+                continue
+            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+        return serialized
 
 
 class ObjectClassesResponse(BaseModel):
@@ -504,11 +521,54 @@ class AttributeInfo(BaseModel):
     )
     scimAttribute: Optional[str] = Field(
         default=None,
+        exclude=True,
         description=(
             "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
             "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
         ),
     )
+    relevant_documentations: List[Dict[str, str]] = Field(
+        default_factory=list,
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
+        description=(
+            "List of chunks that contain evidence for this specific attribute. "
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
+            "This field is populated automatically by the system and should NOT be filled by the LLM."
+        ),
+    )
+
+    @field_validator("relevant_documentations", mode="before")
+    @classmethod
+    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
+        if not isinstance(v, list):
+            return []
+
+        validated_chunks: List[Dict[str, str]] = []
+        for chunk in v:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            if chunk_id and doc_id:
+                validated_chunks.append(
+                    {
+                        "chunk_id": str(chunk_id),
+                        "doc_id": str(doc_id),
+                    }
+                )
+        return validated_chunks
+
+    @field_serializer("relevant_documentations", when_used="always")
+    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        serialized: List[Dict[str, str]] = []
+        for chunk in value or []:
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            if not doc_id or not chunk_id:
+                continue
+            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+        return serialized
 
 
 class AttributeResponse(BaseModel):
@@ -571,6 +631,48 @@ class EndpointInfo(BaseModel):
         serialization_alias="suggestedUse",
         description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
     )
+    relevant_documentations: List[Dict[str, str]] = Field(
+        default_factory=list,
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
+        description=(
+            "List of chunks that contain evidence for this specific endpoint. "
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
+            "This field is populated automatically by the system and should NOT be filled by the LLM."
+        ),
+    )
+
+    @field_validator("relevant_documentations", mode="before")
+    @classmethod
+    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
+        if not isinstance(v, list):
+            return []
+
+        validated_chunks: List[Dict[str, str]] = []
+        for chunk in v:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            if chunk_id and doc_id:
+                validated_chunks.append(
+                    {
+                        "chunk_id": str(chunk_id),
+                        "doc_id": str(doc_id),
+                    }
+                )
+        return validated_chunks
+
+    @field_serializer("relevant_documentations", when_used="always")
+    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        serialized: List[Dict[str, str]] = []
+        for chunk in value or []:
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            if not doc_id or not chunk_id:
+                continue
+            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+        return serialized
 
     @field_validator("method", mode="before")
     @classmethod

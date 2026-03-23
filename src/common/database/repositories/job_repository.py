@@ -62,12 +62,12 @@ class JobRepository:
 
         :param job_id: Job ID
         :param session_id: Session ID
-        :param result: Job result containing relevantChunks
+        :param result: Job result containing relevantDocumentations
         """
         try:
             chunks_to_save = []
 
-            # Save object-class-level relevantChunks (if present in result.objectClasses)
+            # Save object-class-level relevantDocumentations (if present in result.objectClasses)
             result_data = result.get("result", {})
             object_classes = result_data.get("objectClasses", [])
 
@@ -77,17 +77,17 @@ class JobRepository:
                         continue
 
                     class_name = obj_class.get("name")
-                    class_chunks = obj_class.get("relevantChunks", [])
+                    class_chunks = obj_class.get("relevantDocumentations", [])
 
                     if class_name and class_chunks:
                         # Prepare chunks for bulk insert
                         for chunk_info in class_chunks:
-                            doc_uuid_str = chunk_info.get("docUuid")
-                            if doc_uuid_str:
+                            chunk_id_str = chunk_info.get("chunk_id") or chunk_info.get("chunkId")
+                            if chunk_id_str:
                                 chunks_to_save.append(
                                     {
                                         "entity_type": class_name,
-                                        "doc_id": doc_uuid_str,
+                                        "doc_id": chunk_id_str,
                                     }
                                 )
 

@@ -12,13 +12,13 @@ from ..chunks import split_text_with_token_overlap
 from ..session.schema import DocumentationItem
 from .llms import get_llm_processed_chunk
 from .prompts import get_llm_chunk_process_prompt
-from .schema import SavedPage
+from .schema import SavedDocumentation
 
 logger = logging.getLogger(__name__)
 
 
-async def process_scraped_page(
-    page: SavedPage,
+async def process_scraped_documentation(
+    documentation: SavedDocumentation,
     semaphore: asyncio.Semaphore,
     app: str,
     app_version: str,
@@ -27,35 +27,35 @@ async def process_scraped_page(
     scraper_job_id: Optional[UUID] = None,
 ) -> list[DocumentationItem]:
     """
-    Process a single scraped page:
+    Process a single scraped documentation:
     * generate chunks from the content
     * for each chunk, generate summary, tags and category
     * for each chunk, create DocumentationItem object
 
     inputs:
-        page: SavedPage - the scraped page to process
+        documentation: SavedDocumentation - the scraped documentation to process
         semaphore: asyncio.Semaphore - semaphore for limiting concurrency
         app: str - application name
         app_version: str - application version
         chunk_length: int - maximum length of each chunk
     outputs:
-        chunks: list - list of DocumentationItem objects for the page
+        chunks: list - list of DocumentationItem objects for the documentation
     """
 
     async with semaphore:
-        logger.debug("[Scrape:Process] Processing page: %s", page.url)
-        chunks = split_text_with_token_overlap(page.content, max_tokens=chunk_length, overlap_ratio=0.05)
-        logger.debug("[Scrape:Process] Generated %s chunks for page: %s", len(chunks), page.url)
-        page_chunks = []
+        logger.debug("[Scrape:Process] Processing documentation: %s", documentation.url)
+        chunks = split_text_with_token_overlap(documentation.content, max_tokens=chunk_length, overlap_ratio=0.05)
+        logger.debug("[Scrape:Process] Generated %s chunks for documentation: %s", len(chunks), documentation.url)
+        documentation_chunks = []
 
         for idx, chunk in enumerate(chunks):
-            prompts = get_llm_chunk_process_prompt(chunk[0], str(page.url), app, app_version)
+            prompts = get_llm_chunk_process_prompt(chunk[0], str(documentation.url), app, app_version)
 
             data = await get_llm_processed_chunk(prompts)
 
-            page_chunk = DocumentationItem(
-                page_id=page.id,
-                url=str(page.url),
+            documentation_chunk = DocumentationItem(
+                doc_id=documentation.id,
+                url=str(documentation.url),
                 # chunk_number=idx,
                 source=source,
                 scrape_job_ids=[scraper_job_id] if scraper_job_id else [],
@@ -65,19 +65,23 @@ async def process_scraped_page(
                     "tags": data.tags,
                     "num_endpoints": data.num_endpoints,
                     "length": chunk[1],
-                    "contentType": page.contentType,
+                    "contentType": documentation.contentType,
                     "different_app_name": data.different_app_name,
                 },
                 content=chunk[0],
             )
-            page_chunks.append(page_chunk)
+            documentation_chunks.append(documentation_chunk)
 
-        logger.info("[Scrape:Process] Completed processing page %s: generated %s chunks", page.url, len(page_chunks))
-        return page_chunks
+        logger.info(
+            "[Scrape:Process] Completed processing documentation %s: generated %s chunks",
+            documentation.url,
+            len(documentation_chunks),
+        )
+        return documentation_chunks
 
 
-async def process_all_pages(
-    pages: list[SavedPage],
+async def process_all_documentations(
+    documentations: list[SavedDocumentation],
     app: str,
     app_version: str,
     source: str,
@@ -86,32 +90,36 @@ async def process_all_pages(
     chunk_length: Optional[int] = None,
 ) -> list[DocumentationItem]:
     """
-    Process all scraped pages concurrently with semaphore limiting.
+    Process all scraped documentations concurrently with semaphore limiting.
 
     inputs:
-        pages: list - list of SavedPage objects to process
+        documentations: list - list of Saveddocumentation objects to process
         app: str - application name
         app_version: str - application version
         chunk_length: int - maximum length of each chunk
         max_concurrent: int - maximum number of concurrent tasks
     outputs:
-        list - list of PageChunk objects for all pages
+        list - list of documentationChunk objects for all documentations
     """
     effective_chunk_length = chunk_length or config.scrape_and_process.chunk_length
     local_semaphore = semaphore or asyncio.Semaphore(config.scrape_and_process.max_concurrent)
 
     results = await asyncio.gather(
         *[
-            process_scraped_page(page, local_semaphore, app, app_version, effective_chunk_length, source)
-            for page in pages
+            process_scraped_documentation(
+                documentation, local_semaphore, app, app_version, effective_chunk_length, source
+            )
+            for documentation in documentations
         ]
     )
 
     all_chunks = []
-    for page_chunks in results:
-        all_chunks.extend(page_chunks)
+    for documentation_chunks in results:
+        all_chunks.extend(documentation_chunks)
 
     logger.info(
-        "[Scrape:Process] Processing complete: generated %s total chunks from %s pages", len(all_chunks), len(pages)
+        "[Scrape:Process] Processing complete: generated %s total chunks from %s documentations",
+        len(all_chunks),
+        len(documentations),
     )
     return all_chunks
