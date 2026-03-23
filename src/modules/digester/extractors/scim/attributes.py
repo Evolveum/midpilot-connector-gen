@@ -11,7 +11,7 @@ This module extracts explicit application-to-SCIM attribute mappings.
 import asyncio
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -29,6 +29,49 @@ from ...scim.loader import get_base_scim_attributes, is_scim_standard_class
 from ...utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
+    if not isinstance(chunk, dict):
+        return None
+
+    doc_id = chunk.get("docId") or chunk.get("doc_id")
+    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
+    if not doc_id or not chunk_id:
+        return None
+
+    return str(doc_id), str(chunk_id)
+
+
+def _attach_relevant_documentations_per_attribute(
+    attributes: Dict[str, Dict[str, Any]],
+    attribute_chunk_pairs: Dict[str, Set[Tuple[str, str]]],
+) -> Dict[str, Dict[str, Any]]:
+    """Attach per-attribute relevantDocumentations in camelCase."""
+    enriched: Dict[str, Dict[str, Any]] = {}
+    normalized_pairs: Dict[str, Set[Tuple[str, str]]] = {}
+
+    for raw_name, pairs in attribute_chunk_pairs.items():
+        normalized = str(raw_name).strip().lower()
+        if not normalized:
+            continue
+        if normalized not in normalized_pairs:
+            normalized_pairs[normalized] = set()
+        normalized_pairs[normalized].update(pairs)
+
+    for attr_name, attr_info in attributes.items():
+        info = dict(attr_info)
+        direct_pairs = attribute_chunk_pairs.get(attr_name, set())
+        if direct_pairs:
+            sorted_pairs = sorted(direct_pairs, key=lambda pair: (pair[0], pair[1]))
+        else:
+            fallback_pairs = normalized_pairs.get(str(attr_name).strip().lower(), set())
+            sorted_pairs = sorted(fallback_pairs, key=lambda pair: (pair[0], pair[1]))
+        info["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in sorted_pairs]
+        enriched[attr_name] = info
+
+    return enriched
 
 
 def _build_scim_attribute_chain(object_class: str, base_attributes: Dict[str, Dict[str, Any]]) -> Any:
@@ -201,20 +244,28 @@ async def extract_scim_attributes(
     # Collect results and relevant chunks
     all_custom_attributes: List[Dict[str, Dict[str, Any]]] = []
     relevant_chunks: List[Dict[str, Any]] = []
+    attribute_chunk_pairs: Dict[str, Set[Tuple[str, str]]] = {}
 
     for custom_attrs, chunk_id in zip(all_results, chunk_details, strict=False):
         if custom_attrs:
             all_custom_attributes.append(custom_attrs)
+            chunk_pair: Optional[Tuple[str, str]] = None
             if chunk_id:
                 chunk_id_str = str(chunk_id)
                 doc_id = chunk_id_to_doc_id.get(chunk_id_str) if chunk_id_to_doc_id else None
                 if doc_id:
-                    relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+                    chunk_ref = {"doc_id": doc_id, "chunk_id": chunk_id_str}
+                    relevant_chunks.append(chunk_ref)
+                    chunk_pair = _normalize_chunk_pair(chunk_ref)
                 else:
                     logger.warning(
                         "[SCIM:Attributes] Missing docId for chunk %s, skipping relevant chunk mapping",
                         chunk_id_str,
                     )
+            if chunk_pair:
+                for attr_name in custom_attrs.keys():
+                    seen_pairs = attribute_chunk_pairs.setdefault(str(attr_name), set())
+                    seen_pairs.add(chunk_pair)
 
     logger.info(
         "[SCIM:Attributes] Completed parallel processing. Found mappings in %d/%d chunks",
@@ -224,16 +275,20 @@ async def extract_scim_attributes(
 
     # Step 3: Merge custom attributes
     merged_custom = _merge_custom_attributes(all_custom_attributes)
+    merged_custom_with_references = _attach_relevant_documentations_per_attribute(
+        merged_custom,
+        attribute_chunk_pairs,
+    )
 
     logger.info(
         "[SCIM:Attributes] Completed for %s. Total mappings: %d (base reference attrs: %d)",
         object_class,
-        len(merged_custom),
+        len(merged_custom_with_references),
         len(base_attributes),
     )
 
     return {
-        "result": {"attributes": merged_custom},
+        "result": {"attributes": merged_custom_with_references},
         "relevantDocumentations": relevant_chunks,
     }
 
@@ -291,7 +346,7 @@ async def extract_custom_scim_attributes(
             if not normalized_name:
                 continue
 
-            info_dict = info.model_dump()
+            info_dict = info.model_dump(exclude={"relevant_documentations"})
             scim_attribute = info_dict.get("scimAttribute")
             if isinstance(scim_attribute, str):
                 scim_attribute = scim_attribute.strip()

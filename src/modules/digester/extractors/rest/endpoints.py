@@ -5,7 +5,7 @@
 import asyncio
 import logging
 import re
-from typing import Any, Dict, List, Tuple, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -32,6 +32,45 @@ from ...utils.metadata_helper import extract_summary_and_tags
 from ...utils.parallel_docs import process_grouped_chunks_in_parallel
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
+    if not isinstance(chunk, dict):
+        return None
+
+    doc_id = chunk.get("docId") or chunk.get("doc_id")
+    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
+    if not doc_id or not chunk_id:
+        return None
+
+    return str(doc_id), str(chunk_id)
+
+
+def _endpoint_key(path: Any, method: Any) -> Optional[Tuple[str, str]]:
+    """Build normalized endpoint key from path + method."""
+    path_str = str(path or "").strip()
+    method_str = str(method or "").strip().upper()
+    if not path_str or not method_str:
+        return None
+    return path_str, method_str
+
+
+def _attach_relevant_documentations_per_endpoint(
+    endpoints: List[Dict[str, Any]],
+    endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]],
+) -> List[Dict[str, Any]]:
+    """Attach per-endpoint relevantDocumentations in camelCase."""
+    enriched: List[Dict[str, Any]] = []
+
+    for endpoint in endpoints:
+        endpoint_copy = dict(endpoint)
+        key = _endpoint_key(endpoint_copy.get("path"), endpoint_copy.get("method"))
+        pairs = sorted(endpoint_chunk_pairs.get(key, set()), key=lambda pair: (pair[0], pair[1])) if key else []
+        endpoint_copy["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in pairs]
+        enriched.append(endpoint_copy)
+
+    return enriched
 
 
 async def extract_endpoints(
@@ -122,6 +161,7 @@ async def extract_endpoints(
     # Process each chunk
     extracted_endpoints: List[EndpointInfo] = []
     relevant_chunk_info: List[Dict[str, Any]] = []
+    endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]] = {}
 
     async def _extract_for_chunk_id(
         chunk_id: UUID, chunks_for_chunk_id: List[str]
@@ -206,7 +246,7 @@ async def extract_endpoints(
                         EndpointParamInfo,
                         await param_chain.ainvoke(
                             {
-                                "endpoint": endpoint.model_dump(by_alias=True),
+                                "endpoint": endpoint.model_dump(by_alias=True, exclude={"relevant_documentations"}),
                                 "chunk": context_snippet,
                             },
                             config=RunnableConfig(callbacks=[langfuse_handler]),
@@ -249,6 +289,19 @@ async def extract_endpoints(
         extracted_endpoints.extend(endpoints_for_id)
         relevant_chunk_info.extend(relevant_chunks_for_id)
 
+        normalized_pairs = [_normalize_chunk_pair(chunk_ref) for chunk_ref in relevant_chunks_for_id]
+        valid_pairs = [pair for pair in normalized_pairs if pair is not None]
+        if not valid_pairs:
+            continue
+
+        for endpoint in endpoints_for_id:
+            key = _endpoint_key(endpoint.path, endpoint.method)
+            if not key:
+                continue
+            seen_pairs = endpoint_chunk_pairs.setdefault(key, set())
+            for doc_id, chunk_id in valid_pairs:
+                seen_pairs.add((doc_id, chunk_id))
+
     # Deduplicate and merge
     await update_job_progress(
         job_id,
@@ -257,9 +310,10 @@ async def extract_endpoints(
     )
 
     merged_dicts: List[Dict[str, Any]] = await merge_endpoint_candidates(extracted_endpoints, object_class, job_id)
+    merged_with_references = _attach_relevant_documentations_per_endpoint(merged_dicts, endpoint_chunk_pairs)
 
-    logger.info("[Digester:Endpoints] Extraction complete. Unique endpoints: %d", len(merged_dicts))
+    logger.info("[Digester:Endpoints] Extraction complete. Unique endpoints: %d", len(merged_with_references))
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Endpoint extraction complete")
 
-    return {"result": {"endpoints": merged_dicts}, "relevantDocumentations": relevant_chunk_info}
+    return {"result": {"endpoints": merged_with_references}, "relevantDocumentations": relevant_chunk_info}

@@ -24,6 +24,30 @@ logger = logging.getLogger(__name__)
 _job_futures: Dict[UUID, asyncio.Future] = {}
 
 
+def _normalize_relevant_chunks_for_session(value: Any) -> Any:
+    """
+    Normalize relevant chunk references for session storage.
+
+    Converts dict entries to camelCase shape: {"docId": "...", "chunkId": "..."}.
+    """
+    if not isinstance(value, list):
+        return value
+
+    if value and all(isinstance(item, int) for item in value):
+        return value
+
+    normalized: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        doc_id = item.get("docId") or item.get("doc_id")
+        chunk_id = item.get("chunkId") or item.get("chunk_id")
+        if not doc_id or not chunk_id:
+            continue
+        normalized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+    return normalized
+
+
 async def update_job_progress(
     job_id: UUID,
     *,
@@ -538,16 +562,24 @@ async def schedule_coroutine_job(
                             relevant_chunks = result_dict.get("relevantDocumentations") or result_dict.get(
                                 "relevant_chunk_indices", []
                             )
+                            normalized_relevant_chunks = _normalize_relevant_chunks_for_session(relevant_chunks)
 
                             session_updates = {session_result_key: actual_result}
 
                             # Store relevant chunks for this specific extraction
-                            if relevant_chunks:
+                            if normalized_relevant_chunks:
                                 # Get existing relevant_chunks dict or create new one
                                 existing_relevant = (
                                     await repo.get_session_data(session_id, "relevantDocumentations") or {}
                                 )
-                                existing_relevant[session_result_key] = relevant_chunks
+                                if isinstance(existing_relevant, dict):
+                                    existing_relevant = {
+                                        k: _normalize_relevant_chunks_for_session(v)
+                                        for k, v in existing_relevant.items()
+                                    }
+                                else:
+                                    existing_relevant = {}
+                                existing_relevant[session_result_key] = normalized_relevant_chunks
                                 session_updates["relevantDocumentations"] = existing_relevant
 
                             await repo.update_session(session_id, session_updates)

@@ -5,7 +5,7 @@
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -80,6 +80,49 @@ def _build_fill_missing_chain() -> Any:
     return make_basic_chain(prompt, llm, parser)
 
 
+def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
+    if not isinstance(chunk, dict):
+        return None
+
+    doc_id = chunk.get("docId") or chunk.get("doc_id")
+    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
+    if not doc_id or not chunk_id:
+        return None
+
+    return str(doc_id), str(chunk_id)
+
+
+def _attach_relevant_documentations_per_attribute(
+    attributes: Dict[str, Dict[str, Any]],
+    attribute_chunk_pairs: Dict[str, Set[Tuple[str, str]]],
+) -> Dict[str, Dict[str, Any]]:
+    """Attach per-attribute relevantDocumentations in camelCase."""
+    enriched: Dict[str, Dict[str, Any]] = {}
+    normalized_pairs: Dict[str, Set[Tuple[str, str]]] = {}
+
+    for raw_name, pairs in attribute_chunk_pairs.items():
+        normalized = str(raw_name).strip().lower()
+        if not normalized:
+            continue
+        if normalized not in normalized_pairs:
+            normalized_pairs[normalized] = set()
+        normalized_pairs[normalized].update(pairs)
+
+    for attr_name, attr_info in attributes.items():
+        info = dict(attr_info)
+        direct_pairs = attribute_chunk_pairs.get(attr_name, set())
+        if direct_pairs:
+            sorted_pairs = sorted(direct_pairs, key=lambda pair: (pair[0], pair[1]))
+        else:
+            fallback_pairs = normalized_pairs.get(str(attr_name).strip().lower(), set())
+            sorted_pairs = sorted(fallback_pairs, key=lambda pair: (pair[0], pair[1]))
+        info["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in sorted_pairs]
+        enriched[attr_name] = info
+
+    return enriched
+
+
 async def _extract_from_single_chunk(
     chain: Any,
     *,
@@ -120,7 +163,7 @@ async def _extract_from_single_chunk(
             else:
                 return {}
 
-        return {name: info.model_dump() for name, info in parsed.attributes.items()}
+        return {name: info.model_dump(exclude={"relevant_documentations"}) for name, info in parsed.attributes.items()}
 
     except Exception as exc:
         error_message = f"[Digester:Attributes] Failed to process chunk {chunk_id}: {exc}"
@@ -200,7 +243,7 @@ async def _fill_from_single_chunk(
             else:
                 return {}
 
-        return {name: info.model_dump() for name, info in parsed.attributes.items()}
+        return {name: info.model_dump(exclude={"relevant_documentations"}) for name, info in parsed.attributes.items()}
 
     except Exception as exc:
         logger.error("[Digester:Attributes] Fill from chunk failed: %s", exc)
@@ -337,6 +380,7 @@ async def extract_attributes(
 
     all_per_chunk: List[Dict[str, Dict[str, Any]]] = []
     relevant_chunks: List[Dict[str, Any]] = []
+    attribute_chunk_pairs: Dict[str, Set[Tuple[str, str]]] = {}
 
     async def _extract_for_chunk_id(chunk_id: UUID, chunks_for_chunk_id: List[str]):
         chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map else None
@@ -372,6 +416,23 @@ async def extract_attributes(
         all_per_chunk.extend(chunk_per_group)
         relevant_chunks.extend(chunk_relevant)
 
+        normalized_pairs = [_normalize_chunk_pair(chunk_ref) for chunk_ref in chunk_relevant]
+        valid_pairs = [pair for pair in normalized_pairs if pair is not None]
+        if not valid_pairs:
+            continue
+
+        extracted_attribute_names = {
+            str(attr_name).strip()
+            for partial in chunk_per_group
+            if isinstance(partial, dict)
+            for attr_name in partial.keys()
+            if isinstance(attr_name, str) and attr_name.strip()
+        }
+        for attr_name in extracted_attribute_names:
+            seen_pairs = attribute_chunk_pairs.setdefault(attr_name, set())
+            for doc_id, chunk_id in valid_pairs:
+                seen_pairs.add((doc_id, chunk_id))
+
     merged_attributes = await merge_attribute_candidates(
         object_class=object_class,
         per_chunk=all_per_chunk,
@@ -394,7 +455,11 @@ async def extract_attributes(
         chunks=chunks,
         job_id=job_id,
     )
+    attributes_with_references = _attach_relevant_documentations_per_attribute(
+        filled_attributes,
+        attribute_chunk_pairs,
+    )
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
-    return {"result": {"attributes": filled_attributes}, "relevantDocumentations": relevant_chunks}
+    return {"result": {"attributes": attributes_with_references}, "relevantDocumentations": relevant_chunks}

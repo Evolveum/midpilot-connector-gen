@@ -199,7 +199,7 @@ async def merge_attribute_candidates(
             content = getattr(result, "content", None)
             parsed = AttributeResponse.model_validate(json.loads(content)) if content else AttributeResponse()
 
-        return {name: info.model_dump() for name, info in parsed.attributes.items()}
+        return {name: info.model_dump(exclude={"relevant_documentations"}) for name, info in parsed.attributes.items()}
 
     except Exception as exc:
         logger.error("[Digester:Attributes] Dedupe failed: %s", exc)
@@ -270,7 +270,7 @@ async def merge_endpoint_candidates(
     merged.sort(key=lambda e: (e.path, _METHOD_ORDER[e.method], e.method))
 
     # Convert to dicts for JSON serialization
-    merged_dicts = [ep.model_dump(by_alias=True) for ep in merged]
+    merged_dicts = [ep.model_dump(by_alias=True, exclude={"relevant_documentations"}) for ep in merged]
 
     logger.info("[Digester:Endpoints] Merged %d endpoints for %s", len(merged_dicts), object_class)
 
