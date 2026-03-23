@@ -163,7 +163,10 @@ async def _extract_from_single_chunk(
             else:
                 return {}
 
-        return {name: info.model_dump(exclude={"relevant_documentations"}) for name, info in parsed.attributes.items()}
+        return {
+            name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
+            for name, info in parsed.attributes.items()
+        }
 
     except Exception as exc:
         error_message = f"[Digester:Attributes] Failed to process chunk {chunk_id}: {exc}"
@@ -243,7 +246,10 @@ async def _fill_from_single_chunk(
             else:
                 return {}
 
-        return {name: info.model_dump(exclude={"relevant_documentations"}) for name, info in parsed.attributes.items()}
+        return {
+            name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
+            for name, info in parsed.attributes.items()
+        }
 
     except Exception as exc:
         logger.error("[Digester:Attributes] Fill from chunk failed: %s", exc)

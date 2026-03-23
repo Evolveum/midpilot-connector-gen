@@ -521,7 +521,6 @@ class AttributeInfo(BaseModel):
     )
     scimAttribute: Optional[str] = Field(
         default=None,
-        exclude=True,
         description=(
             "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
             "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."

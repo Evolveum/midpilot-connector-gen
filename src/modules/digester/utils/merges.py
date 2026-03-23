@@ -199,7 +199,10 @@ async def merge_attribute_candidates(
             content = getattr(result, "content", None)
             parsed = AttributeResponse.model_validate(json.loads(content)) if content else AttributeResponse()
 
-        return {name: info.model_dump(exclude={"relevant_documentations"}) for name, info in parsed.attributes.items()}
+        return {
+            name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
+            for name, info in parsed.attributes.items()
+        }
 
     except Exception as exc:
         logger.error("[Digester:Attributes] Dedupe failed: %s", exc)
