@@ -59,6 +59,7 @@ async def test_generate_native_schema():
         result = await service.create_native_schema(
             test_attributes,
             "User",
+            session_id=uuid4(),
             job_id=uuid4(),
         )
 

@@ -135,13 +135,17 @@ async def create_native_schema(
     attributes_payload: AttributesPayload,
     object_class: str,
     *,
+    session_id: UUID,
     job_id: UUID,
 ) -> Dict[str, str]:
     """
     Generate Groovy for native schema mapping from attributes.
     """
-    # packaged resource under codegen/documentations/
-    docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "25-user-schema.adoc")
+
+    api_types = await get_api_types_from_session(session_id)
+    protocol = detect_protocol(api_types)
+    assets = get_operation_assets("native_schema", protocol)
+    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)

@@ -95,6 +95,7 @@ async def generate_native_schema(
         },
         worker=service.create_native_schema,
         worker_args=(attrs, object_class),
+        worker_kwargs={"session_id": session_id},
         initial_stage="queue",
         initial_message="Queued code generation",
         session_id=session_id,

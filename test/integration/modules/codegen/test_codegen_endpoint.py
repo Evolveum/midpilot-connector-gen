@@ -53,6 +53,7 @@ async def test_generate_native_schema_success():
             },
             worker=ANY,
             worker_args=({"username": {"type": "string"}}, "User"),
+            worker_kwargs={"session_id": session_id},
             initial_stage="queue",
             initial_message="Queued code generation",
             session_id=session_id,
