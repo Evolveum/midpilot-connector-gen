@@ -141,7 +141,7 @@ async def create_native_schema(
     Generate Groovy for native schema mapping from attributes.
     """
     # packaged resource under codegen/documentations/
-    user_schema_docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "25-user-schema.adoc")
+    docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "25-user-schema.adoc")
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)
@@ -152,7 +152,7 @@ async def create_native_schema(
         system_prompt=get_native_schema_system_prompt,
         user_prompt=get_native_schema_user_prompt,
         logger_prefix="NativeSchema",
-        extra_prompt_vars={"user_schema_docs": user_schema_docs_text},
+        extra_prompt_vars={"user_schema_docs": docs_text},
         job_id=job_id,
     )
     return {"code": code}
@@ -167,9 +167,7 @@ async def create_conn_id(
     """
     Generate Groovy for ConnID attribute mapping from attributes.
     """
-    connid_docs_text = read_adoc_text(
-        __package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc"
-    )
+    docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc")
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)
@@ -180,7 +178,7 @@ async def create_conn_id(
         system_prompt=get_connID_system_prompt,
         user_prompt=get_connID_user_prompt,
         logger_prefix="ConnID",
-        extra_prompt_vars={"connID_docs": connid_docs_text},
+        extra_prompt_vars={"connID_docs": docs_text},
         job_id=job_id,
     )
     return {"code": code}
@@ -189,7 +187,7 @@ async def create_conn_id(
 async def create_search(
     *,
     attributes: AttributesPayload,
-    endpoints: EndpointsPayload,
+    endpoints: Optional[EndpointsPayload] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -231,7 +229,7 @@ async def create_search(
 async def create_create(
     *,
     attributes: AttributesPayload,
-    endpoints: EndpointsPayload,
+    endpoints: Optional[EndpointsPayload] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -272,7 +270,7 @@ async def create_create(
 async def create_update(
     *,
     attributes: AttributesPayload,
-    endpoints: EndpointsPayload,
+    endpoints: Optional[EndpointsPayload] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -313,7 +311,7 @@ async def create_update(
 async def create_delete(
     *,
     attributes: AttributesPayload,
-    endpoints: EndpointsPayload,
+    endpoints: Optional[EndpointsPayload] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,

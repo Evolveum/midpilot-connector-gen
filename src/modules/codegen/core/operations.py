@@ -46,10 +46,11 @@ class SearchGenerator(BaseGroovyGenerator):
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
-        endpoints: EndpointsPayload = kwargs.get("endpoints")  # type: ignore[assignment]
+        endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
+        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
         return {
             "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoints_to_records(endpoints), ensure_ascii=False),
+            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
         }
 
     def get_initial_result(self, **kwargs: Any) -> str:
@@ -82,10 +83,11 @@ class CreateGenerator(BaseGroovyGenerator):
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
-        endpoints: EndpointsPayload = kwargs.get("endpoints")  # type: ignore[assignment]
+        endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
+        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
         return {
             "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoints_to_records(endpoints), ensure_ascii=False),
+            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
         }
 
     def get_initial_result(self, **kwargs: Any) -> str:
@@ -118,10 +120,11 @@ class UpdateGenerator(BaseGroovyGenerator):
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
-        endpoints: EndpointsPayload = kwargs.get("endpoints")  # type: ignore[assignment]
+        endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
+        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
         return {
             "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoints_to_records(endpoints), ensure_ascii=False),
+            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
         }
 
     def get_initial_result(self, **kwargs: Any) -> str:
@@ -154,10 +157,11 @@ class DeleteGenerator(BaseGroovyGenerator):
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
-        endpoints: EndpointsPayload = kwargs.get("endpoints")  # type: ignore[assignment]
+        endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
+        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
         return {
             "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoints_to_records(endpoints), ensure_ascii=False),
+            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
         }
 
     def get_initial_result(self, **kwargs: Any) -> str:
