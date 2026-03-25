@@ -47,7 +47,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
         patch("src.modules.digester.service.process_documents_in_parallel") as mock_parallel,
-        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = [
             (
@@ -123,7 +123,7 @@ async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
         patch("src.modules.digester.service.process_documents_in_parallel") as mock_parallel,
-        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = []
 
@@ -171,7 +171,7 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_extract_chunks.return_value = (
             ["chunk-0 text", "chunk-2 text"],
@@ -255,7 +255,7 @@ async def test_extract_attributes_session_not_found(mock_llm, mock_digester_upda
             new_callable=AsyncMock,
             return_value=False,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_extract_chunks.return_value = (["chunk text"], [(0, doc_uuid)])
         mock_extract_attrs.return_value = {"result": {"attributes": {"id": {}}}, "relevantDocumentations": []}
@@ -298,7 +298,7 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_extract_chunks.return_value = (["chunk-0 text"], [(0, doc_uuid)])
 
@@ -357,7 +357,7 @@ async def test_extract_endpoints_no_relevant_chunks(mock_llm, mock_digester_upda
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_extract_chunks.return_value = ([], [])
 
@@ -386,7 +386,7 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_extract_chunks.return_value = (["chunk"], [(0, doc_uuid)])
         mock_extract_endpoints.return_value = {"result": {"endpoints": []}, "relevantDocumentations": []}
@@ -730,7 +730,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
             patch(
                 "src.modules.digester.service.deduplicate_and_sort_object_classes", new_callable=AsyncMock
             ) as mock_dedupe_classes,
-            patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+            patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         ):
             mock_parallel.return_value = [
                 (
@@ -777,7 +777,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                 new_callable=AsyncMock,
                 return_value=True,
             ) as mock_update_object_class,
-            patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+            patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         ):
             mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
             mock_attrs.return_value = {
@@ -800,7 +800,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                 new_callable=AsyncMock,
                 return_value=True,
             ) as mock_update_object_class,
-            patch("src.modules.digester.service.get_api_type_from_session", new_callable=AsyncMock, return_value=[]),
+            patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         ):
             mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
             mock_endpoints.return_value = {

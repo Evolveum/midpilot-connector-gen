@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, cast
 from uuid import UUID
 
 from ...common.jobs import update_job_progress
+from ...common.utils.session_metadata import get_session_api_types, is_scim_api
 
 # Shared extractors
 from .extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
@@ -23,7 +24,6 @@ from .extractors.scim.attributes import extract_scim_attributes
 from .extractors.scim.endpoints import pregenerate_scim_endpoints
 from .extractors.scim.object_class import extract_scim_object_classes
 from .schema import InfoMetadata, InfoResponse
-from .utils.api_context import get_api_type_from_session, is_scim_api, protocol_selection_message
 from .utils.doc_chunk import select_doc_chunks
 from .utils.merges import (
     merge_info_metadata,
@@ -135,18 +135,8 @@ async def extract_object_classes(
     Returns:
         Dictionary with result and relevantDocumentations
     """
-    api_type = await get_api_type_from_session(session_id)
+    api_type = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_type)
-
-    logger.info(
-        "%s",
-        protocol_selection_message(
-            "Digester:ObjectClasses",
-            is_scim=is_scim,
-            scim_mode="guided extraction",
-            rest_mode="standard REST extraction",
-        ),
-    )
 
     if is_scim:
         return await extract_scim_object_classes(doc_items, job_id)
@@ -421,19 +411,8 @@ async def extract_attributes(
     chunk_metadata_map = build_doc_metadata_map(doc_items)
     chunk_id_to_doc_id = _build_chunk_id_to_doc_id(doc_items)
 
-    api_type = await get_api_type_from_session(session_id)
+    api_type = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_type)
-
-    logger.info(
-        "%s",
-        protocol_selection_message(
-            "Digester:Attributes",
-            is_scim=is_scim,
-            scim_mode="guided extraction",
-            rest_mode="standard REST extraction",
-            object_class=object_class,
-        ),
-    )
 
     if is_scim:
         result = await extract_scim_attributes(
@@ -497,19 +476,8 @@ async def extract_endpoints(
         base_api_url: Base API URL for endpoint extraction
     """
 
-    api_type = await get_api_type_from_session(session_id)
+    api_type = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_type)
-
-    logger.info(
-        "%s",
-        protocol_selection_message(
-            "Digester:Endpoints",
-            is_scim=is_scim,
-            scim_mode="deterministic endpoint pregeneration",
-            rest_mode="standard REST extraction",
-            object_class=object_class,
-        ),
-    )
 
     if is_scim:
         result = await pregenerate_scim_endpoints(

@@ -327,7 +327,6 @@ async def test_extract_class_endpoints_success():
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
-        assert mock_repo.get_session_data.await_count == 2
         mock_schedule.assert_awaited_once()
         mock_repo.update_session.assert_awaited_once()
 

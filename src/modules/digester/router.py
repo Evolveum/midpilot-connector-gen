@@ -15,6 +15,7 @@ from ...common.enums import JobStatus
 from ...common.jobs import schedule_coroutine_job
 from ...common.schema import JobCreateResponse, JobStatusMultiDocResponse
 from ...common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
+from ...common.utils.session_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
 from . import service
 from .schema import (
     AttributeResponse,
@@ -24,7 +25,6 @@ from .schema import (
     ObjectClassesResponse,
     RelationsResponse,
 )
-from .utils.api_context import is_scim_api, load_session_api_context
 from .utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
 from .utils.inputs import auth_input, metadata_input, object_classes_input
 from .utils.object_classes import (
@@ -438,7 +438,8 @@ async def extract_class_endpoints(
             detail=f"Object class '{object_class}' not found in session {session_id}.",
         )
 
-    api_type, base_api_url = await load_session_api_context(repo, session_id)
+    api_type = await get_session_api_types(session_id)
+    base_api_url = await get_session_base_api_url(session_id)
     is_scim = is_scim_api(api_type)
 
     criteria = ENDPOINT_CRITERIA.model_copy()
