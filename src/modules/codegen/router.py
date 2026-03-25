@@ -24,10 +24,10 @@ from ...common.schema import (
 )
 from ...common.session.session import ensure_session_exists, resolve_session_job_id
 from ...common.status_response import build_stage_status_response
+from ...common.utils.session_metadata import get_session_api_types
 from ..digester.schema import RelationsResponse
 from . import service
 from .selection.protocol import ApiProtocol, detect_protocol
-from .selection.session_metadata import get_api_types_from_session
 
 router = APIRouter()
 
@@ -55,7 +55,7 @@ async def _build_multi_doc_status_response(job_id: UUID) -> JobStatusMultiDocRes
 
 
 async def _is_scim_session(session_id: UUID) -> bool:
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     return detect_protocol(api_types) == ApiProtocol.SCIM
 
 

@@ -8,6 +8,7 @@ from uuid import UUID
 
 from ...common.database.config import async_session_maker
 from ...common.database.repositories.session_repository import SessionRepository
+from ...common.utils.session_metadata import get_session_api_types
 from ..digester.schema import AttributeResponse, EndpointResponse, RelationsResponse
 from .core.generate_groovy import generate_groovy
 from .core.operations import (
@@ -22,7 +23,6 @@ from .prompts.native_schema_prompts import get_native_schema_system_prompt, get_
 from .selection.docs_loader import read_adoc_text
 from .selection.protocol import detect_protocol
 from .selection.protocol_selectors import get_operation_assets
-from .selection.session_metadata import get_api_types_from_session
 from .utils.map_to_record import attributes_to_records_for_codegen
 
 logger = logging.getLogger(__name__)
@@ -142,7 +142,7 @@ async def create_native_schema(
     Generate Groovy for native schema mapping from attributes.
     """
 
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     protocol = detect_protocol(api_types)
     assets = get_operation_assets("native_schema", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
@@ -201,7 +201,7 @@ async def create_search(
     Automatically selects protocol-specific prompts and documentation based on api_type.
     """
     # Get API types and select appropriate documentation
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     protocol = detect_protocol(api_types)
     assets = get_operation_assets("search", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
@@ -243,7 +243,7 @@ async def create_create(
     Automatically selects protocol-specific prompts and documentation based on api_type.
     """
     # Get API types and select appropriate documentation
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     protocol = detect_protocol(api_types)
     assets = get_operation_assets("create", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
@@ -284,7 +284,7 @@ async def create_update(
     Automatically selects protocol-specific prompts and documentation based on api_type.
     """
     # Get API types and select appropriate documentation
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     protocol = detect_protocol(api_types)
     assets = get_operation_assets("update", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
@@ -325,7 +325,7 @@ async def create_delete(
     Automatically selects protocol-specific prompts and documentation based on api_type.
     """
     # Get API types and select appropriate documentation
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     protocol = detect_protocol(api_types)
     assets = get_operation_assets("delete", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
