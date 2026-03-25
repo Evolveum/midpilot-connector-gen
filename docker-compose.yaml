@@ -15,8 +15,8 @@ services:
     environment:
       LOGGING__LEVEL: info
       DATABASE__HOST: db
-      DATABASE__PORT: 5432
-      DATABASE__URL: postgresql+asyncpg://${DATABASE__USER}:${DATABASE__PASSWORD}@db:5432/${DATABASE__NAME}
+      DATABASE__PORT: ${DATABASE__INT_PORT}
+      DATABASE__URL: postgresql+asyncpg://${DATABASE__USER}:${DATABASE__PASSWORD}@db:${DATABASE__INT_PORT}/${DATABASE__NAME}
     ports:
       - "${HOST_PORT:-8090}:8090"
 
@@ -37,7 +37,7 @@ services:
       retries: 20
       start_period: 5s
     ports:
-      - ${DATABASE__EXT_PORT}:${DATABASE__PORT}
+      - ${DATABASE__EXT_PORT}:${DATABASE__INT_PORT}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

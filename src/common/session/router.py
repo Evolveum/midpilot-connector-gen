@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
 import logging
 import uuid
 from typing import Any, Dict
@@ -24,6 +25,10 @@ from .session import process_documentation_worker
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Guard high-burst documentation HEAD/PUT traffic against DB pool exhaustion.
+_DOC_UPLOAD_API_LIMIT = max(1, min(config.database.pool_size, 8))
+_DOC_UPLOAD_API_SEMAPHORE = asyncio.Semaphore(_DOC_UPLOAD_API_LIMIT)
 
 
 @router.post(
@@ -221,28 +226,29 @@ async def upload_documentation(
     Each chunk becomes a separate DocumentationItem with source='upload'.
     Application name and version are loaded from session's discoveryInput or scrapeInput.
     """
-    repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    async with _DOC_UPLOAD_API_SEMAPHORE:
+        repo = SessionRepository(db)
+        if not await repo.session_exists(session_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    # Load app and app_version from session
-    session_data = await repo.get_session_data(session_id) or {}
-    discovery_input = session_data.get("discoveryInput", {})
-    scrape_input = session_data.get("scrapeInput", {})
+        # Load app and app_version from session
+        session_data = await repo.get_session_data(session_id) or {}
+        discovery_input = session_data.get("discoveryInput", {})
+        scrape_input = session_data.get("scrapeInput", {})
 
-    # Try discoveryInput first, fallback to scrapeInput, then to "unknown"
-    app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
-    app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
+        # Try discoveryInput first, fallback to scrapeInput, then to "unknown"
+        app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
+        app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
 
-    doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
-    filename = documentation.filename or "unknown"
+        doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
+        filename = documentation.filename or "unknown"
 
-    # Chunk the content
-    logger.info("[Upload] Chunking documentation for session %s", session_id)
-    chunks = split_text_with_token_overlap(
-        doc_text, max_tokens=config.scrape_and_process.chunk_length, overlap_ratio=0.05
-    )
-    logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
+        # Chunk the content
+        logger.info("[Upload] Chunking documentation for session %s", session_id)
+        chunks = split_text_with_token_overlap(
+            doc_text, max_tokens=config.scrape_and_process.chunk_length, overlap_ratio=0.05
+        )
+        logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
 
     doc_id = uuid.uuid4()  # Single doc_id for the entire uploaded file
 
@@ -319,33 +325,34 @@ async def replace_documentation(
     This clears all previously scraped and uploaded documentation.
     Chunks and processes the documentation with LLM - returns immediately with job_id.
     """
-    repo = SessionRepository(db)
-    doc_repo = DocumentationRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    async with _DOC_UPLOAD_API_SEMAPHORE:
+        repo = SessionRepository(db)
+        doc_repo = DocumentationRepository(db)
+        if not await repo.session_exists(session_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    # Load app and app_version from session
-    session_data = await repo.get_session_data(session_id) or {}
-    discovery_input = session_data.get("discoveryInput", {})
-    scrape_input = session_data.get("scrapeInput", {})
+        # Load app and app_version from session
+        session_data = await repo.get_session_data(session_id) or {}
+        discovery_input = session_data.get("discoveryInput", {})
+        scrape_input = session_data.get("scrapeInput", {})
 
-    # Try discoveryInput first, fallback to scrapeInput, then to "unknown"
-    app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
-    app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
+        # Try discoveryInput first, fallback to scrapeInput, then to "unknown"
+        app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
+        app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
 
-    doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
-    filename = documentation.filename or "unknown"
+        doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
+        filename = documentation.filename or "unknown"
 
-    # Clear existing documentation first
-    await repo.update_session(session_id, {"documentationItems": []})
-    await doc_repo.delete_documentation_items_by_session(session_id)
+        # Clear existing documentation first
+        await repo.update_session(session_id, {"documentationItems": []})
+        await doc_repo.delete_documentation_items_by_session(session_id)
 
-    # Chunk the content
-    logger.info("[Upload] Chunking documentation for session %s", session_id)
-    chunks = split_text_with_token_overlap(
-        doc_text, max_tokens=config.scrape_and_process.chunk_length, overlap_ratio=0.05
-    )
-    logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
+        # Chunk the content
+        logger.info("[Upload] Chunking documentation for session %s", session_id)
+        chunks = split_text_with_token_overlap(
+            doc_text, max_tokens=config.scrape_and_process.chunk_length, overlap_ratio=0.05
+        )
+        logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
 
     doc_id = uuid.uuid4()  # Single doc_id for the entire uploaded file
 
@@ -407,21 +414,22 @@ async def upload_documentation_by_id(
     Each chunk becomes a separate DocumentationItem with source='upload' and the provided documentation_id as doc_id.
     Application name and version are loaded from session's discoveryInput or scrapeInput.
     """
-    repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    async with _DOC_UPLOAD_API_SEMAPHORE:
+        repo = SessionRepository(db)
+        if not await repo.session_exists(session_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    # Load app and app_version from session
-    session_data = await repo.get_session_data(session_id) or {}
-    discovery_input = session_data.get("discoveryInput", {})
-    scrape_input = session_data.get("scrapeInput", {})
+        # Load app and app_version from session
+        session_data = await repo.get_session_data(session_id) or {}
+        discovery_input = session_data.get("discoveryInput", {})
+        scrape_input = session_data.get("scrapeInput", {})
 
-    # Try discoveryInput first, fallback to scrapeInput, then to "unknown"
-    app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
-    app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
+        # Try discoveryInput first, fallback to scrapeInput, then to "unknown"
+        app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
+        app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
 
-    doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
-    filename = documentation.filename or "unknown"
+        doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
+        filename = documentation.filename or "unknown"
 
     # Chunk the content
     logger.info("[Upload] Chunking documentation for session %s with doc_id %s", session_id, documentation_id)
@@ -505,15 +513,16 @@ async def check_documentation_item(
     Checks a single documentation item from the session by its UUID.
     Returns 404 if the session or the documentation item is not found.
     """
-    repo = SessionRepository(db)
-    if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+    async with _DOC_UPLOAD_API_SEMAPHORE:
+        repo = SessionRepository(db)
+        if not await repo.session_exists(session_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    doc_items: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
-    if not doc_items:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"No documentation found in session {session_id}"
-        )
+        doc_items: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
+        if not doc_items:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"No documentation found in session {session_id}"
+            )
 
     # Find item by UUID
     index_to_check = next((i for i, d in enumerate(doc_items) if str(d.get("docId")) == str(documentation_id)), None)

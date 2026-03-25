@@ -316,7 +316,7 @@ class Settings(BaseSettings):
 
     Example: LOGGING__LEVEL=error
              DATABASE__HOST=localhost
-             DATABASE__PORT=5432
+             DATABASE__PORT=5433
     """
 
     model_config = SettingsConfigDict(

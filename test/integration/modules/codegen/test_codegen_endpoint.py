@@ -39,7 +39,12 @@ async def test_generate_native_schema_success():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_native_schema(session_id, "User", usePreviousSessionData=True, db=MagicMock())
+        response = await generate_native_schema(
+            session_id,
+            "User",
+            usePreviousSessionData=True,
+            db=MagicMock(),
+        )
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
