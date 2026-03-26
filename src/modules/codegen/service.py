@@ -20,6 +20,7 @@ from .core.operations import (
 )
 from .prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
 from .prompts.native_schema_prompts import get_native_schema_system_prompt, get_native_schema_user_prompt
+from .schema import SearchIntent
 from .selection.docs_loader import read_adoc_text
 from .selection.protocol import detect_protocol
 from .selection.protocol_selectors import get_operation_assets
@@ -72,15 +73,28 @@ def _collect_pairs(val: Any) -> List[Tuple[int, Optional[str]]]:
 
 def _merge_unique_pairs(*seqs: Iterable[Tuple[int, Optional[str]]]) -> List[Tuple[int, Optional[str]]]:
     """
-    Merge multiple (idx, uuid) sequences preserving unique (idx, uuid) pairs.
+    Merge multiple (idx, uuid) sequences preserving unique chunk IDs.
+
+    When a chunk_id is present, deduplicate by chunk_id only so the same
+    documentation chunk is not processed multiple times if it was selected
+    from both attributes and endpoints. For legacy index-only entries
+    (chunk_id is None), preserve uniqueness by the full pair.
     """
     merged: List[Tuple[int, Optional[str]]] = []
-    seen: set[Tuple[int, Optional[str]]] = set()
+    seen_pairs: set[Tuple[int, Optional[str]]] = set()
+    seen_chunk_ids: set[str] = set()
     for seq in seqs:
         for idx, chunk_id in seq:
+            if isinstance(chunk_id, str):
+                if chunk_id in seen_chunk_ids:
+                    continue
+                seen_chunk_ids.add(chunk_id)
+                merged.append((idx, chunk_id))
+                continue
+
             pair = (idx, chunk_id)
-            if pair not in seen:
-                seen.add(pair)
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
                 merged.append(pair)
     return merged
 
@@ -194,6 +208,7 @@ async def create_search(
     endpoints: Optional[EndpointsPayload] = None,
     session_id: UUID,
     object_class: str,
+    intent: SearchIntent,
     job_id: UUID,
 ) -> Dict[str, str]:
     """
@@ -208,6 +223,7 @@ async def create_search(
 
     generator = SearchGenerator(
         object_class=object_class,
+        intent=intent,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,

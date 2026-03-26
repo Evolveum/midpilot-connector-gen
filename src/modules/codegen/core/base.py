@@ -334,9 +334,7 @@ class BaseGroovyGenerator(ABC):
                     current_group_chunks_remaining = max(0, current_group_chunks_remaining - 1)
                     if current_group_chunks_remaining == 0:
                         await increment_processed_documents(job_id, delta=1)
-                        logger.info("%s Completed chunk group chunk_id=%s", self.config.logger_prefix, chunk_id)
                 else:
-                    # Fallback mode (no selected-chunk grouping): increment per chunk
                     await increment_processed_documents(job_id, delta=1)
 
         return result

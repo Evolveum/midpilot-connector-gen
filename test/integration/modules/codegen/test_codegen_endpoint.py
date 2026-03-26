@@ -179,7 +179,7 @@ async def test_generate_search_success():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_search(session_id, "User", "GET", db=MagicMock())
+        response = await generate_search(session_id, "User", "all", db=MagicMock())
 
     assert response.jobId == job_id
     mock_repo.session_exists.assert_awaited_once_with(session_id)
@@ -213,7 +213,7 @@ async def test_generate_search_scim_allows_missing_endpoints():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_search(session_id, "User", "GET", db=MagicMock())
+        response = await generate_search(session_id, "User", "all", db=MagicMock())
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
@@ -224,7 +224,7 @@ async def test_generate_search_scim_allows_missing_endpoints():
         update_args = mock_repo.update_session.call_args[0]
         assert update_args[0] == session_id
         inputs = update_args[1]
-        assert inputs["UserSearchInput"] == {"objectClass": "User", "attributes": attrs_payload}
+        assert inputs["UserSearchAllInput"] == {"objectClass": "User", "attributes": attrs_payload, "intent": "all"}
 
 
 # RELATION

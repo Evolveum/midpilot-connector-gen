@@ -2,4 +2,6 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-# We don't need schema for codegen part
+from typing import Literal
+
+SearchIntent = Literal["all", "filter", "id"]

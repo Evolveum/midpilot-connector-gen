@@ -24,12 +24,21 @@ from ...common.schema import (
 )
 from ...common.session.session import ensure_session_exists, resolve_session_job_id
 from ...common.status_response import build_stage_status_response
-from ...common.utils.session_metadata import get_session_api_types
+from ...common.utils.session_metadata import get_session_api_types, is_scim_api
 from ..digester.schema import RelationsResponse
 from . import service
-from .selection.protocol import ApiProtocol, detect_protocol
+from .schema import SearchIntent
 
 router = APIRouter()
+
+
+def _search_result_key(object_class: str, intent: SearchIntent) -> str:
+    suffix_map = {
+        "all": "All",
+        "filter": "Filter",
+        "id": "Id",
+    }
+    return f"{object_class}Search{suffix_map[intent]}"
 
 
 async def _build_multi_doc_status_response(job_id: UUID) -> JobStatusMultiDocResponse:
@@ -52,11 +61,6 @@ async def _build_multi_doc_status_response(job_id: UUID) -> JobStatusMultiDocRes
         result=status.get("result"),
         errors=status.get("errors"),
     )
-
-
-async def _is_scim_session(session_id: UUID) -> bool:
-    api_types = await get_session_api_types(session_id)
-    return detect_protocol(api_types) == ApiProtocol.SCIM
 
 
 # Codegen Operations - Native Schema
@@ -285,7 +289,7 @@ async def override_connid(
 async def generate_search(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    intent: str = Path(..., description="Intent"),
+    intent: SearchIntent = Path(..., description="Intent"),
     usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -304,7 +308,8 @@ async def generate_search(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
-    is_scim = await _is_scim_session(session_id)
+    api_types = await get_session_api_types(session_id)
+    is_scim = is_scim_api(api_types)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -317,16 +322,20 @@ async def generate_search(
         "sessionId": session_id,
         "attributes": attrs,
         "object_class": object_class,
+        "intent": intent,
         "usePreviousSessionData": usePreviousSessionData,
     }
     worker_kwargs = {
         "attributes": attrs,
         "session_id": session_id,
         "object_class": object_class,
+        "intent": intent,
     }
     if eps is not None:
         job_input["endpoints"] = eps
         worker_kwargs["endpoints"] = eps
+
+    result_key = _search_result_key(object_class, intent)
 
     job_id = await schedule_coroutine_job(
         job_type="codegen.getSearch",
@@ -337,17 +346,17 @@ async def generate_search(
         initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
-        session_result_key=f"{object_class}Search",
+        session_result_key=result_key,
     )
 
-    session_input = {"objectClass": object_class, "attributes": attrs}
+    session_input = {"objectClass": object_class, "attributes": attrs, "intent": intent}
     if eps is not None:
         session_input["endpoints"] = eps
     await repo.update_session(
         session_id,
         {
-            f"{object_class}SearchJobId": str(job_id),
-            f"{object_class}SearchInput": session_input,
+            f"{result_key}JobId": str(job_id),
+            f"{result_key}Input": session_input,
         },
     )
 
@@ -362,7 +371,7 @@ async def generate_search(
 async def get_search_status(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    intent: str = Path(..., description="Intent"),
+    intent: SearchIntent = Path(..., description="Intent"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -372,13 +381,15 @@ async def get_search_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
+    result_key = _search_result_key(object_class, intent)
+
     jobId = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
-        session_key=f"{object_class}SearchJobId",
+        session_key=f"{result_key}JobId",
         job_label="search",
-        not_found_detail=f"No search job found for {object_class} in session {session_id}",
+        not_found_detail=f"No search job found for {object_class} intent={intent} in session {session_id}",
     )
 
     return await _build_multi_doc_status_response(jobId)
@@ -392,7 +403,7 @@ async def get_search_status(
 async def override_search(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    intent: str = Path(..., description="Intent"),
+    intent: SearchIntent = Path(..., description="Intent"),
     search_code: Dict[str, Any] = Body(..., description="Search code as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -402,7 +413,8 @@ async def override_search(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}Search": search_code})
+    result_key = _search_result_key(object_class, intent)
+    await repo.update_session(session_id, {result_key: search_code})
 
     return {
         "message": f"Search code for {object_class} overridden successfully",
@@ -438,7 +450,8 @@ async def generate_create(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
-    is_scim = await _is_scim_session(session_id)
+    api_types = await get_session_api_types(session_id)
+    is_scim = is_scim_api(api_types)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -569,7 +582,8 @@ async def generate_update(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
-    is_scim = await _is_scim_session(session_id)
+    api_types = await get_session_api_types(session_id)
+    is_scim = is_scim_api(api_types)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -700,7 +714,8 @@ async def generate_delete(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
-    is_scim = await _is_scim_session(session_id)
+    api_types = await get_session_api_types(session_id)
+    is_scim = is_scim_api(api_types)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
