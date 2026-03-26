@@ -10,16 +10,16 @@ from uuid import UUID
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from ....common.chunks import normalize_to_text
-from ....common.jobs import append_job_error, update_job_progress
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.relations_prompts import (
+from .....common.chunks import normalize_to_text
+from .....common.jobs import append_job_error, update_job_progress
+from .....common.langfuse import langfuse_handler
+from .....common.llm import get_default_llm, make_basic_chain
+from ...prompts.rest.relations_prompts import (
     get_relations_system_prompt,
     get_relations_user_prompt,
 )
-from ..schema import RelationRecord, RelationsResponse
-from ..utils.metadata_helper import extract_summary_and_tags
+from ...schema import RelationRecord, RelationsResponse
+from ...utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def _parse_relations_result(
     job_id: UUID,
     idx: Optional[int] = None,
     total_chunks: Optional[int] = None,
-    doc_id: Optional[UUID] = None,
+    chunk_id: Optional[UUID] = None,
 ) -> List[RelationRecord]:
     """
     Parse LLM result into RelationRecord list.
@@ -124,18 +124,20 @@ def _parse_relations_result(
         logger.warning("[Digester:Relations] Could not parse result format")
         return []
 
-    except Exception as e:
-        logger.error("[Digester:Relations] Failed to parse relations result: %s", e)
+    except Exception as exc:
         if job_id is not None and idx is not None:
             try:
                 total = total_chunks or 0
                 prefix = "[Digester:Relations] "
-                error_msg = f"{prefix}Parse failed for chunk {idx + 1}/{total if total else '?'}: {e}"
-                if doc_id:
-                    error_msg = f"{error_msg} (Doc: {doc_id})"
-                append_job_error(job_id, error_msg)
+                error_message = f"{prefix}Failed to parse chunk {idx + 1}/{total if total else '?'}: {exc}"
+                if chunk_id:
+                    error_message = f"{error_message} (chunk_id: {chunk_id})"
+                logger.exception(error_message)
+                append_job_error(job_id, error_message)
             except Exception:
                 pass
+        else:
+            logger.exception("[Digester:Relations] Failed to parse relations result")
         return []
 
 
@@ -145,26 +147,30 @@ async def _extract_from_chunk(
     chunk: str,
     job_id: UUID,
     total_chunks: Optional[int] = None,
-    doc_id: Optional[UUID] = None,
-    doc_metadata: Optional[Dict[str, Any]] = None,
+    chunk_id: Optional[UUID] = None,
+    chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[RelationRecord]:
     try:
         logger.info("[Digester:Relations] LLM call for chunk %s", idx + 1)
-
-        # Extract summary and tags from doc metadata
-        summary, tags = extract_summary_and_tags(doc_metadata)
+        summary, tags = extract_summary_and_tags(chunk_metadata)
 
         result = await chain.ainvoke(
             {"chunk": chunk, "summary": summary, "tags": tags}, config={"callbacks": [langfuse_handler]}
         )
-        return _parse_relations_result(result, job_id=job_id, idx=idx, total_chunks=total_chunks, doc_id=doc_id)
-    except Exception as e:
-        logger.error("[Digester:Relations] Chunk %d failed: %s", idx + 1, e)
+        return _parse_relations_result(
+            result,
+            job_id=job_id,
+            idx=idx,
+            total_chunks=total_chunks,
+            chunk_id=chunk_id,
+        )
+    except Exception as exc:
         total = total_chunks or 0
-        error_msg = f"[Digester:Relations] Chunk {idx + 1}/{total if total else '?'} call failed: {e}"
-        if doc_id:
-            error_msg = f"{error_msg} (Doc: {doc_id})"
-        append_job_error(job_id, error_msg)
+        error_message = f"[Digester:Relations] Failed to process chunk {idx + 1}/{total if total else '?'}: {exc}"
+        if chunk_id:
+            error_message = f"{error_message} (chunk_id: {chunk_id})"
+        logger.exception(error_message)
+        append_job_error(job_id, error_message)
         return []
 
 
@@ -172,8 +178,8 @@ async def extract_relations(
     schema: str,
     relevant_object_classes: Any,
     job_id: UUID,
-    doc_id: Optional[UUID] = None,
-    doc_metadata: Optional[Dict[str, Any]] = None,
+    chunk_id: Optional[UUID] = None,
+    chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[RelationsResponse, bool]:
     """
     Extract relationships between object classes from an OpenAPI/Swagger specification.
@@ -212,7 +218,7 @@ async def extract_relations(
         f"- {name}: {desc}" if desc.strip() else f"- {name}" for name, desc in relevant_items
     )
 
-    # Normalize text (document is already pre-chunked in DB)
+    # Normalize text (input is already pre-chunked in DB)
     text = normalize_to_text(schema)
 
     if not text or not text.strip():
@@ -223,7 +229,7 @@ async def extract_relations(
     await update_job_progress(
         job_id,
         stage="processing_chunks",
-        message="Processing document and extracting relations",
+        message="Processing chunk and extracting relations",
     )
 
     parser: PydanticOutputParser[RelationsResponse] = PydanticOutputParser(pydantic_object=RelationsResponse)
@@ -241,10 +247,18 @@ async def extract_relations(
 
     chain = make_basic_chain(prompt, llm, parser)
 
-    logger.info("[Digester:Relations] Processing document for relation extraction")
-    # Process the single pre-chunked document (no need for asyncio.gather with just one item)
+    logger.info("[Digester:Relations] Processing chunk for relation extraction")
+    # Process the single pre-chunked input (no need for asyncio.gather with just one item)
     chunk_results = [
-        await _extract_from_chunk(chain, 0, text, job_id, total_chunks=1, doc_id=doc_id, doc_metadata=doc_metadata)
+        await _extract_from_chunk(
+            chain,
+            0,
+            text,
+            job_id,
+            total_chunks=1,
+            chunk_id=chunk_id,
+            chunk_metadata=chunk_metadata,
+        )
     ]
     logger.info("[Digester:Relations] Extraction completed")
 

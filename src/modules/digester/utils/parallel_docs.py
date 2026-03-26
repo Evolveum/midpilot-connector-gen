@@ -16,84 +16,84 @@ T = TypeVar("T")
 
 async def process_documents_in_parallel(
     *,
-    doc_items: List[dict],
+    chunk_items: List[dict],
     job_id: UUID,
     extractor: Callable[[str, UUID, UUID], Awaitable[Tuple[T, bool]]],
     logger_scope: str,
 ) -> List[Tuple[T, bool, UUID]]:
     """
-    Process multiple documents in parallel using the provided extractor function.
+    Process multiple chunks in parallel using the provided extractor function.
 
-    Takes a list of document items and processes them concurrently, updating job progress
-    and tracking document completion. Each document is processed using the extractor
+    Takes a list of chunk items and processes them concurrently, updating job progress
+    and tracking completion. Each chunk is processed using the extractor
     function which returns the result and a relevance flag.
 
     Args:
-        doc_items: List of document dictionaries containing 'uuid' and 'content' keys
+        chunk_items: List of chunk dictionaries containing 'chunkId' and 'content' keys
         job_id: UUID for job tracking and progress updates
-        extractor: Async function that processes document content and returns (result, has_relevant_data)
+        extractor: Async function that processes chunk content and returns (result, has_relevant_data)
         logger_scope: String prefix for logging messages
 
     Returns:
-        List of tuples containing (result, has_relevant_data, doc_uuid) for each processed document
+        List of tuples containing (result, has_relevant_data, chunk_id) for each processed chunk
     """
-    total_docs = len(doc_items)
-    await update_job_progress(job_id, total_processing=total_docs, message="Processing documents")
+    total_chunks = len(chunk_items)
+    await update_job_progress(job_id, total_processing=total_chunks, message="Processing chunks")
 
-    async def _process_single_doc(doc_item: dict) -> Tuple[T, bool, UUID]:
-        """Process a single document and return its results."""
-        doc_uuid = UUID(doc_item["uuid"])
-        doc_content = doc_item["content"]
+    async def _process_single_chunk_item(chunk_item: dict) -> Tuple[T, bool, UUID]:
+        """Process a single chunk and return its results."""
+        chunk_id = UUID(chunk_item["chunkId"])
+        chunk_content = chunk_item["content"]
 
-        logger.info(f"[{logger_scope}] Processing document (UUID: {doc_uuid})")
+        logger.info("[%s] Processing chunk (chunk_id: %s)", logger_scope, chunk_id)
 
-        result, has_relevant_data = await extractor(doc_content, job_id, doc_uuid)
+        result, has_relevant_data = await extractor(chunk_content, job_id, chunk_id)
 
         await increment_processed_documents(job_id, delta=1)
-        return result, has_relevant_data, doc_uuid
+        return result, has_relevant_data, chunk_id
 
-    return list(await asyncio.gather(*(_process_single_doc(doc_item) for doc_item in doc_items)))
+    return list(await asyncio.gather(*(_process_single_chunk_item(chunk_item) for chunk_item in chunk_items)))
 
 
 async def process_grouped_chunks_in_parallel(
     *,
-    doc_to_chunks: Dict[str, List[str]],
+    chunks_by_id: Dict[str, List[str]],
     job_id: UUID,
     extractor: Callable[[UUID, List[str]], Awaitable[Tuple[T, List[Dict[str, Any]]]]],
     logger_scope: str,
-    total_documents: int,
+    total_groups: int,
 ) -> List[Tuple[T, List[Dict[str, Any]]]]:
     """
-    Process grouped chunks in parallel, with each document's chunks processed together.
+    Process grouped chunks in parallel, with each chunk-id group processed together.
 
-    Takes a dictionary mapping document UUIDs to their respective chunks and processes
-    each document's chunks concurrently using the provided extractor function. Updates
-    job progress and tracks document completion.
+    Takes a dictionary mapping chunk IDs to their respective chunks and processes
+    each chunk-id group concurrently using the provided extractor function. Updates
+    job progress and tracks completion.
 
     Args:
-        doc_to_chunks: Dictionary mapping document UUID strings to lists of chunk texts
+        chunks_by_id: Dictionary mapping chunk ID strings to lists of chunk texts
         job_id: UUID for job tracking and progress updates
-        extractor: Async function that processes document chunks and returns (result, relevant_chunks)
+        extractor: Async function that processes chunk-id groups and returns (result, relevant_chunks)
         logger_scope: String prefix for logging messages
-        total_documents: Total number of documents for progress tracking
+        total_groups: Total number of chunk-id groups for progress tracking
 
     Returns:
-        List of tuples containing (result, relevant_chunks) for each processed document
+        List of tuples containing (result, relevant_chunks) for each processed chunk-id group
     """
     await update_job_progress(
         job_id,
-        total_processing=total_documents,
+        total_processing=total_groups,
         processing_completed=0,
         message="Processing selected chunks",
     )
 
-    async def _process_single_document(doc_uuid: UUID, chunks: List[str]) -> Tuple[T, List[Dict[str, Any]]]:
-        logger.info(f"[{logger_scope}] Processing document (UUID: {doc_uuid})")
+    async def _process_single_chunk(chunk_id: UUID, chunks: List[str]) -> Tuple[T, List[Dict[str, Any]]]:
+        logger.info("[%s] Processing chunks for chunk_id=%s", logger_scope, chunk_id)
 
-        result, relevant_chunks = await extractor(doc_uuid, chunks)
+        result, relevant_chunks = await extractor(chunk_id, chunks)
         await increment_processed_documents(job_id, delta=1)
         return result, relevant_chunks
 
-    tasks = [_process_single_document(UUID(doc_uuid), chunks) for doc_uuid, chunks in doc_to_chunks.items()]
+    tasks = [_process_single_chunk(UUID(chunk_id), chunks) for chunk_id, chunks in chunks_by_id.items()]
 
     return list(await asyncio.gather(*tasks))

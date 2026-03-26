@@ -8,6 +8,7 @@ from uuid import UUID
 
 from ...common.database.config import async_session_maker
 from ...common.database.repositories.session_repository import SessionRepository
+from ...common.utils.session_metadata import get_session_api_types
 from ..digester.schema import AttributeResponse, EndpointResponse, RelationsResponse
 from .core.generate_groovy import generate_groovy
 from .core.operations import (
@@ -22,7 +23,6 @@ from .prompts.native_schema_prompts import get_native_schema_system_prompt, get_
 from .selection.docs_loader import read_adoc_text
 from .selection.protocol import detect_protocol
 from .selection.protocol_selectors import get_operation_assets
-from .selection.session_metadata import get_api_types_from_session
 from .utils.map_to_record import attributes_to_records_for_codegen
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def _attrs_map_from_payload(payload: AttributesPayload) -> Dict[str, Dict[str, A
 
 def _collect_pairs(val: Any) -> List[Tuple[int, Optional[str]]]:
     """
-    TODO
+    Normalize relevant chunk references to ordered (index, chunk_id) tuples.
     """
     out: List[Tuple[int, Optional[str]]] = []
     if not val:
@@ -57,13 +57,12 @@ def _collect_pairs(val: Any) -> List[Tuple[int, Optional[str]]]:
     if isinstance(val, list) and val:
         first = val[0]
         if isinstance(first, dict):
-            if "docUuid" in first:
-                for item in val:
-                    if isinstance(item, dict) and "docUuid" in item:
-                        doc_uuid = item.get("docUuid")
-                        if isinstance(doc_uuid, str):
-                            # Use sequential index
-                            out.append((len(out), doc_uuid))
+            for item in val:
+                if not isinstance(item, dict):
+                    continue
+                chunk_id = item.get("chunk_id") or item.get("chunkId")
+                if isinstance(chunk_id, str):
+                    out.append((len(out), chunk_id))
         else:
             for idx in val:
                 if isinstance(idx, int):
@@ -78,8 +77,8 @@ def _merge_unique_pairs(*seqs: Iterable[Tuple[int, Optional[str]]]) -> List[Tupl
     merged: List[Tuple[int, Optional[str]]] = []
     seen: set[Tuple[int, Optional[str]]] = set()
     for seq in seqs:
-        for idx, du in seq:
-            pair = (idx, du)
+        for idx, chunk_id in seq:
+            pair = (idx, chunk_id)
             if pair not in seen:
                 seen.add(pair)
                 merged.append(pair)
@@ -102,7 +101,7 @@ async def _collect_relevant_chunks(
     """
     async with async_session_maker() as db:
         repo = SessionRepository(db)
-        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+        relevant_map = await repo.get_session_data(session_id, "relevantDocumentations")
 
     if not relevant_map:
         return None, None
@@ -118,7 +117,7 @@ async def _collect_relevant_chunks(
         return None, None
 
     relevant_indices = [i for i, _ in merged_pairs]
-    relevant_pairs = [{"docUuid": du} for _, du in merged_pairs]
+    relevant_pairs = [{"chunk_id": chunk_id} for _, chunk_id in merged_pairs if chunk_id]
 
     logger.info(
         "[Codegen:%s] Relevant chunks for endpoints=%d, for attributes=%d, merged=%d for %s",
@@ -136,13 +135,17 @@ async def create_native_schema(
     attributes_payload: AttributesPayload,
     object_class: str,
     *,
+    session_id: UUID,
     job_id: UUID,
 ) -> Dict[str, str]:
     """
     Generate Groovy for native schema mapping from attributes.
     """
-    # packaged resource under codegen/documentations/
-    user_schema_docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "25-user-schema.adoc")
+
+    api_types = await get_session_api_types(session_id)
+    protocol = detect_protocol(api_types)
+    assets = get_operation_assets("native_schema", protocol)
+    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)
@@ -153,7 +156,7 @@ async def create_native_schema(
         system_prompt=get_native_schema_system_prompt,
         user_prompt=get_native_schema_user_prompt,
         logger_prefix="NativeSchema",
-        extra_prompt_vars={"user_schema_docs": user_schema_docs_text},
+        extra_prompt_vars={"user_schema_docs": docs_text},
         job_id=job_id,
     )
     return {"code": code}
@@ -168,9 +171,7 @@ async def create_conn_id(
     """
     Generate Groovy for ConnID attribute mapping from attributes.
     """
-    connid_docs_text = read_adoc_text(
-        __package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc"
-    )
+    docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc")
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)
@@ -181,7 +182,7 @@ async def create_conn_id(
         system_prompt=get_connID_system_prompt,
         user_prompt=get_connID_user_prompt,
         logger_prefix="ConnID",
-        extra_prompt_vars={"connID_docs": connid_docs_text},
+        extra_prompt_vars={"connID_docs": docs_text},
         job_id=job_id,
     )
     return {"code": code}
@@ -190,7 +191,7 @@ async def create_conn_id(
 async def create_search(
     *,
     attributes: AttributesPayload,
-    endpoints: EndpointsPayload,
+    endpoints: Optional[EndpointsPayload] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -200,7 +201,7 @@ async def create_search(
     Automatically selects protocol-specific prompts and documentation based on api_type.
     """
     # Get API types and select appropriate documentation
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     protocol = detect_protocol(api_types)
     assets = get_operation_assets("search", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
@@ -232,7 +233,7 @@ async def create_search(
 async def create_create(
     *,
     attributes: AttributesPayload,
-    endpoints: EndpointsPayload,
+    endpoints: Optional[EndpointsPayload] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -242,7 +243,7 @@ async def create_create(
     Automatically selects protocol-specific prompts and documentation based on api_type.
     """
     # Get API types and select appropriate documentation
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     protocol = detect_protocol(api_types)
     assets = get_operation_assets("create", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
@@ -273,7 +274,7 @@ async def create_create(
 async def create_update(
     *,
     attributes: AttributesPayload,
-    endpoints: EndpointsPayload,
+    endpoints: Optional[EndpointsPayload] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -283,7 +284,7 @@ async def create_update(
     Automatically selects protocol-specific prompts and documentation based on api_type.
     """
     # Get API types and select appropriate documentation
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     protocol = detect_protocol(api_types)
     assets = get_operation_assets("update", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
@@ -314,7 +315,7 @@ async def create_update(
 async def create_delete(
     *,
     attributes: AttributesPayload,
-    endpoints: EndpointsPayload,
+    endpoints: Optional[EndpointsPayload] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -324,7 +325,7 @@ async def create_delete(
     Automatically selects protocol-specific prompts and documentation based on api_type.
     """
     # Get API types and select appropriate documentation
-    api_types = await get_api_types_from_session(session_id)
+    api_types = await get_session_api_types(session_id)
     protocol = detect_protocol(api_types)
     assets = get_operation_assets("delete", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
@@ -368,14 +369,14 @@ async def create_relation(
 
     async with async_session_maker() as db:
         repo = SessionRepository(db)
-        relevant_map = await repo.get_session_data(session_id, "relevantChunks")
+        relevant_map = await repo.get_session_data(session_id, "relevantDocumentations")
 
     if relevant_map:
         raw = relevant_map.get("relationsOutput")
         pairs = _collect_pairs(raw)
         if pairs:
             relevant_indices = [i for i, _ in pairs]
-            relevant_pairs = [{"docUuid": du} for _, du in pairs]
+            relevant_pairs = [{"chunk_id": chunk_id} for _, chunk_id in pairs if chunk_id]
             logger.info(
                 "[Codegen:Relation] Relevant chunks for indices_only=%d, pairs_with_uuid=%d",
                 len(relevant_indices or []),

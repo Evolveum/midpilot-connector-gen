@@ -14,8 +14,12 @@ from src.modules.digester.schema import RelationsResponse
 
 
 def test_collect_pairs_new_format():
-    """Test _collect_pairs with new format containing only docUuid."""
-    input_data = [{"docUuid": "uuid1"}, {"docUuid": "uuid2"}, {"docUuid": "uuid3"}]
+    """Test _collect_pairs with format containing chunk_id."""
+    input_data = [
+        {"chunk_id": "uuid1"},
+        {"chunk_id": "uuid2"},
+        {"chunk_id": "uuid3"},
+    ]
 
     result = service._collect_pairs(input_data)
 
@@ -55,6 +59,7 @@ async def test_generate_native_schema():
         result = await service.create_native_schema(
             test_attributes,
             "User",
+            session_id=uuid4(),
             job_id=uuid4(),
         )
 
@@ -102,6 +107,7 @@ async def test_generate_search():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.SearchGenerator") as mock_search_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -202,6 +208,7 @@ async def test_generate_create():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -245,6 +252,7 @@ async def test_generate_update():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.UpdateGenerator") as mock_update_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -287,6 +295,7 @@ async def test_generate_delete():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.DeleteGenerator") as mock_delete_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value

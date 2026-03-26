@@ -15,8 +15,8 @@ def normalize_input(input_payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized_input.pop("sessionId")
     if "session_id" in normalized_input:
         normalized_input.pop("session_id")
-    if "page_id" in normalized_input:
-        normalized_input.pop("page_id")
+    if "doc_id" in normalized_input:
+        normalized_input.pop("doc_id")
     if "usePreviousSessionData" in normalized_input:
         normalized_input.pop("usePreviousSessionData")
     if "chunks" in normalized_input:
@@ -26,12 +26,14 @@ def normalize_input(input_payload: Dict[str, Any]) -> Dict[str, Any]:
     if "documentationItems" in normalized_input:
         for doc_item in normalized_input["documentationItems"]:
             if isinstance(doc_item, dict):
-                if "id" in doc_item:
-                    doc_item.pop("id")
-                if "uuid" in doc_item:
-                    doc_item.pop("uuid")
-                if "pageId" in doc_item:
-                    doc_item.pop("pageId")
+                if "chunkId" in doc_item:
+                    doc_item.pop("chunkId")
+                if "chunk_id" in doc_item:
+                    doc_item.pop("chunk_id")
+                if "docId" in doc_item:
+                    doc_item.pop("docId")
+                if "doc_id" in doc_item:
+                    doc_item.pop("doc_id")
                 if "session_id" in doc_item:
                     doc_item.pop("session_id")
                 if "scrape_job_ids" in doc_item:
@@ -46,7 +48,7 @@ def normalize_input(input_payload: Dict[str, Any]) -> Dict[str, Any]:
         )
     if "relevantObjectClasses" in normalized_input and "objectClasses" in normalized_input["relevantObjectClasses"]:
         for obj_class in normalized_input["relevantObjectClasses"]["objectClasses"]:
-            obj_class.pop("relevantChunks")
-    if "relevantChunks" in normalized_input:
-        normalized_input.pop("relevantChunks")
+            obj_class.pop("relevantDocumentations")
+    if "relevantDocumentations" in normalized_input:
+        normalized_input.pop("relevantDocumentations")
     return normalized_input

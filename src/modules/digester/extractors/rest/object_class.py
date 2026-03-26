@@ -13,44 +13,44 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from ....common.enums import JobStage
-from ....common.jobs import append_job_error, update_job_progress
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.object_class_prompts import (
+from .....common.enums import JobStage
+from .....common.jobs import append_job_error, update_job_progress
+from .....common.langfuse import langfuse_handler
+from .....common.llm import get_default_llm, make_basic_chain
+from ...prompts.rest.object_class_prompts import (
     get_object_class_system_prompt,
     get_object_class_user_prompt,
 )
-from ..prompts.object_class_relevancy_prompt import (
+from ...prompts.rest.object_class_relevancy_prompt import (
     get_object_classes_relevancy_system_prompt,
     get_object_classes_relevancy_user_prompt,
 )
-from ..prompts.sorting_output_prompts import (
+from ...prompts.rest.sorting_output_prompts import (
     sort_object_classes_system_prompt,
     sort_object_classes_user_prompt,
 )
-from ..schema import ObjectClass, ObjectClassesRelevancyResponse, ObjectClassesResponse
-from ..utils.merges import merge_object_classes
-from ..utils.parallel import run_extraction_parallel
+from ...schema import ObjectClass, ObjectClassesRelevancyResponse, ObjectClassesResponse
+from ...utils.merges import merge_object_classes
+from ...utils.parallel import run_extraction_parallel
 
 logger = logging.getLogger(__name__)
 
 
 async def extract_object_classes_raw(
-    schema: str, job_id: UUID, doc_id: Optional[UUID] = None, doc_metadata: Optional[Dict[str, Any]] = None
+    schema: str, job_id: UUID, chunk_id: Optional[UUID] = None, chunk_metadata: Optional[Dict[str, Any]] = None
 ) -> Tuple[List[ObjectClass], bool]:
     """
-    Extract raw object classes from a single document with per-chunk parallel LLM calls.
-    Does NOT deduplicate or sort - that's done later across all documents.
+    Extract raw object classes from a single chunk with one LLM call.
+    Does NOT deduplicate or sort - that's done later across all chunks.
 
     Args:
-        schema: The document content to extract from
+        schema: The chunk content to extract from
         job_id: Job ID for progress tracking
-        doc_id: Optional document UUID
-        doc_metadata: Optional metadata dict containing summary and @metadata with llm_tags
+        chunk_id: Optional chunk UUID
+        chunk_metadata: Optional metadata dict containing summary and @metadata with tags
 
     Returns:
-        - List of raw ObjectClass instances (with relevant_chunks populated)
+        - List of raw ObjectClass instances (with relevant_documentations populated)
         - Boolean indicating if relevant data was found
     """
 
@@ -63,11 +63,11 @@ async def extract_object_classes_raw(
         system_prompt=get_object_class_system_prompt,
         user_prompt=get_object_class_user_prompt,
         parse_fn=parse_fn,
-        logger_prefix="[Digester:ObjectClasses] ",
+        logger_prefix="[Digester:REST:ObjectClasses] ",
         job_id=job_id,
-        doc_id=doc_id,
+        chunk_id=chunk_id,
         track_chunk_per_item=True,
-        chunk_metadata=doc_metadata,
+        chunk_metadata=chunk_metadata,
     )
 
     extracted_valid: List[ObjectClass] = []
@@ -79,11 +79,11 @@ async def extract_object_classes_raw(
                 extracted_valid.append(obj_class)
             else:
                 logger.info(
-                    "[Digester:ObjectClasses] Extracted object class name '%s' not found in document, deleting object class",
+                    "[Digester:ObjectClasses] Extracted object class name '%s' not found in chunk, deleting object class",
                     obj_class.name,
                 )
 
-    logger.info("[Digester:ObjectClasses] Raw extraction complete from document. Count: %d", len(extracted_valid))
+    logger.info("[Digester:ObjectClasses] Raw extraction complete from chunk. Count: %d", len(extracted_valid))
     return extracted_valid, bool(extracted_valid)
 
 
@@ -138,7 +138,13 @@ async def deduplicate_and_sort_object_classes(
                     "superclass": oc.superclass,
                     "abstract": oc.abstract,
                     "embedded": oc.embedded,
-                    "relevant_chunks": [{"docUuid": str(chunk["docUuid"])} for chunk in (oc.relevant_chunks or [])],
+                    "relevant_documentations": [
+                        {
+                            "doc_id": str(chunk["doc_id"]),
+                            "chunk_id": str(chunk["chunk_id"]),
+                        }
+                        for chunk in (oc.relevant_documentations or [])
+                    ],
                 }
                 for oc in dedup_list
             ]
@@ -200,12 +206,13 @@ async def deduplicate_and_sort_object_classes(
                     job_id, stage=JobStage.relevancy_filtering_finished, message="Relevancy filtering finished"
                 )
 
-        except Exception as e:
-            logger.exception("[Digester:ObjectClasses] Relevancy filtering failed. Error: %s", e)
+        except Exception as exc:
+            error_message = f"[Digester:ObjectClasses] Relevancy filtering failed: {exc}"
+            logger.exception(error_message)
             await update_job_progress(
                 job_id, stage=JobStage.relevancy_filtering_finished, message="Relevancy filtering failed"
             )
-            append_job_error(job_id, f"[Digester:ObjectClasses] Relevancy filtering failed: {e}")
+            append_job_error(job_id, error_message)
 
     # Try to sort by importance using LLM, but fall back to alphabetical if it fails
     try:
@@ -274,8 +281,9 @@ async def deduplicate_and_sort_object_classes(
             )
 
     except Exception as exc:
-        logger.exception("[Digester:ObjectClasses] Sorting failed, using alphabetical order. Error: %s", exc)
-        append_job_error(job_id, f"[Digester:ObjectClasses] Sorting failed, using alphabetical order: {exc}")
+        error_message = f"[Digester:ObjectClasses] Sorting failed, using alphabetical order: {exc}"
+        logger.exception(error_message)
+        append_job_error(job_id, error_message)
 
     # Fallback to alphabetical order
     await update_job_progress(job_id, stage=JobStage.sorting_finished, message="Using alphabetical order")

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import config
 from ..modules.digester.router import DEFAULT_CRITERIA
-from ..modules.digester.schema import BaseAPIEndpoint, InfoMetadata
+from ..modules.digester.schema import BaseAPIEndpoint, InfoMetadata, InfoResponse
 from .chunk_filter.filter import filter_documentation_items
 from .database.repositories.session_repository import SessionRepository
 
@@ -54,24 +54,6 @@ async def generate_metadata_from_doc_items(session_id: uuid.UUID, db: AsyncSessi
     session_data = await repo.get_session_data(session_id) or {}
     discovery_input = session_data.get("discoveryInput", {})
     scrape_input = session_data.get("scrapeInput", {})
-    # raw_items = await doc_repo.get_documentation_items_by_session(session_id)
-    # if not raw_items:
-    #     raise ValueError(f"Session with ID {session_id} has no documentation items stored.")
-
-    # doc_items: List[Dict[str, Any]] = []
-    # for item in raw_items:
-    #     doc_items.append(
-    #         {
-    #             "uuid": item.get("id"),
-    #             "pageId": item.get("pageId"),
-    #             "source": item.get("source"),
-    #             "url": item.get("url"),
-    #             "summary": item.get("summary"),
-    #             "content": item.get("content", ""),
-    #             "@metadata": item.get("metadata", {}) or {},
-    #         }
-    #     )
-
     doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
 
     synonyms = config.scrape_and_process.latest_version_synonyms
@@ -81,7 +63,6 @@ async def generate_metadata_from_doc_items(session_id: uuid.UUID, db: AsyncSessi
 
     version_distribution: Dict[str, int] = {}
     total_items = len(doc_items)
-    found_app_version = ""
     latest_numbered_version = None
     for item in doc_items:
         metadata = item.get("@metadata", {})
@@ -93,8 +74,6 @@ async def generate_metadata_from_doc_items(session_id: uuid.UUID, db: AsyncSessi
         if re.search(r"\d", version):
             version = re.sub(r"[^\d.]", "", version)
         version_distribution[version] = version_distribution.get(version, 0) + 1
-
-    curr_version_items: List[Dict[str, Any]] = []
 
     if version_distribution.get("unknown", 0) < total_items * config.scrape_and_process.unknown_version_threshold:
         if is_latest_version:
@@ -109,7 +88,8 @@ async def generate_metadata_from_doc_items(session_id: uuid.UUID, db: AsyncSessi
                 item
                 for item in doc_items
                 if item.get("@metadata", {}).get("application_version") is None
-                or item.get("@metadata", {}).get("application_version") == any(synonyms)
+                or str(item.get("@metadata", {}).get("application_version", "")).lower().strip()
+                in [synonym.lower().strip() for synonym in synonyms]
                 or re.sub(r"[^\d.]", "", item.get("@metadata", {}).get("application_version"))
                 == latest_numbered_version
             ]
@@ -216,9 +196,10 @@ async def generate_metadata_from_doc_items(session_id: uuid.UUID, db: AsyncSessi
 
     try:
         info_metadata = InfoMetadata(**raw_metadata_output)
+        info_response = InfoResponse(info_metadata=info_metadata)
         logger.info("[Metadata] Generated InfoMetadata: %s", info_metadata)
-        validated_metadata_output = info_metadata.model_dump()
-        logger.info("[Metadata] Validated InfoMetadata: %s", validated_metadata_output)
+        validated_metadata_output = info_response.model_dump(by_alias=True)
+        logger.info("[Metadata] Validated InfoResponse: %s", validated_metadata_output)
 
     except Exception as e:
         logger.error("[Metadata] Error generating InfoMetadata: %s", e)

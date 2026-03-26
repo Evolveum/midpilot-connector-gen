@@ -24,8 +24,10 @@ from ...common.schema import (
 )
 from ...common.session.session import ensure_session_exists, resolve_session_job_id
 from ...common.status_response import build_stage_status_response
+from ...common.utils.session_metadata import get_session_api_types
 from ..digester.schema import RelationsResponse
 from . import service
+from .selection.protocol import ApiProtocol, detect_protocol
 
 router = APIRouter()
 
@@ -50,6 +52,11 @@ async def _build_multi_doc_status_response(job_id: UUID) -> JobStatusMultiDocRes
         result=status.get("result"),
         errors=status.get("errors"),
     )
+
+
+async def _is_scim_session(session_id: UUID) -> bool:
+    api_types = await get_session_api_types(session_id)
+    return detect_protocol(api_types) == ApiProtocol.SCIM
 
 
 # Codegen Operations - Native Schema
@@ -88,6 +95,7 @@ async def generate_native_schema(
         },
         worker=service.create_native_schema,
         worker_args=(attrs, object_class),
+        worker_kwargs={"session_id": session_id},
         initial_stage="queue",
         initial_message="Queued code generation",
         session_id=session_id,
@@ -296,42 +304,50 @@ async def generate_search(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
-    # Load endpoints from session
+    is_scim = await _is_scim_session(session_id)
+
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if not eps:
+    if eps is None and not is_scim:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
         )
 
+    job_input = {
+        "sessionId": session_id,
+        "attributes": attrs,
+        "object_class": object_class,
+        "usePreviousSessionData": usePreviousSessionData,
+    }
+    worker_kwargs = {
+        "attributes": attrs,
+        "session_id": session_id,
+        "object_class": object_class,
+    }
+    if eps is not None:
+        job_input["endpoints"] = eps
+        worker_kwargs["endpoints"] = eps
+
     job_id = await schedule_coroutine_job(
         job_type="codegen.getSearch",
-        input_payload={
-            "sessionId": session_id,
-            "attributes": attrs,
-            "endpoints": eps,
-            "object_class": object_class,
-            "usePreviousSessionData": usePreviousSessionData,
-        },
+        input_payload=job_input,
         worker=service.create_search,
         worker_args=(),
-        worker_kwargs={
-            "attributes": attrs,
-            "endpoints": eps,
-            "session_id": session_id,
-            "object_class": object_class,
-        },
+        worker_kwargs=worker_kwargs,
         initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
         session_result_key=f"{object_class}Search",
     )
 
+    session_input = {"objectClass": object_class, "attributes": attrs}
+    if eps is not None:
+        session_input["endpoints"] = eps
     await repo.update_session(
         session_id,
         {
             f"{object_class}SearchJobId": str(job_id),
-            f"{object_class}SearchInput": {"objectClass": object_class, "attributes": attrs, "endpoints": eps},
+            f"{object_class}SearchInput": session_input,
         },
     )
 
@@ -422,42 +438,50 @@ async def generate_create(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
-    # Load endpoints from session
+    is_scim = await _is_scim_session(session_id)
+
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if not eps:
+    if eps is None and not is_scim:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
         )
 
+    job_input = {
+        "sessionId": session_id,
+        "attributes": attrs,
+        "object_class": object_class,
+        "usePreviousSessionData": usePreviousSessionData,
+    }
+    worker_kwargs = {
+        "attributes": attrs,
+        "session_id": session_id,
+        "object_class": object_class,
+    }
+    if eps is not None:
+        job_input["endpoints"] = eps
+        worker_kwargs["endpoints"] = eps
+
     job_id = await schedule_coroutine_job(
         job_type="codegen.getCreate",
-        input_payload={
-            "sessionId": session_id,
-            "attributes": attrs,
-            "endpoints": eps,
-            "object_class": object_class,
-            "usePreviousSessionData": usePreviousSessionData,
-        },
+        input_payload=job_input,
         worker=service.create_create,
         worker_args=(),
-        worker_kwargs={
-            "attributes": attrs,
-            "endpoints": eps,
-            "session_id": session_id,
-            "object_class": object_class,
-        },
+        worker_kwargs=worker_kwargs,
         initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
         session_result_key=f"{object_class}Create",
     )
 
+    session_input = {"objectClass": object_class, "attributes": attrs}
+    if eps is not None:
+        session_input["endpoints"] = eps
     await repo.update_session(
         session_id,
         {
             f"{object_class}CreateJobId": str(job_id),
-            f"{object_class}CreateInput": {"objectClass": object_class, "attributes": attrs, "endpoints": eps},
+            f"{object_class}CreateInput": session_input,
         },
     )
 
@@ -545,42 +569,50 @@ async def generate_update(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
-    # Load endpoints from session
+    is_scim = await _is_scim_session(session_id)
+
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if not eps:
+    if eps is None and not is_scim:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
         )
 
+    job_input = {
+        "sessionId": session_id,
+        "attributes": attrs,
+        "object_class": object_class,
+        "usePreviousSessionData": usePreviousSessionData,
+    }
+    worker_kwargs = {
+        "attributes": attrs,
+        "session_id": session_id,
+        "object_class": object_class,
+    }
+    if eps is not None:
+        job_input["endpoints"] = eps
+        worker_kwargs["endpoints"] = eps
+
     job_id = await schedule_coroutine_job(
         job_type="codegen.getUpdate",
-        input_payload={
-            "sessionId": session_id,
-            "attributes": attrs,
-            "endpoints": eps,
-            "object_class": object_class,
-            "usePreviousSessionData": usePreviousSessionData,
-        },
+        input_payload=job_input,
         worker=service.create_update,
         worker_args=(),
-        worker_kwargs={
-            "attributes": attrs,
-            "endpoints": eps,
-            "session_id": session_id,
-            "object_class": object_class,
-        },
+        worker_kwargs=worker_kwargs,
         initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
         session_result_key=f"{object_class}Update",
     )
 
+    session_input = {"objectClass": object_class, "attributes": attrs}
+    if eps is not None:
+        session_input["endpoints"] = eps
     await repo.update_session(
         session_id,
         {
             f"{object_class}UpdateJobId": str(job_id),
-            f"{object_class}UpdateInput": {"objectClass": object_class, "attributes": attrs, "endpoints": eps},
+            f"{object_class}UpdateInput": session_input,
         },
     )
 
@@ -668,42 +700,50 @@ async def generate_delete(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
-    # Load endpoints from session
+    is_scim = await _is_scim_session(session_id)
+
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if not eps:
+    if eps is None and not is_scim:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
         )
 
+    job_input = {
+        "sessionId": session_id,
+        "attributes": attrs,
+        "object_class": object_class,
+        "usePreviousSessionData": usePreviousSessionData,
+    }
+    worker_kwargs = {
+        "attributes": attrs,
+        "session_id": session_id,
+        "object_class": object_class,
+    }
+    if eps is not None:
+        job_input["endpoints"] = eps
+        worker_kwargs["endpoints"] = eps
+
     job_id = await schedule_coroutine_job(
         job_type="codegen.getDelete",
-        input_payload={
-            "sessionId": session_id,
-            "attributes": attrs,
-            "endpoints": eps,
-            "object_class": object_class,
-            "usePreviousSessionData": usePreviousSessionData,
-        },
+        input_payload=job_input,
         worker=service.create_delete,
         worker_args=(),
-        worker_kwargs={
-            "attributes": attrs,
-            "endpoints": eps,
-            "session_id": session_id,
-            "object_class": object_class,
-        },
+        worker_kwargs=worker_kwargs,
         initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
         session_result_key=f"{object_class}Delete",
     )
 
+    session_input = {"objectClass": object_class, "attributes": attrs}
+    if eps is not None:
+        session_input["endpoints"] = eps
     await repo.update_session(
         session_id,
         {
             f"{object_class}DeleteJobId": str(job_id),
-            f"{object_class}DeleteInput": {"objectClass": object_class, "attributes": attrs, "endpoints": eps},
+            f"{object_class}DeleteInput": session_input,
         },
     )
 

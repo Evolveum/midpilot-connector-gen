@@ -34,7 +34,7 @@ class DocumentationRepository:
         content: str,
         *,
         original_job_id: Optional[UUID] = None,
-        page_id: Optional[UUID] = None,
+        doc_id: Optional[UUID] = None,
         url: Optional[str] = None,
         summary: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -46,7 +46,7 @@ class DocumentationRepository:
         :param source: Source type ('scraper' or 'upload')
         :param content: Documentation content
         :param original_job_id: Optional job ID that created this item (for scraper items)
-        :param page_id: Optional page ID
+        :param doc_id: Optional document ID
         :param url: Optional URL
         :param summary: Optional summary
         :param metadata: Optional metadata dict
@@ -54,7 +54,7 @@ class DocumentationRepository:
         """
         doc_item = DocumentationItem(
             session_id=session_id,
-            page_id=page_id,
+            doc_id=doc_id,
             scrape_job_ids=[str(original_job_id)] if original_job_id else [],
             source=source,
             url=url,
@@ -64,8 +64,8 @@ class DocumentationRepository:
         )
         self.db.add(doc_item)
         await self.db.flush()
-        logger.info(f"Created documentation item {doc_item.id} for session {session_id}")
-        return doc_item.id
+        logger.info(f"Created documentation item {doc_item.chunk_id} for session {session_id}")
+        return doc_item.chunk_id
 
     async def get_documentation_items_by_session(
         self, session_id: UUID, source: Optional[str] = None
@@ -89,8 +89,8 @@ class DocumentationRepository:
 
         return [
             {
-                "id": str(item.id),
-                "pageId": str(item.page_id) if item.page_id else None,
+                "chunkId": str(item.chunk_id),
+                "docId": str(item.doc_id) if item.doc_id else None,
                 "source": item.source,
                 "url": item.url,
                 "summary": item.summary,
@@ -119,8 +119,8 @@ class DocumentationRepository:
 
         return [
             {
-                "id": str(item.id),
-                "pageId": str(item.page_id) if item.page_id else None,
+                "chunkId": str(item.chunk_id),
+                "docId": str(item.doc_id) if item.doc_id else None,
                 "source": item.source,
                 "url": item.url,
                 "summary": item.summary,
@@ -132,12 +132,12 @@ class DocumentationRepository:
 
     async def update_documentation_item(
         self,
-        item_id: UUID,
+        chunk_id: UUID,
         *,
         source: Optional[str] = None,
         content: Optional[str] = None,
         original_job_id: Optional[UUID] = None,
-        page_id: Optional[UUID] = None,
+        doc_id: Optional[UUID] = None,
         url: Optional[str] = None,
         summary: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -145,22 +145,22 @@ class DocumentationRepository:
         """
         Update an existing documentation item.
 
-        :param item_id: Documentation item ID
+        :param chunk_id: Documentation chunk ID
         :param source: New source (optional)
         :param content: New content (optional)
         :param original_job_id: Optional new job ID that created this item (for scraper items)
-        :param page_id: Optional new page ID
+        :param doc_id: Optional new document ID
         :param url: Optional new URL
         :param summary: Optional new summary
         :param metadata: Optional new metadata dict
         :return: True if update was successful, False if item not found
         """
-        query = select(DocumentationItem).where(DocumentationItem.id == item_id)
+        query = select(DocumentationItem).where(DocumentationItem.chunk_id == chunk_id)
         result = await self.db.execute(query)
         item = result.scalar_one_or_none()
 
         if item is None:
-            logger.warning(f"Documentation item not found for update: {item_id}")
+            logger.warning(f"Documentation item not found for update: {chunk_id}")
             return False
 
         if content is not None:
@@ -171,8 +171,8 @@ class DocumentationRepository:
             current_ids = item.scrape_job_ids or []
             if str(original_job_id) not in current_ids:
                 item.scrape_job_ids = current_ids + [str(original_job_id)]
-        if page_id is not None:
-            item.page_id = page_id
+        if doc_id is not None:
+            item.doc_id = doc_id
         if url is not None:
             item.url = url
         if summary is not None:
@@ -181,7 +181,7 @@ class DocumentationRepository:
             item.doc_metadata = metadata
 
         await self.db.flush()
-        logger.info(f"Updated documentation item {item_id}")
+        logger.info(f"Updated documentation item {chunk_id}")
         return True
 
     async def remove_job_ids_from_documentation_items(self, session_id: UUID, doc_source: str) -> int:
@@ -211,17 +211,17 @@ class DocumentationRepository:
         )
         return count
 
-    async def remove_documentation_items_by_page_id(self, session_id: UUID, page_id: UUID) -> int:
+    async def remove_documentation_items_by_doc_id(self, session_id: UUID, doc_id: UUID) -> int:
         """
-        Remove documentation items for a session that are associated with a specific page ID.
+        Remove documentation items for a session that are associated with a specific document ID.
 
         :param session_id: Session ID
-        :param page_id: Page ID to filter items
+        :param doc_id: Document ID to filter items
         :return: Number of items deleted
         """
         query = select(DocumentationItem).where(
             DocumentationItem.session_id == session_id,
-            DocumentationItem.page_id == page_id,
+            DocumentationItem.doc_id == doc_id,
         )
 
         result = await self.db.execute(query)
@@ -232,17 +232,17 @@ class DocumentationRepository:
             await self.db.delete(item)
 
         await self.db.flush()
-        logger.info(f"Deleted {count} documentation items for session {session_id} and page ID {page_id}")
+        logger.info(f"Deleted {count} documentation items for session {session_id} and document ID {doc_id}")
         return count
 
-    async def get_documentation_item(self, id: UUID) -> Optional[Dict[str, Any]]:
+    async def get_documentation_item(self, chunk_id: UUID) -> Optional[Dict[str, Any]]:
         """
         Get a single documentation item by ID.
 
-        :param id: Documentation item ID
+        :param chunk_id: Documentation chunk ID
         :return: Documentation item dict or None
         """
-        query = select(DocumentationItem).where(DocumentationItem.id == id)
+        query = select(DocumentationItem).where(DocumentationItem.chunk_id == chunk_id)
         result = await self.db.execute(query)
         item = result.scalar_one_or_none()
 
@@ -250,9 +250,9 @@ class DocumentationRepository:
             return None
 
         return {
-            "id": str(item.id),
+            "chunkId": str(item.chunk_id),
             "sessionId": str(item.session_id),
-            "pageId": str(item.page_id) if item.page_id else None,
+            "docId": str(item.doc_id) if item.doc_id else None,
             "source": item.source,
             "url": item.url,
             "summary": item.summary,
@@ -284,14 +284,14 @@ class DocumentationRepository:
         Bulk create documentation items for efficiency.
 
         :param session_id: Session ID
-        :param items: List of item dicts with keys: source, content, page_id, url, summary, metadata
+        :param items: List of item dicts with keys: source, content, doc_id, url, summary, metadata
         :return: List of created documentation item IDs
         """
         ids = []
         for item_data in items:
             doc_item = DocumentationItem(
                 session_id=session_id,
-                page_id=item_data.get("page_id"),
+                doc_id=item_data.get("doc_id"),
                 source=item_data["source"],
                 url=item_data.get("url"),
                 summary=item_data.get("summary"),
@@ -299,7 +299,7 @@ class DocumentationRepository:
                 doc_metadata=item_data.get("metadata", {}),
             )
             self.db.add(doc_item)
-            ids.append(doc_item.id)
+            ids.append(doc_item.chunk_id)
 
         await self.db.flush()
         logger.info(f"Bulk created {len(ids)} documentation items for session {session_id}")

@@ -2,10 +2,10 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import re
 from typing import Any, Dict, List, Literal, Optional
-from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
 
 
 # --- Object Classes ---
@@ -79,13 +79,15 @@ class ObjectClass(BaseModel):
             "Include key characteristics and usage context. Keep it concise (1-2 sentences)."
         ),
     )
-    relevant_chunks: List[Dict[str, UUID]] = Field(
+    relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
-        validation_alias="relevantChunks",
-        serialization_alias="relevantChunks",
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
+        json_schema_extra={"exclude": True},
         description=(
             "List of chunks that contain relevant information about this object class. "
-            "Each entry contains only 'docUuid' (the document UUID is the chunk identifier)."
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
+            "This field is populated automatically by the system and should NOT be filled by the LLM."
         ),
     )
     # These fields will be excluded from JSON when None
@@ -100,20 +102,39 @@ class ObjectClass(BaseModel):
         description="Dictionary of attributes for this object class. Only present when explicitly extracted.",
     )
 
-    @field_validator("relevant_chunks", mode="before")
+    @field_validator("relevant_documentations", mode="before")
     @classmethod
-    def validate_relevant_chunks(cls, v: Any) -> List[Dict[str, UUID]]:
+    def validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
         if not isinstance(v, list):
             return []
 
-        validated_chunks: List[Dict[str, UUID]] = []
+        validated_chunks: List[Dict[str, str]] = []
         for chunk in v:
             if not isinstance(chunk, dict):
                 continue
-            if "docUuid" in chunk:
-                validated_chunks.append({"docUuid": chunk["docUuid"]})
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            if chunk_id and doc_id:
+                validated_chunks.append(
+                    {
+                        "chunk_id": str(chunk_id),
+                        "doc_id": str(doc_id),
+                    }
+                )
 
         return validated_chunks
+
+    @field_serializer("relevant_documentations", when_used="always")
+    def serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """Expose relevantDocumentations in camelCase while keeping internal snake_case."""
+        serialized: List[Dict[str, str]] = []
+        for chunk in value or []:
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            if not doc_id or not chunk_id:
+                continue
+            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+        return serialized
 
 
 class ObjectClassesResponse(BaseModel):
@@ -173,6 +194,9 @@ class ObjectClassesRelevancyResponse(BaseModel):
 
 
 # --- Auth ---
+AuthType = Literal["basic", "bearer", "oauth2", "apiKey", "session", "digest", "mtls", "openidConnect", "other"]
+
+
 class AuthInfo(BaseModel):
     """
     Authentication mechanism discovered in the API documentations/security schemes.
@@ -187,11 +211,11 @@ class AuthInfo(BaseModel):
             "Preserve original casing (e.g., 'BasicAuth', 'Bearer token', 'OAuth 2.0')."
         ),
     )
-    type: str = Field(
+    type: AuthType = Field(
         ...,
         description=(
-            "Normalized auth type when obvious. Common values: 'basic', 'bearer', 'session', 'oauth2', "
-            "'apiKey', 'mtls'. If unclear, use the closest descriptive string from the docs."
+            "Normalized auth type. Allowed values: 'basic', 'bearer', 'oauth2', 'apiKey', "
+            "'session', 'digest', 'mtls', 'openidConnect', 'other'."
         ),
     )
     quirks: Optional[str] = Field(
@@ -201,6 +225,67 @@ class AuthInfo(BaseModel):
             "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
         ),
     )
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _normalize_auth_type(cls, value: Any) -> str:
+        """
+        Normalize auth type variations to a stable, closed vocabulary.
+        """
+        if not isinstance(value, str):
+            return "other"
+
+        normalized = re.sub(r"[^a-z0-9]+", "", value.strip().lower())
+
+        aliases = {
+            # basic
+            "basic": "basic",
+            "basicauth": "basic",
+            "httpbasic": "basic",
+            # bearer
+            "bearer": "bearer",
+            "jwt": "bearer",
+            "token": "bearer",
+            "accesstoken": "bearer",
+            "personalaccesstoken": "bearer",
+            "pat": "bearer",
+            # oauth2
+            "oauth": "oauth2",
+            "oauth2": "oauth2",
+            "oauth2.0": "oauth2",
+            "oauth 2.0": "oauth2",
+            "oauth20": "oauth2",
+            "authorizationcode": "oauth2",
+            "clientcredentials": "oauth2",
+            "devicecode": "oauth2",
+            "pkce": "oauth2",
+            # api key
+            "apikey": "apiKey",
+            "api_key": "apiKey",
+            "apikeyauth": "apiKey",
+            "xapikey": "apiKey",
+            # session
+            "session": "session",
+            "cookie": "session",
+            "cookiesession": "session",
+            "sessioncookie": "session",
+            # digest
+            "digest": "digest",
+            "httpdigest": "digest",
+            # mtls
+            "mtls": "mtls",
+            "mutualtls": "mtls",
+            "clientcertificate": "mtls",
+            # openid connect
+            "openidconnect": "openidConnect",
+            "oidc": "openidConnect",
+            "openid": "openidConnect",
+            # fallback bucket
+            "other": "other",
+            "custom": "other",
+        }
+
+        return aliases.get(normalized, "other")
 
 
 class AuthResponse(BaseModel):
@@ -268,11 +353,11 @@ class InfoMetadata(BaseModel):
         serialization_alias="apiVersion",
         description="API version string as documented (e.g., 'v1', '2024-05', semantic).",
     )
-    api_type: List[str] = Field(
+    api_type: List[Literal["REST", "SCIM"]] = Field(
         default_factory=list,
         validation_alias="apiType",
         serialization_alias="apiType",
-        description="API technology types (e.g., REST, OpenAPI, SCIM, SOAP, GraphQL, Other).",
+        description=("API technology types. Allowed values: REST, SCIM. OpenAPI/Swagger should be normalized to REST."),
     )
     base_api_endpoint: List[BaseAPIEndpoint] = Field(
         default_factory=list,
@@ -283,28 +368,93 @@ class InfoMetadata(BaseModel):
 
     model_config = {"populate_by_name": True}
 
+    @field_validator("api_type", mode="before")
+    @classmethod
+    def _normalize_api_type(cls, value: Any) -> List[str]:
+        """
+        Normalize api types from various upstream sources.
+        Keep only supported values and canonicalize their casing.
+        """
+        if value is None:
+            return []
+
+        raw_values: List[Any]
+        if isinstance(value, str):
+            raw_values = [value]
+        elif isinstance(value, list):
+            raw_values = value
+        else:
+            return []
+
+        aliases = {
+            "rest": "REST",
+            "scim": "SCIM",
+        }
+
+        normalized: List[str] = []
+        for item in raw_values:
+            if not isinstance(item, str):
+                continue
+            canonical = aliases.get(item.strip().lower())
+            if canonical:
+                normalized.append(canonical)
+
+        # Preserve the first-seen order while deduplicating.
+        return list(dict.fromkeys(normalized))
+
+    @field_validator("base_api_endpoint", mode="before")
+    @classmethod
+    def _normalize_base_api_endpoint(cls, v: Any) -> List[Any]:
+        """
+        Keep the field resilient to partial/malformed LLM output.
+        Accept null, a single object, or a list of objects.
+        """
+        if v is None:
+            return []
+        if isinstance(v, dict) or isinstance(v, BaseAPIEndpoint):
+            return [v]
+        if isinstance(v, list):
+            return [item for item in v if isinstance(item, (dict, BaseAPIEndpoint))]
+        return []
+
+    @field_validator("base_api_endpoint", mode="after")
+    @classmethod
+    def _dedupe_and_sort_base_api_endpoint(cls, endpoints: List[BaseAPIEndpoint]) -> List[BaseAPIEndpoint]:
+        unique: Dict[tuple[str, str], BaseAPIEndpoint] = {}
+        for endpoint in endpoints or []:
+            uri = (endpoint.uri or "").strip()
+            if not uri:
+                continue
+            key = (uri.lower(), endpoint.type)
+            if key not in unique:
+                unique[key] = BaseAPIEndpoint(uri=uri, type=endpoint.type)
+
+        return sorted(
+            unique.values(),
+            key=lambda endpoint: (endpoint.uri.lower(), 0 if endpoint.type == "constant" else 1),
+        )
+
 
 class InfoResponse(BaseModel):
     """
     Container for high-level API metadata. Return null/empty fields when unknown.
-    Use the alias 'infoAboutSchema' for serialization if needed.
+    Use the alias 'InfoMetadata' for serialization if needed.
     """
 
-    info_about_schema: InfoMetadata = Field(
-        default_factory=InfoMetadata,
-        validation_alias="infoAboutSchema",
-        serialization_alias="infoAboutSchema",
-        description="High-level application and API metadata if discovered in the documentations.",
+    info_metadata: Optional[InfoMetadata] = Field(
+        default=None,
+        validation_alias="infoMetadata",
+        serialization_alias="infoMetadata",
+        description="High-level application and API metadata if discovered in the documentations. Null when unavailable.",
     )
 
     model_config = {"populate_by_name": True}
 
-    # Accept null incoming payloads by converting them to an empty object
-    @field_validator("info_about_schema", mode="before")
+    @field_validator("info_metadata", mode="before")
     @classmethod
     def _normalize_info(cls, v):
         if v is None:
-            return {}
+            return None
         return v
 
 
@@ -317,51 +467,107 @@ class AttributeInfo(BaseModel):
     Attribute metadata for an object class property as described in OpenAPI/JSON Schema.
     """
 
-    type: str = Field(
-        ...,
+    type: Optional[str] = Field(
+        default=None,
         description=(
-            "JSON Schema type or relation: 'string' | 'integer' | 'number' | 'boolean' | 'object' | 'array' | "
-            "'reference <TargetClass>' when $ref points to another schema."
+            "Type as declared in the documentation (prefer OpenAPI). For simple attributes, use one of: 'string' "
+            "(includes binaries encoded as base64), 'number', 'integer', or 'boolean'. For complex attributes, use "
+            "the object class name. Put additional type details in 'format' (e.g., 'email', 'binary', 'double', "
+            "'embedded', 'reference'). If a complex attribute is relevant, ensure the referenced object class is "
+            "included in extracted object classes. Use null if unknown."
         ),
     )
     format: Optional[str] = Field(
-        default="",
+        default=None,
         description=(
-            "OpenAPI format for primitives (e.g., 'email', 'uri', 'int64', 'date-time'). For arrays, use item format. "
-            "Use 'embedded' for inline object and 'reference' for $ref targets; otherwise empty."
+            "Format of the type with additional detail. For simple attributes, use an OpenAPI format registry value "
+            "(e.g., 'email', 'uri', 'int64', 'date-time'). For complex attributes, use one of: 'embedded' or "
+            "'reference'. Use 'embedded' for object classes directly embedded in JSON/XML. Use 'reference' for a "
+            "reference to another full object class (embedded=false), even if the full object appears embedded in "
+            "the payload. Use null if unknown."
         ),
     )
-    description: str = Field(
-        ...,
-        description="Property description from the schema; empty string if not provided.",
+    description: Optional[str] = Field(
+        default=None,
+        description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
     )
-    mandatory: bool = Field(
-        default=False,
-        description="True when the property name is listed in the object's 'required' array.",
+    mandatory: Optional[bool] = Field(
+        default=None,
+        description="Is attribute required? True if the attribute is required; otherwise false. Use null if unknown.",
     )
-    updatable: bool = Field(
-        default=False,
-        description="False if readOnly=true; otherwise true.",
+    updatable: Optional[bool] = Field(
+        default=None,
+        description="Can be attribute modified? False if readOnly=true; otherwise true. Use null if unknown.",
     )
-    creatable: bool = Field(
-        default=False,
-        description="False if readOnly=true; otherwise true (do not infer from endpoints).",
+    creatable: Optional[bool] = Field(
+        default=None,
+        description="Can attribute be used during create operation? False if readOnly=true; otherwise true (do not infer from endpoints). Use null if unknown.",
     )
-    readable: bool = Field(
-        default=False,
-        description="False if writeOnly=true; otherwise true.",
+    readable: Optional[bool] = Field(
+        default=None,
+        description="Is attribute readable? False if writeOnly=true; otherwise true. Use null if unknown.",
     )
-    multivalue: bool = Field(
-        default=False,
-        description="True if the property's type is 'array'; otherwise false.",
+    multivalue: Optional[bool] = Field(
+        default=None,
+        description="Is attribute multivalue? True if the property's type is 'array'; otherwise false. Use null if unknown.",
     )
-    returnedByDefault: bool = Field(
-        default=False,
+    returnedByDefault: Optional[bool] = Field(
+        default=None,
         description=(
+            "Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should."
             "True if the attribute is returned by default without additional calls; set false when it "
-            "requires extra expansion or separate endpoint fetches."
+            "requires extra expansion or separate endpoint fetches. Use null if unknown."
         ),
     )
+    scimAttribute: Optional[str] = Field(
+        default=None,
+        description=(
+            "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
+            "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
+        ),
+    )
+    relevant_documentations: List[Dict[str, str]] = Field(
+        default_factory=list,
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
+        description=(
+            "List of chunks that contain evidence for this specific attribute. "
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
+            "This field is populated automatically by the system and should NOT be filled by the LLM."
+        ),
+    )
+
+    @field_validator("relevant_documentations", mode="before")
+    @classmethod
+    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
+        if not isinstance(v, list):
+            return []
+
+        validated_chunks: List[Dict[str, str]] = []
+        for chunk in v:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            if chunk_id and doc_id:
+                validated_chunks.append(
+                    {
+                        "chunk_id": str(chunk_id),
+                        "doc_id": str(doc_id),
+                    }
+                )
+        return validated_chunks
+
+    @field_serializer("relevant_documentations", when_used="always")
+    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        serialized: List[Dict[str, str]] = []
+        for chunk in value or []:
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            if not doc_id or not chunk_id:
+                continue
+            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+        return serialized
 
 
 class AttributeResponse(BaseModel):
@@ -380,6 +586,9 @@ class AttributeResponse(BaseModel):
 
 
 # --- Endpoints ---
+EndpointMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+
 class EndpointInfo(BaseModel):
     """
     HTTP endpoint associated with a specific object class. Focus on endpoints that
@@ -392,9 +601,9 @@ class EndpointInfo(BaseModel):
         ...,
         description="Concrete URL path template as documented (e.g., '/users/{id}', '/users/{id}/groups').",
     )
-    method: str = Field(
+    method: EndpointMethod = Field(
         ...,
-        description="HTTP method in uppercase (e.g., GET, POST, PUT, PATCH, DELETE).",
+        description="HTTP method (e.g., GET, POST, PUT, PATCH, DELETE).",
     )
     description: str = Field(
         ...,
@@ -407,7 +616,7 @@ class EndpointInfo(BaseModel):
         default=None,
         validation_alias="responseContentType",
         serialization_alias="responseContentType",
-        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json').",
+        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json', 'application/vnd.oracle.resource+json', application/scim+json, other).",
     )
     request_content_type: Optional[str] = Field(
         default=None,
@@ -421,6 +630,56 @@ class EndpointInfo(BaseModel):
         serialization_alias="suggestedUse",
         description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
     )
+    relevant_documentations: List[Dict[str, str]] = Field(
+        default_factory=list,
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
+        description=(
+            "List of chunks that contain evidence for this specific endpoint. "
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
+            "This field is populated automatically by the system and should NOT be filled by the LLM."
+        ),
+    )
+
+    @field_validator("relevant_documentations", mode="before")
+    @classmethod
+    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
+        if not isinstance(v, list):
+            return []
+
+        validated_chunks: List[Dict[str, str]] = []
+        for chunk in v:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            if chunk_id and doc_id:
+                validated_chunks.append(
+                    {
+                        "chunk_id": str(chunk_id),
+                        "doc_id": str(doc_id),
+                    }
+                )
+        return validated_chunks
+
+    @field_serializer("relevant_documentations", when_used="always")
+    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        serialized: List[Dict[str, str]] = []
+        for chunk in value or []:
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            if not doc_id or not chunk_id:
+                continue
+            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+        return serialized
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def _normalize_method(cls, value: Any) -> Any:
+        """Accept lowercase/mixed-case methods and normalize them before literal validation."""
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
 
 
 class EndpointParamInfo(BaseModel):
@@ -441,7 +700,7 @@ class EndpointParamInfo(BaseModel):
         default=None,
         validation_alias="responseContentType",
         serialization_alias="responseContentType",
-        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json').",
+        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json', 'application/vnd.oracle.resource+json', application/scim+json, other).",
     )
     request_content_type: Optional[str] = Field(
         default=None,

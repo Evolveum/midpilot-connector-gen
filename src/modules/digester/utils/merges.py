@@ -5,7 +5,7 @@
 import json
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, cast
 from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
@@ -13,7 +13,16 @@ from langchain_core.runnables.config import RunnableConfig
 from ....common.enums import JobStage
 from ....common.jobs import update_job_progress
 from ....common.langfuse import langfuse_handler
-from ..schema import AttributeResponse, EndpointInfo, ObjectClass
+from ....config import config
+from ..schema import (
+    AttributeResponse,
+    BaseAPIEndpoint,
+    EndpointInfo,
+    EndpointMethod,
+    InfoMetadata,
+    InfoResponse,
+    ObjectClass,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +72,7 @@ def merge_object_classes(
     Deduplicate and merge object classes across documents.
 
     - Merges class metadata (superclass/abstract/embedded/description).
-    - Merges relevant chunks by docUuid when provided.
+    - Merges relevant chunks by (doc_id, chunk_id) when provided.
     - Removes duplicates that differ only by whitespace.
     """
     by_name: Dict[str, ObjectClass] = {}
@@ -75,16 +84,22 @@ def merge_object_classes(
         if key not in by_name:
             # If we have chunk information for this class, set it
             if class_to_chunks and key in class_to_chunks:
-                # Remove duplicate documents (same docUuid)
                 unique_chunks: List[Dict[str, Any]] = []
-                seen: set[str] = set()
+                seen: set[tuple[str, str]] = set()
                 for chunk in class_to_chunks[key]:
-                    doc_uuid = str(chunk["docUuid"])
-                    if doc_uuid not in seen:
-                        seen.add(doc_uuid)
-                        unique_chunks.append(chunk)
-                # Sort chunks by docUuid
-                obj_class.relevant_chunks = sorted(unique_chunks, key=lambda x: str(x["docUuid"]))
+                    doc_id = str(chunk.get("doc_id", "")).strip()
+                    chunk_id = str(chunk.get("chunk_id", "")).strip()
+                    if not doc_id or not chunk_id:
+                        continue
+
+                    pair = (doc_id, chunk_id)
+                    if pair in seen:
+                        continue
+
+                    seen.add(pair)
+                    unique_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id})
+
+                obj_class.relevant_documentations = sorted(unique_chunks, key=lambda x: (x["doc_id"], x["chunk_id"]))
             by_name[key] = obj_class
             continue
 
@@ -100,14 +115,23 @@ def merge_object_classes(
             current.description = obj_class.description
         # Merge relevant chunks if available
         if class_to_chunks and key in class_to_chunks:
-            # Convert to set of docUuids to remove duplicates
-            current_doc_uuids = set(chunk["docUuid"] for chunk in (current.relevant_chunks or []))
-            # Add new document UUIDs
-            for chunk in class_to_chunks[key]:
-                current_doc_uuids.add(chunk["docUuid"])
-            # Convert back to list of dicts and sort
-            current.relevant_chunks = [{"docUuid": doc_uuid} for doc_uuid in sorted(current_doc_uuids)]
+            current_chunk_pairs = {
+                (str(chunk.get("doc_id", "")).strip(), str(chunk.get("chunk_id", "")).strip())
+                for chunk in (current.relevant_documentations or [])
+                if str(chunk.get("doc_id", "")).strip() and str(chunk.get("chunk_id", "")).strip()
+            }
 
+            for chunk in class_to_chunks[key]:
+                doc_id = str(chunk.get("doc_id", "")).strip()
+                chunk_id = str(chunk.get("chunk_id", "")).strip()
+                if not doc_id or not chunk_id:
+                    continue
+                current_chunk_pairs.add((doc_id, chunk_id))
+
+            current.relevant_documentations = [
+                {"doc_id": doc_id, "chunk_id": chunk_id}
+                for doc_id, chunk_id in sorted(current_chunk_pairs, key=lambda pair: (pair[0], pair[1]))
+            ]
     # Remove duplicates with whitespace-only differences (preferring no-space versions)
     for key in list(by_name.keys()):
         key_no_space = key.replace(" ", "")
@@ -175,7 +199,10 @@ async def merge_attribute_candidates(
             content = getattr(result, "content", None)
             parsed = AttributeResponse.model_validate(json.loads(content)) if content else AttributeResponse()
 
-        return {name: info.model_dump() for name, info in parsed.attributes.items()}
+        return {
+            name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
+            for name, info in parsed.attributes.items()
+        }
 
     except Exception as exc:
         logger.error("[Digester:Attributes] Dedupe failed: %s", exc)
@@ -203,21 +230,17 @@ async def merge_endpoint_candidates(
     """
 
     # HTTP method ordering for consistent sorting
-    _METHOD_ORDER: Dict[str, int] = {"GET": 0, "HEAD": 1, "OPTIONS": 2, "POST": 3, "PUT": 4, "PATCH": 5, "DELETE": 6}
+    _METHOD_ORDER: Dict[EndpointMethod, int] = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4}
 
-    def _normalize_method(method: str) -> str:
-        return (method or "").strip().upper()
+    def _endpoint_key(ep: EndpointInfo) -> tuple[str, EndpointMethod]:
+        return (ep.path.strip(), ep.method)
 
-    def _endpoint_key(ep: EndpointInfo) -> tuple:
-        return (ep.path.strip(), _normalize_method(ep.method))
-
-    by_key: Dict[tuple, EndpointInfo] = {}
+    by_key: Dict[tuple[str, EndpointMethod], EndpointInfo] = {}
 
     for ep in extracted_endpoints:
-        if not ep.path or not ep.method:
+        if not ep.path:
             continue
 
-        ep.method = _normalize_method(ep.method)
         key = _endpoint_key(ep)
 
         if key not in by_key:
@@ -247,10 +270,10 @@ async def merge_endpoint_candidates(
     merged = list(by_key.values())
 
     # Sort by path, then by common HTTP method order
-    merged.sort(key=lambda e: (e.path, _METHOD_ORDER.get(_normalize_method(e.method), 99), e.method))
+    merged.sort(key=lambda e: (e.path, _METHOD_ORDER[e.method], e.method))
 
     # Convert to dicts for JSON serialization
-    merged_dicts = [ep.model_dump(by_alias=True) for ep in merged]
+    merged_dicts = [ep.model_dump(by_alias=True, exclude={"relevant_documentations"}) for ep in merged]
 
     logger.info("[Digester:Endpoints] Merged %d endpoints for %s", len(merged_dicts), object_class)
 
@@ -261,3 +284,156 @@ async def merge_endpoint_candidates(
     )
 
     return merged_dicts
+
+
+def is_empty_info_result_payload(payload: Dict[str, Any]) -> bool:
+    """Detect if InfoResponse-like payload has no extracted metadata."""
+    info = (payload or {}).get("infoMetadata")
+    if info is None:
+        return True
+    if not isinstance(info, dict):
+        return True
+
+    return not bool(
+        str(info.get("name") or "").strip()
+        or str(info.get("applicationVersion") or "").strip()
+        or str(info.get("apiVersion") or "").strip()
+        or info.get("apiType")
+        or info.get("baseApiEndpoint")
+    )
+
+
+def _empty_info_metadata_payload() -> Dict[str, Any]:
+    """Standard empty metadata payload for API responses."""
+    return cast(Dict[str, Any], InfoResponse(info_metadata=None).model_dump(by_alias=True))
+
+
+def merge_info_metadata(
+    info_candidates: List[InfoMetadata],
+    total_items: int,
+) -> Dict[str, Any]:
+    """
+    Merge per-document InfoMetadata candidates into a single payload using frequency heuristics.
+
+    This mirrors the threshold-based strategy previously used for processor metadata:
+    - keep values that occur frequently enough across all processed documents
+    - ignore sparse/noisy values
+    """
+    if total_items <= 0:
+        logger.info("[Digester:InfoMetadata] Heuristic merge skipped: total_items=%s", total_items)
+        return _empty_info_metadata_payload()
+
+    threshold = total_items * config.digester.info_metadata_uncertainty_threshold
+
+    name_distribution: Dict[str, int] = {}
+    app_version_distribution: Dict[str, int] = {}
+    api_version_distribution: Dict[str, int] = {}
+    api_type_distribution: Dict[str, int] = {}
+    base_api_endpoints_url_distribution: Dict[str, int] = {}
+    base_api_endpoints_type_distribution: Dict[tuple[str, str], int] = {}
+
+    for info in info_candidates:
+        name = (info.name or "").strip()
+        if name:
+            name_distribution[name] = name_distribution.get(name, 0) + 1
+
+        application_version = (info.application_version or "").strip()
+        if application_version:
+            app_version_distribution[application_version] = app_version_distribution.get(application_version, 0) + 1
+
+        api_version = (info.api_version or "").strip()
+        if api_version:
+            api_version_distribution[api_version] = api_version_distribution.get(api_version, 0) + 1
+
+        for api_type in info.api_type or []:
+            normalized_type = str(api_type).upper().strip()
+            if normalized_type in {"REST", "SCIM"}:
+                api_type_distribution[normalized_type] = api_type_distribution.get(normalized_type, 0) + 1
+
+        for endpoint in info.base_api_endpoint or []:
+            uri = (endpoint.uri or "").strip().lower()
+            endpoint_type: Literal["constant", "dynamic"] = endpoint.type
+            if not uri:
+                continue
+            base_api_endpoints_url_distribution[uri] = base_api_endpoints_url_distribution.get(uri, 0) + 1
+            key = (uri, endpoint_type)
+            base_api_endpoints_type_distribution[key] = base_api_endpoints_type_distribution.get(key, 0) + 1
+
+    found_name = ""
+    if name_distribution:
+        candidate_name = max(name_distribution.keys(), key=lambda value: name_distribution[value])
+        if name_distribution[candidate_name] > threshold:
+            found_name = candidate_name
+
+    found_application_version = ""
+    if app_version_distribution:
+        candidate_version = max(app_version_distribution.keys(), key=lambda value: app_version_distribution[value])
+        if app_version_distribution[candidate_version] > threshold:
+            found_application_version = candidate_version
+
+    found_api_version = ""
+    if api_version_distribution:
+        candidate_api_version = max(api_version_distribution.keys(), key=lambda value: api_version_distribution[value])
+        if api_version_distribution[candidate_api_version] > threshold:
+            found_api_version = candidate_api_version
+
+    found_api_types: List[Literal["REST", "SCIM"]] = [
+        cast(Literal["REST", "SCIM"], api_type)
+        for api_type, count in api_type_distribution.items()
+        if count > threshold
+    ]
+    found_api_types = sorted(found_api_types)
+
+    found_base_api_endpoints: List[BaseAPIEndpoint] = []
+    for uri, count in base_api_endpoints_url_distribution.items():
+        if count <= threshold:
+            continue
+
+        constant_count = base_api_endpoints_type_distribution.get((uri, "constant"), 0)
+        dynamic_count = base_api_endpoints_type_distribution.get((uri, "dynamic"), 0)
+        selected_endpoint_type: Literal["constant", "dynamic"] = (
+            "constant" if constant_count >= dynamic_count else "dynamic"
+        )
+        found_base_api_endpoints.append(BaseAPIEndpoint(uri=uri, type=selected_endpoint_type))
+
+    logger.info(
+        "[Digester:InfoMetadata] Heuristic threshold: total_docs=%s threshold_count=%s",
+        total_items,
+        threshold,
+    )
+    logger.info("[Digester:InfoMetadata] Name distribution: %s", name_distribution)
+    logger.info("[Digester:InfoMetadata] Application version distribution: %s", app_version_distribution)
+    logger.info("[Digester:InfoMetadata] API version distribution: %s", api_version_distribution)
+    logger.info("[Digester:InfoMetadata] API type distribution: %s", api_type_distribution)
+    logger.info("[Digester:InfoMetadata] Base API endpoint URI distribution: %s", base_api_endpoints_url_distribution)
+    logger.info(
+        "[Digester:InfoMetadata] Base API endpoint (URI, type) distribution: %s",
+        base_api_endpoints_type_distribution,
+    )
+    logger.info(
+        "[Digester:InfoMetadata] Heuristic selected values: name=%r applicationVersion=%r apiVersion=%r "
+        "apiType=%s baseApiEndpoint=%s",
+        found_name,
+        found_application_version,
+        found_api_version,
+        found_api_types,
+        [endpoint.model_dump() for endpoint in found_base_api_endpoints],
+    )
+
+    merged_response = InfoResponse(
+        info_metadata=InfoMetadata(
+            name=found_name,
+            application_version=found_application_version,
+            api_version=found_api_version,
+            api_type=found_api_types,
+            base_api_endpoint=found_base_api_endpoints,
+        )
+    )
+    merged_payload = cast(Dict[str, Any], merged_response.model_dump(by_alias=True))
+
+    if is_empty_info_result_payload(merged_payload):
+        logger.info("[Digester:InfoMetadata] Heuristic result is empty -> returning infoMetadata=null")
+        return _empty_info_metadata_payload()
+
+    logger.info("[Digester:InfoMetadata] Heuristic merge produced non-empty infoMetadata")
+    return merged_payload

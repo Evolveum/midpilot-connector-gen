@@ -50,6 +50,11 @@ CRITICAL RULES - BE PRECISE ABOUT SCOPE AND FORMAT:
 - Content <10,000 tokens or limited depth: always include "overview"
 - Example: "This page contains an overview of REST API authentication methods, covering OAuth 2.0, API keys, and basic auth concepts."
 
+**Number of Defined Object Classes:**
+- If the content defines 3 or more object classes with detailed schemas, mention that in the summary, e.g., "defining 5 object classes with detailed schemas for user and group management
+- Count only object classes that have detailed schemas, not those that are just mentioned in navigation, listed without details or are just described with single sentences without detailed descriptions and schemas.
+- In majority of cases, there isn't going to be a detailed description of an object class.
+
 CRITICAL:
 - Include ONLY what is actually documented with details (descriptions, parameters, responses)
 - Ignore navigation panels, sidebars, table of contents, and repeated header/footer sections
@@ -127,6 +132,15 @@ EXAMPLE OUTPUTS:
     "has_authentication": true,
     "is_overview": false,
     "is_index": false
+}
+
+{
+    "summary": "This page contains a part of OpenAPI specification for the Organizations REST API, defining schemas for user, group, and policy management object classes.",
+    "num_endpoints": 0,
+    "has_authentication": false,
+    "is_overview": false,
+    "is_index": false,
+    "num_defined_object_classes": 3
 }
 
         """
@@ -218,58 +232,56 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
     """
 
     developer_prompt = f"""
-    You are an expert in processing technical documentation for {app} {app_version}. Your task is to analyze the provided content chunk and extract relevant information.
-
-    Please provide:
-    1. A concise summary of the chunk.
-    2. Number of endpoints defined in the chunk.
-    3. Relevant tags that describe the content (e.g., "endpoints", "authorization", "user management", object classes that are referenced, each as a "<class_name>", you may also include specific endpoints if there are not more than 10).
-    4. A category for the chunk from the following options: "spec_yaml", "spec_json", "reference_api", "reference_other", "overview", "index", "tutorial", "non-technical", "other".
-    5. Tags for the chunk that you think best describe its content, this should be in seperate field from point 3
-    6. Category that you think best describes the content in the chunk, not from the predefined list, this should be in seperate field from point 4
-
-    Be precise and objective in your analysis.
+    You are an expert in processing technical documentation for {app} {app_version}.
+    Analyze one documentation chunk and return exactly one JSON object.
 
     Output should be a JSON object with the following properties:
     - summary: string - a concise summary of the chunk
-    - num_endpoints: int - number of endpoints defined in the chunk
+    - num_endpoints: int - number of documented endpoints in this chunk
     - tags: list of strings - relevant tags describing the content
-    - category: string - one of the predefined categories
-    - llm_tags: list of strings - tags that best describe the content according to only you
-    - llm_category: string - category that best describes the content according to only you, not from the predefined list
-    - application_version: Optional[str] - the application version mentioned in the content, if any
-    - api_version: Optional[str] - the API version mentioned in the content, if any
-    - api_type: Optional[List[str]] - the API type(s) mentioned in the content, if any
-    - base_api_endpoint: Optional[List[BaseAPIEndpoint]] - the base API endpoint(s) mentioned in the content, if any, BaseAPIEndpoint has 'uri' and 'type' fields, type can be 'constant' or 'dynamic'. Be very careful to only include actual base endpoints, not example endpoints or partial endpoints. It is better to return an empty list than to include incorrect or partial endpoints.
-    - different_app_name: bool - indicates if the chunk mentions a different application name than {app}, be very careful, only mark as true if you are 100% sure that the chunk is about a different application
-    - application_name: Optional[str] - the application name mentioned in the chunk, if any
+    - category: string - one of "spec_yaml", "spec_json", "reference_api", "reference_other", "overview", "index", "tutorial", "non-technical", "other"
+    - different_app_name: bool - true only if chunk is clearly about a different product than {app}
+    - num_defined_object_classes: Optional[int] - number of clearly defined object classes, otherwise null
 
-EXAMPLE OUTPUTS:
-    
+    TAGGING RULES:
+    - Add protocol/context tags only when explicitly supported by the chunk content.
+    - If SCIM evidence exists (e.g., "/scim", RFC7643/RFC7644, SCIM Users/Groups, SCIM URNs), include tag "SCIM".
+    - If REST/OpenAPI/Swagger evidence exists, include tag "REST".
+    - Keep tags concise and deduplicated.
+
+    IMPORTANT:
+    - Do not invent values.
+    - If unsure, keep nullable fields as null.
+    - Return JSON only.
 
     EXAMPLE OUTPUT:
     {{
-        "summary": "This chunk contains detailed documentation for user management endpoints, including creating, retrieving, updating, and deleting users.",
-        "num_endpoints": 5,
-        "tags": ["endpoints", "user management", "provisioning", "User", "Group"],
-        "category": "reference_api",
-        "llm_tags": ["user management", "API reference", "provisioning"],
-        "llm_category": "API reference",
-        "application_version": "v2.1",
-        "api_version": "v1",
-        "api_type": ["REST"],
-        "base_api_endpoint": [{{"uri": "https://<hostname>/api/v3/", "type": "dynamic"}}],
-        "different_app_name": false,
-        "application_name": "ExampleApp"
+      "summary": "This chunk documents SCIM user and group provisioning endpoints.",
+      "num_endpoints": 2,
+      "tags": ["SCIM", "provisioning", "User", "Group"],
+      "category": "reference_api",
+      "different_app_name": false,
+      "num_defined_object_classes": 2
+    }}
+
+    EXAMPLE OUTPUT:
+    {{
+      "summary": "This chunk contains detailed documentation for user management endpoints, including creating, retrieving, updating, and deleting users.",
+      "num_endpoints": 5,
+      "tags": ["REST", "endpoints", "user management", "provisioning", "User", "Group"],
+      "category": "reference_api",
+      "different_app_name": false,
+      "num_defined_object_classes": null
     }}
     """
 
     user_prompt = f"""
-    Analyze the following documentation chunk for {app} {app_version}:
+    Analyze the following documentation chunk for {app} {app_version}.
 
     Part of page with URL: {page_url}
 
-    Content: {content}
+    Content:
+    {content}
     """
 
     return developer_prompt, user_prompt

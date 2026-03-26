@@ -32,7 +32,7 @@ async def process_documentation_worker(
     session_id: UUID,
     chunks: List[tuple[str, int]],
     filename: str,
-    page_id: UUID,
+    doc_id: UUID,
     app: str,
     app_version: str,
     job_id: UUID,
@@ -76,6 +76,7 @@ async def process_documentation_worker(
                 "llm_tags": data.tags,
                 "llm_category": data.category,
             }
+
             return {
                 "idx": idx,
                 "chunk_text": chunk_text,
@@ -94,11 +95,11 @@ async def process_documentation_worker(
             existing_docs = await session_repo.get_session_data(session_id, "documentationItems") or []
 
             for item in processed_chunks:
-                doc_id = await doc_repo.create_documentation_item(
+                chunk_id = await doc_repo.create_documentation_item(
                     session_id=session_id,
                     source="upload",
                     content=item["chunk_text"],
-                    page_id=page_id,
+                    doc_id=doc_id,
                     original_job_id=job_id,
                     url=f"upload://{filename}",
                     summary=item["summary"],
@@ -107,9 +108,9 @@ async def process_documentation_worker(
                 await job_repo.increment_processed_documents(job_id, 1)
 
                 doc_item = DocumentationItem(
-                    id=doc_id,
+                    chunk_id=chunk_id,
                     source="upload",
-                    page_id=page_id,
+                    doc_id=doc_id,
                     scrape_job_ids=[job_id],
                     url=f"upload://{filename}",
                     summary=item["summary"],
@@ -131,7 +132,7 @@ async def process_documentation_worker(
 
         return {
             "chunks_processed": len(doc_items),
-            "page_id": page_id,
+            "doc_id": doc_id,
             "filename": filename,
         }
 
@@ -162,12 +163,12 @@ async def _get_session_documentation_impl(
         doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
 
         doc_repo = DocumentationRepository(db)
-        page_id = uuid.uuid4()
-        doc_id = await doc_repo.create_documentation_item(
+        doc_id = uuid.uuid4()
+        chunk_id = await doc_repo.create_documentation_item(
             session_id=session_id,
             source="upload",
             content=doc_text,
-            page_id=page_id,
+            doc_id=doc_id,
             url=None,
             summary=None,
             metadata={"filename": documentation.filename or "unknown", "length": len(doc_text)},
@@ -175,9 +176,9 @@ async def _get_session_documentation_impl(
 
         existing_docs: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
         doc_item = DocumentationItem(
-            id=doc_id,
+            chunk_id=chunk_id,
             source="upload",
-            page_id=page_id,
+            doc_id=doc_id,
             url=None,
             summary=None,
             scrape_job_ids=[],

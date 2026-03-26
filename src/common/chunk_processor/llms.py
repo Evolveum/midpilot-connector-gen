@@ -7,7 +7,9 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables.config import RunnableConfig
 
+from ...common.langfuse import langfuse_handler
 from ...common.llm import get_default_llm, make_basic_chain
 from .prompts import get_summary_prompts
 from .schema import LlmChunkOutput
@@ -71,7 +73,9 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
     user_message = HumanMessage(content=user_msg)
     user_message.additional_kwargs = {"__openai_role__": "user"}
 
-    llm_response = await llm.ainvoke([developer_message, user_message])
+    llm_response = await llm.ainvoke(
+        [developer_message, user_message], config=RunnableConfig(callbacks=[langfuse_handler])
+    )
 
     logger.debug("[Scrape:LLM] LLM raw output for chunk processing: %s", str(llm_response)[:200])
 
@@ -88,6 +92,6 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
         parser=PydanticOutputParser(pydantic_object=LlmChunkOutput),
     )
 
-    result = await chain.ainvoke({})
+    result = await chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler]))
 
     return result

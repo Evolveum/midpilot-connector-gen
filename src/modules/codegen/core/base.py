@@ -60,37 +60,37 @@ class ChunkProcessor:
 
         Returns:
             - chunks: List of text chunks
-            - provenance_doc_uuid: List of doc UUIDs corresponding to each chunk
-            - per_doc_selected_counts: Dict mapping doc_uuid to chunk count
-            - docs_included: List of doc UUIDs included
+            - provenance_chunk_ids: List of chunk IDs corresponding to each chunk
+            - per_chunk_selected_counts: Dict mapping chunk_id to selected chunk count
+            - chunk_ids_included: List of included chunk IDs
         """
         chunks: List[str] = []
-        provenance_doc_uuid: List[Optional[str]] = []
-        per_doc_selected_counts: Dict[str, int] = {}
-        docs_included: List[str] = []
+        provenance_chunk_ids: List[Optional[str]] = []
+        per_chunk_selected_counts: Dict[str, int] = {}
+        chunk_ids_included: List[str] = []
 
         # Build chunk map by UUID - documentation_items are already chunked
         chunks_by_uuid: Dict[str, Dict[str, Any]] = {}
         for item in documentation_items:
             try:
-                uid = item.get("uuid") or item.get("id")
+                uid = item.get("chunkId")
                 if isinstance(uid, str):
                     chunks_by_uuid[uid] = item
             except Exception:
                 continue
 
         # Process pairs in order - each pair references a specific chunk by its ID
-        doc_counts: Dict[str, int] = {}
-        seen_docs: List[str] = []
+        chunk_counts: Dict[str, int] = {}
+        seen_chunk_ids: List[str] = []
 
         for p in relevant_chunk_pairs:
-            doc_uuid = p.get("docUuid")
-            if not isinstance(doc_uuid, str):
+            chunk_id = p.get("chunk_id") or p.get("chunkId")
+            if not isinstance(chunk_id, str):
                 continue
 
-            chunk_item = chunks_by_uuid.get(doc_uuid)
+            chunk_item = chunks_by_uuid.get(chunk_id)
             if not chunk_item:
-                logger.warning("%s Missing chunk for doc_uuid=%s", logger_prefix, doc_uuid)
+                logger.warning("%s Missing chunk for chunk_id=%s", logger_prefix, chunk_id)
                 continue
 
             content = chunk_item.get("content")
@@ -99,25 +99,25 @@ class ChunkProcessor:
 
             # Add chunk
             chunks.append(normalize_to_text(content))
-            provenance_doc_uuid.append(doc_uuid)
+            provenance_chunk_ids.append(chunk_id)
 
-            # Track per-document counts
-            if doc_uuid not in doc_counts:
-                doc_counts[doc_uuid] = 0
-                seen_docs.append(doc_uuid)
-            doc_counts[doc_uuid] += 1
+            # Track per-chunk-group counts
+            if chunk_id not in chunk_counts:
+                chunk_counts[chunk_id] = 0
+                seen_chunk_ids.append(chunk_id)
+            chunk_counts[chunk_id] += 1
 
-        per_doc_selected_counts = doc_counts
-        docs_included = seen_docs
+        per_chunk_selected_counts = chunk_counts
+        chunk_ids_included = seen_chunk_ids
 
         logger.info(
-            "%s Using %d pre-chunked documentation items from %d unique documents",
+            "%s Using %d pre-chunked documentation items from %d unique chunk IDs",
             logger_prefix,
             len(chunks),
-            len(docs_included),
+            len(chunk_ids_included),
         )
 
-        return chunks, provenance_doc_uuid, per_doc_selected_counts, docs_included
+        return chunks, provenance_chunk_ids, per_chunk_selected_counts, chunk_ids_included
 
 
 class BaseGroovyGenerator(ABC):
@@ -172,7 +172,7 @@ class BaseGroovyGenerator(ABC):
         documentation_items = await self._load_documentation_items(session_id) if session_id else []
 
         # Step 2: Build chunks
-        chunks, provenance_doc_uuid, per_doc_counts, docs_included = self._build_chunks(
+        chunks, provenance_chunk_ids, per_chunk_counts, chunk_ids_included = self._build_chunks(
             documentation_items=documentation_items,
             relevant_chunk_pairs=relevant_chunk_pairs,
         )
@@ -182,7 +182,7 @@ class BaseGroovyGenerator(ABC):
             return self.config.default_scaffold
 
         # Step 2: Initialize progress
-        await self._initialize_progress(job_id, chunks, docs_included)
+        await self._initialize_progress(job_id, chunks, chunk_ids_included)
 
         # Step 3: Prepare input data and LLM chain
         input_data = self.prepare_input_data(**operation_specific_kwargs)
@@ -192,9 +192,9 @@ class BaseGroovyGenerator(ABC):
         result = self.get_initial_result(**operation_specific_kwargs)
         result = await self._process_chunks(
             chunks=chunks,
-            provenance_doc_uuid=provenance_doc_uuid,
-            per_doc_counts=per_doc_counts,
-            docs_included=docs_included,
+            provenance_chunk_ids=provenance_chunk_ids,
+            per_chunk_counts=per_chunk_counts,
+            chunk_ids_included=chunk_ids_included,
             input_data=input_data,
             chain=chain,
             job_id=job_id,
@@ -226,14 +226,14 @@ class BaseGroovyGenerator(ABC):
 
         if relevant_chunk_pairs:
             # Use selected chunks based on pairs
-            chunks, provenance, per_doc_counts, docs = ChunkProcessor.build_chunks_from_pairs(
+            chunks, provenance, per_chunk_counts, selected_chunk_ids = ChunkProcessor.build_chunks_from_pairs(
                 relevant_chunk_pairs, documentation_items, self.config.logger_prefix
             )
-            return chunks, provenance, per_doc_counts, docs
+            return chunks, provenance, per_chunk_counts, selected_chunk_ids
         else:
             # Use all documentation items directly
             chunks = [normalize_to_text(item.get("content", "")) for item in documentation_items]
-            provenance = [item.get("uuid") or item.get("id") for item in documentation_items]
+            provenance = [item.get("chunkId") for item in documentation_items]
             logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
             return chunks, provenance, {}, []
 
@@ -241,14 +241,14 @@ class BaseGroovyGenerator(ABC):
         self,
         job_id: UUID,
         chunks: List[str],
-        docs_included: List[str],
+        chunk_ids_included: List[str],
     ):
         """Initialize job progress tracking."""
         total_chunks = len(chunks)
         logger.info("%s Processing %d chunks", self.config.logger_prefix, total_chunks)
 
-        # Use document count if available, otherwise use chunk count as fallback
-        total_count = len(docs_included) if docs_included else total_chunks
+        # Use selected chunk-id count if available, otherwise use chunk count as fallback
+        total_count = len(chunk_ids_included) if chunk_ids_included else total_chunks
 
         await update_job_progress(
             job_id,
@@ -274,9 +274,9 @@ class BaseGroovyGenerator(ABC):
     async def _process_chunks(
         self,
         chunks: List[str],
-        provenance_doc_uuid: List[Optional[str]],
-        per_doc_counts: Dict[str, int],
-        docs_included: List[str],
+        provenance_chunk_ids: List[Optional[str]],
+        per_chunk_counts: Dict[str, int],
+        chunk_ids_included: List[str],
         input_data: Dict[str, str],
         chain,
         job_id: UUID,
@@ -285,28 +285,28 @@ class BaseGroovyGenerator(ABC):
         """Process chunks iteratively with LLM."""
         result = initial_result
         total_chunks = len(chunks)
-        current_doc_uuid: Optional[str] = None
-        current_doc_chunks_remaining: int = 0
+        current_chunk_id: Optional[str] = None
+        current_group_chunks_remaining: int = 0
 
         for idx, chunk in enumerate(chunks, start=1):
-            doc_uuid = provenance_doc_uuid[idx - 1] if idx - 1 < len(provenance_doc_uuid) else None
+            chunk_id = provenance_chunk_ids[idx - 1] if idx - 1 < len(provenance_chunk_ids) else None
 
             try:
-                # Update current document if in per-doc mode
-                if per_doc_counts and docs_included and isinstance(doc_uuid, str):
-                    if current_doc_uuid != doc_uuid:
-                        total_for_doc = per_doc_counts.get(doc_uuid, 0)
-                        current_doc_uuid = doc_uuid
-                        current_doc_chunks_remaining = total_for_doc
+                # Update current group when running in selected-chunk mode
+                if per_chunk_counts and chunk_ids_included and isinstance(chunk_id, str):
+                    if current_chunk_id != chunk_id:
+                        total_for_chunk_group = per_chunk_counts.get(chunk_id, 0)
+                        current_chunk_id = chunk_id
+                        current_group_chunks_remaining = total_for_chunk_group
 
                 # Log progress
-                if doc_uuid:
+                if chunk_id:
                     logger.info(
-                        "%s LLM call %d/%d (doc_uuid: %s)",
+                        "%s LLM call %d/%d (chunk_id: %s)",
                         self.config.logger_prefix,
                         idx,
                         total_chunks,
-                        doc_uuid,
+                        chunk_id,
                     )
                 else:
                     logger.info("%s LLM call %d/%d", self.config.logger_prefix, idx, total_chunks)
@@ -322,20 +322,21 @@ class BaseGroovyGenerator(ABC):
                     result = strip_markdown_fences(code)
 
             except Exception as exc:
-                logger.error("%s Chunk %d failed: %s", self.config.logger_prefix, idx, exc)
-                append_job_error(job_id, f"[{self.config.logger_prefix}] Chunk {idx}/{total_chunks} failed: {exc}")
+                error_message = f"[{self.config.logger_prefix}] Failed to process chunk {idx}/{total_chunks}: {exc}"
+                logger.exception(error_message)
+                append_job_error(job_id, error_message)
                 continue
 
             finally:
                 # Handle progress tracking based on mode
-                if per_doc_counts and docs_included and isinstance(doc_uuid, str):
-                    # Per-document mode: increment when document is complete
-                    current_doc_chunks_remaining = max(0, current_doc_chunks_remaining - 1)
-                    if current_doc_chunks_remaining == 0:
+                if per_chunk_counts and chunk_ids_included and isinstance(chunk_id, str):
+                    # Selected-chunk mode: increment when this group is complete
+                    current_group_chunks_remaining = max(0, current_group_chunks_remaining - 1)
+                    if current_group_chunks_remaining == 0:
                         await increment_processed_documents(job_id, delta=1)
-                        logger.info("%s Completed document %s", self.config.logger_prefix, doc_uuid)
+                        logger.info("%s Completed chunk group chunk_id=%s", self.config.logger_prefix, chunk_id)
                 else:
-                    # Fallback mode (no per-doc tracking): increment per chunk
+                    # Fallback mode (no selected-chunk grouping): increment per chunk
                     await increment_processed_documents(job_id, delta=1)
 
         return result

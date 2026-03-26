@@ -28,12 +28,12 @@ def extract_summary_and_tags(doc_metadata: Dict[str, Any] | None) -> Tuple[str, 
 
     # Extract and format tags
     metadata = doc_metadata.get("@metadata", {}) or {}
-    llm_tags = metadata.get("llm_tags")
-    if llm_tags:
-        if isinstance(llm_tags, list):
-            tags = ", ".join(str(tag) for tag in llm_tags)
+    tags_data = metadata.get("tags")
+    if tags_data:
+        if isinstance(tags_data, list):
+            tags = ", ".join(str(tag) for tag in tags_data)
         else:
-            tags = str(llm_tags)
+            tags = str(tags_data)
 
     return summary, tags
 
@@ -41,7 +41,7 @@ def extract_summary_and_tags(doc_metadata: Dict[str, Any] | None) -> Tuple[str, 
 def build_doc_metadata_map(doc_items: list[dict]) -> dict[str, dict[str, Any]]:
     """
     Build a lookup map for doc metadata:
-        doc_uuid (str) -> {"summary": ..., "@metadata": {...}}
+        chunk_id (str) -> {"summary": ..., "@metadata": {...}}
 
     This avoids repeatedly scanning doc_items in O(n) per document.
 
@@ -52,11 +52,11 @@ def build_doc_metadata_map(doc_items: list[dict]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
 
     for item in doc_items:
-        doc_uuid = item.get("uuid")
-        if not doc_uuid:
+        chunk_id = item.get("chunkId")
+        if not chunk_id:
             continue
 
-        out[str(doc_uuid)] = {
+        out[str(chunk_id)] = {
             "summary": item.get("summary"),
             "@metadata": item.get("@metadata", {}) or {},
         }
