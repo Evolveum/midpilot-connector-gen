@@ -53,7 +53,10 @@ async def test_generate_native_schema():
         "id": {"type": "string", "format": "uuid", "description": "Unique identifier"},
     }
 
-    with patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy:
+    with (
+        patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy,
+        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+    ):
         mock_generate_groovy.return_value = "mocked groovy code"
 
         result = await service.create_native_schema(

@@ -296,16 +296,19 @@ async def test_extract_class_endpoints_success():
         ]
     }
 
-    # Mock metadataOutput for baseApiUrl
-    mock_metadata_output = {"infoMetadata": {"baseApiEndpoint": [{"uri": "https://api.example.com"}]}}
-
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
-    mock_repo.get_session_data = AsyncMock(side_effect=[mock_object_classes_output, mock_metadata_output])
+    mock_repo.get_session_data = AsyncMock(return_value=mock_object_classes_output)
     mock_repo.update_session = AsyncMock()
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.router.get_session_base_api_url",
+            new_callable=AsyncMock,
+            return_value="https://api.example.com",
+        ),
         patch(
             "src.modules.digester.router.filter_documentation_items",
             new_callable=AsyncMock,
