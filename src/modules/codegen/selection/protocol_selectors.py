@@ -6,7 +6,6 @@
 Helpers that select prompts and docs based on API protocol.
 """
 
-from dataclasses import dataclass
 from typing import Mapping
 
 from ..prompts.native_schema_prompts import get_native_schema_system_prompt, get_native_schema_user_prompt
@@ -18,15 +17,7 @@ from ..prompts.scim.create_prompts import get_scim_create_system_prompt, get_sci
 from ..prompts.scim.delete_prompts import get_scim_delete_system_prompt, get_scim_delete_user_prompt
 from ..prompts.scim.search_prompts import get_scim_search_system_prompt, get_scim_search_user_prompt
 from ..prompts.scim.update_prompts import get_scim_update_system_prompt, get_scim_update_user_prompt
-from .protocol import ApiProtocol
-
-
-@dataclass(frozen=True)
-class OperationAssets:
-    system_prompt: str
-    user_prompt: str
-    docs_path: str
-
+from ..schema import ApiProtocol, OperationAssets
 
 PROMPT_MAP: Mapping[str, Mapping[ApiProtocol, OperationAssets]] = {
     "search": {

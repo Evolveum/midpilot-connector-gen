@@ -15,52 +15,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...common.database.config import get_db
 from ...common.database.repositories.session_repository import SessionRepository
-from ...common.enums import JobStatus
-from ...common.jobs import get_job_status, schedule_coroutine_job
+from ...common.jobs import schedule_coroutine_job
 from ...common.schema import (
     JobCreateResponse,
     JobStatusMultiDocResponse,
     JobStatusStageResponse,
 )
 from ...common.session.session import ensure_session_exists, resolve_session_job_id
-from ...common.status_response import build_stage_status_response
+from ...common.status_response import build_multi_doc_status_response, build_stage_status_response
 from ...common.utils.session_metadata import get_session_api_types, is_scim_api
 from ..digester.schema import RelationsResponse
 from . import service
-from .schema import SearchIntent
+from .schema import SearchIntent, build_search_operation_key
 
 router = APIRouter()
-
-
-def _search_result_key(object_class: str, intent: SearchIntent) -> str:
-    suffix_map = {
-        "all": "All",
-        "filter": "Filter",
-        "id": "Id",
-    }
-    return f"{object_class}Search{suffix_map[intent]}"
-
-
-async def _build_multi_doc_status_response(job_id: UUID) -> JobStatusMultiDocResponse:
-    """
-    Build a multi-document aware status response for codegen jobs.
-    It forwards the progress dict as-is so multi-doc fields (processedDocuments,
-    totalDocuments, currentDocument{docId, processedChunks, totalChunks}) are preserved.
-    """
-    status = await get_job_status(job_id)
-    raw_status = status.get("status", JobStatus.not_found.value)
-    enum_status = JobStatus(raw_status)
-
-    return JobStatusMultiDocResponse(
-        jobId=status.get("jobId", job_id),
-        status=enum_status,
-        createdAt=status.get("createdAt"),
-        startedAt=status.get("startedAt"),
-        updatedAt=status.get("updatedAt"),
-        progress=status.get("progress"),
-        result=status.get("result"),
-        errors=status.get("errors"),
-    )
 
 
 # Codegen Operations - Native Schema
@@ -103,7 +71,7 @@ async def generate_native_schema(
         initial_stage="queue",
         initial_message="Queued code generation",
         session_id=session_id,
-        session_result_key=f"{object_class}NativeSchema",
+        session_result_key=f"{object_class}NativeSchemaOutput",
     )
 
     await repo.update_session(
@@ -163,7 +131,7 @@ async def override_native_schema(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}NativeSchema": native_schema})
+    await repo.update_session(session_id, {f"{object_class}NativeSchemaOutput": native_schema})
 
     return {
         "message": f"Native schema for {object_class} overridden successfully",
@@ -211,7 +179,7 @@ async def generate_connid(
         initial_stage="queue",
         initial_message="Queued code generation",
         session_id=session_id,
-        session_result_key=f"{object_class}Connid",
+        session_result_key=f"{object_class}ConnidOutput",
     )
 
     await repo.update_session(
@@ -271,7 +239,7 @@ async def override_connid(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}Connid": connid})
+    await repo.update_session(session_id, {f"{object_class}ConnidOutput": connid})
 
     return {
         "message": f"ConnID for {object_class} overridden successfully",
@@ -335,7 +303,7 @@ async def generate_search(
         job_input["endpoints"] = eps
         worker_kwargs["endpoints"] = eps
 
-    result_key = _search_result_key(object_class, intent)
+    operation_key = build_search_operation_key(object_class, intent)
 
     job_id = await schedule_coroutine_job(
         job_type="codegen.getSearch",
@@ -346,7 +314,7 @@ async def generate_search(
         initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
-        session_result_key=result_key,
+        session_result_key=f"{operation_key}Output",
     )
 
     session_input = {"objectClass": object_class, "attributes": attrs, "intent": intent}
@@ -355,8 +323,8 @@ async def generate_search(
     await repo.update_session(
         session_id,
         {
-            f"{result_key}JobId": str(job_id),
-            f"{result_key}Input": session_input,
+            f"{operation_key}JobId": str(job_id),
+            f"{operation_key}Input": session_input,
         },
     )
 
@@ -381,18 +349,18 @@ async def get_search_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    result_key = _search_result_key(object_class, intent)
+    operation_key = build_search_operation_key(object_class, intent)
 
     jobId = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
-        session_key=f"{result_key}JobId",
+        session_key=f"{operation_key}JobId",
         job_label="search",
         not_found_detail=f"No search job found for {object_class} intent={intent} in session {session_id}",
     )
 
-    return await _build_multi_doc_status_response(jobId)
+    return await build_multi_doc_status_response(jobId)
 
 
 # Maybe in the future add to the cache?
@@ -413,8 +381,8 @@ async def override_search(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    result_key = _search_result_key(object_class, intent)
-    await repo.update_session(session_id, {result_key: search_code})
+    operation_key = build_search_operation_key(object_class, intent)
+    await repo.update_session(session_id, {f"{operation_key}Output": search_code})
 
     return {
         "message": f"Search code for {object_class} overridden successfully",
@@ -484,7 +452,7 @@ async def generate_create(
         initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
-        session_result_key=f"{object_class}Create",
+        session_result_key=f"{object_class}CreateOutput",
     )
 
     session_input = {"objectClass": object_class, "attributes": attrs}
@@ -527,7 +495,7 @@ async def get_create_status(
         not_found_detail=f"No create job found for {object_class} in session {session_id}",
     )
 
-    return await _build_multi_doc_status_response(jobId)
+    return await build_multi_doc_status_response(jobId)
 
 
 @router.put(
@@ -546,7 +514,7 @@ async def override_create(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}Create": create_code})
+    await repo.update_session(session_id, {f"{object_class}CreateOutput": create_code})
 
     return {
         "message": f"Create code for {object_class} overridden successfully",
@@ -616,7 +584,7 @@ async def generate_update(
         initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
-        session_result_key=f"{object_class}Update",
+        session_result_key=f"{object_class}UpdateOutput",
     )
 
     session_input = {"objectClass": object_class, "attributes": attrs}
@@ -659,7 +627,7 @@ async def get_update_status(
         not_found_detail=f"No update job found for {object_class} in session {session_id}",
     )
 
-    return await _build_multi_doc_status_response(jobId)
+    return await build_multi_doc_status_response(jobId)
 
 
 @router.put(
@@ -678,7 +646,7 @@ async def override_update(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}Update": update_code})
+    await repo.update_session(session_id, {f"{object_class}UpdateOutput": update_code})
 
     return {
         "message": f"Update code for {object_class} overridden successfully",
@@ -748,7 +716,7 @@ async def generate_delete(
         initial_stage="preparing",
         initial_message="Preparing code generation from relevant chunks",
         session_id=session_id,
-        session_result_key=f"{object_class}Delete",
+        session_result_key=f"{object_class}DeleteOutput",
     )
 
     session_input = {"objectClass": object_class, "attributes": attrs}
@@ -791,7 +759,7 @@ async def get_delete_status(
         not_found_detail=f"No delete job found for {object_class} in session {session_id}",
     )
 
-    return await _build_multi_doc_status_response(jobId)
+    return await build_multi_doc_status_response(jobId)
 
 
 @router.put(
@@ -810,7 +778,7 @@ async def override_delete(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}Delete": delete_code})
+    await repo.update_session(session_id, {f"{object_class}DeleteOutput": delete_code})
 
     return {
         "message": f"Delete code for {object_class} overridden successfully",
@@ -864,7 +832,7 @@ async def generate_relation_code(
         initial_stage="preparing",
         initial_message="Queued code generation from relevant chunks",
         session_id=session_id,
-        session_result_key=f"{relation_name}Code",
+        session_result_key=f"{relation_name}CodeOutput",
     )
 
     await repo.update_session(
@@ -904,7 +872,7 @@ async def get_relation_code_status(
         not_found_detail=f"No relation code job found for {relation_name} in session {session_id}",
     )
 
-    return await _build_multi_doc_status_response(jobId)
+    return await build_multi_doc_status_response(jobId)
 
 
 @router.put(
@@ -923,7 +891,7 @@ async def override_relation_code(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{relation_name}Code": relation_code})
+    await repo.update_session(session_id, {f"{relation_name}Output": relation_code})
 
     return {
         "message": f"Relation code for {relation_name} overridden successfully",

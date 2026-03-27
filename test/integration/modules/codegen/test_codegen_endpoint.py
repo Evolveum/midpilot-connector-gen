@@ -62,7 +62,7 @@ async def test_generate_native_schema_success():
             initial_stage="queue",
             initial_message="Queued code generation",
             session_id=session_id,
-            session_result_key="UserNativeSchema",
+            session_result_key="UserNativeSchemaOutput",
         )
         mock_repo.update_session.assert_awaited_once()
 
@@ -119,7 +119,7 @@ async def test_override_native_schema_success():
         assert response["objectClass"] == "User"
         mock_repo.update_session.assert_awaited_once_with(
             session_id,
-            {"UserNativeSchema": {"code": "custom groovy code"}},
+            {"UserNativeSchemaOutput": {"code": "custom groovy code"}},
         )
 
 
@@ -283,7 +283,7 @@ async def test_get_relation_code_status_found():
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.codegen.router._build_multi_doc_status_response",
+            "src.modules.codegen.router.build_multi_doc_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_builder,
