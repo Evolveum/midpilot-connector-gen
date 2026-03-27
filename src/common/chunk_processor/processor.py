@@ -7,12 +7,12 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from ...config import config
-from ..chunks import split_text_with_token_overlap
-from ..session.schema import DocumentationItem
-from .llms import get_llm_processed_chunk
-from .prompts import get_llm_chunk_process_prompt
-from .schema import SavedDocumentation
+from src.common.chunk_processor.llms import get_llm_processed_chunk
+from src.common.chunk_processor.prompts import get_llm_chunk_process_prompt
+from src.common.chunk_processor.schema import SavedDocumentation
+from src.common.chunks import split_text_with_token_overlap
+from src.common.session.schema import DocumentationItem
+from src.config import config
 
 logger = logging.getLogger(__name__)
 

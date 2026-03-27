@@ -10,11 +10,11 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
-from ...scrape.llms import get_irrelevant_llm_response
-from ..prompts.prompts import get_irrelevant_filter_prompts, get_rank_links_prompts
-from ..schema import RankedLinks
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.discovery.prompts.prompts import get_irrelevant_filter_prompts, get_rank_links_prompts
+from src.modules.discovery.schema import RankedLinks
+from src.modules.scrape.llms import get_irrelevant_llm_response
 
 logger = logging.getLogger(__name__)
 

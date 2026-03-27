@@ -10,7 +10,7 @@ from fastapi.routing import APIRoute
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 
-from ..config import config
+from src.config import config
 
 """Langfuse integration functions, used for development and testing purposes"""
 

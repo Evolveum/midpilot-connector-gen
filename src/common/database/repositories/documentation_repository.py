@@ -9,8 +9,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import DocumentationItem
-from .relevant_chunk_repository import RelevantChunkRepository
+from src.common.database.models import DocumentationItem
+from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 
 logger = logging.getLogger(__name__)
 

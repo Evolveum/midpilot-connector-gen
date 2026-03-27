@@ -1,11 +1,66 @@
+#  Copyright (C) 2010-2026 Evolveum and contributors
+#  #
+#  Licensed under the EUPL-1.2 or later.
+
 import copy
 import logging
-from typing import Any, Dict
+from collections.abc import Mapping
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def normalize_input(input_payload: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_object_class_name(object_class: str) -> str:
+    """Normalize object class name for case-insensitive matching."""
+    return object_class.strip().lower()
+
+
+def normalize_chunk_pair(chunk: Mapping[str, Any]) -> tuple[str, str] | None:
+    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
+    if not isinstance(chunk, Mapping):
+        return None
+
+    doc_id = chunk.get("docId") or chunk.get("doc_id")
+    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
+    if not doc_id or not chunk_id:
+        return None
+    return str(doc_id), str(chunk_id)
+
+
+def normalize_endpoint_key(path: Any, method: Any) -> tuple[str, str] | None:
+    """Build normalized endpoint key from path + method."""
+    path_str = str(path or "").strip()
+    method_str = str(method or "").strip().upper()
+    if not path_str or not method_str:
+        return None
+    return path_str, method_str
+
+
+def normalize_relevant_chunks_for_session(value: Any) -> Any:
+    """
+    Normalize relevant chunk references for session storage.
+
+    Converts dict entries to camelCase shape: {"docId": "...", "chunkId": "..."}.
+    """
+    if not isinstance(value, list):
+        return value
+
+    if value and all(isinstance(item, int) for item in value):
+        return value
+
+    normalized: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        pair = normalize_chunk_pair(item)
+        if pair is None:
+            continue
+        doc_id, chunk_id = pair
+        normalized.append({"docId": doc_id, "chunkId": chunk_id})
+    return normalized
+
+
+def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize job input for better querying
     """
@@ -43,7 +98,7 @@ def normalize_input(input_payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized_input["documentationItems"] = sorted(
             normalized_input["documentationItems"],
             key=lambda x: (str(x.get("url") or ""), str(x.get("summary") or ""))
-            if isinstance(x, dict)
+            if isinstance(x, Mapping)
             else (str(x), ""),
         )
     if "relevantObjectClasses" in normalized_input and "objectClasses" in normalized_input["relevantObjectClasses"]:

@@ -8,17 +8,17 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from ...common.enums import JobStage
-from ...common.jobs import update_job_progress
-from .prompts.prompts import (
+from src.common.enums import JobStage
+from src.common.jobs import update_job_progress
+from src.modules.discovery.prompts.prompts import (
     get_discovery_fetch_sys_prompt,
     get_discovery_fetch_user_prompt,
 )
-from .schema import (
+from src.modules.discovery.schema import (
     CandidateLinksInput,
     CandidateLinksOutput,
 )
-from .utils.discovery_helpers import (
+from src.modules.discovery.utils.discovery_helpers import (
     extract_links,
     fetch_candidate_links_simplified,
     filter_enriched_by_links,
@@ -28,7 +28,7 @@ from .utils.discovery_helpers import (
     resolve_ranking_settings,
     select_links_by_query,
 )
-from .utils.filter_helpers import filter_candidate_links, rank_candidate_links
+from src.modules.discovery.utils.filter_helpers import filter_candidate_links, rank_candidate_links
 
 logger = logging.getLogger(__name__)
 

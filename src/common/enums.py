@@ -4,8 +4,6 @@
 
 from enum import Enum
 
-# Centralized enums for the micro-service
-
 
 class JobStatus(str, Enum):
     queued = "queued"

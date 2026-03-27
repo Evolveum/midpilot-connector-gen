@@ -7,7 +7,7 @@ import logging
 from typing import Any, Awaitable, Callable, Dict, List, Tuple, TypeVar
 from uuid import UUID
 
-from ....common.jobs import increment_processed_documents, update_job_progress
+from src.common.jobs import increment_processed_documents, update_job_progress
 
 logger = logging.getLogger(__name__)
 

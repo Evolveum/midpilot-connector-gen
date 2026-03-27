@@ -6,36 +6,39 @@ import logging
 from typing import Any, Callable, Dict, List, cast
 from uuid import UUID
 
-from ...common.jobs import update_job_progress
-from ...common.utils.session_metadata import get_session_api_types, is_scim_api
+from src.common.jobs import update_job_progress
+from src.common.utils.session_metadata import get_session_api_types, is_scim_api
 
 # Shared extractors
-from .extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
-from .extractors.info import extract_info_metadata as _extract_info_metadata
+from src.modules.digester.extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
+from src.modules.digester.extractors.info import extract_info_metadata as _extract_info_metadata
 
 # REST extractors
-from .extractors.rest.attributes import extract_attributes as _extract_rest_attributes
-from .extractors.rest.endpoints import extract_endpoints as _extract_rest_endpoints
-from .extractors.rest.object_class import deduplicate_and_sort_object_classes, extract_object_classes_raw
-from .extractors.rest.relations import extract_relations as _extract_relations
+from src.modules.digester.extractors.rest.attributes import extract_attributes as _extract_rest_attributes
+from src.modules.digester.extractors.rest.endpoints import extract_endpoints as _extract_rest_endpoints
+from src.modules.digester.extractors.rest.object_class import (
+    deduplicate_and_sort_object_classes,
+    extract_object_classes_raw,
+)
+from src.modules.digester.extractors.rest.relations import extract_relations as _extract_relations
 
 # SCIM extractors
-from .extractors.scim.attributes import extract_scim_attributes
-from .extractors.scim.endpoints import pregenerate_scim_endpoints
-from .extractors.scim.object_class import extract_scim_object_classes
-from .schema import InfoMetadata, InfoResponse
-from .utils.doc_chunk import select_doc_chunks
-from .utils.merges import (
+from src.modules.digester.extractors.scim.attributes import extract_scim_attributes
+from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
+from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
+from src.modules.digester.schema import InfoMetadata, InfoResponse
+from src.modules.digester.utils.doc_chunk import select_doc_chunks
+from src.modules.digester.utils.merges import (
     merge_info_metadata,
     merge_relations_results,
 )
-from .utils.metadata_helper import build_doc_metadata_map
-from .utils.object_classes import (
+from src.modules.digester.utils.metadata_helper import build_doc_metadata_map
+from src.modules.digester.utils.object_classes import (
     extract_attributes_from_result,
     extract_endpoints_from_result,
     update_object_class_field_in_session,
 )
-from .utils.parallel_docs import process_documents_in_parallel
+from src.modules.digester.utils.parallel_docs import process_documents_in_parallel
 
 logger = logging.getLogger(__name__)
 

@@ -10,9 +10,9 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, utc_now
-from .documentation_item import DocumentationItem
-from .session import Session
+from src.common.database.models.base import Base, utc_now
+from src.common.database.models.documentation_item import DocumentationItem
+from src.common.database.models.session import Session
 
 
 class RelevantChunk(Base):

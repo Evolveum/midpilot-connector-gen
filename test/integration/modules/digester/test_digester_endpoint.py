@@ -123,7 +123,7 @@ async def test_get_object_classes_status_found():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.utils.status.get_job_status", new_callable=AsyncMock, return_value=mock_status),
+        patch("src.common.utils.status_response.get_job_status", new_callable=AsyncMock, return_value=mock_status),
     ):
         session_id = uuid4()
         response = await get_object_classes_status(session_id, db=MagicMock())

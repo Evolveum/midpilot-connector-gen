@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Session, SessionData
+from src.common.database.models import Session, SessionData
 
 logger = logging.getLogger(__name__)
 

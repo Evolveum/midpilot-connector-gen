@@ -9,7 +9,7 @@ from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel
 from langchain_openai import ChatOpenAI
 
-from ..config import config
+from src.config import config
 
 
 def get_default_llm(temperature: float = 1, reasoning_effort: str = "high") -> ChatOpenAI:

@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .common.jobs import recover_stale_running_jobs
-from .config import config
-from .router import root_router
+from src.common.jobs import recover_stale_running_jobs
+from src.config import config
+from src.router import root_router
 
 
 @asynccontextmanager

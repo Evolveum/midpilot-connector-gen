@@ -11,14 +11,14 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from ....common.enums import JobStage
-from ....common.jobs import append_job_error, update_job_progress
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
-from ..prompts.auth_prompts import get_auth_system_prompt, get_auth_user_prompt
-from ..prompts.rest.sorting_output_prompts import sort_auth_system_prompt, sort_auth_user_prompt
-from ..schema import AuthInfo, AuthResponse
-from ..utils.parallel import run_extraction_parallel
+from src.common.enums import JobStage
+from src.common.jobs import append_job_error, update_job_progress
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.digester.prompts.auth_prompts import get_auth_system_prompt, get_auth_user_prompt
+from src.modules.digester.prompts.rest.sorting_output_prompts import sort_auth_system_prompt, sort_auth_user_prompt
+from src.modules.digester.schema import AuthInfo, AuthResponse
+from src.modules.digester.utils.parallel import run_extraction_parallel
 
 logger = logging.getLogger(__name__)
 

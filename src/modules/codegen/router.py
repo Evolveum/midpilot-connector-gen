@@ -13,20 +13,20 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...common.database.config import get_db
-from ...common.database.repositories.session_repository import SessionRepository
-from ...common.jobs import schedule_coroutine_job
-from ...common.schema import (
+from src.common.database.config import get_db
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.jobs import schedule_coroutine_job
+from src.common.schema import (
     JobCreateResponse,
     JobStatusMultiDocResponse,
     JobStatusStageResponse,
 )
-from ...common.session.session import ensure_session_exists, resolve_session_job_id
-from ...common.status_response import build_multi_doc_status_response, build_stage_status_response
-from ...common.utils.session_metadata import get_session_api_types, is_scim_api
-from ..digester.schema import RelationsResponse
-from . import service
-from .schema import SearchIntent, build_search_operation_key
+from src.common.session.session import ensure_session_exists, resolve_session_job_id
+from src.common.utils.session_metadata import get_session_api_types, is_scim_api
+from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
+from src.modules.codegen import service
+from src.modules.codegen.schema import SearchIntent, build_search_operation_key
+from src.modules.digester.schema import RelationsResponse
 
 router = APIRouter()
 

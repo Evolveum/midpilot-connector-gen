@@ -11,15 +11,15 @@ from uuid import UUID
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...config import config
-from ..chunk_processor.llms import get_llm_processed_chunk
-from ..chunk_processor.prompts import get_llm_chunk_process_prompt
-from ..database.config import async_session_maker
-from ..database.repositories.documentation_repository import DocumentationRepository
-from ..database.repositories.job_repository import JobRepository
-from ..database.repositories.session_repository import SessionRepository
-from ..enums import JobStage
-from .schema import DocumentationItem
+from src.common.chunk_processor.llms import get_llm_processed_chunk
+from src.common.chunk_processor.prompts import get_llm_chunk_process_prompt
+from src.common.database.config import async_session_maker
+from src.common.database.repositories.documentation_repository import DocumentationRepository
+from src.common.database.repositories.job_repository import JobRepository
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import JobStage
+from src.common.session.schema import DocumentationItem
+from src.config import config
 
 logger = logging.getLogger(__name__)
 

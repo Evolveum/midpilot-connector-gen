@@ -23,12 +23,12 @@ from crawl4ai.utils import (  # type: ignore
 from lxml import html as lhtml  # type: ignore
 from pydantic import HttpUrl
 
-from ...common.chunk_processor.schema import SavedDocumentation
-from ...common.schema import validate_pydantic_object
-from ...config import config
-from .llms import get_irrelevant_llm_response, get_relevant_links_from_text
-from .prompts import get_irrelevant_filter_prompts, get_relevant_filter_prompts
-from .schema import DocumentationReferences, IrrelevantLinks, ReferenceItem, RelevantLinks
+from src.common.chunk_processor.schema import SavedDocumentation
+from src.common.schema import validate_pydantic_object
+from src.config import config
+from src.modules.scrape.llms import get_irrelevant_llm_response, get_relevant_links_from_text
+from src.modules.scrape.prompts import get_irrelevant_filter_prompts, get_relevant_filter_prompts
+from src.modules.scrape.schema import DocumentationReferences, IrrelevantLinks, ReferenceItem, RelevantLinks
 
 logger = logging.getLogger(__name__)
 

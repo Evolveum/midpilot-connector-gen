@@ -7,8 +7,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ....common.chunk_filter.filter import filter_documentation_items
-from .criteria import AUTH_CRITERIA, DEFAULT_CRITERIA
+from src.common.chunk_filter.filter import filter_documentation_items
+from src.modules.digester.utils.criteria import AUTH_CRITERIA, DEFAULT_CRITERIA
 
 
 async def object_classes_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:

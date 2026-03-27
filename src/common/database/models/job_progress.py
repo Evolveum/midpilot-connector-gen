@@ -11,10 +11,10 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, utc_now
+from src.common.database.models.base import Base, utc_now
 
 if TYPE_CHECKING:
-    from .job import Job
+    from src.common.database.models.job import Job
 
 
 class JobProgress(Base):

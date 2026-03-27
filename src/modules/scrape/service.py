@@ -10,18 +10,18 @@ from uuid import UUID
 
 from crawl4ai.utils import get_base_domain  # type: ignore
 
-from ...common.chunk_processor.processor import process_all_documentations
-from ...common.chunk_processor.schema import SavedDocumentation
-from ...common.database.config import async_session_maker
-from ...common.database.repositories.documentation_repository import DocumentationRepository
-from ...common.database.repositories.job_repository import JobRepository
-from ...common.database.repositories.session_repository import SessionRepository
-from ...common.enums import JobStage
-from ...common.jobs import update_job_progress
-from ...common.session.schema import DocumentationItem
-from ...config import config
-from .fucntions import scraper_loop
-from .schema import ScrapeRequest, ScrapeResult
+from src.common.chunk_processor.processor import process_all_documentations
+from src.common.chunk_processor.schema import SavedDocumentation
+from src.common.database.config import async_session_maker
+from src.common.database.repositories.documentation_repository import DocumentationRepository
+from src.common.database.repositories.job_repository import JobRepository
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import JobStage
+from src.common.jobs import update_job_progress
+from src.common.session.schema import DocumentationItem
+from src.config import config
+from src.modules.scrape.fucntions import scraper_loop
+from src.modules.scrape.schema import ScrapeRequest, ScrapeResult
 
 logger = logging.getLogger(__name__)
 
