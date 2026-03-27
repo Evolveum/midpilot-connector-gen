@@ -22,6 +22,7 @@ from src.common.database.repositories.session_repository import SessionRepositor
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.common.utils.normalize import normalize_chunk_pair, normalize_endpoint_key
 from src.modules.digester.prompts.scim.endpoints_prompts import (
     scim_endpoints_system_prompt,
     scim_endpoints_user_prompt,
@@ -38,28 +39,6 @@ from src.modules.digester.utils.scim_resource import extract_scim_resource_path,
 logger = logging.getLogger(__name__)
 
 
-def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
-    if not isinstance(chunk, dict):
-        return None
-
-    doc_id = chunk.get("docId") or chunk.get("doc_id")
-    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
-    if not doc_id or not chunk_id:
-        return None
-
-    return str(doc_id), str(chunk_id)
-
-
-def _endpoint_key(path: Any, method: Any) -> Optional[Tuple[str, str]]:
-    """Build normalized endpoint key from path + method."""
-    path_str = str(path or "").strip()
-    method_str = str(method or "").strip().upper()
-    if not path_str or not method_str:
-        return None
-    return path_str, method_str
-
-
 def _attach_relevant_documentations_per_endpoint(
     endpoints: List[Dict[str, Any]],
     endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]],
@@ -69,7 +48,7 @@ def _attach_relevant_documentations_per_endpoint(
 
     for endpoint in endpoints:
         endpoint_copy = dict(endpoint)
-        key = _endpoint_key(endpoint_copy.get("path"), endpoint_copy.get("method"))
+        key = normalize_endpoint_key(endpoint_copy.get("path"), endpoint_copy.get("method"))
         pairs = sorted(endpoint_chunk_pairs.get(key, set()), key=lambda pair: (pair[0], pair[1])) if key else []
         endpoint_copy["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in pairs]
         enriched.append(endpoint_copy)
@@ -126,7 +105,7 @@ async def pregenerate_scim_endpoints(
         object_class,
     )
 
-    normalized_pairs = [_normalize_chunk_pair(chunk_ref) for chunk_ref in relevant_chunks]
+    normalized_pairs = [normalize_chunk_pair(chunk_ref) for chunk_ref in relevant_chunks]
     valid_pairs = sorted({pair for pair in normalized_pairs if pair is not None}, key=lambda pair: (pair[0], pair[1]))
     endpoint_relevant = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in valid_pairs]
     endpoints_with_references = [dict(endpoint, relevantDocumentations=endpoint_relevant) for endpoint in endpoints]
@@ -281,7 +260,7 @@ async def extract_scim_endpoints(
                 if doc_id:
                     chunk_ref = {"doc_id": doc_id, "chunk_id": chunk_id_str}
                     relevant_chunks.append(chunk_ref)
-                    chunk_pair = _normalize_chunk_pair(chunk_ref)
+                    chunk_pair = normalize_chunk_pair(chunk_ref)
                 else:
                     logger.warning(
                         "[SCIM:Endpoints] Missing docId for chunk %s, skipping relevant chunk mapping",
@@ -289,7 +268,7 @@ async def extract_scim_endpoints(
                     )
             if chunk_pair:
                 for endpoint in custom_eps:
-                    key = _endpoint_key(endpoint.path, endpoint.method)
+                    key = normalize_endpoint_key(endpoint.path, endpoint.method)
                     if not key:
                         continue
                     seen_pairs = endpoint_chunk_pairs.setdefault(key, set())

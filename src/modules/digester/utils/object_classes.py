@@ -8,13 +8,9 @@ from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
+from src.common.utils.normalize import normalize_object_class_name
 
 logger = logging.getLogger(__name__)
-
-
-def normalize_object_class_name(object_class: str) -> str:
-    """Normalize object class name for case-insensitive matching."""
-    return object_class.strip().lower()
 
 
 def find_object_class(object_classes: List[Any], object_class: str) -> Optional[Dict[str, Any]]:

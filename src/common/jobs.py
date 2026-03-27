@@ -16,36 +16,12 @@ from src.common.database.repositories.relevant_chunk_repository import RelevantC
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage
 from src.common.session.schema import DocumentationItem
-from src.common.utils.normalize_input import normalize_input
+from src.common.utils.normalize import normalize_input, normalize_relevant_chunks_for_session
 from src.config import config
 
 logger = logging.getLogger(__name__)
 
 _job_futures: Dict[UUID, asyncio.Future] = {}
-
-
-def _normalize_relevant_chunks_for_session(value: Any) -> Any:
-    """
-    Normalize relevant chunk references for session storage.
-
-    Converts dict entries to camelCase shape: {"docId": "...", "chunkId": "..."}.
-    """
-    if not isinstance(value, list):
-        return value
-
-    if value and all(isinstance(item, int) for item in value):
-        return value
-
-    normalized: List[Dict[str, str]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        doc_id = item.get("docId") or item.get("doc_id")
-        chunk_id = item.get("chunkId") or item.get("chunk_id")
-        if not doc_id or not chunk_id:
-            continue
-        normalized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
-    return normalized
 
 
 async def update_job_progress(
@@ -562,7 +538,7 @@ async def schedule_coroutine_job(
                             relevant_chunks = result_dict.get("relevantDocumentations") or result_dict.get(
                                 "relevant_chunk_indices", []
                             )
-                            normalized_relevant_chunks = _normalize_relevant_chunks_for_session(relevant_chunks)
+                            normalized_relevant_chunks = normalize_relevant_chunks_for_session(relevant_chunks)
 
                             session_updates = {session_result_key: actual_result}
 
@@ -574,7 +550,7 @@ async def schedule_coroutine_job(
                                 )
                                 if isinstance(existing_relevant, dict):
                                     existing_relevant = {
-                                        k: _normalize_relevant_chunks_for_session(v)
+                                        k: normalize_relevant_chunks_for_session(v)
                                         for k, v in existing_relevant.items()
                                     }
                                 else:

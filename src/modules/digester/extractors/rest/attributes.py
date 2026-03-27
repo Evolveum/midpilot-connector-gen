@@ -18,6 +18,7 @@ from src.common.jobs import (
 )
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.common.utils.normalize import normalize_chunk_pair
 from src.modules.digester.prompts.rest.attributes_prompts import (
     get_fill_missing_details_system_prompt,
     get_fill_missing_details_user_prompt,
@@ -78,19 +79,6 @@ def _build_fill_missing_chain() -> Any:
         ]
     ).partial(format_instructions=parser.get_format_instructions())
     return make_basic_chain(prompt, llm, parser)
-
-
-def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
-    if not isinstance(chunk, dict):
-        return None
-
-    doc_id = chunk.get("docId") or chunk.get("doc_id")
-    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
-    if not doc_id or not chunk_id:
-        return None
-
-    return str(doc_id), str(chunk_id)
 
 
 def _attach_relevant_documentations_per_attribute(
@@ -422,7 +410,7 @@ async def extract_attributes(
         all_per_chunk.extend(chunk_per_group)
         relevant_chunks.extend(chunk_relevant)
 
-        normalized_pairs = [_normalize_chunk_pair(chunk_ref) for chunk_ref in chunk_relevant]
+        normalized_pairs = [normalize_chunk_pair(chunk_ref) for chunk_ref in chunk_relevant]
         valid_pairs = [pair for pair in normalized_pairs if pair is not None]
         if not valid_pairs:
             continue

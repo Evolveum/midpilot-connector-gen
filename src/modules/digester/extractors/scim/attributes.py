@@ -20,6 +20,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.common.utils.normalize import normalize_chunk_pair
 from src.modules.digester.prompts.scim.attributes_prompts import (
     get_scim_attributes_system_prompt,
     get_scim_attributes_user_prompt,
@@ -29,19 +30,6 @@ from src.modules.digester.scim.loader import get_base_scim_attributes, is_scim_s
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
-    if not isinstance(chunk, dict):
-        return None
-
-    doc_id = chunk.get("docId") or chunk.get("doc_id")
-    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
-    if not doc_id or not chunk_id:
-        return None
-
-    return str(doc_id), str(chunk_id)
 
 
 def _attach_relevant_documentations_per_attribute(
@@ -256,7 +244,7 @@ async def extract_scim_attributes(
                 if doc_id:
                     chunk_ref = {"doc_id": doc_id, "chunk_id": chunk_id_str}
                     relevant_chunks.append(chunk_ref)
-                    chunk_pair = _normalize_chunk_pair(chunk_ref)
+                    chunk_pair = normalize_chunk_pair(chunk_ref)
                 else:
                     logger.warning(
                         "[SCIM:Attributes] Missing docId for chunk %s, skipping relevant chunk mapping",

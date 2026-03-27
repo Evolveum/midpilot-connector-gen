@@ -14,7 +14,7 @@ db_config = config.database
 
 # Validate database URL
 if not db_config.url:
-    raise ValueError("DATABASE_URL must be configured in environment or .env file")
+    raise ValueError("DATABASE__URL must be configured in environment or .env file")
 
 # Create async engine using settings from main config
 engine = create_async_engine(

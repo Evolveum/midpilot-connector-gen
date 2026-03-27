@@ -15,7 +15,9 @@ from src.common.enums import JobStatus
 from src.common.jobs import schedule_coroutine_job
 from src.common.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
+from src.common.utils.normalize import normalize_object_class_name
 from src.common.utils.session_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
+from src.common.utils.status_response import build_typed_job_status_response
 from src.modules.digester import service
 from src.modules.digester.schema import (
     AttributeResponse,
@@ -30,10 +32,8 @@ from src.modules.digester.utils.inputs import auth_input, metadata_input, object
 from src.modules.digester.utils.object_classes import (
     find_object_class,
     get_relevant_chunks,
-    normalize_object_class_name,
     upsert_object_class,
 )
-from src.modules.digester.utils.status import build_typed_job_status_response
 
 router = APIRouter()
 

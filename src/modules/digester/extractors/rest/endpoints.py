@@ -5,7 +5,7 @@
 import asyncio
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple, cast
+from typing import Any, Dict, List, Set, Tuple, cast
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -20,6 +20,7 @@ from src.common.jobs import (
 )
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.common.utils.normalize import normalize_chunk_pair, normalize_endpoint_key
 from src.modules.digester.prompts.rest.endpoints_prompts import (
     check_endpoint_params_system_prompt,
     check_endpoint_params_user_prompt,
@@ -34,28 +35,6 @@ from src.modules.digester.utils.parallel_docs import process_grouped_chunks_in_p
 logger = logging.getLogger(__name__)
 
 
-def _normalize_chunk_pair(chunk: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
-    if not isinstance(chunk, dict):
-        return None
-
-    doc_id = chunk.get("docId") or chunk.get("doc_id")
-    chunk_id = chunk.get("chunkId") or chunk.get("chunk_id")
-    if not doc_id or not chunk_id:
-        return None
-
-    return str(doc_id), str(chunk_id)
-
-
-def _endpoint_key(path: Any, method: Any) -> Optional[Tuple[str, str]]:
-    """Build normalized endpoint key from path + method."""
-    path_str = str(path or "").strip()
-    method_str = str(method or "").strip().upper()
-    if not path_str or not method_str:
-        return None
-    return path_str, method_str
-
-
 def _attach_relevant_documentations_per_endpoint(
     endpoints: List[Dict[str, Any]],
     endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]],
@@ -65,7 +44,7 @@ def _attach_relevant_documentations_per_endpoint(
 
     for endpoint in endpoints:
         endpoint_copy = dict(endpoint)
-        key = _endpoint_key(endpoint_copy.get("path"), endpoint_copy.get("method"))
+        key = normalize_endpoint_key(endpoint_copy.get("path"), endpoint_copy.get("method"))
         pairs = sorted(endpoint_chunk_pairs.get(key, set()), key=lambda pair: (pair[0], pair[1])) if key else []
         endpoint_copy["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in pairs]
         enriched.append(endpoint_copy)
@@ -289,13 +268,13 @@ async def extract_endpoints(
         extracted_endpoints.extend(endpoints_for_id)
         relevant_chunk_info.extend(relevant_chunks_for_id)
 
-        normalized_pairs = [_normalize_chunk_pair(chunk_ref) for chunk_ref in relevant_chunks_for_id]
+        normalized_pairs = [normalize_chunk_pair(chunk_ref) for chunk_ref in relevant_chunks_for_id]
         valid_pairs = [pair for pair in normalized_pairs if pair is not None]
         if not valid_pairs:
             continue
 
         for endpoint in endpoints_for_id:
-            key = _endpoint_key(endpoint.path, endpoint.method)
+            key = normalize_endpoint_key(endpoint.path, endpoint.method)
             if not key:
                 continue
             seen_pairs = endpoint_chunk_pairs.setdefault(key, set())
