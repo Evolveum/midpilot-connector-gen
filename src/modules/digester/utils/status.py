@@ -5,10 +5,10 @@
 from typing import Any, Type
 from uuid import UUID
 
-from ....common.enums import JobStatus
-from ....common.jobs import get_job_status
-from ....common.schema import JobStatusMultiDocResponse
-from ..schema import ObjectClassesResponse
+from src.common.enums import JobStatus
+from src.common.jobs import get_job_status
+from src.common.schema import JobStatusMultiDocResponse
+from src.modules.digester.schema import ObjectClassesResponse
 
 
 async def build_typed_job_status_response(job_id: UUID, model_cls: Type[Any]) -> JobStatusMultiDocResponse:

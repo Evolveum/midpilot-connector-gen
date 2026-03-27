@@ -9,10 +9,10 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from ...common.langfuse import langfuse_handler
-from ...common.llm import get_default_llm, make_basic_chain
-from .prompts import get_summary_prompts
-from .schema import LlmChunkOutput
+from src.common.chunk_processor.prompts import get_summary_prompts
+from src.common.chunk_processor.schema import LlmChunkOutput
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
 
 logger = logging.getLogger(__name__)
 

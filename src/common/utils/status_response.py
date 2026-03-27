@@ -1,13 +1,15 @@
-# Copyright (C) 2010-2026 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
+#  #
+#  Licensed under the EUPL-1.2 or later.
 #
 # Licensed under the EUPL-1.2 or later.
 
 from typing import Optional
 from uuid import UUID
 
-from .enums import JobStatus
-from .jobs import get_job_status
-from .schema import (
+from src.common.enums import JobStatus
+from src.common.jobs import get_job_status
+from src.common.schema import (
     BaseProgress,
     JobStatusMultiDocResponse,
     JobStatusStageResponse,

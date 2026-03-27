@@ -7,7 +7,7 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
-from ...config import config
+from src.config import config
 
 # Get database settings from main config
 db_config = config.database

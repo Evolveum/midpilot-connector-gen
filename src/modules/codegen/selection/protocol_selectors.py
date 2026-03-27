@@ -8,16 +8,19 @@ Helpers that select prompts and docs based on API protocol.
 
 from typing import Mapping
 
-from ..prompts.native_schema_prompts import get_native_schema_system_prompt, get_native_schema_user_prompt
-from ..prompts.rest.create_prompts import get_create_system_prompt, get_create_user_prompt
-from ..prompts.rest.delete_prompts import get_delete_system_prompt, get_delete_user_prompt
-from ..prompts.rest.search_prompts import get_search_system_prompt, get_search_user_prompt
-from ..prompts.rest.update_prompts import get_update_system_prompt, get_update_user_prompt
-from ..prompts.scim.create_prompts import get_scim_create_system_prompt, get_scim_create_user_prompt
-from ..prompts.scim.delete_prompts import get_scim_delete_system_prompt, get_scim_delete_user_prompt
-from ..prompts.scim.search_prompts import get_scim_search_system_prompt, get_scim_search_user_prompt
-from ..prompts.scim.update_prompts import get_scim_update_system_prompt, get_scim_update_user_prompt
-from ..schema import ApiProtocol, OperationAssets
+from src.modules.codegen.prompts.native_schema_prompts import (
+    get_native_schema_system_prompt,
+    get_native_schema_user_prompt,
+)
+from src.modules.codegen.prompts.rest.create_prompts import get_create_system_prompt, get_create_user_prompt
+from src.modules.codegen.prompts.rest.delete_prompts import get_delete_system_prompt, get_delete_user_prompt
+from src.modules.codegen.prompts.rest.search_prompts import get_search_system_prompt, get_search_user_prompt
+from src.modules.codegen.prompts.rest.update_prompts import get_update_system_prompt, get_update_user_prompt
+from src.modules.codegen.prompts.scim.create_prompts import get_scim_create_system_prompt, get_scim_create_user_prompt
+from src.modules.codegen.prompts.scim.delete_prompts import get_scim_delete_system_prompt, get_scim_delete_user_prompt
+from src.modules.codegen.prompts.scim.search_prompts import get_scim_search_system_prompt, get_scim_search_user_prompt
+from src.modules.codegen.prompts.scim.update_prompts import get_scim_update_system_prompt, get_scim_update_user_prompt
+from src.modules.codegen.schema import ApiProtocol, OperationAssets
 
 PROMPT_MAP: Mapping[str, Mapping[ApiProtocol, OperationAssets]] = {
     "search": {

@@ -11,10 +11,10 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, utc_now
+from src.common.database.models.base import Base, utc_now
 
 if TYPE_CHECKING:
-    from .session import Session
+    from src.common.database.models.session import Session
 
 
 class DocumentationItem(Base):

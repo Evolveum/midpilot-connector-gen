@@ -11,11 +11,11 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from ....common.enums import JobStage
-from ....common.jobs import append_job_error, update_job_progress
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
-from ..utils.postprocess import _coerce_llm_text, strip_markdown_fences
+from src.common.enums import JobStage
+from src.common.jobs import append_job_error, update_job_progress
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 

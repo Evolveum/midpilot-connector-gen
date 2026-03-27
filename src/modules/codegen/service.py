@@ -6,24 +6,27 @@ import logging
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union, cast
 from uuid import UUID
 
-from ...common.database.config import async_session_maker
-from ...common.database.repositories.session_repository import SessionRepository
-from ...common.utils.session_metadata import get_session_api_types, is_scim_api
-from ..digester.schema import AttributeResponse, EndpointResponse, RelationsResponse
-from .core.generate_groovy import generate_groovy
-from .core.operations import (
+from src.common.database.config import async_session_maker
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.utils.session_metadata import get_session_api_types, is_scim_api
+from src.modules.codegen.core.generate_groovy import generate_groovy
+from src.modules.codegen.core.operations import (
     CreateGenerator,
     DeleteGenerator,
     RelationGenerator,
     SearchGenerator,
     UpdateGenerator,
 )
-from .prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
-from .prompts.native_schema_prompts import get_native_schema_system_prompt, get_native_schema_user_prompt
-from .schema import SearchIntent
-from .selection.docs_loader import read_adoc_text
-from .selection.protocol_selectors import ApiProtocol, get_operation_assets
-from .utils.map_to_record import attributes_to_records_for_codegen
+from src.modules.codegen.prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
+from src.modules.codegen.prompts.native_schema_prompts import (
+    get_native_schema_system_prompt,
+    get_native_schema_user_prompt,
+)
+from src.modules.codegen.schema import SearchIntent
+from src.modules.codegen.selection.docs_loader import read_adoc_text
+from src.modules.codegen.selection.protocol_selectors import ApiProtocol, get_operation_assets
+from src.modules.codegen.utils.map_to_record import attributes_to_records_for_codegen
+from src.modules.digester.schema import AttributeResponse, EndpointResponse, RelationsResponse
 
 logger = logging.getLogger(__name__)
 

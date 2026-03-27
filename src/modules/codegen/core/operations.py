@@ -6,10 +6,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from ...digester.schema import RelationsResponse
-from ..prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
-from ..schema import SearchIntent
-from .base import (
+from src.modules.codegen.core.base import (
     AttributesPayload,
     BaseGroovyGenerator,
     EndpointsPayload,
@@ -17,6 +14,9 @@ from .base import (
     attributes_to_records,
     endpoints_to_records,
 )
+from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
+from src.modules.codegen.schema import SearchIntent
+from src.modules.digester.schema import RelationsResponse
 
 logger = logging.getLogger(__name__)
 

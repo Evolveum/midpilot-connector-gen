@@ -17,16 +17,16 @@ from uuid import UUID
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from .....common.jobs import increment_processed_documents, update_job_progress
-from .....common.langfuse import langfuse_handler
-from .....common.llm import get_default_llm, make_basic_chain
-from ...prompts.scim.attributes_prompts import (
+from src.common.jobs import increment_processed_documents, update_job_progress
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.digester.prompts.scim.attributes_prompts import (
     get_scim_attributes_system_prompt,
     get_scim_attributes_user_prompt,
 )
-from ...schema import AttributeResponse
-from ...scim.loader import get_base_scim_attributes, is_scim_standard_class
-from ...utils.metadata_helper import extract_summary_and_tags
+from src.modules.digester.schema import AttributeResponse
+from src.modules.digester.scim.loader import get_base_scim_attributes, is_scim_standard_class
+from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 

@@ -14,8 +14,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 
-from ....common.langfuse import langfuse_handler
-from ..schema import PyScrapeFetchReferences, PySearchPrompts
+from src.common.langfuse import langfuse_handler
+from src.modules.discovery.schema import PyScrapeFetchReferences, PySearchPrompts
 
 logger = logging.getLogger(__name__)
 

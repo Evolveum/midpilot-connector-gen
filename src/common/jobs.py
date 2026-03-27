@@ -9,15 +9,15 @@ from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 from uuid import UUID
 
-from ..config import config
-from .database.config import async_session_maker
-from .database.repositories.documentation_repository import DocumentationRepository
-from .database.repositories.job_repository import JobRepository
-from .database.repositories.relevant_chunk_repository import RelevantChunkRepository
-from .database.repositories.session_repository import SessionRepository
-from .enums import JobStage
-from .normalize_input import normalize_input
-from .session.schema import DocumentationItem
+from src.common.database.config import async_session_maker
+from src.common.database.repositories.documentation_repository import DocumentationRepository
+from src.common.database.repositories.job_repository import JobRepository
+from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import JobStage
+from src.common.session.schema import DocumentationItem
+from src.common.utils.normalize_input import normalize_input
+from src.config import config
 
 logger = logging.getLogger(__name__)
 

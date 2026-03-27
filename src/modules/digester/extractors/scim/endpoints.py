@@ -17,19 +17,23 @@ from uuid import UUID
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from .....common.database.config import async_session_maker
-from .....common.database.repositories.session_repository import SessionRepository
-from .....common.jobs import increment_processed_documents, update_job_progress
-from .....common.langfuse import langfuse_handler
-from .....common.llm import get_default_llm, make_basic_chain
-from ...prompts.scim.endpoints_prompts import (
+from src.common.database.config import async_session_maker
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.jobs import increment_processed_documents, update_job_progress
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.digester.prompts.scim.endpoints_prompts import (
     scim_endpoints_system_prompt,
     scim_endpoints_user_prompt,
 )
-from ...schema import EndpointInfo, EndpointResponse
-from ...scim.loader import generate_scim_crud_endpoints, get_base_scim_endpoints, is_scim_standard_class
-from ...utils.metadata_helper import extract_summary_and_tags
-from ...utils.scim_resource import extract_scim_resource_path, infer_scim_resource_path
+from src.modules.digester.schema import EndpointInfo, EndpointResponse
+from src.modules.digester.scim.loader import (
+    generate_scim_crud_endpoints,
+    get_base_scim_endpoints,
+    is_scim_standard_class,
+)
+from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
+from src.modules.digester.utils.scim_resource import extract_scim_resource_path, infer_scim_resource_path
 
 logger = logging.getLogger(__name__)
 

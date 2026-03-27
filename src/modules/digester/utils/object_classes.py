@@ -6,8 +6,8 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from ....common.database.config import async_session_maker
-from ....common.database.repositories.session_repository import SessionRepository
+from src.common.database.config import async_session_maker
+from src.common.database.repositories.session_repository import SessionRepository
 
 logger = logging.getLogger(__name__)
 

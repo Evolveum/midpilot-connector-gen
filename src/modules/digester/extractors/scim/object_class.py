@@ -13,16 +13,16 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from .....common.jobs import update_job_progress
-from ...prompts.scim.object_class_prompts import (
+from src.common.jobs import update_job_progress
+from src.modules.digester.prompts.scim.object_class_prompts import (
     scim_object_class_system_prompt,
     scim_object_class_user_prompt,
 )
-from ...schema import ObjectClass, ObjectClassesResponse
-from ...scim.loader import get_base_scim_object_classes, load_scim_base_schemas
-from ...utils.metadata_helper import build_doc_metadata_map
-from ...utils.parallel import run_extraction_parallel
-from ...utils.parallel_docs import process_documents_in_parallel
+from src.modules.digester.schema import ObjectClass, ObjectClassesResponse
+from src.modules.digester.scim.loader import get_base_scim_object_classes, load_scim_base_schemas
+from src.modules.digester.utils.metadata_helper import build_doc_metadata_map
+from src.modules.digester.utils.parallel import run_extraction_parallel
+from src.modules.digester.utils.parallel_docs import process_documents_in_parallel
 
 logger = logging.getLogger(__name__)
 

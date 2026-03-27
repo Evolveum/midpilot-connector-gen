@@ -5,7 +5,7 @@
 import logging
 from typing import Any, Dict, List, Set, Tuple
 
-from ....common.chunks import normalize_to_text
+from src.common.chunks import normalize_to_text
 
 logger = logging.getLogger(__name__)
 

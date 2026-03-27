@@ -12,24 +12,24 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from .....common.chunks import get_neighboring_tokens
-from .....common.enums import JobStage
-from .....common.jobs import (
+from src.common.chunks import get_neighboring_tokens
+from src.common.enums import JobStage
+from src.common.jobs import (
     append_job_error,
     update_job_progress,
 )
-from .....common.langfuse import langfuse_handler
-from .....common.llm import get_default_llm, make_basic_chain
-from ...prompts.rest.endpoints_prompts import (
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.digester.prompts.rest.endpoints_prompts import (
     check_endpoint_params_system_prompt,
     check_endpoint_params_user_prompt,
     get_endpoints_system_prompt,
     get_endpoints_user_prompt,
 )
-from ...schema import EndpointInfo, EndpointParamInfo, EndpointResponse
-from ...utils.merges import merge_endpoint_candidates
-from ...utils.metadata_helper import extract_summary_and_tags
-from ...utils.parallel_docs import process_grouped_chunks_in_parallel
+from src.modules.digester.schema import EndpointInfo, EndpointParamInfo, EndpointResponse
+from src.modules.digester.utils.merges import merge_endpoint_candidates
+from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
+from src.modules.digester.utils.parallel_docs import process_grouped_chunks_in_parallel
 
 logger = logging.getLogger(__name__)
 

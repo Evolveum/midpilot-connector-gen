@@ -7,9 +7,9 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database.repositories.documentation_repository import DocumentationRepository
-from ..database.repositories.session_repository import SessionRepository
-from .schema import ChunkFilterCriteria
+from src.common.chunk_filter.schema import ChunkFilterCriteria
+from src.common.database.repositories.documentation_repository import DocumentationRepository
+from src.common.database.repositories.session_repository import SessionRepository
 
 
 async def filter_documentation_items(
@@ -25,7 +25,7 @@ async def filter_documentation_items(
     output: list of documentationItem dicts that meet the criteria
     """
     if db is None:
-        from ..database.config import async_session_maker
+        from src.common.database.config import async_session_maker
 
         async with async_session_maker() as session:
             return await _filter_documentation_items_impl(criteria, session_id, session)
