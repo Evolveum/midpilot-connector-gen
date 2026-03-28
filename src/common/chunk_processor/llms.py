@@ -73,12 +73,6 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
     user_message = HumanMessage(content=user_msg)
     user_message.additional_kwargs = {"__openai_role__": "user"}
 
-    llm_response = await llm.ainvoke(
-        [developer_message, user_message], config=RunnableConfig(callbacks=[langfuse_handler])
-    )
-
-    logger.debug("[Scrape:LLM] LLM raw output for chunk processing: %s", str(llm_response)[:200])
-
     prompt = ChatPromptTemplate.from_messages(
         [
             developer_message,
@@ -93,5 +87,7 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
     )
 
     result = await chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler]))
+
+    logger.debug("[Scrape:LLM] Finished LLM call for chunk processing with result: %s", result)
 
     return result
