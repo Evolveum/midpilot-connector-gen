@@ -4,7 +4,7 @@
 
 from datetime import datetime, timezone
 
-from ..config import Base
+from src.common.database.config import Base
 
 
 def utc_now() -> datetime:

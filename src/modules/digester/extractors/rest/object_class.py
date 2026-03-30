@@ -13,25 +13,25 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from .....common.enums import JobStage
-from .....common.jobs import append_job_error, update_job_progress
-from .....common.langfuse import langfuse_handler
-from .....common.llm import get_default_llm, make_basic_chain
-from ...prompts.rest.object_class_prompts import (
+from src.common.enums import JobStage
+from src.common.jobs import append_job_error, update_job_progress
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.digester.prompts.rest.object_class_prompts import (
     get_object_class_system_prompt,
     get_object_class_user_prompt,
 )
-from ...prompts.rest.object_class_relevancy_prompt import (
+from src.modules.digester.prompts.rest.object_class_relevancy_prompt import (
     get_object_classes_relevancy_system_prompt,
     get_object_classes_relevancy_user_prompt,
 )
-from ...prompts.rest.sorting_output_prompts import (
+from src.modules.digester.prompts.rest.sorting_output_prompts import (
     sort_object_classes_system_prompt,
     sort_object_classes_user_prompt,
 )
-from ...schema import ObjectClass, ObjectClassesRelevancyResponse, ObjectClassesResponse
-from ...utils.merges import merge_object_classes
-from ...utils.parallel import run_extraction_parallel
+from src.modules.digester.schema import ObjectClass, ObjectClassesRelevancyResponse, ObjectClassesResponse
+from src.modules.digester.utils.chunk_extraction import extract_single_chunk
+from src.modules.digester.utils.merges import merge_object_classes
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ async def extract_object_classes_raw(
     def parse_fn(result: ObjectClassesResponse) -> List[ObjectClass]:
         return result.objectClasses or []
 
-    extracted, has_relevant_data = await run_extraction_parallel(
+    extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
         pydantic_model=ObjectClassesResponse,
         system_prompt=get_object_class_system_prompt,

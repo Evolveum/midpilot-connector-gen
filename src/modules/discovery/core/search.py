@@ -12,8 +12,7 @@ import requests
 from ddgs import DDGS
 
 from src.config import config
-
-from ..schema import SearchResult
+from src.modules.discovery.schema import SearchResult
 
 logger = logging.getLogger(__name__)
 

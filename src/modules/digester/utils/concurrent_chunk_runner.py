@@ -7,14 +7,14 @@ import logging
 from typing import Any, Awaitable, Callable, Dict, List, Tuple, TypeVar
 from uuid import UUID
 
-from ....common.jobs import increment_processed_documents, update_job_progress
+from src.common.jobs import increment_processed_documents, update_job_progress
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 
-async def process_documents_in_parallel(
+async def run_chunks_concurrently(
     *,
     chunk_items: List[dict],
     job_id: UUID,
@@ -45,8 +45,6 @@ async def process_documents_in_parallel(
         chunk_id = UUID(chunk_item["chunkId"])
         chunk_content = chunk_item["content"]
 
-        logger.info("[%s] Processing chunk (chunk_id: %s)", logger_scope, chunk_id)
-
         result, has_relevant_data = await extractor(chunk_content, job_id, chunk_id)
 
         await increment_processed_documents(job_id, delta=1)
@@ -55,7 +53,7 @@ async def process_documents_in_parallel(
     return list(await asyncio.gather(*(_process_single_chunk_item(chunk_item) for chunk_item in chunk_items)))
 
 
-async def process_grouped_chunks_in_parallel(
+async def run_chunk_groups_concurrently(
     *,
     chunks_by_id: Dict[str, List[str]],
     job_id: UUID,
@@ -88,8 +86,6 @@ async def process_grouped_chunks_in_parallel(
     )
 
     async def _process_single_chunk(chunk_id: UUID, chunks: List[str]) -> Tuple[T, List[Dict[str, Any]]]:
-        logger.info("[%s] Processing chunks for chunk_id=%s", logger_scope, chunk_id)
-
         result, relevant_chunks = await extractor(chunk_id, chunks)
         await increment_processed_documents(job_id, delta=1)
         return result, relevant_chunks

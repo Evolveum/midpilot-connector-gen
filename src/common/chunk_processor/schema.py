@@ -7,8 +7,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
-from ...config import config
-from ...modules.scrape.schema import DocumentationReferences
+from src.config import config
+from src.modules.scrape.schema import DocumentationReferences
 
 
 class SummaryOutput(BaseModel):

@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from ....common.chunk_filter.schema import ChunkFilterCriteria
+from src.common.chunk_filter.schema import ChunkFilterCriteria
 
 DEFAULT_CRITERIA = ChunkFilterCriteria(
     min_length=None,

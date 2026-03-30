@@ -8,10 +8,10 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from langchain_openai import ChatOpenAI
 
-from ....common.llm import get_default_llm
-from ..core.search import search_web
-from ..schema import CandidateLinksInput, DiscoverySearchBatch, PySearchPrompts
-from .llm_helpers import generate_queries_via_llm, generate_queries_via_preset
+from src.common.llm import get_default_llm
+from src.modules.discovery.core.search import search_web
+from src.modules.discovery.schema import CandidateLinksInput, DiscoverySearchBatch, PySearchPrompts
+from src.modules.discovery.utils.llm_helpers import generate_queries_via_llm, generate_queries_via_preset
 
 logger = logging.getLogger(__name__)
 

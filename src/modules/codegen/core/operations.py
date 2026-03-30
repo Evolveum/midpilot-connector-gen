@@ -6,9 +6,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from ...digester.schema import RelationsResponse
-from ..prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
-from .base import (
+from src.modules.codegen.core.base import (
     AttributesPayload,
     BaseGroovyGenerator,
     EndpointsPayload,
@@ -16,6 +14,9 @@ from .base import (
     attributes_to_records,
     endpoints_to_records,
 )
+from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
+from src.modules.codegen.schema import SearchIntent
+from src.modules.digester.schema import RelationsResponse
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class SearchGenerator(BaseGroovyGenerator):
         self,
         *,
         object_class: str,
+        intent: SearchIntent,
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
@@ -40,6 +42,7 @@ class SearchGenerator(BaseGroovyGenerator):
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["object_class"] = object_class
+        config.extra_prompt_vars["intent"] = intent
         config.extra_prompt_vars["search_docs"] = docs_text
         super().__init__(config)
         self.object_class = object_class

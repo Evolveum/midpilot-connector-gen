@@ -6,7 +6,7 @@ from typing import List, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ...config import config
+from src.config import config
 
 
 class ChunkFilterCriteria(BaseModel):

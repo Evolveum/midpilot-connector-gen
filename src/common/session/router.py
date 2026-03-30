@@ -11,16 +11,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...common.chunks import split_text_with_token_overlap
-from ...common.database.config import get_db
-from ...common.database.repositories.documentation_repository import DocumentationRepository
-from ...common.database.repositories.job_repository import JobRepository
-from ...common.database.repositories.session_repository import SessionRepository
-from ...common.enums import JobStage
-from ...common.jobs import schedule_coroutine_job
-from ...config import config
-from .schema import SessionCreateResponse, SessionDataResponse, SessionUpdateRequest
-from .session import process_documentation_worker
+from src.common.chunks import split_text_with_token_overlap
+from src.common.database.config import get_db
+from src.common.database.repositories.documentation_repository import DocumentationRepository
+from src.common.database.repositories.job_repository import JobRepository
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import JobStage
+from src.common.jobs import schedule_coroutine_job
+from src.common.session.schema import SessionCreateResponse, SessionDataResponse, SessionUpdateRequest
+from src.common.session.session import process_documentation_worker
+from src.config import config
 
 logger = logging.getLogger(__name__)
 

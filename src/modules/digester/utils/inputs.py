@@ -2,13 +2,16 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import logging
 from typing import Any, Dict
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ....common.chunk_filter.filter import filter_documentation_items
-from .criteria import AUTH_CRITERIA, DEFAULT_CRITERIA
+from src.common.chunk_filter.filter import filter_documentation_items
+from src.modules.digester.utils.criteria import AUTH_CRITERIA, DEFAULT_CRITERIA
+
+logger = logging.getLogger(__name__)
 
 
 async def object_classes_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
@@ -48,8 +51,15 @@ async def auth_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
             sessionInput - dict with documentationItemsCount and totalLength - used for input in session field
             jobInput - dict for job input field
     """
-    # Apply static category filter to documentation items
+    # Prefer auth-specific chunks, but fall back to the broader default digester set
+    # if the static auth filter is too restrictive for the current session metadata.
     doc_items = await filter_documentation_items(AUTH_CRITERIA, session_id, db=db)
+    if not doc_items:
+        logger.info(
+            "[Digester:Auth] AUTH_CRITERIA matched no documentation for session %s, falling back to DEFAULT_CRITERIA",
+            session_id,
+        )
+        doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
     return {
         "sessionInput": {},
         "jobInput": {

@@ -11,10 +11,10 @@ from uuid import UUID
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...enums import JobStage, JobStatus
-from ...normalize_input import normalize_input
-from ..models import Job, JobProgress
-from .relevant_chunk_repository import RelevantChunkRepository
+from src.common.database.models import Job, JobProgress
+from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.common.enums import JobStage, JobStatus
+from src.common.utils.normalize import normalize_input
 
 logger = logging.getLogger(__name__)
 

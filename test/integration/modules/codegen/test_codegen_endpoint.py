@@ -62,7 +62,7 @@ async def test_generate_native_schema_success():
             initial_stage="queue",
             initial_message="Queued code generation",
             session_id=session_id,
-            session_result_key="UserNativeSchema",
+            session_result_key="UserNativeSchemaOutput",
         )
         mock_repo.update_session.assert_awaited_once()
 
@@ -119,7 +119,7 @@ async def test_override_native_schema_success():
         assert response["objectClass"] == "User"
         mock_repo.update_session.assert_awaited_once_with(
             session_id,
-            {"UserNativeSchema": {"code": "custom groovy code"}},
+            {"UserNativeSchemaOutput": {"code": "custom groovy code"}},
         )
 
 
@@ -179,7 +179,7 @@ async def test_generate_search_success():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_search(session_id, "User", "GET", db=MagicMock())
+        response = await generate_search(session_id, "User", "all", db=MagicMock())
 
     assert response.jobId == job_id
     mock_repo.session_exists.assert_awaited_once_with(session_id)
@@ -213,7 +213,7 @@ async def test_generate_search_scim_allows_missing_endpoints():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_search(session_id, "User", "GET", db=MagicMock())
+        response = await generate_search(session_id, "User", "all", db=MagicMock())
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
@@ -224,7 +224,7 @@ async def test_generate_search_scim_allows_missing_endpoints():
         update_args = mock_repo.update_session.call_args[0]
         assert update_args[0] == session_id
         inputs = update_args[1]
-        assert inputs["UserSearchInput"] == {"objectClass": "User", "attributes": attrs_payload}
+        assert inputs["UserSearchAllInput"] == {"objectClass": "User", "attributes": attrs_payload, "intent": "all"}
 
 
 # RELATION
@@ -283,7 +283,7 @@ async def test_get_relation_code_status_found():
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.codegen.router._build_multi_doc_status_response",
+            "src.modules.codegen.router.build_multi_doc_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_builder,

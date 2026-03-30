@@ -12,19 +12,19 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from ....common.chunks import normalize_to_text
-from ....common.database.config import async_session_maker
-from ....common.database.repositories.session_repository import SessionRepository
-from ....common.enums import JobStage
-from ....common.jobs import (
+from src.common.chunks import normalize_to_text
+from src.common.database.config import async_session_maker
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import JobStage
+from src.common.jobs import (
     append_job_error,
     increment_processed_documents,
     update_job_progress,
 )
-from ....common.langfuse import langfuse_handler
-from ....common.llm import get_default_llm, make_basic_chain
-from ...digester.schema import AttributeResponse, EndpointResponse
-from ..utils.postprocess import _coerce_llm_text, strip_markdown_fences
+from src.common.langfuse import langfuse_handler
+from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
+from src.modules.digester.schema import AttributeResponse, EndpointResponse
 
 logger = logging.getLogger(__name__)
 
@@ -334,9 +334,7 @@ class BaseGroovyGenerator(ABC):
                     current_group_chunks_remaining = max(0, current_group_chunks_remaining - 1)
                     if current_group_chunks_remaining == 0:
                         await increment_processed_documents(job_id, delta=1)
-                        logger.info("%s Completed chunk group chunk_id=%s", self.config.logger_prefix, chunk_id)
                 else:
-                    # Fallback mode (no selected-chunk grouping): increment per chunk
                     await increment_processed_documents(job_id, delta=1)
 
         return result

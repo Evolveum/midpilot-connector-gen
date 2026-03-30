@@ -11,13 +11,13 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, utc_now
+from src.common.database.models.base import Base, utc_now
 
 if TYPE_CHECKING:
-    from .documentation_item import DocumentationItem
-    from .job import Job
-    from .relevant_chunk import RelevantChunk
-    from .session_data import SessionData
+    from src.common.database.models.documentation_item import DocumentationItem
+    from src.common.database.models.job import Job
+    from src.common.database.models.relevant_chunk import RelevantChunk
+    from src.common.database.models.session_data import SessionData
 
 
 class Session(Base):

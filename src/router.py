@@ -4,11 +4,11 @@
 
 from fastapi import APIRouter
 
-from .common.session.router import router as session_router
-from .modules.codegen.router import router as codegen_router
-from .modules.digester.router import router as digester_router
-from .modules.discovery.router import router as discovery_router
-from .modules.scrape.router import router as scrape_router
+from src.common.session.router import router as session_router
+from src.modules.codegen.router import router as codegen_router
+from src.modules.digester.router import router as digester_router
+from src.modules.discovery.router import router as discovery_router
+from src.modules.scrape.router import router as scrape_router
 
 root_router = APIRouter()
 

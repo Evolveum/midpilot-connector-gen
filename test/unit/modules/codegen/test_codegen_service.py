@@ -4,7 +4,7 @@
 
 """Unit tests for the codegen service module."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -53,7 +53,10 @@ async def test_generate_native_schema():
         "id": {"type": "string", "format": "uuid", "description": "Unique identifier"},
     }
 
-    with patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy:
+    with (
+        patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy,
+        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+    ):
         mock_generate_groovy.return_value = "mocked groovy code"
 
         result = await service.create_native_schema(
@@ -105,18 +108,12 @@ async def test_generate_search():
     test_endpoints = {"endpoints": [{"method": "GET", "path": "/users", "description": "List users"}]}
 
     with (
-        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.codegen.service._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
+        ),
         patch("src.modules.codegen.service.SearchGenerator") as mock_search_generator_class,
     ):
-        mock_db_cm = mock_session_maker.return_value
-        mock_db = MagicMock()
-        mock_db_cm.__aenter__ = AsyncMock(return_value=mock_db)
-
-        mock_repo_instance = mock_session_repository.return_value
-        mock_repo_instance.get_session_data = AsyncMock(return_value=None)
-
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_search_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked search code")
@@ -126,6 +123,7 @@ async def test_generate_search():
             endpoints=test_endpoints,
             session_id=uuid4(),
             object_class="User",
+            intent="filter",
             job_id=uuid4(),
         )
 
@@ -135,6 +133,8 @@ async def test_generate_search():
 
         # Verify generator was instantiated and generate method was called
         mock_search_generator_class.assert_called_once()
+        _, kwargs = mock_search_generator_class.call_args
+        assert kwargs["intent"] == "filter"
         mock_generator_instance.generate.assert_called_once()
 
 

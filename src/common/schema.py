@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from .enums import JobStatus
+from src.common.enums import JobStatus
 
 
 def validate_pydantic_object(obj: Any, model: Any) -> Any:

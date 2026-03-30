@@ -10,11 +10,11 @@ from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from ....common.enums import JobStage
-from ....common.jobs import update_job_progress
-from ....common.langfuse import langfuse_handler
-from ....config import config
-from ..schema import (
+from src.common.enums import JobStage
+from src.common.jobs import update_job_progress
+from src.common.langfuse import langfuse_handler
+from src.config import config
+from src.modules.digester.schema import (
     AttributeResponse,
     BaseAPIEndpoint,
     EndpointInfo,

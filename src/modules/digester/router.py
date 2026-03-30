@@ -8,16 +8,18 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...common.chunk_filter.filter import filter_documentation_items
-from ...common.database.config import get_db
-from ...common.database.repositories.session_repository import SessionRepository
-from ...common.enums import JobStatus
-from ...common.jobs import schedule_coroutine_job
-from ...common.schema import JobCreateResponse, JobStatusMultiDocResponse
-from ...common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
-from ...common.utils.session_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
-from . import service
-from .schema import (
+from src.common.chunk_filter.filter import filter_documentation_items
+from src.common.database.config import get_db
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import JobStatus
+from src.common.jobs import schedule_coroutine_job
+from src.common.schema import JobCreateResponse, JobStatusMultiDocResponse
+from src.common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
+from src.common.utils.normalize import normalize_object_class_name
+from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
+from src.common.utils.status_response import build_typed_job_status_response
+from src.modules.digester import service
+from src.modules.digester.schema import (
     AttributeResponse,
     AuthResponse,
     EndpointResponse,
@@ -25,15 +27,13 @@ from .schema import (
     ObjectClassesResponse,
     RelationsResponse,
 )
-from .utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
-from .utils.inputs import auth_input, metadata_input, object_classes_input
-from .utils.object_classes import (
+from src.modules.digester.utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
+from src.modules.digester.utils.inputs import auth_input, metadata_input, object_classes_input
+from src.modules.digester.utils.object_classes import (
     find_object_class,
     get_relevant_chunks,
-    normalize_object_class_name,
     upsert_object_class,
 )
-from .utils.status import build_typed_job_status_response
 
 router = APIRouter()
 
