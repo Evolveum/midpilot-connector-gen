@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, cast
 from uuid import UUID
 
 from src.common.jobs import update_job_progress
-from src.common.utils.session_metadata import get_session_api_types, is_scim_api
+from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 
 # Shared extractors
 from src.modules.digester.extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
@@ -27,6 +27,7 @@ from src.modules.digester.extractors.scim.attributes import extract_scim_attribu
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
 from src.modules.digester.schema import InfoMetadata, InfoResponse
+from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.doc_chunk import select_doc_chunks
 from src.modules.digester.utils.merges import (
     merge_info_metadata,
@@ -38,7 +39,6 @@ from src.modules.digester.utils.object_classes import (
     extract_endpoints_from_result,
     update_object_class_field_in_session,
 )
-from src.modules.digester.utils.parallel_docs import process_documents_in_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,22 @@ def _build_chunk_id_to_doc_id(chunk_items: List[dict]) -> Dict[str, str]:
         if raw_chunk_id and raw_doc_id:
             mapping[str(raw_chunk_id).strip()] = str(raw_doc_id).strip()
     return mapping
+
+
+async def _run_doc_extractors_concurrently(
+    *,
+    chunk_items: List[dict],
+    job_id: UUID,
+    extractor: Callable[[str, UUID, UUID], Any],
+    logger_scope: str,
+):
+    """Compatibility wrapper around the concurrent chunk runner used by digester services."""
+    return await run_chunks_concurrently(
+        chunk_items=chunk_items,
+        job_id=job_id,
+        extractor=extractor,
+        logger_scope=logger_scope,
+    )
 
 
 async def _process_over_chunks(
@@ -71,7 +87,7 @@ async def _process_over_chunks(
     chunk_id_to_doc_id = _build_chunk_id_to_doc_id(chunk_items)
 
     # Process all chunks in parallel using the generic function
-    results = await process_documents_in_parallel(
+    results = await _run_doc_extractors_concurrently(
         chunk_items=chunk_items,
         job_id=job_id,
         extractor=extractor,
@@ -171,7 +187,7 @@ async def _extract_rest_object_classes(
         return await extract_object_classes_raw(content, job_id, chunk_id, chunk_metadata)
 
     # Process all chunks in parallel using the generic function
-    results = await process_documents_in_parallel(
+    results = await _run_doc_extractors_concurrently(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
@@ -249,7 +265,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
         return await extract_auth_raw(content, job_id, chunk_id, chunk_metadata)
 
     # Process all chunks in parallel using the generic function
-    results = await process_documents_in_parallel(
+    results = await _run_doc_extractors_concurrently(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
@@ -305,7 +321,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
         chunk_metadata = chunk_metadata_map.get(str(chunk_id))
         return await _extract_info_metadata(content, job_id, chunk_id, chunk_metadata)
 
-    results = await process_documents_in_parallel(
+    results = await _run_doc_extractors_concurrently(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
@@ -405,9 +421,9 @@ async def extract_attributes(
         relevant_chunks: List of {doc_id, chunk_id} dicts indicating which chunks to process
         job_id: Job ID for progress tracking
     """
-    selected_docs, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
+    selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
 
-    if not selected_docs:
+    if not selected_content:
         logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
         return {"result": {"attributes": {}}, "relevantDocumentations": []}
 
@@ -419,7 +435,7 @@ async def extract_attributes(
 
     if is_scim:
         result = await extract_scim_attributes(
-            selected_docs,
+            selected_content,
             object_class,
             job_id,
             chunk_ids,
@@ -428,7 +444,7 @@ async def extract_attributes(
         )
     else:
         result = await _extract_rest_attributes(
-            selected_docs,
+            selected_content,
             object_class,
             job_id,
             chunk_ids,
@@ -491,9 +507,9 @@ async def extract_endpoints(
             relevant_chunks=relevant_chunks,
         )
     else:
-        selected_docs, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
+        selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
 
-        if not selected_docs:
+        if not selected_content:
             logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
             return {"result": {"endpoints": []}, "relevantDocumentations": []}
 
@@ -501,7 +517,7 @@ async def extract_endpoints(
         chunk_id_to_doc_id = _build_chunk_id_to_doc_id(doc_items)
 
         # Log chunk processing details
-        total_chunks = len(selected_docs)
+        total_chunks = len(selected_content)
         logger.info(
             "[Digester:Endpoints] Processing %d pre-selected chunks for %s (from original indices: %s)",
             total_chunks,
@@ -510,7 +526,7 @@ async def extract_endpoints(
         )
 
         result = await _extract_rest_endpoints(
-            selected_docs,
+            selected_content,
             object_class,
             job_id,
             base_api_url,

@@ -8,7 +8,7 @@ from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.utils.session_metadata import get_session_api_types, is_scim_api
+from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.core.operations import (
     CreateGenerator,

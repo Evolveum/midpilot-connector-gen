@@ -30,8 +30,8 @@ from src.modules.digester.prompts.rest.sorting_output_prompts import (
     sort_object_classes_user_prompt,
 )
 from src.modules.digester.schema import ObjectClass, ObjectClassesRelevancyResponse, ObjectClassesResponse
+from src.modules.digester.utils.chunk_extraction import extract_single_chunk
 from src.modules.digester.utils.merges import merge_object_classes
-from src.modules.digester.utils.parallel import run_extraction_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ async def extract_object_classes_raw(
     def parse_fn(result: ObjectClassesResponse) -> List[ObjectClass]:
         return result.objectClasses or []
 
-    extracted, has_relevant_data = await run_extraction_parallel(
+    extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
         pydantic_model=ObjectClassesResponse,
         system_prompt=get_object_class_system_prompt,

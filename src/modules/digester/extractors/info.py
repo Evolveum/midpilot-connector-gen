@@ -8,8 +8,8 @@ from uuid import UUID
 
 from src.modules.digester.prompts.info_prompts import get_info_system_prompt, get_info_user_prompt
 from src.modules.digester.schema import InfoMetadata, InfoResponse
+from src.modules.digester.utils.chunk_extraction import extract_single_chunk
 from src.modules.digester.utils.merges import is_empty_info_result_payload
-from src.modules.digester.utils.parallel import run_extraction_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ async def extract_info_metadata(
             return []
         return [result.info_metadata]
 
-    extracted, has_relevant_data = await run_extraction_parallel(
+    extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
         pydantic_model=InfoResponse,
         system_prompt=get_info_system_prompt,
@@ -47,5 +47,8 @@ async def extract_info_metadata(
         chunk_metadata=chunk_metadata,
     )
 
-    logger.info("[Digester:InfoMetadata] Raw extraction complete from chunk. Count: %d", len(extracted))
+    logger.info(
+        "[Digester:InfoMetadata] Extraction complete. has_relevant_data=%s",
+        has_relevant_data,
+    )
     return extracted, has_relevant_data

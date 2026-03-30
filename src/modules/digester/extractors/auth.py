@@ -18,7 +18,7 @@ from src.common.llm import get_default_llm, make_basic_chain
 from src.modules.digester.prompts.auth_prompts import get_auth_system_prompt, get_auth_user_prompt
 from src.modules.digester.prompts.rest.sorting_output_prompts import sort_auth_system_prompt, sort_auth_user_prompt
 from src.modules.digester.schema import AuthInfo, AuthResponse
-from src.modules.digester.utils.parallel import run_extraction_parallel
+from src.modules.digester.utils.chunk_extraction import extract_single_chunk
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ async def extract_auth_raw(
     def parse_fn(result: AuthResponse) -> List[AuthInfo]:
         return result.auth or []
 
-    extracted, has_relevant_data = await run_extraction_parallel(
+    extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
         pydantic_model=AuthResponse,
         system_prompt=get_auth_system_prompt,
