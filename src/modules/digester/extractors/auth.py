@@ -50,9 +50,10 @@ async def extract_auth_raw(
         chunk_metadata=chunk_metadata,
     )
 
-    logger.info("[Digester:Auth] Auth extracted: %s from chunk: %s", extracted, chunk_id)
-
-    logger.info("[Digester:Auth] Raw extraction complete from chunk. Count: %d", len(extracted))
+    logger.info(
+        "[Digester:Auth] Extraction complete. has_relevant_data=%s",
+        has_relevant_data,
+    )
     return extracted, has_relevant_data
 
 

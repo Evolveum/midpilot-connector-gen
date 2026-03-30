@@ -257,7 +257,6 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     all_auth_info = []
     all_relevant_chunks: List[Dict[str, Any]] = []
     chunk_id_to_doc_id = _build_chunk_id_to_doc_id(doc_items)
-
     chunk_metadata_map = build_doc_metadata_map(doc_items)
 
     async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
