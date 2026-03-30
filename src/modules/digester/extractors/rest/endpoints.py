@@ -28,9 +28,9 @@ from src.modules.digester.prompts.rest.endpoints_prompts import (
     get_endpoints_user_prompt,
 )
 from src.modules.digester.schema import EndpointInfo, EndpointParamInfo, EndpointResponse
+from src.modules.digester.utils.concurrent_chunk_runner import run_chunk_groups_concurrently
 from src.modules.digester.utils.merges import merge_endpoint_candidates
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
-from src.modules.digester.utils.parallel_docs import process_grouped_chunks_in_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +255,7 @@ async def extract_endpoints(
         return endpoints_for_id, relevant_chunks_for_id
 
     # Process all chunk-id groups in parallel using the generic function
-    results = await process_grouped_chunks_in_parallel(
+    results = await run_chunk_groups_concurrently(
         chunks_by_id=chunks_by_id,
         job_id=job_id,
         extractor=_extract_for_chunk_id,

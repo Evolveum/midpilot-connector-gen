@@ -29,9 +29,9 @@ from src.modules.digester.prompts.rest.attributes_prompts import (
 )
 from src.modules.digester.schema import AttributeResponse
 from src.modules.digester.utils.attribute_filters import filter_ignored_attributes, ignore_attribute_name
+from src.modules.digester.utils.concurrent_chunk_runner import run_chunk_groups_concurrently
 from src.modules.digester.utils.merges import merge_attribute_candidates
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
-from src.modules.digester.utils.parallel_docs import process_grouped_chunks_in_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -398,7 +398,7 @@ async def extract_attributes(
             )
         return per_chunk_results, []
 
-    results = await process_grouped_chunks_in_parallel(
+    results = await run_chunk_groups_concurrently(
         chunks_by_id=chunks_by_id,
         job_id=job_id,
         extractor=_extract_for_chunk_id,

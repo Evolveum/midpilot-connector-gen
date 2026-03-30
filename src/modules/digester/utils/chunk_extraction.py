@@ -23,7 +23,22 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
-async def run_extraction_parallel(
+def build_chunk_extraction_chain(
+    *,
+    pydantic_model: type[T],
+    system_prompt: str,
+    user_prompt: str,
+) -> Any:
+    """Build a reusable structured extraction chain for repeated chunk invocations."""
+    parser: BaseOutputParser = PydanticOutputParser(pydantic_object=pydantic_model)
+    llm = get_default_llm()
+    prompt = ChatPromptTemplate.from_messages(
+        [("system", system_prompt + "\n\n{format_instructions}"), ("human", user_prompt)]
+    ).partial(format_instructions=parser.get_format_instructions())
+    return make_basic_chain(prompt, llm, parser)
+
+
+async def extract_single_chunk(
     schema: str,
     pydantic_model: type[T],
     system_prompt: str,
@@ -67,13 +82,12 @@ async def run_extraction_parallel(
         message="Processing chunk and extracting relevant information",
     )
 
-    # Build LLM chain
-    parser: BaseOutputParser = PydanticOutputParser(pydantic_object=pydantic_model)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", system_prompt + "\n\n{format_instructions}"), ("human", user_prompt)]
-    ).partial(format_instructions=parser.get_format_instructions())
-    chain = make_basic_chain(prompt, llm, parser)
+    logger.info("%sLLM call for chunk %s", logger_prefix, chunk_id)
+    extraction_chain = build_chunk_extraction_chain(
+        pydantic_model=pydantic_model,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+    )
 
     def _result_snippet(result: Any, limit: int = 2000) -> str:
         """Best-effort stringify of a pydantic model or arbitrary object for logging/errors."""
@@ -91,14 +105,12 @@ async def run_extraction_parallel(
 
     # Process the chunk (already pre-chunked)
     try:
-        logger.info("%sCalling LLM for chunk extraction.", logger_prefix)
-
         # Extract summary and tags from chunk metadata
         summary, tags = extract_summary_and_tags(chunk_metadata)
 
         result = cast(
             T,
-            await chain.ainvoke(
+            await extraction_chain.ainvoke(
                 {"chunk": text, "summary": summary, "tags": tags},
                 config=RunnableConfig(callbacks=[langfuse_handler]),
             ),
@@ -131,13 +143,6 @@ async def run_extraction_parallel(
             for item in items:
                 if hasattr(item, "__dict__"):
                     item._chunk_index = 0
-
-        logger.info(
-            "%sExtraction complete. Total items: %d, has_relevant_data=%s",
-            logger_prefix,
-            len(items),
-            has_relevant_data,
-        )
 
         return items, has_relevant_data
 

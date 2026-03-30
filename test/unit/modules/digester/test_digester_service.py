@@ -46,7 +46,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
 
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
-        patch("src.modules.digester.service.process_documents_in_parallel") as mock_parallel,
+        patch("src.modules.digester.service._run_doc_extractors_concurrently") as mock_parallel,
         patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = [
@@ -122,7 +122,7 @@ async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_
     """Test extract_object_classes with no documentation items."""
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
-        patch("src.modules.digester.service.process_documents_in_parallel") as mock_parallel,
+        patch("src.modules.digester.service._run_doc_extractors_concurrently") as mock_parallel,
         patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = []
@@ -422,7 +422,7 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
 
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_auth", new_callable=AsyncMock) as mock_dedupe,
-        patch("src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_parallel.return_value = [
             (
@@ -474,7 +474,7 @@ async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_prog
 
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_auth", new_callable=AsyncMock) as mock_dedupe,
-        patch("src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_parallel.return_value = [([], False, doc_uuid)]
 
@@ -503,7 +503,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
     ]
 
     with (
-        patch("src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_parallel.return_value = [
             (
@@ -580,7 +580,7 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
 
     with (
         patch("src.modules.digester.service._extract_info_metadata", new_callable=AsyncMock) as mock_extract,
-        patch("src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_extract.side_effect = [
             (
@@ -725,7 +725,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
         # Step 1: Extract object classes
         with (
             patch(
-                "src.modules.digester.service.process_documents_in_parallel", new_callable=AsyncMock
+                "src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock
             ) as mock_parallel,
             patch(
                 "src.modules.digester.service.deduplicate_and_sort_object_classes", new_callable=AsyncMock

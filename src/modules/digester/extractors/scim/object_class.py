@@ -20,9 +20,9 @@ from src.modules.digester.prompts.scim.object_class_prompts import (
 )
 from src.modules.digester.schema import ObjectClass, ObjectClassesResponse
 from src.modules.digester.scim.loader import get_base_scim_object_classes, load_scim_base_schemas
+from src.modules.digester.utils.chunk_extraction import extract_single_chunk
+from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.metadata_helper import build_doc_metadata_map
-from src.modules.digester.utils.parallel import run_extraction_parallel
-from src.modules.digester.utils.parallel_docs import process_documents_in_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ async def extract_scim_object_classes(
         return custom_classes, has_relevant_data
 
     # Process all chunks in parallel
-    results = await process_documents_in_parallel(
+    results = await run_chunks_concurrently(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_scim_schemas,
@@ -272,7 +272,7 @@ async def extract_custom_scim_classes(
     def parse_fn(result: ObjectClassesResponse) -> List[ObjectClass]:
         return result.objectClasses or []
 
-    extracted, has_relevant_data = await run_extraction_parallel(
+    extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
         pydantic_model=ObjectClassesResponse,
         system_prompt=scim_object_class_system_prompt,

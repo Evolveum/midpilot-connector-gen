@@ -22,7 +22,7 @@ from src.common.schema import (
     JobStatusStageResponse,
 )
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
-from src.common.utils.session_metadata import get_session_api_types, is_scim_api
+from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
 from src.modules.codegen import service
 from src.modules.codegen.schema import SearchIntent, build_search_operation_key
