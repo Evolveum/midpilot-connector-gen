@@ -15,6 +15,7 @@ from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,14 @@ async def generate_groovy(
         if not text:
             logger.warning("[Codegen:%s] Empty LLM response for %s", logger_prefix, object_class)
             return f'objectClass("{object_class}") {{}}'
-        return strip_markdown_fences(text)
+        code = strip_markdown_fences(text)
+        validation_error = validate_groovy_code(code)
+        if validation_error is not None:
+            error_message = f"[Codegen:{logger_prefix}] Generated invalid Groovy: {validation_error}"
+            logger.warning(error_message)
+            append_job_error(job_id, error_message)
+            return f'objectClass("{object_class}") {{}}'
+        return code
 
     except Exception as exc:
         error_message = f"[Codegen:{logger_prefix}] Generation failed: {exc}"

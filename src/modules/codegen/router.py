@@ -7,7 +7,7 @@ Codegen endpoints for V2 API (session-centric).
 All codegen operations are nested under sessions.
 """
 
-from typing import Any, Dict, Optional
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
@@ -25,7 +25,7 @@ from src.common.session.session import ensure_session_exists, resolve_session_jo
 from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
 from src.modules.codegen import service
-from src.modules.codegen.schema import SearchIntent, build_search_operation_key
+from src.modules.codegen.schema import GroovyCodePayload, SearchIntent, build_search_operation_key
 from src.modules.digester.schema import RelationsResponse
 
 router = APIRouter()
@@ -122,7 +122,7 @@ async def get_native_schema_status(
 async def override_native_schema(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    native_schema: Dict[str, Any] = Body(..., description="Native schema code as JSON"),
+    native_schema: GroovyCodePayload = Body(..., description="Native schema code as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -131,7 +131,7 @@ async def override_native_schema(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}NativeSchemaOutput": native_schema})
+    await repo.update_session(session_id, {f"{object_class}NativeSchemaOutput": native_schema.model_dump()})
 
     return {
         "message": f"Native schema for {object_class} overridden successfully",
@@ -230,7 +230,7 @@ async def get_connid_status(
 async def override_connid(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    connid: Dict[str, Any] = Body(..., description="ConnID code as JSON"),
+    connid: GroovyCodePayload = Body(..., description="ConnID code as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -239,7 +239,7 @@ async def override_connid(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}ConnidOutput": connid})
+    await repo.update_session(session_id, {f"{object_class}ConnidOutput": connid.model_dump()})
 
     return {
         "message": f"ConnID for {object_class} overridden successfully",
@@ -372,7 +372,7 @@ async def override_search(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     intent: SearchIntent = Path(..., description="Intent"),
-    search_code: Dict[str, Any] = Body(..., description="Search code as JSON"),
+    search_code: GroovyCodePayload = Body(..., description="Search code as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -382,7 +382,7 @@ async def override_search(
     await ensure_session_exists(repo, session_id)
 
     operation_key = build_search_operation_key(object_class, intent)
-    await repo.update_session(session_id, {f"{operation_key}Output": search_code})
+    await repo.update_session(session_id, {f"{operation_key}Output": search_code.model_dump()})
 
     return {
         "message": f"Search code for {object_class} overridden successfully",
@@ -505,7 +505,7 @@ async def get_create_status(
 async def override_create(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    create_code: Dict[str, Any] = Body(..., description="Create code as JSON"),
+    create_code: GroovyCodePayload = Body(..., description="Create code as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -514,7 +514,7 @@ async def override_create(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}CreateOutput": create_code})
+    await repo.update_session(session_id, {f"{object_class}CreateOutput": create_code.model_dump()})
 
     return {
         "message": f"Create code for {object_class} overridden successfully",
@@ -637,7 +637,7 @@ async def get_update_status(
 async def override_update(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    update_code: Dict[str, Any] = Body(..., description="Update code as JSON"),
+    update_code: GroovyCodePayload = Body(..., description="Update code as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -646,7 +646,7 @@ async def override_update(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}UpdateOutput": update_code})
+    await repo.update_session(session_id, {f"{object_class}UpdateOutput": update_code.model_dump()})
 
     return {
         "message": f"Update code for {object_class} overridden successfully",
@@ -769,7 +769,7 @@ async def get_delete_status(
 async def override_delete(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    delete_code: Dict[str, Any] = Body(..., description="Delete code as JSON"),
+    delete_code: GroovyCodePayload = Body(..., description="Delete code as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -778,7 +778,7 @@ async def override_delete(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{object_class}DeleteOutput": delete_code})
+    await repo.update_session(session_id, {f"{object_class}DeleteOutput": delete_code.model_dump()})
 
     return {
         "message": f"Delete code for {object_class} overridden successfully",
@@ -882,7 +882,7 @@ async def get_relation_code_status(
 async def override_relation_code(
     session_id: UUID = Path(..., description="Session ID"),
     relation_name: str = Path(..., description="Relation name"),
-    relation_code: Dict[str, Any] = Body(..., description="Relation code as JSON"),
+    relation_code: GroovyCodePayload = Body(..., description="Relation code as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -891,7 +891,7 @@ async def override_relation_code(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {f"{relation_name}Output": relation_code})
+    await repo.update_session(session_id, {f"{relation_name}CodeOutput": relation_code.model_dump()})
 
     return {
         "message": f"Relation code for {relation_name} overridden successfully",
