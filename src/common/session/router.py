@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Dict
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunks import split_text_with_token_overlap
@@ -16,7 +16,7 @@ from src.common.database.config import get_db
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.job_repository import JobRepository
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import JobStage
+from src.common.enums import JobStage, JobStatus
 from src.common.jobs import schedule_coroutine_job
 from src.common.session.schema import SessionCreateResponse, SessionDataResponse, SessionUpdateRequest
 from src.common.session.session import process_documentation_worker
@@ -503,12 +503,17 @@ async def delete_documentation(
     "/{session_id}/documentation/{documentation_id}",
     summary="Checks if documentation item exists by UUID",
     status_code=204,
+    responses={
+        202: {
+            "description": "Documentation upload is still being processed",
+        }
+    },
 )
 async def check_documentation_item(
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation UUID"),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     """
     Checks a single documentation item from the session by its UUID.
     Returns 404 if the session or the documentation item is not found.
@@ -519,20 +524,33 @@ async def check_documentation_item(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
         doc_items: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
-        if not doc_items:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"No documentation found in session {session_id}"
-            )
 
-    # Find item by UUID
-    index_to_check = next((i for i, d in enumerate(doc_items) if str(d.get("docId")) == str(documentation_id)), None)
-    if index_to_check is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Documentation {documentation_id} not found in session {session_id}",
+        # Find item by UUID
+        index_to_check = next(
+            (i for i, d in enumerate(doc_items) if str(d.get("docId")) == str(documentation_id)), None
         )
+        if index_to_check is not None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    return
+        # If the item is not yet persisted, check if an upload job for this doc is queued/running.
+        job_key = f"documentation.processUpload_{documentation_id}_job_id"
+        pending_job_id = await repo.get_session_data(session_id, job_key)
+        if pending_job_id:
+            job_repo = JobRepository(db)
+            job_status = await job_repo.get_job_status(UUID(str(pending_job_id)))
+            if job_status.get("status") in {JobStatus.queued.value, JobStatus.running.value}:
+                return Response(
+                    status_code=status.HTTP_202_ACCEPTED,
+                    headers={
+                        "X-Documentation-Status": "processing",
+                        "X-Job-Id": str(pending_job_id),
+                    },
+                )
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Documentation {documentation_id} not found in session {session_id}",
+    )
 
 
 @router.delete("/{session_id}/documentation/{documentation_id}", summary="Delete all documentation chunks by UUID")
