@@ -9,6 +9,7 @@ from typing import Any, Dict
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Response, UploadFile, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunks import split_text_with_token_overlap
@@ -18,7 +19,12 @@ from src.common.database.repositories.job_repository import JobRepository
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage, JobStatus
 from src.common.jobs import schedule_coroutine_job
-from src.common.session.schema import SessionCreateResponse, SessionDataResponse, SessionUpdateRequest
+from src.common.session.schema import (
+    DocumentationExportDocument,
+    SessionCreateResponse,
+    SessionDataResponse,
+    SessionUpdateRequest,
+)
 from src.common.session.session import process_documentation_worker
 from src.config import config
 
@@ -604,4 +610,139 @@ async def delete_documentation_item(
         "sessionId": session_id,
         "deletedPageId": str(documentation_id),
         "deletedChunks": deleted_count,
+    }
+
+
+@router.get(
+    "/{session_id}/documentation/export",
+    summary="Export session documentation grouped by document",
+)
+async def export_documentation(
+    session_id: UUID = Path(..., description="Session ID"),
+    db: AsyncSession = Depends(get_db),
+) -> list[DocumentationExportDocument]:
+    """
+    Export all documentation items for a session grouped into document bundles.
+    One bundle represents one document (doc_id) and contains all its chunks.
+    """
+    session_repo = SessionRepository(db)
+    if not await session_repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    doc_repo = DocumentationRepository(db)
+    doc_rows = await doc_repo.get_documentation_items_for_export(session_id)
+
+    bundles_by_key: dict[tuple[str, str], Dict[str, Any]] = {}
+
+    for item in doc_rows:
+        doc_identity = item["docId"] or item["chunkId"]
+        key = (item["source"], doc_identity)
+
+        bundle = bundles_by_key.get(key)
+        if bundle is None:
+            bundle = {
+                "docId": item["docId"],
+                "chunks": [],
+            }
+            bundles_by_key[key] = bundle
+
+        bundle["chunks"].append(
+            {
+                "chunkId": item["chunkId"],
+                "source": item["source"],
+                "url": item["url"],
+                "summary": item["summary"],
+                "content": item["content"],
+                "metadata": item["metadata"],
+                "createdAt": item["createdAt"],
+                "scrapeJobIds": item["scrapeJobIds"],
+            }
+        )
+
+    return [DocumentationExportDocument.model_validate(bundle) for bundle in bundles_by_key.values()]
+
+
+@router.put(
+    "/{session_id}/documentation/import",
+    summary="Import documentation into session",
+)
+async def import_documentation(
+    documents: list[DocumentationExportDocument],
+    session_id: UUID = Path(..., description="Session ID"),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Replace session documentation with imported documentation from /documentation/export payload.
+    """
+    session_repo = SessionRepository(db)
+    if not await session_repo.session_exists(session_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
+    doc_repo = DocumentationRepository(db)
+
+    flat_items: list[Dict[str, Any]] = []
+    session_doc_items: list[Dict[str, Any]] = []
+    seen_chunk_ids: set[str] = set()
+
+    for document in documents:
+        for chunk in document.chunks:
+            chunk_id = str(chunk.chunk_id)
+            if chunk_id in seen_chunk_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Duplicate chunkId in import payload: {chunk_id}",
+                )
+            seen_chunk_ids.add(chunk_id)
+
+            flat_chunk = {
+                "chunkId": chunk_id,
+                "docId": str(document.doc_id) if document.doc_id else None,
+                "source": chunk.source,
+                "url": chunk.url,
+                "summary": chunk.summary,
+                "content": chunk.content,
+                "metadata": chunk.metadata,
+                "createdAt": chunk.created_at,
+                "scrapeJobIds": [str(job_id) for job_id in chunk.scrape_job_ids],
+            }
+            flat_items.append(flat_chunk)
+            session_doc_items.append(
+                {
+                    "chunkId": flat_chunk["chunkId"],
+                    "docId": flat_chunk["docId"],
+                    "source": flat_chunk["source"],
+                    "url": flat_chunk["url"],
+                    "summary": flat_chunk["summary"],
+                    "content": flat_chunk["content"],
+                    "metadata": flat_chunk["metadata"],
+                    "scrapeJobIds": flat_chunk["scrapeJobIds"],
+                }
+            )
+
+    await session_repo.update_session(session_id, {"documentationItems": []})
+    await doc_repo.delete_documentation_items_by_session(session_id)
+
+    try:
+        if flat_items:
+            await doc_repo.import_documentation_items_for_session(session_id, flat_items)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db_message = str(getattr(exc, "orig", exc))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Import failed due to DB data conflict. "
+                "Most likely duplicate chunkId (chunk_id is globally unique across all sessions). "
+                f"DB says: {db_message}"
+            ),
+        ) from exc
+
+    await session_repo.update_session(session_id, {"documentationItems": session_doc_items})
+
+    return {
+        "message": "Documentation imported successfully",
+        "sessionId": str(session_id),
+        "importedDocuments": len(documents),
+        "importedChunks": len(flat_items),
     }
