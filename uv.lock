@@ -794,6 +794,19 @@ wheels = [
 ]
 
 [[package]]
+name = "groovy-parser"
+version = "0.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lark" },
+    { name = "pygments" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/15/87/e24f82035abd8eb4c9a6f4296c35b31b43dc57cfb8b5630278d31bf14c7f/groovy_parser-0.2.2.tar.gz", hash = "sha256:c1ed37926794aa6f5c5ad28da60b6b6caeecd4c203aaaf71564647af76959653", size = 30452, upload-time = "2025-10-21T16:34:42.303Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/d5/a2ffe1a8ca559c39b642fd506eb48b8115f4d32964d6ae1d83a0750bb019/groovy_parser-0.2.2-py3-none-any.whl", hash = "sha256:e9b48b65cfabfb64ce7e7c728d39a7a54a69793d694ee94c3cd9eb05edaa8f24", size = 31632, upload-time = "2025-10-21T16:34:40.739Z" },
+]
+
+[[package]]
 name = "grpcio"
 version = "1.74.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2832,6 +2845,7 @@ dependencies = [
     { name = "crawl4ai" },
     { name = "ddgs" },
     { name = "fastapi" },
+    { name = "groovy-parser" },
     { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-chroma" },
@@ -2879,6 +2893,7 @@ requires-dist = [
     { name = "crawl4ai", specifier = "==0.8.0" },
     { name = "ddgs", specifier = "==9.2.3" },
     { name = "fastapi", specifier = ">=0.115.12" },
+    { name = "groovy-parser", specifier = ">=0.2.2" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "langchain", specifier = ">=0.3.24" },
     { name = "langchain-chroma", specifier = ">=0.2.4" },

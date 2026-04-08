@@ -14,7 +14,7 @@ from src.common.schema import (
 )
 
 
-async def build_stage_status_response(job_id: UUID) -> JobStatusStageResponse:
+async def build_stage_status_response(job_id: UUID | None) -> JobStatusStageResponse:
     """Build a stage-only status response (stage + message)."""
     status = await get_job_status(job_id)
     raw_status = status.get("status", JobStatus.not_found.value)
@@ -36,7 +36,7 @@ async def build_stage_status_response(job_id: UUID) -> JobStatusStageResponse:
     )
 
 
-async def build_multi_doc_status_response(job_id: UUID) -> JobStatusMultiDocResponse:
+async def build_multi_doc_status_response(job_id: UUID | None) -> JobStatusMultiDocResponse:
     """
     Build a multi-document aware status response for codegen jobs.
     It forwards the progress dict as-is so multi-doc fields (processedDocuments,

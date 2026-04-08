@@ -22,12 +22,12 @@ venv/
 htmlcov/
 .cache/
 
-# Sessions and Jobs
+# Sessions and Jobs and other directories
 jobs/
 sessions/
+/certificate/
+/clearml/
 
-# Scraper metadata files, TODO: remove completely
-crawl_all.json
 
 # Irrelevatn link debug files
 debug_irrelevant_*
