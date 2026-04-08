@@ -108,18 +108,3 @@ class SessionCreateResponse(BaseModel):
 
     sessionId: UUID = Field(..., description="The unique identifier for the created session")
     message: str = Field(..., description="Confirmation message about the session creation")
-
-
-class SessionDataResponse(BaseModel):
-    """Response model for session data retrieval."""
-
-    sessionId: UUID = Field(..., description="The unique identifier for the session")
-    data: Dict[str, Any] = Field(..., description="The session data stored as a dictionary")
-    createdAt: str = Field(..., description="Timestamp when the session was created")
-    updatedAt: str = Field(..., description="Timestamp when the session was last updated")
-
-
-class SessionUpdateRequest(BaseModel):
-    """Request model for updating session data."""
-
-    data: Dict[str, Any] = Field(..., description="Dictionary containing the data to update in the session")
