@@ -71,6 +71,7 @@ class LangfuseSettings(BaseModel):
     :param public_key: Public Langfuse host key.
     :param secret_key: Secret Langfuse host key.
     :param host: Langfuse host.
+    :param ca_cert_file: Optional CA certificate file for internal Langfuse TLS.
     :param tracing_enabled: Enable/disable langfuse tracing.
     :param environment: Environment name e.g. demo, dev-myname.
     """
@@ -78,6 +79,7 @@ class LangfuseSettings(BaseModel):
     public_key: str = "emptykey"
     secret_key: str = "emptykey"
     host: str = ""
+    ca_cert_file: Optional[str] = None
     tracing_enabled: bool = False
     environment: str = "dev-whoami"
 

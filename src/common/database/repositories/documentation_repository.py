@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -99,6 +100,86 @@ class DocumentationRepository:
             }
             for item in items
         ]
+
+    async def get_documentation_items_for_export(self, session_id: UUID) -> List[Dict[str, Any]]:
+        """
+        Get documentation items for export for a specific session.
+
+        :param session_id: Session ID
+        :return: List of documentation item dicts
+        """
+        query = select(DocumentationItem).where(DocumentationItem.session_id == session_id)
+
+        query = query.order_by(
+            DocumentationItem.doc_id,
+            DocumentationItem.created_at,
+            DocumentationItem.chunk_id,
+        )
+
+        result = await self.db.execute(query)
+        items = result.scalars().all()
+
+        return [
+            {
+                "chunkId": str(item.chunk_id),
+                "docId": str(item.doc_id) if item.doc_id else None,
+                "source": item.source,
+                "url": item.url,
+                "summary": item.summary,
+                "content": item.content,
+                "metadata": item.doc_metadata,
+                "createdAt": item.created_at.isoformat(),
+                "scrapeJobIds": list(item.scrape_job_ids or []),
+            }
+            for item in items
+        ]
+
+    @staticmethod
+    def _parse_iso_datetime(value: str) -> datetime:
+        normalized = value.strip()
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    async def import_documentation_items_for_session(self, session_id: UUID, items: List[Dict[str, Any]]) -> int:
+        """
+        Import documentation items for a specific session preserving exported fields.
+
+        :param session_id: Session ID
+        :param items: Flat list of chunk dictionaries
+        :return: Number of imported chunks
+        """
+        imported_count = 0
+        for item in items:
+            created_at_raw = item.get("createdAt")
+            created_at = self._parse_iso_datetime(created_at_raw) if isinstance(created_at_raw, str) else None
+
+            doc_kwargs = {
+                "chunk_id": UUID(str(item["chunkId"])),
+                "session_id": session_id,
+                "doc_id": UUID(str(item["docId"])) if item.get("docId") else None,
+                "scrape_job_ids": [str(job_id) for job_id in (item.get("scrapeJobIds") or [])],
+                "source": str(item["source"]),
+                "url": item.get("url"),
+                "summary": item.get("summary"),
+                "content": str(item["content"]),
+                "doc_metadata": item.get("metadata") or {},
+            }
+            if created_at is not None:
+                doc_kwargs["created_at"] = created_at
+
+            doc_item = DocumentationItem(
+                **doc_kwargs,
+            )
+            self.db.add(doc_item)
+            imported_count += 1
+
+        await self.db.flush()
+        logger.info(f"Imported {imported_count} documentation items for session {session_id}")
+        return imported_count
 
     async def get_documentation_items_by_session_and_job(self, session_id: UUID, job_id: UUID) -> List[Dict[str, Any]]:
         """

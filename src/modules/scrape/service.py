@@ -174,7 +174,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             len(existing_documentation_chunks_urls),
         )
 
-    processing_tasks: List[asyncio.Task[List[DocumentationItem]]] = []
+    processing_tasks: List[tuple[SavedDocumentation, asyncio.Task[List[DocumentationItem]]]] = []
     processing_semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
     scheduled_documentations: List[SavedDocumentation] = []
     scheduled_documentation_urls: set[str] = set()
@@ -188,15 +188,18 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
         scheduled_documentation_urls.add(normalized_documentation_url)
         scheduled_documentations.append(documentation)
         processing_tasks.append(
-            asyncio.create_task(
-                process_all_documentations(
-                    [documentation],
-                    app=input.application_name,
-                    app_version=input.application_version,
-                    source="scraper",
-                    semaphore=processing_semaphore,
-                    chunk_length=config.scrape_and_process.chunk_length,
-                )
+            (
+                documentation,
+                asyncio.create_task(
+                    process_all_documentations(
+                        [documentation],
+                        app=input.application_name,
+                        app_version=input.application_version,
+                        source="scraper",
+                        semaphore=processing_semaphore,
+                        chunk_length=config.scrape_and_process.chunk_length,
+                    )
+                ),
             )
         )
 
@@ -276,11 +279,11 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                 break
             links = new_links
     except Exception:
-        for task in processing_tasks:
+        for _, task in processing_tasks:
             if not task.done():
                 task.cancel()
         if processing_tasks:
-            await asyncio.gather(*processing_tasks, return_exceptions=True)
+            await asyncio.gather(*(task for _, task in processing_tasks), return_exceptions=True)
         raise
 
     # Finalize chunk processing tasks that have been running in parallel with scraping.
@@ -293,8 +296,16 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             len(scheduled_documentations),
         )
         await update_job_progress(job_id, stage=JobStage.processing_chunks, message="finalizing chunk processing")
-        processed_batches = await asyncio.gather(*processing_tasks)
-        for batch in processed_batches:
+        processed_batches = await asyncio.gather(*(task for _, task in processing_tasks), return_exceptions=True)
+        for (documentation, _), batch in zip(processing_tasks, processed_batches):
+            if isinstance(batch, BaseException):
+                logger.exception(
+                    "[Scrape] Job %s: Chunk processing failed for documentation %s",
+                    job_id,
+                    documentation.url,
+                    exc_info=batch,
+                )
+                raise RuntimeError(f"Chunk processing failed for documentation {documentation.url}: {batch}") from batch
             documentation_chunks.extend(batch)
     else:
         logger.info("[Scrape] Job %s: No documentations queued for chunk processing", job_id)

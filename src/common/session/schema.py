@@ -58,23 +58,53 @@ class DocumentationItem(BaseModel):
     )
 
 
+class DocumentationExportChunk(BaseModel):
+    """Transfer model for one documentation chunk in export/import payload."""
+
+    chunk_id: UUID = Field(
+        ...,
+        serialization_alias="chunkId",
+        validation_alias=AliasChoices("chunkId", "chunk_id"),
+        description="Unique identifier for the documentation chunk",
+    )
+    source: str = Field(..., description="Source type: 'scraper' or 'upload'")
+    url: Optional[str] = Field(None, description="Scraped URL or upload file URI")
+    summary: Optional[str] = Field(None, description="Chunk summary")
+    content: str = Field(..., description="Chunk full text")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        serialization_alias="metadata",
+        validation_alias=AliasChoices("metadata", "@metadata"),
+        description="Chunk metadata",
+    )
+    created_at: str = Field(
+        ...,
+        serialization_alias="createdAt",
+        validation_alias=AliasChoices("createdAt", "created_at"),
+        description="Creation timestamp (ISO 8601)",
+    )
+    scrape_job_ids: list[str] = Field(
+        default_factory=list,
+        serialization_alias="scrapeJobIds",
+        validation_alias=AliasChoices("scrapeJobIds", "scrape_job_ids"),
+        description="Job IDs used for caching/reference",
+    )
+
+
+class DocumentationExportDocument(BaseModel):
+    """Transfer model for one logical document containing all its chunks."""
+
+    doc_id: Optional[UUID] = Field(
+        None,
+        serialization_alias="docId",
+        validation_alias=AliasChoices("docId", "doc_id"),
+        description="Document identifier shared across chunks",
+    )
+    chunks: list[DocumentationExportChunk] = Field(default_factory=list, description="All chunks of the document")
+
+
 class SessionCreateResponse(BaseModel):
     """Response model for session creation."""
 
     sessionId: UUID = Field(..., description="The unique identifier for the created session")
     message: str = Field(..., description="Confirmation message about the session creation")
-
-
-class SessionDataResponse(BaseModel):
-    """Response model for session data retrieval."""
-
-    sessionId: UUID = Field(..., description="The unique identifier for the session")
-    data: Dict[str, Any] = Field(..., description="The session data stored as a dictionary")
-    createdAt: str = Field(..., description="Timestamp when the session was created")
-    updatedAt: str = Field(..., description="Timestamp when the session was last updated")
-
-
-class SessionUpdateRequest(BaseModel):
-    """Request model for updating session data."""
-
-    data: Dict[str, Any] = Field(..., description="Dictionary containing the data to update in the session")

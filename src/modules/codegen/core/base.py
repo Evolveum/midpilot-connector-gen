@@ -23,6 +23,7 @@ from src.common.jobs import (
 )
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
 from src.modules.digester.schema import AttributeResponse, EndpointResponse
 
@@ -189,7 +190,8 @@ class BaseGroovyGenerator(ABC):
         chain = self._build_llm_chain(len(chunks))
 
         # Step 4: Process chunks iteratively
-        result = self.get_initial_result(**operation_specific_kwargs)
+        initial_result = self.get_initial_result(**operation_specific_kwargs)
+        result = initial_result
         result = await self._process_chunks(
             chunks=chunks,
             provenance_chunk_ids=provenance_chunk_ids,
@@ -204,6 +206,13 @@ class BaseGroovyGenerator(ABC):
         if not result:
             logger.warning("%s No code produced; returning default scaffold", self.config.logger_prefix)
             return self.config.default_scaffold
+
+        validation_error = validate_groovy_code(result)
+        if validation_error is not None:
+            error_message = f"{self.config.logger_prefix} Final generated Groovy is invalid: {validation_error}"
+            logger.warning(error_message)
+            append_job_error(job_id, error_message)
+            return initial_result
 
         return strip_markdown_fences(result)
 
@@ -319,7 +328,17 @@ class BaseGroovyGenerator(ABC):
                 code = _coerce_llm_text(response).strip()
 
                 if code:
-                    result = strip_markdown_fences(code)
+                    candidate = strip_markdown_fences(code)
+                    validation_error = validate_groovy_code(candidate)
+                    if validation_error is None:
+                        result = candidate
+                    else:
+                        error_message = (
+                            f"{self.config.logger_prefix} Invalid Groovy after chunk {idx}/{total_chunks}: "
+                            f"{validation_error}"
+                        )
+                        logger.warning(error_message)
+                        append_job_error(job_id, error_message)
 
             except Exception as exc:
                 error_message = f"[{self.config.logger_prefix}] Failed to process chunk {idx}/{total_chunks}: {exc}"

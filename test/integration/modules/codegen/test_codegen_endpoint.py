@@ -19,6 +19,7 @@ from src.modules.codegen.router import (
     get_relation_code_status,
     override_native_schema,
 )
+from src.modules.codegen.schema import GroovyCodePayload
 
 
 # NATIVE SCHEMA
@@ -110,7 +111,7 @@ async def test_override_native_schema_success():
         response = await override_native_schema(
             session_id,
             "User",
-            {"code": "custom groovy code"},
+            GroovyCodePayload(code='objectClass("User") {}'),
             db=MagicMock(),
         )
 
@@ -119,7 +120,7 @@ async def test_override_native_schema_success():
         assert response["objectClass"] == "User"
         mock_repo.update_session.assert_awaited_once_with(
             session_id,
-            {"UserNativeSchemaOutput": {"code": "custom groovy code"}},
+            {"UserNativeSchemaOutput": {"code": 'objectClass("User") {}'}},
         )
 
 

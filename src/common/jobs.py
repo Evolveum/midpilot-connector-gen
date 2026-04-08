@@ -117,8 +117,10 @@ async def set_failed(job_id: UUID, error: str) -> Dict[str, Any]:
         raise
 
 
-async def get_job_status(job_id: UUID) -> Dict[str, Any]:
+async def get_job_status(job_id: UUID | None) -> Dict[str, Any]:
     """Return a public job status dict."""
+    if job_id is None:
+        return {"jobId": None, "status": "not_found"}
     try:
         async with async_session_maker() as db:
             repo = JobRepository(db)
