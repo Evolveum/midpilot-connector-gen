@@ -19,6 +19,8 @@ from src.common.database.repositories.session_repository import SessionRepositor
 from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
 from src.common.session.schema import DocumentationItem
+from src.common.utils.normalize import normalize_url
+from src.common.utils.status_response import build_group_documentation_response
 from src.config import config
 from src.modules.scrape.fucntions import scraper_loop
 from src.modules.scrape.schema import ScrapeRequest, ScrapeResult
@@ -63,8 +65,10 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                     existing_docs_loaded: List[Dict[str, Any]] = (
                         await repo.get_session_data(session_id, "documentationItems") or []
                     )
-                    existing_docs_urls = {item.get("url") for item in existing_docs_loaded if item.get("url")}
-                    new_docs = [item for item in doc_items if item["url"] not in existing_docs_urls]
+                    existing_docs_urls = {
+                        normalize_url(item.get("url")) for item in existing_docs_loaded if item.get("url")
+                    }
+                    new_docs = [item for item in doc_items if normalize_url(item.get("url")) not in existing_docs_urls]
                     updated_chunks_existing: List[Dict[str, Any]] = []
                     for chunk in new_docs:
                         chunk_id = await doc_repo.create_documentation_item(
@@ -112,14 +116,24 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                         len(all_docs),
                     )
 
-                    orig_job_result = latest_job.result
+                    orig_job_result = latest_job.result or {}
+                    saved_documentation_urls = {normalize_url(item.get("url")) for item in doc_items if item.get("url")}
+
+                    doc_rows_for_export = await doc_repo.get_documentation_items_for_export(session_id)
+                    if saved_documentation_urls:
+                        doc_rows_for_export = [
+                            item
+                            for item in doc_rows_for_export
+                            if normalize_url(item.get("url")) in saved_documentation_urls
+                        ]
+                    else:
+                        doc_rows_for_export = []
+
                     return ScrapeResult(
                         finish_reason="reused_previous_session_data",
-                        saved_documentations_count=orig_job_result.get("savedDocumentationsCount", 0)
-                        if orig_job_result
-                        else 0,
-                        documentation_chunks_count=len(updated_chunks_existing),
-                        saved_documentations=orig_job_result.get("savedDocumentations", {}) if orig_job_result else {},
+                        saved_documentations_count=orig_job_result.get("savedDocumentationsCount", 0),
+                        saved_chunks_count=len(updated_chunks_existing),
+                        saved_documentations=build_group_documentation_response(doc_rows_for_export),
                     )
                 else:
                     logger.warning(
@@ -143,8 +157,8 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
         return ScrapeResult(
             finish_reason="no-starter-links",
             saved_documentations_count=0,
-            documentation_chunks_count=0,
-            saved_documentations={},
+            saved_chunks_count=0,
+            saved_documentations=[],
         )
 
     # Trusted domains
@@ -165,7 +179,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             repo = SessionRepository(db)
             existing_documentation_chunks = await repo.get_session_data(session_id, "documentationItems") or []
         existing_documentation_chunks_urls = {
-            str(url).rstrip("/") for item in existing_documentation_chunks for url in [item.get("url")] if url
+            normalize_url(url) for item in existing_documentation_chunks for url in [item.get("url")] if url
         }
         logger.info(
             "[Scrape] Job %s: Loaded %s existing documentation entries (%s unique URLs) for incremental processing",
@@ -180,7 +194,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
     scheduled_documentation_urls: set[str] = set()
 
     async def on_documentation_scraped(documentation: SavedDocumentation) -> None:
-        normalized_documentation_url = str(documentation.url).rstrip("/")
+        normalized_documentation_url = normalize_url(documentation.url)
         if normalized_documentation_url in existing_documentation_chunks_urls:
             return
         if normalized_documentation_url in scheduled_documentation_urls:
@@ -214,8 +228,8 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
         return ScrapeResult(
             finish_reason="wrong-scraper-iterations-value",
             saved_documentations_count=0,
-            documentation_chunks_count=0,
-            saved_documentations={},
+            saved_chunks_count=0,
+            saved_documentations=[],
         )
 
     logger.info("[Scrape] Starting scraper loop for job %s with max %s iterations", job_id, max_iters)
@@ -379,11 +393,21 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             elif updated_existing_chunks:
                 await db.commit()
 
+            doc_rows_for_export = await doc_repo.get_documentation_items_for_export(session_id)
+            if scheduled_documentation_urls:
+                doc_rows_for_export = [
+                    item
+                    for item in doc_rows_for_export
+                    if normalize_url(item.get("url")) in scheduled_documentation_urls
+                ]
+            else:
+                doc_rows_for_export = []
+
     result = ScrapeResult(
         finish_reason=finish_reason,
         saved_documentations_count=len(scheduled_documentations),
-        documentation_chunks_count=len(documentation_chunks),
-        saved_documentations={str(p.url): p.to_dict() for p in scheduled_documentations},
+        saved_chunks_count=len(documentation_chunks),
+        saved_documentations=build_group_documentation_response(doc_rows_for_export),
     )
 
     logger.info(

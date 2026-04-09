@@ -20,10 +20,11 @@ from src.common.database.repositories.session_repository import SessionRepositor
 from src.common.enums import JobStage, JobStatus
 from src.common.jobs import schedule_coroutine_job
 from src.common.session.schema import (
-    DocumentationExportDocument,
+    Documentation,
     SessionCreateResponse,
 )
 from src.common.session.session import process_documentation_worker
+from src.common.utils.status_response import build_group_documentation_response
 from src.config import config
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,7 @@ async def get_documentation_upload_status(
 @router.get("/{session_id}/documentation", summary="Get documentation from session")
 async def get_documentation(
     session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)
-) -> list[DocumentationExportDocument]:
+) -> list[Documentation]:
     """
     Retrieve all documentation items stored in the session grouped by document.
     Returns list of document bundles with docId and all its chunks.
@@ -127,34 +128,7 @@ async def get_documentation(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"No documentation found in session {session_id}"
         )
 
-    bundles_by_key: dict[tuple[str, str], Dict[str, Any]] = {}
-
-    for item in doc_rows:
-        doc_identity = item["docId"] or item["chunkId"]
-        key = (item["source"], doc_identity)
-
-        bundle = bundles_by_key.get(key)
-        if bundle is None:
-            bundle = {
-                "docId": item["docId"],
-                "chunks": [],
-            }
-            bundles_by_key[key] = bundle
-
-        bundle["chunks"].append(
-            {
-                "chunkId": item["chunkId"],
-                "source": item["source"],
-                "url": item["url"],
-                "summary": item["summary"],
-                "content": item["content"],
-                "metadata": item["metadata"],
-                "createdAt": item["createdAt"],
-                "scrapeJobIds": item["scrapeJobIds"],
-            }
-        )
-
-    return [DocumentationExportDocument.model_validate(bundle) for bundle in bundles_by_key.values()]
+    return build_group_documentation_response(doc_rows)
 
 
 @router.get(
@@ -165,7 +139,7 @@ async def get_documentation_by_id(
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation UUID (doc_id)"),
     db: AsyncSession = Depends(get_db),
-) -> DocumentationExportDocument:
+) -> Documentation:
     """
     Retrieve all chunks for a single documentation document (doc_id).
     Returns one document bundle in the same shape as export, scoped to one doc_id.
@@ -200,7 +174,7 @@ async def get_documentation_by_id(
             for item in doc_rows_for_document
         ],
     }
-    return DocumentationExportDocument.model_validate(document_payload)
+    return Documentation.model_validate(document_payload)
 
 
 # HEAD Endpoints
@@ -582,7 +556,7 @@ async def replace_documentation(
     summary="Import documentation preprocessed by LLM",
 )
 async def import_documentation_by_id(
-    document: DocumentationExportDocument,
+    document: Documentation,
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation UUID (doc_id)"),
     db: AsyncSession = Depends(get_db),

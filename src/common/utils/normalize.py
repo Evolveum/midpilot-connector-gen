@@ -10,6 +10,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def normalize_url(value: Any) -> str:
+    """Normalize URL-like values for reliable comparisons."""
+    return str(value).rstrip("/") if value else ""
+
+
 def normalize_object_class_name(object_class: str) -> str:
     """Normalize object class name for case-insensitive matching."""
     return object_class.strip().lower()
