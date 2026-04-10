@@ -27,6 +27,7 @@ from src.modules.digester.prompts.scim.attributes_prompts import (
 )
 from src.modules.digester.schema import AttributeResponse
 from src.modules.digester.scim.loader import get_base_scim_attributes, is_scim_standard_class
+from src.modules.digester.utils.attribute_filters import normalize_readability_flags
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
@@ -263,8 +264,9 @@ async def extract_scim_attributes(
 
     # Step 3: Merge custom attributes
     merged_custom = _merge_custom_attributes(all_custom_attributes)
+    postprocessed_custom = normalize_readability_flags(merged_custom)
     merged_custom_with_references = _attach_relevant_documentations_per_attribute(
-        merged_custom,
+        postprocessed_custom,
         attribute_chunk_pairs,
     )
 

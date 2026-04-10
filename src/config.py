@@ -111,6 +111,10 @@ class ScrapeAndProcessSettings(BaseModel):
     )
 
     # Scraper controls
+    crawl4ai_verbose: bool = Field(
+        False,
+        description="Enable verbose Crawl4AI console logs (FETCH/SCRAPE/COMPLETE).",
+    )
     max_scraper_iterations: int = Field(
         4,
         description="Max outer iterations of the scraper loop",

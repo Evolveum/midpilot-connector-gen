@@ -262,7 +262,7 @@ class DocumentationRepository:
             item.doc_metadata = metadata
 
         await self.db.flush()
-        logger.info(f"Updated documentation item {chunk_id}")
+        logger.info(f"Updated documentation and created chunk_id: {chunk_id}")
         return True
 
     async def remove_job_ids_from_documentation_items(self, session_id: UUID, doc_source: str) -> int:

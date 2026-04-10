@@ -28,7 +28,11 @@ from src.modules.digester.prompts.rest.attributes_prompts import (
     get_object_class_schema_user_prompt,
 )
 from src.modules.digester.schema import AttributeResponse
-from src.modules.digester.utils.attribute_filters import filter_ignored_attributes, ignore_attribute_name
+from src.modules.digester.utils.attribute_filters import (
+    filter_ignored_attributes,
+    ignore_attribute_name,
+    normalize_readability_flags,
+)
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunk_groups_concurrently
 from src.modules.digester.utils.merges import merge_attribute_candidates
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
@@ -449,8 +453,9 @@ async def extract_attributes(
         chunks=chunks,
         job_id=job_id,
     )
+    postprocessed_attributes = normalize_readability_flags(filled_attributes)
     attributes_with_references = _attach_relevant_documentations_per_attribute(
-        filled_attributes,
+        postprocessed_attributes,
         attribute_chunk_pairs,
     )
 
