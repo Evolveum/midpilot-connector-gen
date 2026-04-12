@@ -40,7 +40,7 @@ async def test_extract_auth_success():
         input_payload={"usePreviousSessionData": True},
         dynamic_input_enabled=True,
         dynamic_input_provider=ANY,
-        worker=service.extract_auth,
+        worker=service.extract_auth_with_fallback,
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",

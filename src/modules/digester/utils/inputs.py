@@ -54,6 +54,7 @@ async def auth_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
     # Prefer auth-specific chunks, but fall back to the broader default digester set
     # if the static auth filter is too restrictive for the current session metadata.
     doc_items = await filter_documentation_items(AUTH_CRITERIA, session_id, db=db)
+    used_auth_criteria = bool(doc_items)
     if not doc_items:
         logger.info(
             "[Digester:Auth] AUTH_CRITERIA matched no documentation for session %s, falling back to DEFAULT_CRITERIA",
@@ -64,8 +65,9 @@ async def auth_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
         "sessionInput": {},
         "jobInput": {
             "documentationItems": doc_items,
+            "usedAuthCriteria": used_auth_criteria,
         },
-        "args": (doc_items,),
+        "args": (doc_items, used_auth_criteria, session_id),
     }
 
 
