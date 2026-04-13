@@ -6,6 +6,7 @@ import logging
 from typing import Any, Callable, Dict, List, cast
 from uuid import UUID
 
+from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.jobs import update_job_progress
 from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 
@@ -28,6 +29,7 @@ from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endp
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
 from src.modules.digester.schema import InfoMetadata, InfoResponse
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
+from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
 from src.modules.digester.utils.doc_chunk import select_doc_chunks
 from src.modules.digester.utils.merges import (
     merge_info_metadata,
@@ -302,6 +304,58 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
         "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
         "relevantDocumentations": all_relevant_chunks,
     }
+
+
+def _auth_result_has_items(extraction_result: Dict[str, Any]) -> bool:
+    result = extraction_result.get("result")
+    if not isinstance(result, dict):
+        return False
+    auth = result.get("auth")
+    return isinstance(auth, list) and len(auth) > 0
+
+
+async def extract_auth_with_fallback(
+    doc_items: List[dict],
+    used_auth_criteria: bool,
+    session_id: UUID,
+    job_id: UUID,
+):
+    """
+    Run auth extraction on AUTH_CRITERIA results first.
+    If empty and AUTH_CRITERIA was used, retry once using DEFAULT_CRITERIA docs.
+    """
+    primary_result = await extract_auth(doc_items, job_id)
+    if not used_auth_criteria or _auth_result_has_items(primary_result):
+        return primary_result
+
+    logger.info(
+        "[Digester:Auth] AUTH_CRITERIA produced empty final auth result for session %s; retrying with DEFAULT_CRITERIA",
+        session_id,
+    )
+    await update_job_progress(
+        job_id,
+        stage="chunking",
+        message="No auth found in auth-focused chunks; retrying with broader documentation filter",
+    )
+
+    fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
+    if not fallback_doc_items:
+        logger.info(
+            "[Digester:Auth] DEFAULT_CRITERIA matched no documentation for session %s; keeping empty auth result",
+            session_id,
+        )
+        return primary_result
+
+    primary_chunk_ids = {str(item.get("chunkId")) for item in doc_items if item.get("chunkId")}
+    fallback_chunk_ids = {str(item.get("chunkId")) for item in fallback_doc_items if item.get("chunkId")}
+    if primary_chunk_ids and primary_chunk_ids == fallback_chunk_ids:
+        logger.info(
+            "[Digester:Auth] DEFAULT_CRITERIA matched same chunks as AUTH_CRITERIA for session %s; skipping retry",
+            session_id,
+        )
+        return primary_result
+
+    return await extract_auth(fallback_doc_items, job_id)
 
 
 async def extract_info_metadata(doc_items: List[dict], job_id: UUID):

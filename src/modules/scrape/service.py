@@ -404,7 +404,6 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                 logger.info(
                     "[Scrape] Job %s: Saved %s chunks to session",
                     job_id,
-                    len(documentation_chunks),
                     len(all_docs),
                 )
             elif updated_existing_chunks_count > 0:
