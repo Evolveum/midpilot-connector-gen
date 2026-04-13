@@ -26,6 +26,7 @@ async def test_generate_create():
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
         patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -70,6 +71,7 @@ async def test_generate_update():
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
         patch("src.modules.codegen.service.UpdateGenerator") as mock_update_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -113,6 +115,7 @@ async def test_generate_delete():
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
         patch("src.modules.codegen.service.DeleteGenerator") as mock_delete_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value

@@ -13,6 +13,7 @@ The input data you will receive:
 3. A chunk of the original document (e.g., API spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated—such as parameter semantics, data types, required vs optional fields, pagination, filtering/sorting rules, authentication hints, default values, example requests/responses, and error behavior.
 4. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
 5. The requested search intent for this run is `{intent}`.
+6. Base API URL (if known) for path normalization is `{base_api_url}`.
 
 Prepare a valid Groovy code for search schema in Groovy based on the following `.adoc` documentations:
 
@@ -36,6 +37,10 @@ OUTPUT RULES:
   `supportedFilter(attribute("name").contains().anySingleValue()) {{ ... }}`
 - For `id`, prefer dedicated object-by-id endpoints such as `/users/{{id}}`. Only fall back to `supportedFilter(attribute("uid").eq().anySingleValue())` when the docs do not provide a dedicated identifier endpoint.
 - Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the example in <output_format>.
+- Endpoint paths used inside `endpoint("...")` MUST come from `<extracted_endpoints>` after normalization. Do not invent or copy path variants that are absent there.
+- If docs show a versioned or absolute path variant (e.g., `/api/v3/users` or `https://host/api/v3/users`) but `<extracted_endpoints>` contains `/users`, you MUST use `/users`.
+- For every `endpoint("...")`, output a path that starts with `/`, contains no scheme/host, and avoids duplicated base prefixes.
+- If `base_api_url` contains a base path prefix (e.g., `/api/v1`), strip that prefix from endpoint paths when it appears in docs.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it, but you may delete or replace previously generated parts that conflict with the requested intent or the current documentation.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear.
 - Preserve the outer objectClass and search blocks if already present in <result>.
@@ -59,6 +64,12 @@ Here is extracted endpoints for object class from OpenAPI/Swagger schema wrapped
 <extracted_endpoints>
 {endpoints_json}
 </extracted_endpoints>
+
+Base API URL for endpoint-path normalization:
+
+<base_api_url>
+{base_api_url}
+</base_api_url>
 
 Here is docs where you have to find additional information:
 

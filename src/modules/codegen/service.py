@@ -8,7 +8,7 @@ from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
+from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.core.operations import (
     CreateGenerator,
@@ -222,6 +222,7 @@ async def create_search(
     protocol = ApiProtocol.SCIM if is_scim_api(api_types) else ApiProtocol.REST
     assets = get_operation_assets("search", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    base_api_url = await get_session_base_api_url(session_id)
 
     generator = SearchGenerator(
         object_class=object_class,
@@ -230,6 +231,7 @@ async def create_search(
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
+        base_api_url=base_api_url,
     )
 
     # Collect relevant chunks
@@ -265,6 +267,7 @@ async def create_create(
     protocol = ApiProtocol.SCIM if is_scim_api(api_types) else ApiProtocol.REST
     assets = get_operation_assets("create", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    base_api_url = await get_session_base_api_url(session_id)
 
     generator = CreateGenerator(
         object_class=object_class,
@@ -272,6 +275,7 @@ async def create_create(
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
+        base_api_url=base_api_url,
     )
 
     # Collect relevant chunks
@@ -306,6 +310,7 @@ async def create_update(
     protocol = ApiProtocol.SCIM if is_scim_api(api_types) else ApiProtocol.REST
     assets = get_operation_assets("update", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    base_api_url = await get_session_base_api_url(session_id)
 
     generator = UpdateGenerator(
         object_class=object_class,
@@ -313,6 +318,7 @@ async def create_update(
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
+        base_api_url=base_api_url,
     )
 
     # Collect relevant chunks
@@ -347,6 +353,7 @@ async def create_delete(
     protocol = ApiProtocol.SCIM if is_scim_api(api_types) else ApiProtocol.REST
     assets = get_operation_assets("delete", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    base_api_url = await get_session_base_api_url(session_id)
 
     generator = DeleteGenerator(
         object_class=object_class,
@@ -354,6 +361,7 @@ async def create_delete(
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
+        base_api_url=base_api_url,
     )
 
     # Collect relevant chunks
