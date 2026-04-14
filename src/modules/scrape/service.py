@@ -22,7 +22,7 @@ from src.common.session.schema import DocumentationItem
 from src.common.utils.normalize import normalize_url
 from src.common.utils.status_response import build_group_documentation_response
 from src.config import config
-from src.modules.scrape.fucntions import scraper_loop
+from src.modules.scrape.functions import scraper_loop
 from src.modules.scrape.schema import ScrapeRequest, ScrapeResult
 
 logger = logging.getLogger(__name__)
