@@ -58,8 +58,8 @@ class DocumentationItem(BaseModel):
     )
 
 
-class DocumentationExportChunk(BaseModel):
-    """Transfer model for one documentation chunk in export/import payload."""
+class DocumentationChunk(BaseModel):
+    """API model for one documentation chunk payload."""
 
     chunk_id: UUID = Field(
         ...,
@@ -91,8 +91,8 @@ class DocumentationExportChunk(BaseModel):
     )
 
 
-class DocumentationExportDocument(BaseModel):
-    """Transfer model for one logical document containing all its chunks."""
+class Documentation(BaseModel):
+    """API model for one logical document containing all its chunks."""
 
     doc_id: Optional[UUID] = Field(
         None,
@@ -100,7 +100,7 @@ class DocumentationExportDocument(BaseModel):
         validation_alias=AliasChoices("docId", "doc_id"),
         description="Document identifier shared across chunks",
     )
-    chunks: list[DocumentationExportChunk] = Field(default_factory=list, description="All chunks of the document")
+    chunks: list[DocumentationChunk] = Field(default_factory=list, description="All chunks of the document")
 
 
 class SessionCreateResponse(BaseModel):

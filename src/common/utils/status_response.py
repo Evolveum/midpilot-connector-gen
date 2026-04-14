@@ -12,6 +12,7 @@ from src.common.schema import (
     JobStatusMultiDocResponse,
     JobStatusStageResponse,
 )
+from src.common.session.schema import Documentation
 
 
 async def build_stage_status_response(job_id: UUID | None) -> JobStatusStageResponse:
@@ -102,3 +103,37 @@ async def build_typed_job_status_response(job_id: UUID, model_cls: Type[Any]) ->
         result=result_payload,
         errors=status.get("errors"),
     )
+
+
+def build_group_documentation_response(doc_rows: list[dict[str, Any]]) -> list[Documentation]:
+    """
+    Group flat documentation rows by logical document (source + docId/chunkId fallback).
+    """
+    bundles_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for item in doc_rows:
+        doc_identity = item["docId"] or item["chunkId"]
+        key = (item["source"], doc_identity)
+
+        bundle = bundles_by_key.get(key)
+        if bundle is None:
+            bundle = {
+                "docId": item["docId"],
+                "chunks": [],
+            }
+            bundles_by_key[key] = bundle
+
+        bundle["chunks"].append(
+            {
+                "chunkId": item["chunkId"],
+                "source": item["source"],
+                "url": item["url"],
+                "summary": item["summary"],
+                "content": item["content"],
+                "metadata": item["metadata"],
+                "createdAt": item["createdAt"],
+                "scrapeJobIds": item["scrapeJobIds"],
+            }
+        )
+
+    return [Documentation.model_validate(bundle) for bundle in bundles_by_key.values()]

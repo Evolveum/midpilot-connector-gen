@@ -31,6 +31,7 @@ class SearchGenerator(BaseGroovyGenerator):
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
+        base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -44,6 +45,7 @@ class SearchGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["intent"] = intent
         config.extra_prompt_vars["search_docs"] = docs_text
+        config.extra_prompt_vars["base_api_url"] = base_api_url
         super().__init__(config)
         self.object_class = object_class
 
@@ -69,6 +71,7 @@ class CreateGenerator(BaseGroovyGenerator):
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
+        base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -81,6 +84,7 @@ class CreateGenerator(BaseGroovyGenerator):
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["create_docs"] = docs_text
+        config.extra_prompt_vars["base_api_url"] = base_api_url
         super().__init__(config)
         self.object_class = object_class
 
@@ -106,6 +110,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
+        base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -118,6 +123,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["update_docs"] = docs_text
+        config.extra_prompt_vars["base_api_url"] = base_api_url
         super().__init__(config)
         self.object_class = object_class
 
@@ -143,6 +149,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
+        base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -155,6 +162,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["delete_docs"] = docs_text
+        config.extra_prompt_vars["base_api_url"] = base_api_url
         super().__init__(config)
         self.object_class = object_class
 

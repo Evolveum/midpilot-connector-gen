@@ -121,9 +121,4 @@ async def process_all_documentations(
     for documentation_chunks in results:
         all_chunks.extend(documentation_chunks)
 
-    logger.info(
-        "[Scrape:Process] Processing complete: generated %s total chunks from %s documentations",
-        len(all_chunks),
-        len(documentations),
-    )
     return all_chunks

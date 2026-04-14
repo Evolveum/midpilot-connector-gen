@@ -12,6 +12,7 @@ The input data you will receive:
 2. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger endpoints from api/v1/digester/{{session_id}}/endpoints.
 3. A chunk of the original document (e.g., API spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated—such as parameter semantics, data types, required vs optional fields, authentication hints, default values, example requests/responses, and error behavior.
 4. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
+5. Base API URL (if known) for path normalization is `{base_api_url}`.
 
 Prepare a valid Groovy code for update schema in Groovy based on the following `.adoc` documentations:
 
@@ -22,6 +23,10 @@ Prepare a valid Groovy code for update schema in Groovy based on the following `
 OUTPUT RULES:
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
 - Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the examples in <update_docs>.
+- Endpoint paths used inside `endpoint("...")` MUST come from `<extracted_endpoints>` after normalization. Do not invent or copy path variants that are absent there.
+- If docs show a versioned or absolute path variant (e.g., `/api/v3/users` or `https://host/api/v3/users`) but `<extracted_endpoints>` contains `/users`, you MUST use `/users`.
+- For every `endpoint("...")`, output a path that starts with `/`, contains no scheme/host, and avoids duplicated base prefixes.
+- If `base_api_url` contains a base path prefix (e.g., `/api/v1`), strip that prefix from endpoint paths when it appears in docs.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it; do not discard or rename previously correct parts.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear.
 - Preserve the outer objectClass and update blocks if already present in <result>.
@@ -43,6 +48,12 @@ Here is extracted endpoints for object class from OpenAPI/Swagger schema wrapped
 <extracted_endpoints>
 {endpoints_json}
 </extracted_endpoints>
+
+Base API URL for endpoint-path normalization:
+
+<base_api_url>
+{base_api_url}
+</base_api_url>
 
 Here is chunk where you have to find additional information:
 

@@ -2,9 +2,11 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Dict, List
+from typing import List
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from src.common.session.schema import Documentation
 
 
 class ScrapeRequest(BaseModel):
@@ -72,8 +74,8 @@ class ScrapeRequest(BaseModel):
 class ScrapeResult(BaseModel):
     finish_reason: str = Field(serialization_alias="finishReason")
     saved_documentations_count: int = Field(serialization_alias="savedDocumentationsCount")
-    documentation_chunks_count: int = Field(serialization_alias="documentationChunksCount")
-    saved_documentations: Dict[str, dict] = Field(serialization_alias="savedDocumentations")
+    saved_chunks_count: int = Field(serialization_alias="savedChunksCount")
+    saved_documentations: List[Documentation] = Field(serialization_alias="savedDocumentations")
 
 
 class IrrelevantLinks(BaseModel):
