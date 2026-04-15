@@ -115,7 +115,7 @@ async def get_object_classes_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -123,7 +123,7 @@ async def get_object_classes_status(
         job_label="object classes",
     )
 
-    response = await build_typed_job_status_response(jobId, ObjectClassesResponse)
+    response = await build_typed_job_status_response(resolved_job_id, ObjectClassesResponse)
 
     if response.status == JobStatus.finished:
         object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
@@ -346,7 +346,7 @@ async def get_class_attributes_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -356,7 +356,7 @@ async def get_class_attributes_status(
     )
 
     # Get job status but override result with current session data
-    response = await build_typed_job_status_response(jobId, AttributeResponse)
+    response = await build_typed_job_status_response(resolved_job_id, AttributeResponse)
 
     # If job is finished, replace result with current session data (which may have been updated)
     if response.status == JobStatus.finished:
@@ -518,7 +518,7 @@ async def get_class_endpoints_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -527,7 +527,7 @@ async def get_class_endpoints_status(
         not_found_detail=f"No endpoints job found for {object_class} in session {session_id}",
     )
 
-    return await build_typed_job_status_response(jobId, EndpointResponse)
+    return await build_typed_job_status_response(resolved_job_id, EndpointResponse)
 
 
 @router.put(
@@ -634,7 +634,7 @@ async def get_relations_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -642,7 +642,7 @@ async def get_relations_status(
         job_label="relations",
     )
 
-    return await build_typed_job_status_response(jobId, RelationsResponse)
+    return await build_typed_job_status_response(resolved_job_id, RelationsResponse)
 
 
 @router.put(
@@ -726,7 +726,7 @@ async def get_auth_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -734,7 +734,7 @@ async def get_auth_status(
         job_label="auth",
     )
 
-    return await build_typed_job_status_response(jobId, AuthResponse)
+    return await build_typed_job_status_response(resolved_job_id, AuthResponse)
 
 
 @router.post(
@@ -797,7 +797,7 @@ async def get_metadata_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -805,4 +805,24 @@ async def get_metadata_status(
         job_label="metadata",
     )
 
-    return await build_typed_job_status_response(jobId, InfoResponse)
+    return await build_typed_job_status_response(resolved_job_id, InfoResponse)
+
+
+@router.put(
+    "/{session_id}/metadata",
+    summary="Restore metadata information",
+)
+async def restore_metadata(
+    session_id: UUID = Path(..., description="Session ID"),
+    metadata: InfoResponse = Body(..., description="Info metadata payload as JSON"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Restore metadataOutput in session from provided infoMetadata payload.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    await repo.update_session(session_id, {"metadataOutput": metadata.model_dump(by_alias=True)})
+
+    return {"message": "Metadata updated successfully", "sessionId": session_id}

@@ -352,7 +352,7 @@ def merge_info_metadata(
 
         for endpoint in info.base_api_endpoint or []:
             uri = (endpoint.uri or "").strip().lower()
-            endpoint_type: Literal["constant", "dynamic"] = endpoint.type
+            endpoint_type: Literal["constant", "dynamic", ""] = endpoint.type
             if not uri:
                 continue
             base_api_endpoints_url_distribution[uri] = base_api_endpoints_url_distribution.get(uri, 0) + 1

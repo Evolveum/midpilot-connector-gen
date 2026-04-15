@@ -11,7 +11,7 @@ import pytest
 
 from src.common.enums import JobStatus
 from src.modules.digester import service
-from src.modules.digester.router import extract_metadata, get_metadata_status
+from src.modules.digester.router import extract_metadata, get_metadata_status, restore_metadata
 from src.modules.digester.schema import InfoResponse
 
 
@@ -84,3 +84,39 @@ async def test_get_metadata_status_found():
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_repo.get_session_data.assert_awaited_once_with(session_id, "metadataJobId")
     mock_status_builder.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_restore_metadata_success():
+    """Test manual restore of metadata output."""
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.update_session = AsyncMock()
+
+    payload = InfoResponse.model_validate(
+        {
+            "infoMetadata": {
+                "name": "OpenProject",
+                "apiType": ["REST"],
+                "apiVersion": "3",
+                "baseApiEndpoint": [{"uri": "https://example.com/api", "type": ""}],
+                "applicationVersion": "12.1.0",
+            }
+        }
+    )
+
+    with patch("src.modules.digester.router.SessionRepository", return_value=mock_repo):
+        session_id = uuid4()
+        response = await restore_metadata(
+            session_id=session_id,
+            metadata=payload,
+            db=MagicMock(),
+        )
+
+    mock_repo.session_exists.assert_awaited_once_with(session_id)
+    mock_repo.update_session.assert_awaited_once_with(
+        session_id,
+        {"metadataOutput": payload.model_dump(by_alias=True)},
+    )
+    assert response["message"].startswith("Metadata updated successfully")
+    assert response["sessionId"] == session_id

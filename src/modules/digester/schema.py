@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, cast
 
 from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
 
@@ -324,11 +324,28 @@ class BaseAPIEndpoint(BaseModel):
     """
 
     uri: str = Field(..., description="Base URL or URI template to call the API (e.g., https://host/api/v1).")
-    type: Literal["constant", "dynamic"] = Field(
-        ..., description="'constant' if same for all deployments; 'dynamic' if varies per tenant/installation."
+    type: Literal["constant", "dynamic", ""] = Field(
+        default="",
+        description=(
+            "'constant' if same for all deployments; 'dynamic' if varies per tenant/installation; "
+            "empty string when unknown."
+        ),
     )
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _normalize_type(cls, value: Any) -> Literal["constant", "dynamic", ""]:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            return ""
+
+        normalized = value.strip().lower()
+        if normalized in {"constant", "dynamic"}:
+            return cast(Literal["constant", "dynamic", ""], normalized)
+        return ""
 
 
 class InfoMetadata(BaseModel):
