@@ -314,7 +314,10 @@ async def deduplicate_and_sort_object_classes(
             bucket = [obj for obj in ranked_list if obj.confidence == level]
             if not bucket:
                 continue
-            sorted_bucket = await _sort_bucket_by_importance(bucket, level)
+            if level == "high":
+                sorted_bucket = await _sort_bucket_by_importance(bucket, level)
+            else:
+                sorted_bucket = sorted(bucket, key=lambda item: item.name.strip().lower())
             sorted_ranked.extend(sorted_bucket)
 
         final_sorted = [
