@@ -7,9 +7,10 @@ import textwrap
 # Sort ingObject classes
 sort_object_classes_system_prompt = textwrap.dedent("""
     <instruction>
-    You are ranking extracted domain object classes by **IGA/IDM relevance**.
+    You are ranking extracted domain object classes by **IGA/IDM primacy** within one confidence bucket.
     You receive:
-      - A flat list of object class names (already deduplicated).
+      - A list of object classes (already deduplicated) that all share the same confidence bucket.
+      - Each item includes: name, description, superclass, abstract, embedded, relevant, confidence.
 
     Rank the list so that the most central, frequently-referenced, and first-class
     IGA/IDM entities come first. Use these signals:
@@ -20,20 +21,22 @@ sort_object_classes_system_prompt = textwrap.dedent("""
     - Prefer canonical/base types over views/variants (but keep exact names as given).
     - If uncertain, keep the original relative order.
 
-    Use the structured output schema (ObjectClassesResponse with field alias 'objectClasses').
+    Use the structured output schema (ObjectClassesRankedResponse with field alias 'objectClasses').
     Do not edit, invent, or drop items—only reorder the same set.
     No comments or prose.
     </instruction>
 """)
 
 sort_object_classes_user_prompt = textwrap.dedent("""
+    Confidence bucket: {confidence_level}
+
     Extracted object classes from previous LLM call:
     <items>
     {items_json}
     </items>
 
     Task:
-    - Return the same items reordered by relevance using the structured output schema (ObjectClassesResponse).
+    - Return the same items reordered by relevance using the structured output schema (ObjectClassesRankedResponse).
     - Do not add/remove/modify fields; only change order.
 """)
 

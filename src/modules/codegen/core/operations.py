@@ -14,8 +14,8 @@ from src.modules.codegen.core.base import (
     attributes_to_records,
     endpoints_to_records,
 )
+from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
-from src.modules.codegen.schema import SearchIntent
 from src.modules.digester.schema import RelationsResponse
 
 logger = logging.getLogger(__name__)

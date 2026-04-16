@@ -26,17 +26,13 @@ logger = logging.getLogger(__name__)
 
 def _extract_relevant_names(relevant_object_classes: Any) -> List[Tuple[str, str]]:
     """
-    Extract relevant class names and descriptions from the object classes payload where relevant == 'true'.
+    Extract object class names and descriptions from the object classes payload.
     Returns a list of tuples (name, description).
     Handles various input formats: JSON string, dict, list, or ObjectClassesResponse.
     """
     try:
         if hasattr(relevant_object_classes, "objectClasses"):
-            return [
-                (obj.name, obj.description or "")
-                for obj in relevant_object_classes.object_classes
-                if obj.relevant == "true"
-            ]
+            return [(obj.name, obj.description or "") for obj in relevant_object_classes.object_classes]
 
         # Handle JSON string
         if isinstance(relevant_object_classes, str):
@@ -45,7 +41,7 @@ def _extract_relevant_names(relevant_object_classes: Any) -> List[Tuple[str, str
         else:
             parsed_data = relevant_object_classes
 
-        # Handle dict with objectClasses or object_classes key
+        # Handle dict with objectClasses key
         if isinstance(parsed_data, dict):
             object_classes = parsed_data.get("objectClasses") or parsed_data.get("objectClasses", [])
             logger.debug(
@@ -62,19 +58,17 @@ def _extract_relevant_names(relevant_object_classes: Any) -> List[Tuple[str, str
             )
             return []
 
-        # Extract names and descriptions where relevant == "true"
+        # Extract names and descriptions for all classes
         relevant_items = []
         for obj_class in object_classes:
             if isinstance(obj_class, dict):
-                if obj_class.get("relevant") == "true":
-                    class_name = obj_class.get("name")
-                    class_desc = obj_class.get("description", "") or ""
-                    if class_name:
-                        relevant_items.append((class_name, class_desc))
-            elif hasattr(obj_class, "relevant") and hasattr(obj_class, "name"):
-                if obj_class.relevant == "true":
-                    class_desc = getattr(obj_class, "description", "") or ""
-                    relevant_items.append((obj_class.name, class_desc))
+                class_name = obj_class.get("name")
+                class_desc = obj_class.get("description", "") or ""
+                if class_name:
+                    relevant_items.append((class_name, class_desc))
+            elif hasattr(obj_class, "name"):
+                class_desc = getattr(obj_class, "description", "") or ""
+                relevant_items.append((obj_class.name, class_desc))
 
         logger.debug("[Digester:Relations] Successfully extracted %d relevant items", len(relevant_items))
         return relevant_items
@@ -190,7 +184,7 @@ async def extract_relations(
     Args:
         schema: OpenAPI/Swagger specification as string (YAML or JSON format).
         relevant_object_classes: Output from /getObjectClass endpoint. Can be JSON string, dict, list,
-                              or ObjectClassesResponse. Only items with relevant == "true" are processed.
+                              or ObjectClassesResponse.
 
     Returns:
         Tuple containing:

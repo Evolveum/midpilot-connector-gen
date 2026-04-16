@@ -46,14 +46,13 @@ router = APIRouter()
 )
 async def extract_object_classes(
     session_id: UUID = Path(..., description="Session ID"),
-    filter_relevancy: bool = Query(True, description="Filter object classes by relevancy"),
-    min_relevancy_level: str = Query("high", description="Minimum relevancy level (low/medium/high)"),
     use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Extract object classes from documentation stored in or uploaded to the session.
-    Optionally filter documentation items based on provided criteria.
+    Returns all extracted object classes enriched with confidence (high/medium/low)
+    ordered from highest to lowest confidence.
     Returns jobId to poll for results.
     """
     repo = SessionRepository(db)
@@ -62,16 +61,12 @@ async def extract_object_classes(
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
         input_payload={
-            "filterRelevancy": filter_relevancy,
-            "minRelevancyLevel": min_relevancy_level,
             "usePreviousSessionData": use_previous_session_data,
         },
         dynamic_input_enabled=True,
         dynamic_input_provider=object_classes_input,
         worker=service.extract_object_classes,
         worker_kwargs={
-            "filter_relevancy": filter_relevancy,
-            "min_relevancy_level": min_relevancy_level,
             "session_id": session_id,
         },
         initial_stage="chunking",
@@ -87,8 +82,6 @@ async def extract_object_classes(
         {
             "objectClassesJobId": str(job_id),
             "objectClassesInput": {
-                "filterRelevancy": filter_relevancy,
-                "minRelevancyLevel": min_relevancy_level,
                 "usePreviousSessionData": use_previous_session_data,
             },
         },
@@ -569,7 +562,7 @@ async def extract_relations(
 ):
     """
     Extract relations between object classes from documentation.
-    Loads relevant object classes from session (where relevant=true).
+    Loads object classes from session.
 
     NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """

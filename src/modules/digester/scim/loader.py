@@ -79,6 +79,7 @@ def get_base_scim_object_classes() -> List[Dict[str, Any]]:
                 "name": "User",
                 "schemaUrn": "urn:ietf:params:scim:schemas:core:2.0:User",
                 "relevant": "true",
+                "confidence": "high",
                 "description": "...",
                 ...
             },
@@ -94,6 +95,7 @@ def get_base_scim_object_classes() -> List[Dict[str, Any]]:
             "name": class_name,
             "schemaUrn": schema.get("id", ""),
             "relevant": "true",
+            "confidence": "high",
             "superclass": None,
             "abstract": False,
             "embedded": False,

@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester import service
-from src.modules.digester.schema import ObjectClass
+from src.modules.digester.schema import ExtendedObjectClass
 
 
 # ==================== EXTRACT OBJECT CLASSES ====================
@@ -44,9 +44,8 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
         mock_parallel.return_value = [
             (
                 [
-                    ObjectClass(
+                    ExtendedObjectClass(
                         name="User",
-                        relevant="true",
                         superclass=None,
                         abstract=False,
                         embedded=False,
@@ -59,9 +58,8 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
             ),
             (
                 [
-                    ObjectClass(
+                    ExtendedObjectClass(
                         name="Group",
-                        relevant="true",
                         superclass=None,
                         abstract=False,
                         embedded=False,
@@ -81,12 +79,14 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
                         {
                             "name": "User",
                             "relevant": "true",
+                            "confidence": "high",
                             "description": "Represents a user in the system",
                             "relevantDocumentations": [{"docId": str(doc_uuid1), "chunkId": str(doc_uuid1)}],
                         },
                         {
                             "name": "Group",
                             "relevant": "true",
+                            "confidence": "medium",
                             "description": "Represents a group of users",
                             "relevantDocumentations": [{"docId": str(doc_uuid2), "chunkId": str(doc_uuid2)}],
                         },
@@ -97,7 +97,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
 
         job_id = uuid4()
         session_id = uuid4()
-        result = await service.extract_object_classes(fake_doc_items, True, "high", job_id, session_id)
+        result = await service.extract_object_classes(fake_doc_items, job_id, session_id)
 
         assert "result" in result
         assert "relevantDocumentations" in result
@@ -125,7 +125,7 @@ async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_
 
         mock_dedupe.return_value = EmptyDeduped()
 
-        result = await service.extract_object_classes([], True, "high", uuid4(), uuid4())
+        result = await service.extract_object_classes([], uuid4(), uuid4())
 
         assert result["result"]["objectClasses"] == []
         assert result["relevantDocumentations"] == []

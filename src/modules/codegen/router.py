@@ -25,7 +25,8 @@ from src.common.session.session import ensure_session_exists, resolve_session_jo
 from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
 from src.modules.codegen import service
-from src.modules.codegen.schema import GroovyCodePayload, SearchIntent, build_search_operation_key
+from src.modules.codegen.enums import SearchIntent
+from src.modules.codegen.schema import GroovyCodePayload, build_search_operation_key
 from src.modules.digester.schema import RelationsResponse
 
 router = APIRouter()

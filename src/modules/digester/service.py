@@ -135,8 +135,6 @@ async def _process_over_chunks(
 
 async def extract_object_classes(
     doc_items: List[dict],
-    filter_relevancy: bool,
-    min_relevancy_level: str,
     job_id: UUID,
     session_id: UUID,
 ):
@@ -148,8 +146,6 @@ async def extract_object_classes(
 
     Args:
         doc_items: List of documentation items to process
-        filter_relevancy: Whether to filter by relevancy
-        min_relevancy_level: Minimum relevancy level (low/medium/high)
         job_id: Job ID for progress tracking
         session_id: Session ID to retrieve api_type from infoMetadata
 
@@ -162,20 +158,19 @@ async def extract_object_classes(
     if is_scim:
         return await extract_scim_object_classes(doc_items, job_id)
 
-    return await _extract_rest_object_classes(doc_items, filter_relevancy, min_relevancy_level, job_id)
+    return await _extract_rest_object_classes(doc_items, job_id)
 
 
 async def _extract_rest_object_classes(
     doc_items: List[dict],
-    filter_relevancy: bool,
-    min_relevancy_level: str,
     job_id: UUID,
 ):
     """
-    REST-specific object class extraction (original implementation).
+    REST-specific object class extraction.
 
     Step 1: Extract raw object classes from each chunk (by chunkId) - processes chunks in parallel
-    Step 2: Merge, deduplicate and sort ALL object classes together
+    Step 2: Merge/deduplicate classes
+    Step 3: Enrich with confidence and sort final output
     """
     all_object_classes = []
     all_relevant_chunks: List[Dict[str, Any]] = []
@@ -213,9 +208,7 @@ async def _extract_rest_object_classes(
             if class_name not in class_to_chunks:
                 class_to_chunks[class_name] = []
 
-            if obj_class.relevant_documentations:
-                class_to_chunks[class_name].extend(obj_class.relevant_documentations)
-            elif doc_id:
+            if doc_id:
                 class_to_chunks[class_name].append({"doc_id": doc_id, "chunk_id": chunk_id})
             else:
                 logger.warning(
@@ -240,7 +233,9 @@ async def _extract_rest_object_classes(
         len(doc_items),
     )
     final_result = await deduplicate_and_sort_object_classes(
-        all_object_classes, job_id, filter_relevancy, min_relevancy_level, class_to_chunks
+        all_object_classes,
+        job_id,
+        class_to_chunks,
     )
 
     return {

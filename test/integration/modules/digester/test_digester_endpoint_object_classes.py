@@ -68,12 +68,14 @@ async def test_get_object_classes_status_found():
             {
                 "name": "User",
                 "relevant": "true",
+                "confidence": "high",
                 "description": "User's description",
                 "relevantDocumentations": [],
             },
             {
                 "name": "Group",
                 "relevant": "true",
+                "confidence": "medium",
                 "description": "Group's description",
                 "relevantDocumentations": [],
             },
@@ -88,8 +90,8 @@ async def test_get_object_classes_status_found():
         "status": "finished",
         "result": {
             "objectClasses": [
-                {"name": "User", "relevant": "true", "description": "User's description"},
-                {"name": "Group", "relevant": "true", "description": "Group's description"},
+                {"name": "User", "relevant": "true", "confidence": "high", "description": "User's description"},
+                {"name": "Group", "relevant": "true", "confidence": "medium", "description": "Group's description"},
             ]
         },
     }

@@ -2,10 +2,10 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from enum import Enum
+from enum import StrEnum
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     queued = "queued"
     running = "running"
     finished = "finished"
@@ -13,7 +13,7 @@ class JobStatus(str, Enum):
     not_found = "not_found"
 
 
-class JobStage(str, Enum):
+class JobStage(StrEnum):
     """Common stages for job progress. Keep names aligned with existing JSON values."""
 
     # Queueing / lifecycle
@@ -38,3 +38,8 @@ class JobStage(str, Enum):
     relevancy_filtering = "relevancy_filtering"
     relevancy_filtering_finished = "relevancy_filtering_finished"
     aggregation_finished = "aggregation_finished"
+
+
+class ApiType(StrEnum):
+    REST = "REST"
+    SCIM = "SCIM"

@@ -34,41 +34,6 @@ class ScrapeRequest(BaseModel):
         validation_alias="usePreviousSessionData",
         serialization_alias="usePreviousSessionData",
     )
-    # forbidden_url_parts: List[str] = Field(
-    #     default_factory=lambda: [
-    #         "logout",
-    #         "login",
-    #         "signup",
-    #         "register",
-    #         "subscribe",
-    #         "pricing",
-    #         "plans",
-    #         "terms",
-    #         "privacy",
-    #         "contact",
-    #         "about",
-    #         "blog",
-    #         "news",
-    #         "forum",
-    #         "release-notes",
-    #         "changelog",
-    #         "es",
-    #         "pt",
-    #         "de",
-    #         "fr",
-    #         "jp",
-    #         "zh",
-    #         "sk",
-    #         "ru",
-    #         "it",
-    #         "nl",
-    #         "pl",
-    #         "tr",
-    #     ],
-    #     description="URL substrings to consider irrelevant a priori",
-    #     validation_alias="forbiddenUrlParts",
-    #     serialization_alias="forbiddenUrlParts",
-    # )
 
 
 class ScrapeResult(BaseModel):

@@ -5,23 +5,23 @@
 import json
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Literal, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.enums import JobStage
+from src.common.enums import ApiType, JobStage
 from src.common.jobs import update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.config import config
+from src.modules.digester.enums import EndpointMethod, EndpointType
 from src.modules.digester.schema import (
     AttributeResponse,
     BaseAPIEndpoint,
     EndpointInfo,
-    EndpointMethod,
+    ExtendedObjectClass,
     InfoMetadata,
     InfoResponse,
-    ObjectClass,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,41 +65,22 @@ def merge_relations_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def merge_object_classes(
-    all_object_classes: List[ObjectClass],
+    all_object_classes: List[ExtendedObjectClass],
     class_to_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
-) -> List[ObjectClass]:
+) -> List[ExtendedObjectClass]:
     """
     Deduplicate and merge object classes across documents.
 
     - Merges class metadata (superclass/abstract/embedded/description).
-    - Merges relevant chunks by (doc_id, chunk_id) when provided.
     - Removes duplicates that differ only by whitespace.
     """
-    by_name: Dict[str, ObjectClass] = {}
+    by_name: Dict[str, ExtendedObjectClass] = {}
 
     for obj_class in all_object_classes:
         if not obj_class or not obj_class.name:
             continue
         key = obj_class.name.strip().lower()
         if key not in by_name:
-            # If we have chunk information for this class, set it
-            if class_to_chunks and key in class_to_chunks:
-                unique_chunks: List[Dict[str, Any]] = []
-                seen: set[tuple[str, str]] = set()
-                for chunk in class_to_chunks[key]:
-                    doc_id = str(chunk.get("doc_id", "")).strip()
-                    chunk_id = str(chunk.get("chunk_id", "")).strip()
-                    if not doc_id or not chunk_id:
-                        continue
-
-                    pair = (doc_id, chunk_id)
-                    if pair in seen:
-                        continue
-
-                    seen.add(pair)
-                    unique_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id})
-
-                obj_class.relevant_documentations = sorted(unique_chunks, key=lambda x: (x["doc_id"], x["chunk_id"]))
             by_name[key] = obj_class
             continue
 
@@ -113,25 +94,7 @@ def merge_object_classes(
         # Prefer longer, non-empty description
         if obj_class.description and len(obj_class.description) > len(current.description or ""):
             current.description = obj_class.description
-        # Merge relevant chunks if available
-        if class_to_chunks and key in class_to_chunks:
-            current_chunk_pairs = {
-                (str(chunk.get("doc_id", "")).strip(), str(chunk.get("chunk_id", "")).strip())
-                for chunk in (current.relevant_documentations or [])
-                if str(chunk.get("doc_id", "")).strip() and str(chunk.get("chunk_id", "")).strip()
-            }
 
-            for chunk in class_to_chunks[key]:
-                doc_id = str(chunk.get("doc_id", "")).strip()
-                chunk_id = str(chunk.get("chunk_id", "")).strip()
-                if not doc_id or not chunk_id:
-                    continue
-                current_chunk_pairs.add((doc_id, chunk_id))
-
-            current.relevant_documentations = [
-                {"doc_id": doc_id, "chunk_id": chunk_id}
-                for doc_id, chunk_id in sorted(current_chunk_pairs, key=lambda pair: (pair[0], pair[1]))
-            ]
     # Remove duplicates with whitespace-only differences (preferring no-space versions)
     for key in list(by_name.keys()):
         key_no_space = key.replace(" ", "")
@@ -197,7 +160,11 @@ async def merge_attribute_candidates(
             parsed = result
         else:
             content = getattr(result, "content", None)
-            parsed = AttributeResponse.model_validate(json.loads(content)) if content else AttributeResponse()
+            parsed = (
+                AttributeResponse.model_validate(json.loads(content))
+                if isinstance(content, (str, bytes, bytearray))
+                else AttributeResponse()
+            )
 
         return {
             name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
@@ -230,7 +197,13 @@ async def merge_endpoint_candidates(
     """
 
     # HTTP method ordering for consistent sorting
-    _METHOD_ORDER: Dict[EndpointMethod, int] = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4}
+    _METHOD_ORDER: Dict[EndpointMethod, int] = {
+        EndpointMethod.GET: 0,
+        EndpointMethod.POST: 1,
+        EndpointMethod.PUT: 2,
+        EndpointMethod.PATCH: 3,
+        EndpointMethod.DELETE: 4,
+    }
 
     def _endpoint_key(ep: EndpointInfo) -> tuple[str, EndpointMethod]:
         return (ep.path.strip(), ep.method)
@@ -328,9 +301,9 @@ def merge_info_metadata(
     name_distribution: Dict[str, int] = {}
     app_version_distribution: Dict[str, int] = {}
     api_version_distribution: Dict[str, int] = {}
-    api_type_distribution: Dict[str, int] = {}
+    api_type_distribution: Dict[ApiType, int] = {}
     base_api_endpoints_url_distribution: Dict[str, int] = {}
-    base_api_endpoints_type_distribution: Dict[tuple[str, str], int] = {}
+    base_api_endpoints_type_distribution: Dict[tuple[str, EndpointType], int] = {}
 
     for info in info_candidates:
         name = (info.name or "").strip()
@@ -347,12 +320,13 @@ def merge_info_metadata(
 
         for api_type in info.api_type or []:
             normalized_type = str(api_type).upper().strip()
-            if normalized_type in {"REST", "SCIM"}:
-                api_type_distribution[normalized_type] = api_type_distribution.get(normalized_type, 0) + 1
+            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value}:
+                canonical_type = ApiType(normalized_type)
+                api_type_distribution[canonical_type] = api_type_distribution.get(canonical_type, 0) + 1
 
         for endpoint in info.base_api_endpoint or []:
             uri = (endpoint.uri or "").strip().lower()
-            endpoint_type: Literal["constant", "dynamic", ""] = endpoint.type
+            endpoint_type: EndpointType = endpoint.type
             if not uri:
                 continue
             base_api_endpoints_url_distribution[uri] = base_api_endpoints_url_distribution.get(uri, 0) + 1
@@ -377,22 +351,20 @@ def merge_info_metadata(
         if api_version_distribution[candidate_api_version] > threshold:
             found_api_version = candidate_api_version
 
-    found_api_types: List[Literal["REST", "SCIM"]] = [
-        cast(Literal["REST", "SCIM"], api_type)
-        for api_type, count in api_type_distribution.items()
-        if count > threshold
+    found_api_types: List[ApiType] = [
+        api_type for api_type, count in api_type_distribution.items() if count > threshold
     ]
-    found_api_types = sorted(found_api_types)
+    found_api_types = sorted(found_api_types, key=lambda api_type: api_type.value)
 
     found_base_api_endpoints: List[BaseAPIEndpoint] = []
     for uri, count in base_api_endpoints_url_distribution.items():
         if count <= threshold:
             continue
 
-        constant_count = base_api_endpoints_type_distribution.get((uri, "constant"), 0)
-        dynamic_count = base_api_endpoints_type_distribution.get((uri, "dynamic"), 0)
-        selected_endpoint_type: Literal["constant", "dynamic"] = (
-            "constant" if constant_count >= dynamic_count else "dynamic"
+        constant_count = base_api_endpoints_type_distribution.get((uri, EndpointType.CONSTANT), 0)
+        dynamic_count = base_api_endpoints_type_distribution.get((uri, EndpointType.DYNAMIC), 0)
+        selected_endpoint_type: EndpointType = (
+            EndpointType.CONSTANT if constant_count >= dynamic_count else EndpointType.DYNAMIC
         )
         found_base_api_endpoints.append(BaseAPIEndpoint(uri=uri, type=selected_endpoint_type))
 
