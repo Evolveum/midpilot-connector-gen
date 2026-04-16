@@ -19,9 +19,9 @@ from src.modules.digester.schema import (
     BaseAPIEndpoint,
     EndpointInfo,
     EndpointMethod,
+    ExtendedObjectClass,
     InfoMetadata,
     InfoResponse,
-    ObjectClass,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,41 +65,22 @@ def merge_relations_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def merge_object_classes(
-    all_object_classes: List[ObjectClass],
+    all_object_classes: List[ExtendedObjectClass],
     class_to_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
-) -> List[ObjectClass]:
+) -> List[ExtendedObjectClass]:
     """
     Deduplicate and merge object classes across documents.
 
     - Merges class metadata (superclass/abstract/embedded/description).
-    - Merges relevant chunks by (doc_id, chunk_id) when provided.
     - Removes duplicates that differ only by whitespace.
     """
-    by_name: Dict[str, ObjectClass] = {}
+    by_name: Dict[str, ExtendedObjectClass] = {}
 
     for obj_class in all_object_classes:
         if not obj_class or not obj_class.name:
             continue
         key = obj_class.name.strip().lower()
         if key not in by_name:
-            # If we have chunk information for this class, set it
-            if class_to_chunks and key in class_to_chunks:
-                unique_chunks: List[Dict[str, Any]] = []
-                seen: set[tuple[str, str]] = set()
-                for chunk in class_to_chunks[key]:
-                    doc_id = str(chunk.get("doc_id", "")).strip()
-                    chunk_id = str(chunk.get("chunk_id", "")).strip()
-                    if not doc_id or not chunk_id:
-                        continue
-
-                    pair = (doc_id, chunk_id)
-                    if pair in seen:
-                        continue
-
-                    seen.add(pair)
-                    unique_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id})
-
-                obj_class.relevant_documentations = sorted(unique_chunks, key=lambda x: (x["doc_id"], x["chunk_id"]))
             by_name[key] = obj_class
             continue
 
@@ -113,25 +94,7 @@ def merge_object_classes(
         # Prefer longer, non-empty description
         if obj_class.description and len(obj_class.description) > len(current.description or ""):
             current.description = obj_class.description
-        # Merge relevant chunks if available
-        if class_to_chunks and key in class_to_chunks:
-            current_chunk_pairs = {
-                (str(chunk.get("doc_id", "")).strip(), str(chunk.get("chunk_id", "")).strip())
-                for chunk in (current.relevant_documentations or [])
-                if str(chunk.get("doc_id", "")).strip() and str(chunk.get("chunk_id", "")).strip()
-            }
 
-            for chunk in class_to_chunks[key]:
-                doc_id = str(chunk.get("doc_id", "")).strip()
-                chunk_id = str(chunk.get("chunk_id", "")).strip()
-                if not doc_id or not chunk_id:
-                    continue
-                current_chunk_pairs.add((doc_id, chunk_id))
-
-            current.relevant_documentations = [
-                {"doc_id": doc_id, "chunk_id": chunk_id}
-                for doc_id, chunk_id in sorted(current_chunk_pairs, key=lambda pair: (pair[0], pair[1]))
-            ]
     # Remove duplicates with whitespace-only differences (preferring no-space versions)
     for key in list(by_name.keys()):
         key_no_space = key.replace(" ", "")
@@ -197,7 +160,11 @@ async def merge_attribute_candidates(
             parsed = result
         else:
             content = getattr(result, "content", None)
-            parsed = AttributeResponse.model_validate(json.loads(content)) if content else AttributeResponse()
+            parsed = (
+                AttributeResponse.model_validate(json.loads(content))
+                if isinstance(content, (str, bytes, bytearray))
+                else AttributeResponse()
+            )
 
         return {
             name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})

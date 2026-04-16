@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester import service
-from src.modules.digester.schema import ObjectClass
+from src.modules.digester.schema import ExtendedObjectClass
 
 
 # ==================== INTEGRATION SCENARIOS ====================
@@ -48,9 +48,8 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
             mock_parallel.return_value = [
                 (
                     [
-                        ObjectClass(
+                        ExtendedObjectClass(
                             name="User",
-                            relevant="true",
                             description="User entity",
                             relevant_documentations=[{"doc_id": str(doc_uuid), "chunk_id": str(doc_uuid)}],
                         )
@@ -67,6 +66,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                             {
                                 "name": "User",
                                 "relevant": "true",
+                                "confidence": "high",
                                 "description": "User entity",
                                 "relevantDocumentations": [{"docId": str(doc_uuid), "chunkId": str(doc_uuid)}],
                             }
@@ -75,7 +75,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
 
             mock_dedupe_classes.return_value = ObjectClassResult()
 
-            classes_result = await service.extract_object_classes(doc_items, True, "high", uuid4(), session_id)
+            classes_result = await service.extract_object_classes(doc_items, uuid4(), session_id)
             assert len(classes_result["result"]["objectClasses"]) == 1
 
             mock_parallel.assert_awaited_once()

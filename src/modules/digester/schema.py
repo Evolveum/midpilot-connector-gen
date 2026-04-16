@@ -7,23 +7,20 @@ from typing import Any, Dict, List, Literal, Optional, cast
 
 from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
 
-
 # --- Object Classes ---
-class ObjectClass(BaseModel):
+ConfidenceLevel = Literal["low", "medium", "high"]
+RelevantLevel = Literal["true", "false", "maybe"]
+
+
+class BaseObjectClass(BaseModel):
     """
-    IGA/IDM domain object class as extracted from API schemas.
-    The model guides the LLM to return only first-class identity/access concepts
-    (e.g., User, Group, Role, Permission, Organization, Membership/Assignment, Credential,
-    Attachment, Attribute/FieldDefinition) and to annotate basic taxonomy metadata.
+    Minimal shared representation.
+    Used when only identity + short meaning of the class are needed.
     """
 
     model_config = {
-        "json_encoders": {
-            # Custom JSON encoder to exclude None values
-            type(None): lambda _: None,
-        },
         "json_schema_extra": {
-            "exclude_none": True,  # Exclude None values from JSON output
+            "exclude_none": True,
         },
         "populate_by_name": True,
     }
@@ -35,14 +32,20 @@ class ObjectClass(BaseModel):
             "This should be a primary domain concept or a first-class link between such concepts."
         ),
     )
-    relevant: Literal["true", "false", "maybe"] = Field(
-        default="true",
+    description: str = Field(
         description=(
-            "Indicates whether this object class is relevant to the IDM/IGA domain. "
-            "All extracted object classes SHOULD already be filtered for relevance, "
-            "so this value is typically 'true'."
+            "A brief explanation of what this class represents in the system. "
+            "Include key characteristics and usage context. Keep it concise (1-2 sentences)."
         ),
     )
+
+
+class ExtendedObjectClass(BaseObjectClass):
+    """
+    First-pass extraction model.
+    Extends base information with structural metadata from the schema.
+    """
+
     superclass: Optional[str] = Field(
         default=None,
         description=(
@@ -73,24 +76,54 @@ class ObjectClass(BaseModel):
             "Leave false if not applicable."
         ),
     )
-    description: str = Field(
+
+
+class ObjectClassWithConfidence(BaseObjectClass):
+    """
+    Second-pass enrichment model.
+    Contains only base data + confidence from classification.
+    """
+
+    confidence: ConfidenceLevel = Field(
+        ...,
         description=(
-            "A brief explanation of what this class represents in the system. "
-            "Include key characteristics and usage context. Keep it concise (1-2 sentences)."
+            "Reliability/confidence for IGA/IDM relevance assigned in dedicated enrichment. "
+            "Allowed values: low, medium, high."
         ),
     )
+
+
+class RankedObjectClass(ExtendedObjectClass):
+    """
+    Third-pass sorting model.
+    Contains all ranking-relevant fields, excluding endpoints/attributes/chunk references.
+    """
+
+    relevant: RelevantLevel = Field(
+        default="true",
+        description="IGA/IDM relevance marker for the final payload.",
+    )
+    confidence: ConfidenceLevel = Field(
+        ...,
+        description="Reliability/confidence level for IGA/IDM relevance (low/medium/high).",
+    )
+
+
+class FinalObjectClass(RankedObjectClass):
+    """
+    Final user-facing object class model.
+    Adds system-populated fields not used in LLM ranking prompts.
+    """
+
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
         validation_alias="relevantDocumentations",
         serialization_alias="relevantDocumentations",
-        json_schema_extra={"exclude": True},
         description=(
             "List of chunks that contain relevant information about this object class. "
-            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
-            "This field is populated automatically by the system and should NOT be filled by the LLM."
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings."
         ),
     )
-    # These fields will be excluded from JSON when None
     endpoints: Optional[List[Any]] = Field(
         default=None,
         exclude=True,
@@ -139,55 +172,86 @@ class ObjectClass(BaseModel):
 
 class ObjectClassesResponse(BaseModel):
     """
-    Container for extracted IGA/IDM object classes. Use the alias 'objectClasses' in output.
-    Return an empty list when none are present in the chunk.
+    Final object classes returned to API consumers.
     """
 
-    # Primary Python attribute in snake_case for convenient access in code/tests
-    object_classes: List[ObjectClass] = Field(
+    object_classes: List[FinalObjectClass] = Field(
         default_factory=list,
         validation_alias="objectClasses",
         serialization_alias="objectClasses",
         description=(
-            "List of extracted IGA/IDM-relevant object classes. Use the alias 'objectClasses' in the final JSON."
+            "List of extracted object classes enriched with confidence and returned in final order. "
+            "Use alias 'objectClasses' in JSON payloads."
         ),
     )
 
     model_config = {"populate_by_name": True}
 
-    # Backward-compatible camelCase property used throughout prompts/utils
     @property
-    def objectClasses(self) -> List[ObjectClass]:  # pragma: no cover - simple alias
+    def objectClasses(self) -> List[FinalObjectClass]:
         return self.object_classes
 
 
-class ObjectClassRelevancyItem(BaseModel):
+class ObjectClassesExtendedResponse(BaseModel):
     """
-    Item representing an object class as string with its relevancy status.
+    First LLM call response container.
     """
 
-    name: str = Field(
-        ...,
-        description="Exact name of the object class as it appears in the documentation.",
-    )
-    relevant: Literal["low", "medium", "high"] = Field(
-        ...,
+    object_classes: List[ExtendedObjectClass] = Field(
+        default_factory=list,
+        validation_alias="objectClasses",
+        serialization_alias="objectClasses",
         description=(
-            "Relevance of this class to IGA/IDM use-cases. Use 'high' for mission-critical domain entities, "
-            "'medium' for important but not central classes, and 'low' for peripheral or non-domain types."
+            "List of extracted extended object classes from the first pass. Use alias 'objectClasses' in JSON payloads."
         ),
     )
 
+    model_config = {"populate_by_name": True}
 
-class ObjectClassesRelevancyResponse(BaseModel):
+    @property
+    def objectClasses(self) -> List[ExtendedObjectClass]:
+        return self.object_classes
+
+
+class ObjectClassesConfidenceResponse(BaseModel):
     """
-    Container for filtered IGA/IDM object classes based on relevancy.
+    Second LLM call response container.
     """
 
-    objectClasses: List[ObjectClassRelevancyItem] = Field(
+    object_classes: List[ObjectClassWithConfidence] = Field(
         default_factory=list,
-        description=("List of ObjectClassRelevancyItem representing object classes with their relevancy status."),
+        validation_alias="objectClasses",
+        serialization_alias="objectClasses",
+        description="List of object classes with assigned confidence levels.",
     )
+
+    model_config = {"populate_by_name": True}
+
+    @property
+    def objectClasses(self) -> List[ObjectClassWithConfidence]:
+        return self.object_classes
+
+
+class ObjectClassesRankedResponse(BaseModel):
+    """
+    Third LLM call response container.
+    """
+
+    object_classes: List[RankedObjectClass] = Field(
+        default_factory=list,
+        validation_alias="objectClasses",
+        serialization_alias="objectClasses",
+        description=(
+            "Reordered list of ranked object classes. "
+            "Each item includes fields needed for ranking and final output composition."
+        ),
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @property
+    def objectClasses(self) -> List[RankedObjectClass]:
+        return self.object_classes
 
 
 # --- Object Classes ---

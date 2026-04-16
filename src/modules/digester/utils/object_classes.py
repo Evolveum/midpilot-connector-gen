@@ -12,6 +12,48 @@ from src.common.utils.normalize import normalize_object_class_name
 
 logger = logging.getLogger(__name__)
 
+CONFIDENCE_PRIORITY: Dict[str, int] = {
+    "high": 0,
+    "medium": 1,
+    "low": 2,
+}
+
+
+def confidence_order_key(confidence: Any) -> int:
+    """Get sortable confidence rank where lower value means higher priority."""
+    if not isinstance(confidence, str):
+        return len(CONFIDENCE_PRIORITY)
+    return CONFIDENCE_PRIORITY.get(confidence.strip().lower(), len(CONFIDENCE_PRIORITY))
+
+
+def sort_object_class_dicts(object_classes: List[Any]) -> List[Any]:
+    """
+    Sort object class dicts by confidence (high -> medium -> low), then alphabetically.
+    Non-dict items are preserved at the end in original order.
+    """
+    has_any_confidence = any(
+        isinstance(item, dict) and isinstance(item.get("confidence"), str) for item in object_classes
+    )
+    if not has_any_confidence:
+        return list(object_classes)
+
+    sortable: List[Dict[str, Any]] = []
+    passthrough: List[Any] = []
+    for item in object_classes:
+        if isinstance(item, dict):
+            sortable.append(item)
+        else:
+            passthrough.append(item)
+
+    sorted_classes = sorted(
+        sortable,
+        key=lambda obj: (
+            confidence_order_key(obj.get("confidence")),
+            normalize_object_class_name(str(obj.get("name", ""))),
+        ),
+    )
+    return [*sorted_classes, *passthrough]
+
 
 def find_object_class(object_classes: List[Any], object_class: str) -> Optional[Dict[str, Any]]:
     """Find object class dict by name (case-insensitive)."""
@@ -68,11 +110,11 @@ def upsert_object_class(
         name = obj_cls.get("name")
         if isinstance(name, str) and normalize_object_class_name(name) == normalized_name:
             object_classes[idx] = data
-            payload["objectClasses"] = object_classes
+            payload["objectClasses"] = sort_object_class_dicts(object_classes)
             return payload, True
 
     object_classes.append(data)
-    payload["objectClasses"] = object_classes
+    payload["objectClasses"] = sort_object_class_dicts(object_classes)
     return payload, False
 
 
@@ -135,6 +177,7 @@ async def update_object_class_field_in_session(
             return False
 
         target[field_name] = field_value
+        object_classes_output["objectClasses"] = sort_object_class_dicts(object_classes)
         await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
         logger.info(
             "[Digester:ObjectClasses] Updated '%s' field for object class '%s'",
