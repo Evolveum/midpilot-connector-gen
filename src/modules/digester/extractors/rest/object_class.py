@@ -17,6 +17,7 @@ from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.prompts.rest.object_class_prompts import (
     get_object_class_system_prompt,
     get_object_class_user_prompt,
@@ -31,7 +32,6 @@ from src.modules.digester.prompts.rest.sorting_output_prompts import (
 )
 from src.modules.digester.schema import (
     BaseObjectClass,
-    ConfidenceLevel,
     ExtendedObjectClass,
     FinalObjectClass,
     ObjectClassesConfidenceResponse,
@@ -45,8 +45,12 @@ from src.modules.digester.utils.merges import merge_object_classes
 
 logger = logging.getLogger(__name__)
 
-CONFIDENCE_ORDER: tuple[ConfidenceLevel, ...] = ("high", "medium", "low")
-FALLBACK_CONFIDENCE: ConfidenceLevel = "low"
+CONFIDENCE_ORDER: tuple[ConfidenceLevel, ...] = (
+    ConfidenceLevel.HIGH,
+    ConfidenceLevel.MEDIUM,
+    ConfidenceLevel.LOW,
+)
+FALLBACK_CONFIDENCE: ConfidenceLevel = ConfidenceLevel.LOW
 
 
 def _alpha_sort_key(obj_class: BaseObjectClass) -> str:
@@ -70,7 +74,7 @@ def _to_ranked_object_class(
         superclass=extracted.superclass,
         abstract=extracted.abstract,
         embedded=extracted.embedded,
-        relevant="true",
+        relevant=RelevantLevel.TRUE,
         confidence=confidence,
     )
 
@@ -314,7 +318,7 @@ async def deduplicate_and_sort_object_classes(
             bucket = [obj for obj in ranked_list if obj.confidence == level]
             if not bucket:
                 continue
-            if level == "high":
+            if level == ConfidenceLevel.HIGH:
                 sorted_bucket = await _sort_bucket_by_importance(bucket, level)
             else:
                 sorted_bucket = sorted(bucket, key=lambda item: item.name.strip().lower())

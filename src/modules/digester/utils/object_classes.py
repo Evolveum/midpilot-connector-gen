@@ -9,21 +9,22 @@ from uuid import UUID
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.utils.normalize import normalize_object_class_name
+from src.modules.digester.enums import ConfidenceLevel
 
 logger = logging.getLogger(__name__)
 
-CONFIDENCE_PRIORITY: Dict[str, int] = {
-    "high": 0,
-    "medium": 1,
-    "low": 2,
+CONFIDENCE_PRIORITY: Dict[ConfidenceLevel, int] = {
+    ConfidenceLevel.HIGH: 0,
+    ConfidenceLevel.MEDIUM: 1,
+    ConfidenceLevel.LOW: 2,
 }
 
 
 def confidence_order_key(confidence: Any) -> int:
     """Get sortable confidence rank where lower value means higher priority."""
-    if not isinstance(confidence, str):
+    if confidence is None:
         return len(CONFIDENCE_PRIORITY)
-    return CONFIDENCE_PRIORITY.get(confidence.strip().lower(), len(CONFIDENCE_PRIORITY))
+    return CONFIDENCE_PRIORITY.get(confidence, len(CONFIDENCE_PRIORITY))
 
 
 def sort_object_class_dicts(object_classes: List[Any]) -> List[Any]:
@@ -32,7 +33,8 @@ def sort_object_class_dicts(object_classes: List[Any]) -> List[Any]:
     Non-dict items are preserved at the end in original order.
     """
     has_any_confidence = any(
-        isinstance(item, dict) and isinstance(item.get("confidence"), str) for item in object_classes
+        isinstance(item, dict) and confidence_order_key(item.get("confidence")) < len(CONFIDENCE_PRIORITY)
+        for item in object_classes
     )
     if not has_any_confidence:
         return list(object_classes)

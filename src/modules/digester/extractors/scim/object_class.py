@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from src.common.jobs import update_job_progress
+from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.prompts.scim.object_class_prompts import (
     scim_object_class_system_prompt,
     scim_object_class_user_prompt,
@@ -65,8 +66,8 @@ async def extract_scim_object_classes(
     base_classes = [
         FinalObjectClass(
             name=cls["name"],
-            relevant="true",
-            confidence="high",
+            relevant=RelevantLevel.TRUE,
+            confidence=ConfidenceLevel.HIGH,
             superclass=cls.get("superclass"),
             abstract=cls.get("abstract", False),
             embedded=cls.get("embedded", False),
@@ -167,8 +168,8 @@ async def extract_scim_object_classes(
     custom_classes = [
         FinalObjectClass(
             name=obj_class.name,
-            relevant="true",
-            confidence="medium",
+            relevant=RelevantLevel.TRUE,
+            confidence=ConfidenceLevel.MEDIUM,
             superclass=obj_class.superclass,
             abstract=obj_class.abstract,
             embedded=obj_class.embedded,

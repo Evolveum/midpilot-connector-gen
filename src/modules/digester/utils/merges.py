@@ -5,20 +5,20 @@
 import json
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Literal, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.enums import JobStage
+from src.common.enums import ApiType, JobStage
 from src.common.jobs import update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.config import config
+from src.modules.digester.enums import EndpointMethod, EndpointType
 from src.modules.digester.schema import (
     AttributeResponse,
     BaseAPIEndpoint,
     EndpointInfo,
-    EndpointMethod,
     ExtendedObjectClass,
     InfoMetadata,
     InfoResponse,
@@ -197,7 +197,13 @@ async def merge_endpoint_candidates(
     """
 
     # HTTP method ordering for consistent sorting
-    _METHOD_ORDER: Dict[EndpointMethod, int] = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4}
+    _METHOD_ORDER: Dict[EndpointMethod, int] = {
+        EndpointMethod.GET: 0,
+        EndpointMethod.POST: 1,
+        EndpointMethod.PUT: 2,
+        EndpointMethod.PATCH: 3,
+        EndpointMethod.DELETE: 4,
+    }
 
     def _endpoint_key(ep: EndpointInfo) -> tuple[str, EndpointMethod]:
         return (ep.path.strip(), ep.method)
@@ -295,9 +301,9 @@ def merge_info_metadata(
     name_distribution: Dict[str, int] = {}
     app_version_distribution: Dict[str, int] = {}
     api_version_distribution: Dict[str, int] = {}
-    api_type_distribution: Dict[str, int] = {}
+    api_type_distribution: Dict[ApiType, int] = {}
     base_api_endpoints_url_distribution: Dict[str, int] = {}
-    base_api_endpoints_type_distribution: Dict[tuple[str, str], int] = {}
+    base_api_endpoints_type_distribution: Dict[tuple[str, EndpointType], int] = {}
 
     for info in info_candidates:
         name = (info.name or "").strip()
@@ -314,12 +320,13 @@ def merge_info_metadata(
 
         for api_type in info.api_type or []:
             normalized_type = str(api_type).upper().strip()
-            if normalized_type in {"REST", "SCIM"}:
-                api_type_distribution[normalized_type] = api_type_distribution.get(normalized_type, 0) + 1
+            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value}:
+                canonical_type = ApiType(normalized_type)
+                api_type_distribution[canonical_type] = api_type_distribution.get(canonical_type, 0) + 1
 
         for endpoint in info.base_api_endpoint or []:
             uri = (endpoint.uri or "").strip().lower()
-            endpoint_type: Literal["constant", "dynamic", ""] = endpoint.type
+            endpoint_type: EndpointType = endpoint.type
             if not uri:
                 continue
             base_api_endpoints_url_distribution[uri] = base_api_endpoints_url_distribution.get(uri, 0) + 1
@@ -344,22 +351,20 @@ def merge_info_metadata(
         if api_version_distribution[candidate_api_version] > threshold:
             found_api_version = candidate_api_version
 
-    found_api_types: List[Literal["REST", "SCIM"]] = [
-        cast(Literal["REST", "SCIM"], api_type)
-        for api_type, count in api_type_distribution.items()
-        if count > threshold
+    found_api_types: List[ApiType] = [
+        api_type for api_type, count in api_type_distribution.items() if count > threshold
     ]
-    found_api_types = sorted(found_api_types)
+    found_api_types = sorted(found_api_types, key=lambda api_type: api_type.value)
 
     found_base_api_endpoints: List[BaseAPIEndpoint] = []
     for uri, count in base_api_endpoints_url_distribution.items():
         if count <= threshold:
             continue
 
-        constant_count = base_api_endpoints_type_distribution.get((uri, "constant"), 0)
-        dynamic_count = base_api_endpoints_type_distribution.get((uri, "dynamic"), 0)
-        selected_endpoint_type: Literal["constant", "dynamic"] = (
-            "constant" if constant_count >= dynamic_count else "dynamic"
+        constant_count = base_api_endpoints_type_distribution.get((uri, EndpointType.CONSTANT), 0)
+        dynamic_count = base_api_endpoints_type_distribution.get((uri, EndpointType.DYNAMIC), 0)
+        selected_endpoint_type: EndpointType = (
+            EndpointType.CONSTANT if constant_count >= dynamic_count else EndpointType.DYNAMIC
         )
         found_base_api_endpoints.append(BaseAPIEndpoint(uri=uri, type=selected_endpoint_type))
 

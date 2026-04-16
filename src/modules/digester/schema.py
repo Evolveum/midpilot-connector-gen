@@ -3,13 +3,20 @@
 # Licensed under the EUPL-1.2 or later.
 
 import re
-from typing import Any, Dict, List, Literal, Optional, cast
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
 
+from src.common.enums import ApiType
+from src.modules.digester.enums import (
+    AuthType,
+    ConfidenceLevel,
+    EndpointMethod,
+    EndpointType,
+    RelevantLevel,
+)
+
 # --- Object Classes ---
-ConfidenceLevel = Literal["low", "medium", "high"]
-RelevantLevel = Literal["true", "false", "maybe"]
 
 
 class BaseObjectClass(BaseModel):
@@ -100,7 +107,7 @@ class RankedObjectClass(ExtendedObjectClass):
     """
 
     relevant: RelevantLevel = Field(
-        default="true",
+        default=RelevantLevel.TRUE,
         description="IGA/IDM relevance marker for the final payload.",
     )
     confidence: ConfidenceLevel = Field(
@@ -257,10 +264,6 @@ class ObjectClassesRankedResponse(BaseModel):
 # --- Object Classes ---
 
 
-# --- Auth ---
-AuthType = Literal["basic", "bearer", "oauth2", "apiKey", "session", "digest", "mtls", "openidConnect", "other"]
-
-
 class AuthInfo(BaseModel):
     """
     Authentication mechanism discovered in the API documentations/security schemes.
@@ -292,64 +295,64 @@ class AuthInfo(BaseModel):
 
     @field_validator("type", mode="before")
     @classmethod
-    def _normalize_auth_type(cls, value: Any) -> str:
+    def _normalize_auth_type(cls, value: Any) -> AuthType:
         """
         Normalize auth type variations to a stable, closed vocabulary.
         """
         if not isinstance(value, str):
-            return "other"
+            return AuthType.OTHER
 
         normalized = re.sub(r"[^a-z0-9]+", "", value.strip().lower())
 
         aliases = {
             # basic
-            "basic": "basic",
-            "basicauth": "basic",
-            "httpbasic": "basic",
+            "basic": AuthType.BASIC,
+            "basicauth": AuthType.BASIC,
+            "httpbasic": AuthType.BASIC,
             # bearer
-            "bearer": "bearer",
-            "jwt": "bearer",
-            "token": "bearer",
-            "accesstoken": "bearer",
-            "personalaccesstoken": "bearer",
-            "pat": "bearer",
+            "bearer": AuthType.BEARER,
+            "jwt": AuthType.BEARER,
+            "token": AuthType.BEARER,
+            "accesstoken": AuthType.BEARER,
+            "personalaccesstoken": AuthType.BEARER,
+            "pat": AuthType.BEARER,
             # oauth2
-            "oauth": "oauth2",
-            "oauth2": "oauth2",
-            "oauth2.0": "oauth2",
-            "oauth 2.0": "oauth2",
-            "oauth20": "oauth2",
-            "authorizationcode": "oauth2",
-            "clientcredentials": "oauth2",
-            "devicecode": "oauth2",
-            "pkce": "oauth2",
+            "oauth": AuthType.OAUTH2,
+            "oauth2": AuthType.OAUTH2,
+            "oauth2.0": AuthType.OAUTH2,
+            "oauth 2.0": AuthType.OAUTH2,
+            "oauth20": AuthType.OAUTH2,
+            "authorizationcode": AuthType.OAUTH2,
+            "clientcredentials": AuthType.OAUTH2,
+            "devicecode": AuthType.OAUTH2,
+            "pkce": AuthType.OAUTH2,
             # api key
-            "apikey": "apiKey",
-            "api_key": "apiKey",
-            "apikeyauth": "apiKey",
-            "xapikey": "apiKey",
+            "apikey": AuthType.API_KEY,
+            "api_key": AuthType.API_KEY,
+            "apikeyauth": AuthType.API_KEY,
+            "xapikey": AuthType.API_KEY,
             # session
-            "session": "session",
-            "cookie": "session",
-            "cookiesession": "session",
-            "sessioncookie": "session",
+            "session": AuthType.SESSION,
+            "cookie": AuthType.SESSION,
+            "cookiesession": AuthType.SESSION,
+            "sessioncookie": AuthType.SESSION,
             # digest
-            "digest": "digest",
-            "httpdigest": "digest",
+            "digest": AuthType.DIGEST,
+            "httpdigest": AuthType.DIGEST,
             # mtls
-            "mtls": "mtls",
-            "mutualtls": "mtls",
-            "clientcertificate": "mtls",
+            "mtls": AuthType.MTLS,
+            "mutualtls": AuthType.MTLS,
+            "clientcertificate": AuthType.MTLS,
             # openid connect
-            "openidconnect": "openidConnect",
-            "oidc": "openidConnect",
-            "openid": "openidConnect",
+            "openidconnect": AuthType.OPENID_CONNECT,
+            "oidc": AuthType.OPENID_CONNECT,
+            "openid": AuthType.OPENID_CONNECT,
             # fallback bucket
-            "other": "other",
-            "custom": "other",
+            "other": AuthType.OTHER,
+            "custom": AuthType.OTHER,
         }
 
-        return aliases.get(normalized, "other")
+        return aliases.get(normalized, AuthType.OTHER)
 
 
 class AuthResponse(BaseModel):
@@ -388,8 +391,8 @@ class BaseAPIEndpoint(BaseModel):
     """
 
     uri: str = Field(..., description="Base URL or URI template to call the API (e.g., https://host/api/v1).")
-    type: Literal["constant", "dynamic", ""] = Field(
-        default="",
+    type: EndpointType = Field(
+        default=EndpointType.UNKNOWN,
         description=(
             "'constant' if same for all deployments; 'dynamic' if varies per tenant/installation; "
             "empty string when unknown."
@@ -400,16 +403,18 @@ class BaseAPIEndpoint(BaseModel):
 
     @field_validator("type", mode="before")
     @classmethod
-    def _normalize_type(cls, value: Any) -> Literal["constant", "dynamic", ""]:
+    def _normalize_type(cls, value: Any) -> EndpointType:
+        if isinstance(value, EndpointType):
+            return value
         if value is None:
-            return ""
+            return EndpointType.UNKNOWN
         if not isinstance(value, str):
-            return ""
+            return EndpointType.UNKNOWN
 
         normalized = value.strip().lower()
-        if normalized in {"constant", "dynamic"}:
-            return cast(Literal["constant", "dynamic", ""], normalized)
-        return ""
+        if normalized in {EndpointType.CONSTANT.value, EndpointType.DYNAMIC.value}:
+            return EndpointType(normalized)
+        return EndpointType.UNKNOWN
 
 
 class InfoMetadata(BaseModel):
@@ -434,7 +439,7 @@ class InfoMetadata(BaseModel):
         serialization_alias="apiVersion",
         description="API version string as documented (e.g., 'v1', '2024-05', semantic).",
     )
-    api_type: List[Literal["REST", "SCIM"]] = Field(
+    api_type: List[ApiType] = Field(
         default_factory=list,
         validation_alias="apiType",
         serialization_alias="apiType",
@@ -451,7 +456,7 @@ class InfoMetadata(BaseModel):
 
     @field_validator("api_type", mode="before")
     @classmethod
-    def _normalize_api_type(cls, value: Any) -> List[str]:
+    def _normalize_api_type(cls, value: Any) -> List[ApiType]:
         """
         Normalize api types from various upstream sources.
         Keep only supported values and canonicalize their casing.
@@ -467,12 +472,14 @@ class InfoMetadata(BaseModel):
         else:
             return []
 
-        aliases = {
-            "rest": "REST",
-            "scim": "SCIM",
+        aliases: Dict[str, ApiType] = {
+            "rest": ApiType.REST,
+            "openapi": ApiType.REST,
+            "swagger": ApiType.REST,
+            "scim": ApiType.SCIM,
         }
 
-        normalized: List[str] = []
+        normalized: List[ApiType] = []
         for item in raw_values:
             if not isinstance(item, str):
                 continue
@@ -501,7 +508,7 @@ class InfoMetadata(BaseModel):
     @field_validator("base_api_endpoint", mode="after")
     @classmethod
     def _dedupe_and_sort_base_api_endpoint(cls, endpoints: List[BaseAPIEndpoint]) -> List[BaseAPIEndpoint]:
-        unique: Dict[tuple[str, str], BaseAPIEndpoint] = {}
+        unique: Dict[tuple[str, EndpointType], BaseAPIEndpoint] = {}
         for endpoint in endpoints or []:
             uri = (endpoint.uri or "").strip()
             if not uri:
@@ -512,7 +519,7 @@ class InfoMetadata(BaseModel):
 
         return sorted(
             unique.values(),
-            key=lambda endpoint: (endpoint.uri.lower(), 0 if endpoint.type == "constant" else 1),
+            key=lambda endpoint: (endpoint.uri.lower(), 0 if endpoint.type == EndpointType.CONSTANT else 1),
         )
 
 
@@ -664,10 +671,6 @@ class AttributeResponse(BaseModel):
 
 
 # --- Attributes ---
-
-
-# --- Endpoints ---
-EndpointMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 
 class EndpointInfo(BaseModel):
