@@ -102,9 +102,9 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
                     doc_item.pop("scrapeJobIds")
         normalized_input["documentationItems"] = sorted(
             normalized_input["documentationItems"],
-            key=lambda x: (str(x.get("url") or ""), str(x.get("summary") or ""))
-            if isinstance(x, Mapping)
-            else (str(x), ""),
+            key=lambda x: (
+                (str(x.get("url") or ""), str(x.get("summary") or "")) if isinstance(x, Mapping) else (str(x), "")
+            ),
         )
     if "relevantObjectClasses" in normalized_input and "objectClasses" in normalized_input["relevantObjectClasses"]:
         for obj_class in normalized_input["relevantObjectClasses"]["objectClasses"]:
