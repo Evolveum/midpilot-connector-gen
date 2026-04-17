@@ -3,9 +3,9 @@
 # Licensed under the EUPL-1.2 or later.
 import json
 
-from langchain.output_parsers import RetryWithErrorOutputParser
-from langchain.prompts import BasePromptTemplate
+from langchain_classic.output_parsers import RetryWithErrorOutputParser
 from langchain_core.output_parsers import BaseOutputParser
+from langchain_core.prompts import BasePromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel
 from langchain_openai import ChatOpenAI
 
@@ -20,10 +20,10 @@ def get_default_llm(temperature: float = 1, reasoning_effort: str = "high") -> C
     :return: Configured ChatOpenAI instance.
     """
     return ChatOpenAI(
-        openai_api_key=config.llm.openai_api_key,
-        openai_api_base=config.llm.openai_api_base,
-        model_name=config.llm.model_name,
-        request_timeout=config.llm.request_timeout,
+        api_key=config.llm.openai_api_key,
+        base_url=config.llm.openai_api_base,
+        model=config.llm.model_name,
+        timeout=config.llm.request_timeout,
         temperature=temperature,
         # extra_body={"reasoning": {"enabled": True}, "provider": {"order": ["google-ai-studio"]}},
         extra_body={"provider": {"order": config.llm.provider_order}},

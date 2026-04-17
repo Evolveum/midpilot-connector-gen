@@ -423,7 +423,8 @@ class JobRepository:
         )
         result = await self.db.execute(query)
 
-        if result.rowcount == 0:
+        rowcount = getattr(result, "rowcount", None)
+        if rowcount == 0 or rowcount is None:
             self.db.add(JobProgress(job_id=job_id, processing_completed=delta, updated_at=now))
 
         await self.db.flush()

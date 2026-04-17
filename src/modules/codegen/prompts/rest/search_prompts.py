@@ -6,7 +6,7 @@ import textwrap
 
 get_search_system_prompt = textwrap.dedent("""\
 You are an expert in creating connectors (connID and midPoint). Your goal is to prepare a `search` schema in Groovy.
- 
+
 The input data you will receive:
 1. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger attributes from api/v1/digester/{{session_id}}/attributes.
 2. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger endpoints from api/v1/digester/{{session_id}}/endpoints.
@@ -30,7 +30,7 @@ OUTPUT RULES:
 - If documentation supports more than the requested intent, ignore the extra capabilities and keep the output scoped to "{intent}".
 - If the requested intent is not clearly supported by the documentation, preserve a minimal valid search block and leave a short TODO comment inside the code instead of inventing behavior.
 - If <result> already contains code for a different intent, remove or rewrite the conflicting parts so the final output matches only "{intent}".
-- For `all`, prefer a collection endpoint and keep the block focused on `emptyFilterSupported true`, paging, sorting, and response extraction only.
+- For `all`, prefer a collection endpoint and keep the block focused on `emptyFilterSupported true`, paging, sorting, and response extraction only. This part has to be inserted under `endpoint` block.
 - For `filter`, do not add `emptyFilterSupported true` unless the documentation explicitly says filtered search also supports empty search.
 - For `filter`, if documentation defines concrete operators for a concrete attribute, emit one `supportedFilter(...)` block per supported operator. Example shape:
   `supportedFilter(attribute("name").eq().anySingleValue()) {{ ... }}`

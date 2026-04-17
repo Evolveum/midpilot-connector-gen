@@ -1,6 +1,6 @@
 # Connector Generator AI Service
 
-Smart Integration Microservice for scraping, digester and CodeGen built with FastAPI.
+Midpilot Connector Generator for discovery, scraping, digester and CodeGen built with FastAPI.
 
 ## Project structure
 
