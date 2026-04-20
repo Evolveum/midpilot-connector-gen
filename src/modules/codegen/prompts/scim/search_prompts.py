@@ -13,6 +13,7 @@ The input data you will receive:
 3. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
 4. The requested search intent for this run is `{intent}`.
 5. Base API URL (if known) for path normalization is `{base_api_url}`.
+6. Optional user-provided preferred endpoint in JSON is `{preferred_endpoint_json}`.
 
 Prepare a valid Groovy code for search schema in Groovy based on the following `.adoc` documentations:
 
@@ -28,10 +29,13 @@ Output rules:
   - `id`: generate only identifier-based lookup support, using exact-match filter declarations for the documented unique identifier attribute(s). Do not add broad filter coverage or empty-filter support.
 - If documentation supports more than the requested intent, ignore the extra capabilities and keep the output scoped to "{intent}".
 - If the requested intent is not clearly supported by the documentation, preserve a minimal valid search block and leave a short TODO comment inside the code instead of inventing behavior.
-- Never generate `sortingSupport { ... }` blocks and never reference `sorting.*`. Sorting DSL is not supported by the framework.
+- `emptyFilterSupported true` MUST be declared inside an `endpoint("...") {{ ... }}` block. Never place `emptyFilterSupported true` directly under `search {{ ... }}`.
+- Never generate `sortingSupport {{ ... }}` blocks and never reference `sorting.*`. Sorting DSL is not supported by the framework.
 - Use SCIM filter syntax for query parameters: `filter=<attribute> <operator> <value>`.
 - For string values in filters, use escaped quotes: `\\"value\\"`.
 - Treat <extracted_attributes> as the primary sources of truth. Prefer them over the examples in <search_docs>.
+- If <preferred_endpoint> is provided, prioritize it as the primary candidate endpoint for the requested intent whenever it is compatible with SCIM behavior and docs.
+- If <preferred_endpoint> conflicts with docs or SCIM semantics, prefer documented behavior and leave a short TODO comment about the mismatch.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it; do not discard or rename previously correct parts.
 - Do not fabricate parameters, attributes, or fields. If documentation is unclear, add a TODO comment instead of guessing.
 - Preserve the outer objectClass and search blocks if already present in <result>.
@@ -50,6 +54,12 @@ Here is extracted object class attributes from SCIM schema wrapped into JSON fro
 <extracted_attributes>
 {attributes_json}
 </extracted_attributes>
+
+Optional user-provided preferred endpoint (JSON):
+
+<preferred_endpoint>
+{preferred_endpoint_json}
+</preferred_endpoint>
 
 Base API URL for endpoint-path normalization:
 

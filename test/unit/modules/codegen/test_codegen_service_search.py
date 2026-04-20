@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen import service
+from src.modules.codegen.enums import SearchIntent
 
 
 @pytest.mark.asyncio
@@ -21,6 +22,7 @@ async def test_generate_search():
     }
 
     test_endpoints = {"endpoints": [{"method": "GET", "path": "/users", "description": "List users"}]}
+    test_preferred_endpoint = {"method": "GET", "path": "/users/search"}
 
     with (
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
@@ -37,9 +39,10 @@ async def test_generate_search():
         result = await service.create_search(
             attributes=test_attributes,
             endpoints=test_endpoints,
+            preferred_endpoint=test_preferred_endpoint,
             session_id=uuid4(),
             object_class="User",
-            intent="filter",
+            intent=SearchIntent.FILTER,
             job_id=uuid4(),
         )
 
@@ -50,5 +53,6 @@ async def test_generate_search():
         # Verify generator was instantiated and generate method was called
         mock_search_generator_class.assert_called_once()
         _, kwargs = mock_search_generator_class.call_args
-        assert kwargs["intent"] == "filter"
+        assert kwargs["intent"] == SearchIntent.FILTER
+        assert kwargs["preferred_endpoint"] == test_preferred_endpoint
         mock_generator_instance.generate.assert_called_once()

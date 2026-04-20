@@ -21,6 +21,7 @@ async def test_generate_create():
     }
 
     test_endpoints = {"endpoints": [{"method": "POST", "path": "/users", "description": "Create user"}]}
+    test_preferred_endpoint = {"method": "POST", "path": "/users"}
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
@@ -43,6 +44,7 @@ async def test_generate_create():
         result = await service.create_create(
             attributes=test_attributes,
             endpoints=test_endpoints,
+            preferred_endpoint=test_preferred_endpoint,
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
@@ -54,6 +56,8 @@ async def test_generate_create():
 
         # Verify generator was instantiated and generate method was called
         mock_create_generator_class.assert_called_once()
+        _, kwargs = mock_create_generator_class.call_args
+        assert kwargs["preferred_endpoint"] == test_preferred_endpoint
         mock_generator_instance.generate.assert_called_once()
 
 
@@ -66,6 +70,7 @@ async def test_generate_update():
     }
 
     test_endpoints = {"endpoints": [{"method": "PUT", "path": "/users/{id}", "description": "Update user"}]}
+    test_preferred_endpoint = {"method": "PATCH", "path": "/users/{id}"}
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
@@ -88,6 +93,7 @@ async def test_generate_update():
         result = await service.create_update(
             attributes=test_attributes,
             endpoints=test_endpoints,
+            preferred_endpoint=test_preferred_endpoint,
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
@@ -99,6 +105,8 @@ async def test_generate_update():
 
         # Verify generator was instantiated and generate method was called
         mock_update_generator_class.assert_called_once()
+        _, kwargs = mock_update_generator_class.call_args
+        assert kwargs["preferred_endpoint"] == test_preferred_endpoint
         mock_generator_instance.generate.assert_called_once()
 
 
@@ -110,6 +118,7 @@ async def test_generate_delete():
     }
 
     test_endpoints = {"endpoints": [{"method": "DELETE", "path": "/users/{id}", "description": "Delete user"}]}
+    test_preferred_endpoint = {"method": "DELETE", "path": "/users/{id}"}
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
@@ -132,6 +141,7 @@ async def test_generate_delete():
         result = await service.create_delete(
             attributes=test_attributes,
             endpoints=test_endpoints,
+            preferred_endpoint=test_preferred_endpoint,
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
@@ -143,4 +153,6 @@ async def test_generate_delete():
 
         # Verify generator was instantiated and generate method was called
         mock_delete_generator_class.assert_called_once()
+        _, kwargs = mock_delete_generator_class.call_args
+        assert kwargs["preferred_endpoint"] == test_preferred_endpoint
         mock_generator_instance.generate.assert_called_once()
