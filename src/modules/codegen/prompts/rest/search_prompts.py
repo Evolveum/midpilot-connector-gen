@@ -10,7 +10,7 @@ You are an expert in creating connectors (connID and midPoint). Your goal is to 
 The input data you will receive:
 1. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger attributes from api/v1/digester/{{session_id}}/attributes.
 2. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger endpoints from api/v1/digester/{{session_id}}/endpoints.
-3. A chunk of the original document (e.g., API spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated—such as parameter semantics, data types, required vs optional fields, pagination, filtering/sorting rules, authentication hints, default values, example requests/responses, and error behavior.
+3. A chunk of the original document (e.g., API spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated—such as parameter semantics, data types, required vs optional fields, pagination, filtering rules, authentication hints, default values, example requests/responses, and error behavior.
 4. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
 5. The requested search intent for this run is `{intent}`.
 6. Base API URL (if known) for path normalization is `{base_api_url}`.
@@ -30,7 +30,8 @@ OUTPUT RULES:
 - If documentation supports more than the requested intent, ignore the extra capabilities and keep the output scoped to "{intent}".
 - If the requested intent is not clearly supported by the documentation, preserve a minimal valid search block and leave a short TODO comment inside the code instead of inventing behavior.
 - If <result> already contains code for a different intent, remove or rewrite the conflicting parts so the final output matches only "{intent}".
-- For `all`, prefer a collection endpoint and keep the block focused on `emptyFilterSupported true`, paging, sorting, and response extraction only. This part has to be inserted under `endpoint` block.
+- For `all`, prefer a collection endpoint and keep the block focused on `emptyFilterSupported true`, paging, and response extraction only. This part has to be inserted under `endpoint` block.
+- Never generate `sortingSupport { ... }` blocks and never reference `sorting.*`. Sorting DSL is not supported by the framework.
 - For `filter`, do not add `emptyFilterSupported true` unless the documentation explicitly says filtered search also supports empty search.
 - For `filter`, if documentation defines concrete operators for a concrete attribute, emit one `supportedFilter(...)` block per supported operator. Example shape:
   `supportedFilter(attribute("name").eq().anySingleValue()) {{ ... }}`

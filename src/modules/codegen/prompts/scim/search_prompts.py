@@ -9,9 +9,10 @@ You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs
 
 The input data you will receive:
 1. A fragment that was extracted in the previous step LLM from the SCIM attributes for {object_class}.
-2. A chunk of the original document (e.g., SCIM spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated, such as parameter semantics, data types, required vs optional fields, pagination, filtering/sorting rules, authentication hints, default values, example requests/responses, error behavior, filter syntax, attribute selection, and SCIM-specific behavior.
+2. A chunk of the original document (e.g., SCIM spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated, such as parameter semantics, data types, required vs optional fields, pagination, filtering rules, authentication hints, default values, example requests/responses, error behavior, filter syntax, attribute selection, and SCIM-specific behavior.
 3. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
 4. The requested search intent for this run is `{intent}`.
+5. Base API URL (if known) for path normalization is `{base_api_url}`.
 
 Prepare a valid Groovy code for search schema in Groovy based on the following `.adoc` documentations:
 
@@ -27,6 +28,7 @@ Output rules:
   - `id`: generate only identifier-based lookup support, using exact-match filter declarations for the documented unique identifier attribute(s). Do not add broad filter coverage or empty-filter support.
 - If documentation supports more than the requested intent, ignore the extra capabilities and keep the output scoped to "{intent}".
 - If the requested intent is not clearly supported by the documentation, preserve a minimal valid search block and leave a short TODO comment inside the code instead of inventing behavior.
+- Never generate `sortingSupport { ... }` blocks and never reference `sorting.*`. Sorting DSL is not supported by the framework.
 - Use SCIM filter syntax for query parameters: `filter=<attribute> <operator> <value>`.
 - For string values in filters, use escaped quotes: `\\"value\\"`.
 - Treat <extracted_attributes> as the primary sources of truth. Prefer them over the examples in <search_docs>.
@@ -48,6 +50,12 @@ Here is extracted object class attributes from SCIM schema wrapped into JSON fro
 <extracted_attributes>
 {attributes_json}
 </extracted_attributes>
+
+Base API URL for endpoint-path normalization:
+
+<base_api_url>
+{base_api_url}
+</base_api_url>
 
 Here is chunk where you have to find additional information:
 <chunk>
