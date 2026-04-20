@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import JobStatus
+from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.router import (
     extract_class_endpoints,
     get_class_endpoints_status,
@@ -95,7 +96,9 @@ async def test_get_class_endpoints_status_found():
     fake_status = MagicMock(
         jobId=job_id,
         status=JobStatus.finished,
-        result=EndpointResponse(endpoints=[EndpointInfo(method="GET", path="/users", description="List users")]),
+        result=EndpointResponse(
+            endpoints=[EndpointInfo(method=EndpointMethod.GET, path="/users", description="List users")]
+        ),
     )
 
     with (

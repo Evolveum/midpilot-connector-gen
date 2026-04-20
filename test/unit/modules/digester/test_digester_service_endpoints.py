@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester import service
+from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.schema import EndpointInfo
 
 
@@ -50,19 +51,19 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
             "result": {
                 "endpoints": [
                     EndpointInfo(
-                        method="GET",
+                        method=EndpointMethod.GET,
                         path="/users",
                         description="List all users",
                         suggested_use=["getAll"],
                     ).model_dump(),
                     EndpointInfo(
-                        method="POST",
+                        method=EndpointMethod.POST,
                         path="/users",
                         description="Create a new user",
                         suggested_use=["create"],
                     ).model_dump(),
                     EndpointInfo(
-                        method="GET",
+                        method=EndpointMethod.GET,
                         path="/users/{id}",
                         description="Get user by ID",
                         suggested_use=["getById"],

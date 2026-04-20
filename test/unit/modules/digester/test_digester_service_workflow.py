@@ -51,7 +51,6 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                         ExtendedObjectClass(
                             name="User",
                             description="User entity",
-                            relevant_documentations=[{"doc_id": str(doc_uuid), "chunk_id": str(doc_uuid)}],
                         )
                     ],
                     True,

@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extractors.rest.object_class import deduplicate_and_sort_object_classes
 from src.modules.digester.schema import (
     ExtendedObjectClass,
@@ -29,9 +30,11 @@ async def test_deduplicate_and_sort_object_classes_keeps_all_and_sorts_by_confid
     mock_chain.ainvoke = AsyncMock(
         return_value=ObjectClassesConfidenceResponse(
             object_classes=[
-                ObjectClassWithConfidence(name="Role", description="Role entity", confidence="high"),
-                ObjectClassWithConfidence(name="User", description="User entity", confidence="medium"),
-                ObjectClassWithConfidence(name="Permission", description="Permission entity", confidence="low"),
+                ObjectClassWithConfidence(name="Role", description="Role entity", confidence=ConfidenceLevel.HIGH),
+                ObjectClassWithConfidence(name="User", description="User entity", confidence=ConfidenceLevel.MEDIUM),
+                ObjectClassWithConfidence(
+                    name="Permission", description="Permission entity", confidence=ConfidenceLevel.LOW
+                ),
             ]
         )
     )
@@ -47,7 +50,11 @@ async def test_deduplicate_and_sort_object_classes_keeps_all_and_sorts_by_confid
         )
 
     assert [item.name for item in result.objectClasses] == ["Role", "User", "Permission"]
-    assert [item.confidence for item in result.objectClasses] == ["high", "medium", "low"]
+    assert [item.confidence for item in result.objectClasses] == [
+        ConfidenceLevel.HIGH,
+        ConfidenceLevel.MEDIUM,
+        ConfidenceLevel.LOW,
+    ]
 
 
 @pytest.mark.asyncio
@@ -72,7 +79,7 @@ async def test_deduplicate_and_sort_object_classes_defaults_to_low_when_confiden
         )
 
     assert len(result.objectClasses) == 2
-    assert [item.confidence for item in result.objectClasses] == ["low", "low"]
+    assert [item.confidence for item in result.objectClasses] == [ConfidenceLevel.LOW, ConfidenceLevel.LOW]
 
 
 @pytest.mark.asyncio
@@ -87,9 +94,11 @@ async def test_deduplicate_and_sort_object_classes_sorts_with_llm_inside_same_co
     classification_chain.ainvoke = AsyncMock(
         return_value=ObjectClassesConfidenceResponse(
             object_classes=[
-                ObjectClassWithConfidence(name="Account", description="Account entity", confidence="high"),
-                ObjectClassWithConfidence(name="User", description="User entity", confidence="high"),
-                ObjectClassWithConfidence(name="Group", description="Group entity", confidence="medium"),
+                ObjectClassWithConfidence(
+                    name="Account", description="Account entity", confidence=ConfidenceLevel.HIGH
+                ),
+                ObjectClassWithConfidence(name="User", description="User entity", confidence=ConfidenceLevel.HIGH),
+                ObjectClassWithConfidence(name="Group", description="Group entity", confidence=ConfidenceLevel.MEDIUM),
             ]
         )
     )
@@ -104,8 +113,8 @@ async def test_deduplicate_and_sort_object_classes_sorts_with_llm_inside_same_co
                     superclass=None,
                     abstract=None,
                     embedded=None,
-                    relevant="true",
-                    confidence="high",
+                    relevant=RelevantLevel.TRUE,
+                    confidence=ConfidenceLevel.HIGH,
                 ),
                 RankedObjectClass(
                     name="Account",
@@ -113,8 +122,8 @@ async def test_deduplicate_and_sort_object_classes_sorts_with_llm_inside_same_co
                     superclass=None,
                     abstract=None,
                     embedded=None,
-                    relevant="true",
-                    confidence="high",
+                    relevant=RelevantLevel.TRUE,
+                    confidence=ConfidenceLevel.HIGH,
                 ),
             ]
         )
@@ -134,4 +143,8 @@ async def test_deduplicate_and_sort_object_classes_sorts_with_llm_inside_same_co
         )
 
     assert [item.name for item in result.objectClasses] == ["User", "Account", "Group"]
-    assert [item.confidence for item in result.objectClasses] == ["high", "high", "medium"]
+    assert [item.confidence for item in result.objectClasses] == [
+        ConfidenceLevel.HIGH,
+        ConfidenceLevel.HIGH,
+        ConfidenceLevel.MEDIUM,
+    ]

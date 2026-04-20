@@ -11,6 +11,7 @@ import pytest
 
 from src.common.enums import JobStatus
 from src.modules.digester import service
+from src.modules.digester.enums import AuthType
 from src.modules.digester.router import extract_auth, get_auth_status
 from src.modules.digester.schema import AuthInfo, AuthResponse
 
@@ -69,7 +70,7 @@ async def test_get_auth_status_found():
     fake_status = MagicMock(
         jobId=job_id,
         status=JobStatus.finished,
-        result=AuthResponse(auth=[AuthInfo(name="OAuth2", type="oauth2")]),
+        result=AuthResponse(auth=[AuthInfo(name="OAuth2", type=AuthType.OAUTH2)]),
     )
 
     with (

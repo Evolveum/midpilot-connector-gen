@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester import service
+from src.modules.digester.enums import AuthType
 from src.modules.digester.schema import AuthInfo, AuthResponse
 from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
 
@@ -39,12 +40,18 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
     ):
         mock_parallel.return_value = [
             (
-                [AuthInfo(name="OAuth2", type="oauth2", quirks="Supports authorization_code and client_credentials")],
+                [
+                    AuthInfo(
+                        name="OAuth2",
+                        type=AuthType.OAUTH2,
+                        quirks="Supports authorization_code and client_credentials",
+                    )
+                ],
                 True,
                 doc_uuid1,
             ),
             (
-                [AuthInfo(name="API Key", type="apiKey", quirks="Header: X-API-Key")],
+                [AuthInfo(name="API Key", type=AuthType.API_KEY, quirks="Header: X-API-Key")],
                 True,
                 doc_uuid2,
             ),
@@ -211,7 +218,7 @@ async def test_extract_auth_with_fallback_switches_to_default_docs_without_real_
         if chunk_items == auth_doc_items:
             return [([], False, auth_chunk_id)]
         if chunk_items == default_doc_items:
-            return [([AuthInfo(name="OAuth2", type="oauth2", quirks="")], True, default_chunk_id)]
+            return [([AuthInfo(name="OAuth2", type=AuthType.OAUTH2, quirks="")], True, default_chunk_id)]
         return []
 
     async def dedupe_side_effect(auth_info, job_id):
