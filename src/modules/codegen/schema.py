@@ -2,10 +2,10 @@
 #
 # Licensed under the EUPL-1.2 or later.
 from dataclasses import dataclass
+from typing import Any, Dict
 
 from pydantic import BaseModel, Field, field_validator
 
-from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
 
 
@@ -16,18 +16,6 @@ class OperationAssets:
     docs_path: str
 
 
-_SEARCH_INTENT_SUFFIX: dict[SearchIntent, str] = {
-    SearchIntent.ALL: "All",
-    SearchIntent.FILTER: "Filter",
-    SearchIntent.ID: "Id",
-}
-
-
-def build_search_operation_key(object_class: str, intent: SearchIntent | str) -> str:
-    normalized_intent = SearchIntent(intent) if isinstance(intent, str) else intent
-    return f"{object_class}Search{_SEARCH_INTENT_SUFFIX[normalized_intent]}"
-
-
 class GroovyCodePayload(BaseModel):
     code: str = Field(..., description="Groovy code")
 
@@ -35,3 +23,12 @@ class GroovyCodePayload(BaseModel):
     @classmethod
     def validate_code(cls, value: str) -> str:
         return ensure_valid_groovy_code(value)
+
+
+class PreferredEndpointInput(BaseModel):
+    preferred_endpoint: Dict[str, Any] | None = Field(
+        default=None,
+        validation_alias="preferredEndpoint",
+        serialization_alias="preferredEndpoint",
+        description="Optional user-provided preferred endpoint used to focus code generation.",
+    )

@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.router import generate_search
 
 
@@ -41,7 +42,7 @@ async def test_generate_search_success():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_search(session_id, "User", "all", db=MagicMock())
+        response = await generate_search(session_id, "User", SearchIntent.ALL, db=MagicMock())
 
     assert response.jobId == job_id
     mock_repo.session_exists.assert_awaited_once_with(session_id)
@@ -75,7 +76,7 @@ async def test_generate_search_scim_allows_missing_endpoints():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_search(session_id, "User", "all", db=MagicMock())
+        response = await generate_search(session_id, "User", SearchIntent.ALL, db=MagicMock())
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)

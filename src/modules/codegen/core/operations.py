@@ -27,6 +27,7 @@ class SearchGenerator(BaseGroovyGenerator):
         *,
         object_class: str,
         intent: SearchIntent,
+        preferred_endpoint: Optional[Dict[str, Any]] = None,
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
@@ -46,6 +47,7 @@ class SearchGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["intent"] = intent
         config.extra_prompt_vars["search_docs"] = docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
+        config.extra_prompt_vars["preferred_endpoint_json"] = json.dumps(preferred_endpoint or {}, ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
 
@@ -67,6 +69,7 @@ class CreateGenerator(BaseGroovyGenerator):
         self,
         *,
         object_class: str,
+        preferred_endpoint: Optional[Dict[str, Any]] = None,
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
@@ -85,6 +88,7 @@ class CreateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["create_docs"] = docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
+        config.extra_prompt_vars["preferred_endpoint_json"] = json.dumps(preferred_endpoint or {}, ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
 
@@ -106,6 +110,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         self,
         *,
         object_class: str,
+        preferred_endpoint: Optional[Dict[str, Any]] = None,
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
@@ -124,6 +129,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["update_docs"] = docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
+        config.extra_prompt_vars["preferred_endpoint_json"] = json.dumps(preferred_endpoint or {}, ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
 
@@ -145,6 +151,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         self,
         *,
         object_class: str,
+        preferred_endpoint: Optional[Dict[str, Any]] = None,
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
@@ -163,6 +170,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["delete_docs"] = docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
+        config.extra_prompt_vars["preferred_endpoint_json"] = json.dumps(preferred_endpoint or {}, ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
 
