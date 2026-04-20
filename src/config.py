@@ -2,7 +2,6 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-import os
 from datetime import timedelta
 from enum import Enum
 from typing import List, Optional
@@ -63,22 +62,6 @@ class LLMSettings(BaseModel):
         ["groq", "wandb/fp4", "clarifai/fp4"],
         description="List of LLM providers in order of preference",
     )
-
-    @model_validator(mode="after")
-    def apply_legacy_env_fallbacks(self) -> "LLMSettings":
-        """Support legacy OPENAI_* env names when LLM__* settings are not provided."""
-        if not self.openai_api_key:
-            self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
-
-        legacy_base = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
-        if legacy_base and not os.getenv("LLM__OPENAI_API_BASE"):
-            self.openai_api_base = legacy_base
-
-        legacy_model = os.getenv("OPENAI_MODEL") or os.getenv("OPENAI_MODEL_NAME")
-        if legacy_model and not os.getenv("LLM__MODEL_NAME"):
-            self.model_name = legacy_model
-
-        return self
 
 
 class LangfuseSettings(BaseModel):

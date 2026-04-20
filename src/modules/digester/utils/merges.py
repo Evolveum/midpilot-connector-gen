@@ -361,10 +361,17 @@ def merge_info_metadata(
         if count <= threshold:
             continue
 
-        constant_count = base_api_endpoints_type_distribution.get((uri, EndpointType.CONSTANT), 0)
-        dynamic_count = base_api_endpoints_type_distribution.get((uri, EndpointType.DYNAMIC), 0)
+        type_distribution: Dict[EndpointType, int] = {
+            endpoint_type: base_api_endpoints_type_distribution.get((uri, endpoint_type), 0)
+            for endpoint_type in (EndpointType.CONSTANT, EndpointType.DYNAMIC, EndpointType.UNKNOWN)
+        }
+        top_count = max(type_distribution.values(), default=0)
+        top_types = [
+            endpoint_type for endpoint_type, type_count in type_distribution.items() if type_count == top_count
+        ]
+
         selected_endpoint_type: EndpointType = (
-            EndpointType.CONSTANT if constant_count >= dynamic_count else EndpointType.DYNAMIC
+            top_types[0] if top_count > 0 and len(top_types) == 1 else EndpointType.UNKNOWN
         )
         found_base_api_endpoints.append(BaseAPIEndpoint(uri=uri, type=selected_endpoint_type))
 

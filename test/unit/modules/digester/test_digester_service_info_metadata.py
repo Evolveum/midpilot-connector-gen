@@ -7,8 +7,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.digester import service
+from src.modules.digester.enums import EndpointType
 from src.modules.digester.schema import BaseAPIEndpoint, InfoMetadata
+from src.modules.digester.utils.merges import merge_info_metadata
 
 
 # ==================== EXTRACT INFO METADATA ====================
@@ -32,7 +35,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
                         name="ExampleAPI",
                         api_version="v1.0",
                         application_version="1.0.0",
-                        api_type=["REST", "SCIM"],
+                        api_type=[ApiType.REST, ApiType.SCIM],
                         base_api_endpoint=[],
                     )
                 ],
@@ -45,8 +48,10 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
                         name="ExampleAPI",
                         api_version="v1.0",
                         application_version="1.0.0",
-                        api_type=["REST", "SCIM"],
-                        base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1", type="constant")],
+                        api_type=[ApiType.REST, ApiType.SCIM],
+                        base_api_endpoint=[
+                            BaseAPIEndpoint(uri="https://api.example.com/v1", type=EndpointType.CONSTANT)
+                        ],
                     )
                 ],
                 True,
@@ -109,7 +114,7 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
                         name="ExampleAPI",
                         api_version="1",
                         application_version="1.0.0",
-                        api_type=["REST"],
+                        api_type=[ApiType.REST],
                         base_api_endpoint=[],
                     )
                 ],
@@ -121,7 +126,7 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
                         name="ExampleAPI",
                         api_version="1",
                         application_version="1.0.0",
-                        api_type=["REST", "SCIM"],
+                        api_type=[ApiType.REST, ApiType.SCIM],
                         base_api_endpoint=[],
                     )
                 ],
@@ -151,3 +156,34 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
             "summary": "Summary two",
             "@metadata": {"tags": "openapi"},
         }
+
+
+def test_merge_info_metadata_preserves_unknown_endpoint_type_when_unknown_is_majority():
+    uri = "https://api.example.com/v1"
+    info_candidates = [
+        InfoMetadata(base_api_endpoint=[BaseAPIEndpoint(uri=uri, type=EndpointType.UNKNOWN)]),
+        InfoMetadata(base_api_endpoint=[BaseAPIEndpoint(uri=uri, type=EndpointType.UNKNOWN)]),
+        InfoMetadata(base_api_endpoint=[BaseAPIEndpoint(uri=uri, type=EndpointType.CONSTANT)]),
+    ]
+
+    merged = merge_info_metadata(info_candidates, total_items=3)
+    base_api_endpoints = merged["infoMetadata"]["baseApiEndpoint"]
+
+    assert len(base_api_endpoints) == 1
+    assert base_api_endpoints[0]["uri"] == uri.lower()
+    assert base_api_endpoints[0]["type"] == ""
+
+
+def test_merge_info_metadata_uses_unknown_endpoint_type_when_constant_and_dynamic_tie():
+    uri = "https://api.example.com/v1"
+    info_candidates = [
+        InfoMetadata(base_api_endpoint=[BaseAPIEndpoint(uri=uri, type=EndpointType.CONSTANT)]),
+        InfoMetadata(base_api_endpoint=[BaseAPIEndpoint(uri=uri, type=EndpointType.DYNAMIC)]),
+    ]
+
+    merged = merge_info_metadata(info_candidates, total_items=2)
+    base_api_endpoints = merged["infoMetadata"]["baseApiEndpoint"]
+
+    assert len(base_api_endpoints) == 1
+    assert base_api_endpoints[0]["uri"] == uri.lower()
+    assert base_api_endpoints[0]["type"] == ""
