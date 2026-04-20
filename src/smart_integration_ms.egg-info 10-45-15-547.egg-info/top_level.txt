@@ -1,5 +1,0 @@
-app
-common
-config
-modules
-router
