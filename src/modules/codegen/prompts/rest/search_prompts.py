@@ -36,11 +36,12 @@ OUTPUT RULES:
 - For `filter`, if documentation defines concrete operators for a concrete attribute, emit one `supportedFilter(...)` block per supported operator. Example shape:
   `supportedFilter(attribute("name").eq().anySingleValue()) {{ ... }}`
   `supportedFilter(attribute("name").contains().anySingleValue()) {{ ... }}`
-- For `id`, prefer dedicated object-by-id endpoints such as `/users/{{id}}`. Only fall back to `supportedFilter(attribute("uid").eq().anySingleValue())` when the docs do not provide a dedicated identifier endpoint.
+- For `id`, prefer dedicated object-by-id endpoints such as `users/{{id}}`. Only fall back to `supportedFilter(attribute("uid").eq().anySingleValue())` when the docs do not provide a dedicated identifier endpoint.
 - Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the example in <output_format>.
-- Endpoint paths used inside `endpoint("...")` MUST come from `<extracted_endpoints>` after normalization. Do not invent or copy path variants that are absent there.
-- If docs show a versioned or absolute path variant (e.g., `/api/v3/users` or `https://host/api/v3/users`) but `<extracted_endpoints>` contains `/users`, you MUST use `/users`.
-- For every `endpoint("...")`, output a path that starts with `/`, contains no scheme/host, and avoids duplicated base prefixes.
+- Endpoint paths used inside `endpoint("...")` MUST come from `<extracted_endpoints>` after normalization to connector-relative format. Do not invent or copy path variants that are absent there.
+- If docs show a versioned or absolute path variant (e.g., `/api/v3/users` or `https://host/api/v3/users`) but `<extracted_endpoints>` contains `/users`, you MUST normalize and use `users`.
+- For every `endpoint("...")`, output a connector-relative path without leading `/`, containing no scheme/host, and avoiding duplicated base prefixes.
+- Path parameters must stay as literal placeholders in braces (e.g., `users/{{id}}`); never use Groovy interpolation variants such as `users/${{id}}` or `$id`.
 - If `base_api_url` contains a base path prefix (e.g., `/api/v1`), strip that prefix from endpoint paths when it appears in docs.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it, but you may delete or replace previously generated parts that conflict with the requested intent or the current documentation.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear.
