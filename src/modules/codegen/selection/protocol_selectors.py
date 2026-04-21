@@ -9,27 +9,32 @@ Helpers that select prompts and docs based on API protocol.
 from typing import Mapping
 
 from src.common.enums import ApiType
+from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_system_prompt,
     get_native_schema_user_prompt,
 )
 from src.modules.codegen.prompts.rest.create_prompts import get_create_system_prompt, get_create_user_prompt
 from src.modules.codegen.prompts.rest.delete_prompts import get_delete_system_prompt, get_delete_user_prompt
-from src.modules.codegen.prompts.rest.search_prompts import get_search_system_prompt, get_search_user_prompt
+from src.modules.codegen.prompts.rest.search_prompts import (
+    get_search_all_system_prompt,
+    get_search_filter_system_prompt,
+    get_search_id_system_prompt,
+    get_search_user_prompt,
+)
 from src.modules.codegen.prompts.rest.update_prompts import get_update_system_prompt, get_update_user_prompt
 from src.modules.codegen.prompts.scim.create_prompts import get_scim_create_system_prompt, get_scim_create_user_prompt
 from src.modules.codegen.prompts.scim.delete_prompts import get_scim_delete_system_prompt, get_scim_delete_user_prompt
-from src.modules.codegen.prompts.scim.search_prompts import get_scim_search_system_prompt, get_scim_search_user_prompt
+from src.modules.codegen.prompts.scim.search_prompts import (
+    get_scim_search_all_system_prompt,
+    get_scim_search_filter_system_prompt,
+    get_scim_search_id_system_prompt,
+    get_scim_search_user_prompt,
+)
 from src.modules.codegen.prompts.scim.update_prompts import get_scim_update_system_prompt, get_scim_update_user_prompt
 from src.modules.codegen.schema import OperationAssets
 
 PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
-    "search": {
-        ApiType.REST: OperationAssets(get_search_system_prompt, get_search_user_prompt, "rest/40-search-users.adoc"),
-        ApiType.SCIM: OperationAssets(
-            get_scim_search_system_prompt, get_scim_search_user_prompt, "scim/40-search.adoc"
-        ),
-    },
     "create": {
         ApiType.REST: OperationAssets(get_create_system_prompt, get_create_user_prompt, "rest/50-create.adoc"),
         ApiType.SCIM: OperationAssets(
@@ -58,9 +63,53 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
     },
 }
 
+SEARCH_PROMPT_MAP: Mapping[ApiType, Mapping[SearchIntent, OperationAssets]] = {
+    ApiType.REST: {
+        SearchIntent.ALL: OperationAssets(
+            get_search_all_system_prompt,
+            get_search_user_prompt,
+            "rest/40-search-users.adoc",
+        ),
+        SearchIntent.FILTER: OperationAssets(
+            get_search_filter_system_prompt,
+            get_search_user_prompt,
+            "rest/40-search-users.adoc",
+        ),
+        SearchIntent.ID: OperationAssets(
+            get_search_id_system_prompt,
+            get_search_user_prompt,
+            "rest/40-search-users.adoc",
+        ),
+    },
+    ApiType.SCIM: {
+        SearchIntent.ALL: OperationAssets(
+            get_scim_search_all_system_prompt,
+            get_scim_search_user_prompt,
+            "scim/40-search.adoc",
+        ),
+        SearchIntent.FILTER: OperationAssets(
+            get_scim_search_filter_system_prompt,
+            get_scim_search_user_prompt,
+            "scim/40-search.adoc",
+        ),
+        SearchIntent.ID: OperationAssets(
+            get_scim_search_id_system_prompt,
+            get_scim_search_user_prompt,
+            "scim/40-search.adoc",
+        ),
+    },
+}
+
 
 def get_operation_assets(operation: str, protocol: ApiType) -> OperationAssets:
     op = operation.lower()
     if op not in PROMPT_MAP or protocol not in PROMPT_MAP[op]:
         raise ValueError(f"Unsupported operation/protocol: {operation}/{protocol}")
     return PROMPT_MAP[op][protocol]
+
+
+def get_search_operation_assets(protocol: ApiType, intent: SearchIntent | str) -> OperationAssets:
+    normalized_intent = SearchIntent(intent) if isinstance(intent, str) else intent
+    if protocol not in SEARCH_PROMPT_MAP or normalized_intent not in SEARCH_PROMPT_MAP[protocol]:
+        raise ValueError(f"Unsupported search intent/protocol: {normalized_intent}/{protocol}")
+    return SEARCH_PROMPT_MAP[protocol][normalized_intent]

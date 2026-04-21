@@ -25,7 +25,7 @@ from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_user_prompt,
 )
 from src.modules.codegen.selection.docs_loader import read_adoc_text
-from src.modules.codegen.selection.protocol_selectors import get_operation_assets
+from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.codegen.utils.map_to_record import attributes_to_records_for_codegen
 from src.modules.digester.schema import AttributeResponse, EndpointResponse, RelationsResponse
 
@@ -222,7 +222,7 @@ async def create_search(
     # Get API types and select appropriate documentation
     api_types = await get_session_api_types(session_id)
     protocol = ApiType.SCIM if is_scim_api(api_types) else ApiType.REST
-    assets = get_operation_assets("search", protocol)
+    assets = get_search_operation_assets(protocol, intent)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
     base_api_url = await get_session_base_api_url(session_id)
 
