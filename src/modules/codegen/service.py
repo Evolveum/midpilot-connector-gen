@@ -209,7 +209,7 @@ async def create_search(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
-    preferred_endpoint: Optional[Dict[str, Any]] = None,
+    preferred_endpoints: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     intent: SearchIntent,
@@ -229,7 +229,7 @@ async def create_search(
     generator = SearchGenerator(
         object_class=object_class,
         intent=intent,
-        preferred_endpoint=preferred_endpoint,
+        preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
@@ -257,7 +257,7 @@ async def create_create(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
-    preferred_endpoint: Optional[Dict[str, Any]] = None,
+    preferred_endpoints: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -275,7 +275,7 @@ async def create_create(
 
     generator = CreateGenerator(
         object_class=object_class,
-        preferred_endpoint=preferred_endpoint,
+        preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
@@ -302,7 +302,7 @@ async def create_update(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
-    preferred_endpoint: Optional[Dict[str, Any]] = None,
+    preferred_endpoints: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -320,7 +320,7 @@ async def create_update(
 
     generator = UpdateGenerator(
         object_class=object_class,
-        preferred_endpoint=preferred_endpoint,
+        preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
@@ -347,7 +347,7 @@ async def create_delete(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
-    preferred_endpoint: Optional[Dict[str, Any]] = None,
+    preferred_endpoints: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -365,7 +365,7 @@ async def create_delete(
 
     generator = DeleteGenerator(
         object_class=object_class,
-        preferred_endpoint=preferred_endpoint,
+        preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,

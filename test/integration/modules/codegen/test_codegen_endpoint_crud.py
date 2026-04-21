@@ -10,38 +10,46 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen.router import generate_create, generate_delete, generate_update
-from src.modules.codegen.schema import PreferredEndpointInput
+from src.modules.codegen.schema import PreferredEndpointsInput
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("generator_fn", "job_type", "session_input_key", "preferred_endpoint"),
+    ("generator_fn", "job_type", "session_input_key", "preferred_endpoints"),
     [
         (
             generate_create,
             "codegen.getCreate",
             "UserCreateInput",
-            {"method": "POST", "path": "/users"},
+            [
+                {"method": "POST", "path": "/users"},
+                {"method": "POST", "path": "/users/create"},
+            ],
         ),
         (
             generate_update,
             "codegen.getUpdate",
             "UserUpdateInput",
-            {"method": "PATCH", "path": "/users/{id}"},
+            [
+                {"method": "PATCH", "path": "/users/{id}"},
+                {"method": "PUT", "path": "/users/{id}"},
+            ],
         ),
         (
             generate_delete,
             "codegen.getDelete",
             "UserDeleteInput",
-            {"method": "DELETE", "path": "/users/{id}"},
+            [
+                {"method": "DELETE", "path": "/users/{id}"},
+            ],
         ),
     ],
 )
-async def test_generate_crud_includes_preferred_endpoint_in_job_and_session_input(
+async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_input(
     generator_fn,
     job_type: str,
     session_input_key: str,
-    preferred_endpoint: dict,
+    preferred_endpoints: list[dict],
 ):
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
@@ -72,7 +80,9 @@ async def test_generate_crud_includes_preferred_endpoint_in_job_and_session_inpu
             session_id,
             "User",
             db=MagicMock(),
-            preferred_endpoint_input=PreferredEndpointInput.model_validate({"preferredEndpoint": preferred_endpoint}),
+            preferred_endpoints_input=PreferredEndpointsInput.model_validate(
+                {"preferredEndpoints": preferred_endpoints}
+            ),
         )
 
     assert response.jobId == job_id
@@ -80,9 +90,9 @@ async def test_generate_crud_includes_preferred_endpoint_in_job_and_session_inpu
 
     _, schedule_kwargs = mock_schedule.call_args
     assert schedule_kwargs["job_type"] == job_type
-    assert schedule_kwargs["input_payload"]["preferredEndpoint"] == preferred_endpoint
-    assert schedule_kwargs["worker_kwargs"]["preferred_endpoint"] == preferred_endpoint
+    assert schedule_kwargs["input_payload"]["preferredEndpoints"] == preferred_endpoints
+    assert schedule_kwargs["worker_kwargs"]["preferred_endpoints"] == preferred_endpoints
 
     update_args = mock_repo.update_session.call_args[0]
     inputs = update_args[1]
-    assert inputs[session_input_key]["preferredEndpoint"] == preferred_endpoint
+    assert inputs[session_input_key]["preferredEndpoints"] == preferred_endpoints

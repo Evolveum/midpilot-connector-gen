@@ -14,7 +14,7 @@ The input data you will receive:
 4. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
 5. The requested search intent for this run is `{intent}`.
 6. Base API URL (if known) for path normalization is `{base_api_url}`.
-7. Optional user-provided preferred endpoint in JSON is `{preferred_endpoint_json}`.
+7. Optional user-provided preferred endpoints in JSON are `{preferred_endpoints_json}`.
 
 Prepare a valid Groovy code for search schema in Groovy based on the following `.adoc` documentations:
 
@@ -40,8 +40,8 @@ OUTPUT RULES:
   `supportedFilter(attribute("name").contains().anySingleValue()) {{ ... }}`
 - For `id`, prefer dedicated object-by-id endpoints such as `users/{{id}}`. Only fall back to `supportedFilter(attribute("uid").eq().anySingleValue())` when the docs do not provide a dedicated identifier endpoint.
 - Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the example in <output_format>.
-- If <preferred_endpoint> is provided, prioritize it as the primary candidate endpoint for the requested intent whenever it is compatible with `<extracted_endpoints>` and docs.
-- If <preferred_endpoint> conflicts with `<extracted_endpoints>` or docs, prefer documented/extracted data and leave a short TODO comment about the mismatch.
+- If <preferred_endpoints> are provided, prioritize endpoints from this list for the requested intent whenever they are compatible with `<extracted_endpoints>` and docs.
+- If <preferred_endpoints> conflict with `<extracted_endpoints>` or docs, prefer documented/extracted data and leave a short TODO comment about the mismatch.
 - Endpoint paths used inside `endpoint("...")` MUST come from `<extracted_endpoints>` after normalization to connector-relative format. Do not invent or copy path variants that are absent there.
 - If docs show a versioned or absolute path variant (e.g., `/api/v3/users` or `https://host/api/v3/users`) but `<extracted_endpoints>` contains `/users`, you MUST normalize and use `users`.
 - For every `endpoint("...")`, output a connector-relative path without leading `/`, containing no scheme/host, and avoiding duplicated base prefixes.
@@ -71,11 +71,11 @@ Here is extracted endpoints for object class from OpenAPI/Swagger schema wrapped
 {endpoints_json}
 </extracted_endpoints>
 
-Optional user-provided preferred endpoint (JSON):
+Optional user-provided preferred endpoints (JSON):
 
-<preferred_endpoint>
-{preferred_endpoint_json}
-</preferred_endpoint>
+<preferred_endpoints>
+{preferred_endpoints_json}
+</preferred_endpoints>
 
 Base API URL for endpoint-path normalization:
 

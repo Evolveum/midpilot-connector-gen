@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -25,10 +25,38 @@ class GroovyCodePayload(BaseModel):
         return ensure_valid_groovy_code(value)
 
 
-class PreferredEndpointInput(BaseModel):
-    preferred_endpoint: Dict[str, Any] | None = Field(
-        default=None,
-        validation_alias="preferredEndpoint",
-        serialization_alias="preferredEndpoint",
-        description="Optional user-provided preferred endpoint used to focus code generation.",
+class PreferredEndpointsPayload(BaseModel):
+    method: str = Field(..., description="HTTP method of the preferred endpoint.")
+    path: str = Field(..., description="Path of the preferred endpoint.")
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError("method cannot be empty")
+        return normalized
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("path cannot be empty")
+        return normalized
+
+
+class PreferredEndpointsInput(BaseModel):
+    preferred_endpoints: list[PreferredEndpointsPayload] = Field(
+        default_factory=list,
+        validation_alias="preferredEndpoints",
+        serialization_alias="preferredEndpoints",
+        description="Optional user-provided preferred endpoints used to focus code generation.",
     )
+
+    @field_validator("preferred_endpoints", mode="before")
+    @classmethod
+    def normalize_preferred_endpoints(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        return value

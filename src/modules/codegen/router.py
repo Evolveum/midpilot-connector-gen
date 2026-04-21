@@ -28,7 +28,7 @@ from src.modules.codegen import service
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.schema import (
     GroovyCodePayload,
-    PreferredEndpointInput,
+    PreferredEndpointsInput,
 )
 from src.modules.digester.schema import RelationsResponse
 
@@ -264,7 +264,7 @@ async def generate_search(
     intent: SearchIntent = Path(..., description="Intent"),
     usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
-    preferred_endpoint_input: Optional[PreferredEndpointInput] = None,
+    preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
 ):
     """
     Generate Groovy search code for the given object class.
@@ -283,7 +283,11 @@ async def generate_search(
 
     api_types = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_types)
-    preferred_endpoint = preferred_endpoint_input.preferred_endpoint if preferred_endpoint_input else None
+    preferred_endpoints = (
+        [endpoint.model_dump() for endpoint in preferred_endpoints_input.preferred_endpoints]
+        if preferred_endpoints_input
+        else None
+    )
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -299,14 +303,14 @@ async def generate_search(
         "intent": intent,
         "usePreviousSessionData": usePreviousSessionData,
     }
-    if preferred_endpoint is not None:
-        job_input["preferredEndpoint"] = preferred_endpoint
+    if preferred_endpoints is not None:
+        job_input["preferredEndpoints"] = preferred_endpoints
     worker_kwargs = {
         "attributes": attrs,
         "session_id": session_id,
         "object_class": object_class,
         "intent": intent,
-        "preferred_endpoint": preferred_endpoint,
+        "preferred_endpoints": preferred_endpoints,
     }
     if eps is not None:
         job_input["endpoints"] = eps
@@ -329,8 +333,8 @@ async def generate_search(
     session_input = {"objectClass": object_class, "attributes": attrs, "intent": intent}
     if eps is not None:
         session_input["endpoints"] = eps
-    if preferred_endpoint is not None:
-        session_input["preferredEndpoint"] = preferred_endpoint
+    if preferred_endpoints is not None:
+        session_input["preferredEndpoints"] = preferred_endpoints
     await repo.update_session(
         session_id,
         {
@@ -413,7 +417,7 @@ async def generate_create(
     object_class: str = Path(..., description="Object class name"),
     usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
-    preferred_endpoint_input: Optional[PreferredEndpointInput] = None,
+    preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
 ):
     """
     Generate Groovy create code for the given object class.
@@ -432,7 +436,11 @@ async def generate_create(
 
     api_types = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_types)
-    preferred_endpoint = preferred_endpoint_input.preferred_endpoint if preferred_endpoint_input else None
+    preferred_endpoints = (
+        [endpoint.model_dump() for endpoint in preferred_endpoints_input.preferred_endpoints]
+        if preferred_endpoints_input
+        else None
+    )
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -447,13 +455,13 @@ async def generate_create(
         "object_class": object_class,
         "usePreviousSessionData": usePreviousSessionData,
     }
-    if preferred_endpoint is not None:
-        job_input["preferredEndpoint"] = preferred_endpoint
+    if preferred_endpoints is not None:
+        job_input["preferredEndpoints"] = preferred_endpoints
     worker_kwargs = {
         "attributes": attrs,
         "session_id": session_id,
         "object_class": object_class,
-        "preferred_endpoint": preferred_endpoint,
+        "preferred_endpoints": preferred_endpoints,
     }
     if eps is not None:
         job_input["endpoints"] = eps
@@ -474,8 +482,8 @@ async def generate_create(
     session_input = {"objectClass": object_class, "attributes": attrs}
     if eps is not None:
         session_input["endpoints"] = eps
-    if preferred_endpoint is not None:
-        session_input["preferredEndpoint"] = preferred_endpoint
+    if preferred_endpoints is not None:
+        session_input["preferredEndpoints"] = preferred_endpoints
     await repo.update_session(
         session_id,
         {
@@ -552,7 +560,7 @@ async def generate_update(
     object_class: str = Path(..., description="Object class name"),
     usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
-    preferred_endpoint_input: Optional[PreferredEndpointInput] = None,
+    preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
 ):
     """
     Generate Groovy update code for the given object class.
@@ -571,7 +579,11 @@ async def generate_update(
 
     api_types = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_types)
-    preferred_endpoint = preferred_endpoint_input.preferred_endpoint if preferred_endpoint_input else None
+    preferred_endpoints = (
+        [endpoint.model_dump() for endpoint in preferred_endpoints_input.preferred_endpoints]
+        if preferred_endpoints_input
+        else None
+    )
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -586,13 +598,13 @@ async def generate_update(
         "object_class": object_class,
         "usePreviousSessionData": usePreviousSessionData,
     }
-    if preferred_endpoint is not None:
-        job_input["preferredEndpoint"] = preferred_endpoint
+    if preferred_endpoints is not None:
+        job_input["preferredEndpoints"] = preferred_endpoints
     worker_kwargs = {
         "attributes": attrs,
         "session_id": session_id,
         "object_class": object_class,
-        "preferred_endpoint": preferred_endpoint,
+        "preferred_endpoints": preferred_endpoints,
     }
     if eps is not None:
         job_input["endpoints"] = eps
@@ -613,8 +625,8 @@ async def generate_update(
     session_input = {"objectClass": object_class, "attributes": attrs}
     if eps is not None:
         session_input["endpoints"] = eps
-    if preferred_endpoint is not None:
-        session_input["preferredEndpoint"] = preferred_endpoint
+    if preferred_endpoints is not None:
+        session_input["preferredEndpoints"] = preferred_endpoints
     await repo.update_session(
         session_id,
         {
@@ -691,7 +703,7 @@ async def generate_delete(
     object_class: str = Path(..., description="Object class name"),
     usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
     db: AsyncSession = Depends(get_db),
-    preferred_endpoint_input: Optional[PreferredEndpointInput] = None,
+    preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
 ):
     """
     Generate Groovy delete code for the given object class.
@@ -710,7 +722,11 @@ async def generate_delete(
 
     api_types = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_types)
-    preferred_endpoint = preferred_endpoint_input.preferred_endpoint if preferred_endpoint_input else None
+    preferred_endpoints = (
+        [endpoint.model_dump() for endpoint in preferred_endpoints_input.preferred_endpoints]
+        if preferred_endpoints_input
+        else None
+    )
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -725,13 +741,13 @@ async def generate_delete(
         "object_class": object_class,
         "usePreviousSessionData": usePreviousSessionData,
     }
-    if preferred_endpoint is not None:
-        job_input["preferredEndpoint"] = preferred_endpoint
+    if preferred_endpoints is not None:
+        job_input["preferredEndpoints"] = preferred_endpoints
     worker_kwargs = {
         "attributes": attrs,
         "session_id": session_id,
         "object_class": object_class,
-        "preferred_endpoint": preferred_endpoint,
+        "preferred_endpoints": preferred_endpoints,
     }
     if eps is not None:
         job_input["endpoints"] = eps
@@ -752,8 +768,8 @@ async def generate_delete(
     session_input = {"objectClass": object_class, "attributes": attrs}
     if eps is not None:
         session_input["endpoints"] = eps
-    if preferred_endpoint is not None:
-        session_input["preferredEndpoint"] = preferred_endpoint
+    if preferred_endpoints is not None:
+        session_input["preferredEndpoints"] = preferred_endpoints
     await repo.update_session(
         session_id,
         {

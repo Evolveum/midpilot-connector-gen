@@ -13,7 +13,7 @@ The input data you will receive:
 3. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
 4. The requested search intent for this run is `{intent}`.
 5. Base API URL (if known) for path normalization is `{base_api_url}`.
-6. Optional user-provided preferred endpoint in JSON is `{preferred_endpoint_json}`.
+6. Optional user-provided preferred endpoints in JSON are `{preferred_endpoints_json}`.
 
 Prepare a valid Groovy code for search schema in Groovy based on the following `.adoc` documentations:
 
@@ -34,8 +34,8 @@ Output rules:
 - Use SCIM filter syntax for query parameters: `filter=<attribute> <operator> <value>`.
 - For string values in filters, use escaped quotes: `\\"value\\"`.
 - Treat <extracted_attributes> as the primary sources of truth. Prefer them over the examples in <search_docs>.
-- If <preferred_endpoint> is provided, prioritize it as the primary candidate endpoint for the requested intent whenever it is compatible with SCIM behavior and docs.
-- If <preferred_endpoint> conflicts with docs or SCIM semantics, prefer documented behavior and leave a short TODO comment about the mismatch.
+- If <preferred_endpoints> are provided, prioritize endpoints from this list for the requested intent whenever they are compatible with SCIM behavior and docs.
+- If <preferred_endpoints> conflict with docs or SCIM semantics, prefer documented behavior and leave a short TODO comment about the mismatch.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it; do not discard or rename previously correct parts.
 - Do not fabricate parameters, attributes, or fields. If documentation is unclear, add a TODO comment instead of guessing.
 - Preserve the outer objectClass and search blocks if already present in <result>.
@@ -55,11 +55,11 @@ Here is extracted object class attributes from SCIM schema wrapped into JSON fro
 {attributes_json}
 </extracted_attributes>
 
-Optional user-provided preferred endpoint (JSON):
+Optional user-provided preferred endpoints (JSON):
 
-<preferred_endpoint>
-{preferred_endpoint_json}
-</preferred_endpoint>
+<preferred_endpoints>
+{preferred_endpoints_json}
+</preferred_endpoints>
 
 Base API URL for endpoint-path normalization:
 

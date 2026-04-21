@@ -22,7 +22,10 @@ async def test_generate_search():
     }
 
     test_endpoints = {"endpoints": [{"method": "GET", "path": "/users", "description": "List users"}]}
-    test_preferred_endpoint = {"method": "GET", "path": "/users/search"}
+    test_preferred_endpoints = [
+        {"method": "GET", "path": "/users/search"},
+        {"method": "GET", "path": "/users/{id}"},
+    ]
 
     with (
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
@@ -39,7 +42,7 @@ async def test_generate_search():
         result = await service.create_search(
             attributes=test_attributes,
             endpoints=test_endpoints,
-            preferred_endpoint=test_preferred_endpoint,
+            preferred_endpoints=test_preferred_endpoints,
             session_id=uuid4(),
             object_class="User",
             intent=SearchIntent.FILTER,
@@ -54,5 +57,5 @@ async def test_generate_search():
         mock_search_generator_class.assert_called_once()
         _, kwargs = mock_search_generator_class.call_args
         assert kwargs["intent"] == SearchIntent.FILTER
-        assert kwargs["preferred_endpoint"] == test_preferred_endpoint
+        assert kwargs["preferred_endpoints"] == test_preferred_endpoints
         mock_generator_instance.generate.assert_called_once()
