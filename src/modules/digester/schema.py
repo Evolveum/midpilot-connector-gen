@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
 
@@ -15,6 +15,29 @@ from src.modules.digester.enums import (
     EndpointType,
     RelevantLevel,
 )
+
+class DocSequenceItem(BaseModel):
+    """
+    Represents a sequence from a chunk relevant to the extracted information.
+    """
+
+    chunk_id: str = Field(..., description="Unique identifier for the document chunk.")
+    start_sequence: str = Field(
+        ..., description="Unique token / word sequence that identifies the start of the relevant chunk."
+    )
+    end_sequence: str = Field(
+        ..., description="Unique token / word sequence that identifies the end of the relevant chunk."
+    )
+
+
+class DocProcessingSequenceItem(DocSequenceItem):
+    """
+    DocSequenceItem with full text field for easier processing.
+    """
+
+    text: str = Field(
+        ..., description="Full text of the document chunk from start_sequence to end_sequence for processing."
+    )
 
 # --- Object Classes ---
 
@@ -262,13 +285,12 @@ class ObjectClassesRankedResponse(BaseModel):
 
 
 # --- Object Classes ---
+  
+# --- Auth ---
 
-
-class AuthInfo(BaseModel):
+class BaseAuth(BaseModel):
     """
-    Authentication mechanism discovered in the API documentations/security schemes.
-    Guide the LLM to extract concrete auth methods (e.g., Basic, Bearer/JWT, Session/Cookie,
-    OAuth2 variants, API Key, mTLS) and capture notable non-standard behavior in quirks.
+    Basic authentification method class
     """
 
     name: str = Field(
@@ -283,13 +305,6 @@ class AuthInfo(BaseModel):
         description=(
             "Normalized auth type. Allowed values: 'basic', 'bearer', 'oauth2', 'apiKey', "
             "'session', 'digest', 'mtls', 'openidConnect', 'other'."
-        ),
-    )
-    quirks: Optional[str] = Field(
-        default="",
-        description=(
-            "Short, verbatim notes about special behavior or non-standard aspects (e.g., header/cookie/name, "
-            "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
         ),
     )
 
@@ -353,6 +368,112 @@ class AuthInfo(BaseModel):
         }
 
         return aliases.get(normalized, AuthType.OTHER)
+
+
+class DiscoveryAuth(BaseAuth):
+    """
+    Authentication mechanism discovered in the API documentations/security schemes.
+    Guide the LLM to extract concrete auth methods (e.g., Basic, Bearer/JWT, Session/Cookie,
+    OAuth2 variants, API Key, mTLS)
+    """
+
+    # quirks: Optional[str] = Field(
+    #     default="",
+    #     description=(
+    #         "Short, verbatim notes about special behavior or non-standard aspects (e.g., header/cookie/name, "
+    #         "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
+    #     ),
+    # )
+
+    relevant_sequences: List[DocSequenceItem] = Field(
+        description=("List of relevant document sequences that support the presence of this auth method. ")
+    )
+
+
+class AuthInfo(DiscoveryAuth):
+    """
+    Authentication mechanism with its metadata and supporting evidence sequences.
+    This is the main model used in the system for representing extracted auth methods.
+    """
+
+    quirks: Optional[str] = Field(
+        default="",
+        description=(
+            "Short, verbatim notes about special behavior or non-standard aspects (e.g., header/cookie/name, "
+            "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
+        ),
+    )
+
+
+class AuthProcessingInfo(AuthInfo):
+    """
+    Authentication mechanism with full text of relevant sequences for processing in deduplication/sorting.
+    This model is used internally during processing to have all necessary information in one place.
+    """
+
+    relevant_sequences: List[DocProcessingSequenceItem] = Field(  # type: ignore[assignment]
+        description=("List of document sequences that support the presence of this auth method, includes full text")
+    )
+
+
+class AuthDedupResponse(BaseModel):
+    """
+    Container for deduplication LLM output.
+    """
+
+    duplicates: List[Tuple[Tuple[str, str], Tuple[str, str]]] = Field(
+        ...,
+        description=(
+            "List of pairs of duplicate auth methods. Each pair contains two tuples: (name, type) of the auth method."
+        ),
+    )
+
+    to_be_deleted: List[Tuple[str, str]] = Field(
+        ...,
+        description=(
+            "List of auth methods (Tuples of name and type) to be deleted because of having weak documentation"
+        ),
+    )
+
+
+class AuthDiscoveryResponse(BaseModel):
+    """
+    Container for extracted authentication mechanisms in discovery. Return an empty list when none are present.
+    """
+
+    auth: Optional[List[DiscoveryAuth]] = Field(
+        default_factory=list,
+        description="List of authentication methods supported or referenced by the API.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    # Ensure robustness: coerce null to [] and never serialize null
+    @field_validator("auth", mode="before")
+    @classmethod
+    def _normalize_auth(cls, v):
+        if v is None:
+            return []
+        return v
+
+    @model_serializer
+    def _serialize(self):
+        # Always emit [] instead of null to keep contract stable
+        return {"auth": self.auth or []}
+
+
+class AuthBuildResponse(BaseAuth):
+    """
+    Container for extracted authentication mechanisms after building the auth info
+    """
+
+    quirks: Optional[str] = Field(
+        default="",
+        description=(
+            "Short, verbatim notes about special behavior or non-standard aspects (e.g., header/cookie/name, "
+            "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
+        ),
+    )
 
 
 class AuthResponse(BaseModel):

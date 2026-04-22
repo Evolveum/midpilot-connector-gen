@@ -14,13 +14,31 @@ DEFAULT_CRITERIA = ChunkFilterCriteria(
     ],
 )
 
-AUTH_CRITERIA = ChunkFilterCriteria(
+DEFAULT_AUTH_CRITERIA = ChunkFilterCriteria(
     min_length=None,
     min_endpoints_num=None,
     allowed_categories=[
         "spec_yaml",
         "spec_json",
         "overview",
+    ],
+    allowed_tags=[
+        [
+            "authentication",
+            "auth",
+            "authorization",
+        ]
+    ],
+)
+
+EXTENDED_AUTH_CRITERIA = ChunkFilterCriteria(
+    min_length=None,
+    min_endpoints_num=None,
+    allowed_categories=[
+        "spec_yaml",
+        "spec_json",
+        "overview",
+        "reference_api",
     ],
     allowed_tags=[
         [

@@ -6,12 +6,13 @@ import logging
 from typing import Any, Callable, Dict, List, cast
 from uuid import UUID
 
+from src.common.enums import JobStage
 from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.jobs import update_job_progress
 from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 
 # Shared extractors
-from src.modules.digester.extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
+from src.modules.digester.extractors.auth import build_auth_items, deduplicate_auth, extract_auth_raw, sort_auth_by_importance
 from src.modules.digester.extractors.info import extract_info_metadata as _extract_info_metadata
 
 # REST extractors
@@ -27,7 +28,7 @@ from src.modules.digester.extractors.rest.relations import extract_relations as 
 from src.modules.digester.extractors.scim.attributes import extract_scim_attributes
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
-from src.modules.digester.schema import InfoMetadata, InfoResponse
+from src.modules.digester.schema import InfoMetadata, InfoResponse, DiscoveryAuth
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
 from src.modules.digester.utils.doc_chunk import select_doc_chunks
@@ -261,7 +262,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
         return await extract_auth_raw(content, job_id, chunk_id, chunk_metadata)
 
     # Process all chunks in parallel using the generic function
-    results = await _run_doc_extractors_concurrently(
+    discovery_results = await run_chunks_concurrently(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
@@ -269,7 +270,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     )
 
     # Collect results from all chunks
-    for raw_auth, has_relevant_data, chunk_id in results:
+    for raw_auth, has_relevant_data, chunk_id in discovery_results:
         logger.info(
             "[Digester:Auth] Chunk %s: extracted %s auth items",
             chunk_id,
@@ -288,69 +289,58 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
                 )
 
     logger.info(
-        "[Digester:Auth] Processing complete. Total: %s auth items from %s chunks. "
-        "Starting deduplication and sorting...",
+        "[Digester:Auth] Auth discovery complete. Total: %s auth items from %s documents. Starting deduplication",
         len(all_auth_info),
         len(doc_items),
     )
-    final_result = await deduplicate_and_sort_auth(all_auth_info, job_id)
+    await update_job_progress(job_id, stage=JobStage.discovery_finished, message="Auth discovery finished")
+    deduplicated_results = await deduplicate_auth(all_auth_info, job_id)
 
-    return {
-        "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
-        "relevantDocumentations": all_relevant_chunks,
-    }
+    # TODO: delete
+    logger.info(
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Result is: %s",
+        len(deduplicated_results),
+        deduplicated_results,
+    )
 
-
-def _auth_result_has_items(extraction_result: Dict[str, Any]) -> bool:
-    result = extraction_result.get("result")
-    if not isinstance(result, dict):
-        return False
-    auth = result.get("auth")
-    return isinstance(auth, list) and len(auth) > 0
-
-
-async def extract_auth_with_fallback(
-    doc_items: List[dict],
-    used_auth_criteria: bool,
-    session_id: UUID,
-    job_id: UUID,
-):
-    """
-    Run auth extraction on AUTH_CRITERIA results first.
-    If empty and AUTH_CRITERIA was used, retry once using DEFAULT_CRITERIA docs.
-    """
-    primary_result = await extract_auth(doc_items, job_id)
-    if not used_auth_criteria or _auth_result_has_items(primary_result):
-        return primary_result
+    built_auth_items = await build_auth_items(deduplicated_results, job_id)
 
     logger.info(
-        "[Digester:Auth] AUTH_CRITERIA produced empty final auth result for session %s; retrying with DEFAULT_CRITERIA",
-        session_id,
-    )
-    await update_job_progress(
-        job_id,
-        stage="chunking",
-        message="No auth found in auth-focused chunks; retrying with broader documentation filter",
+        "[Digester:Auth] Build complete. Total: %s built auth items. Built result is: %s",
+        len(built_auth_items),
+        built_auth_items,
     )
 
-    fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
-    if not fallback_doc_items:
-        logger.info(
-            "[Digester:Auth] DEFAULT_CRITERIA matched no documentation for session %s; keeping empty auth result",
-            session_id,
-        )
-        return primary_result
+    final_deduplicated_results = await deduplicate_auth(built_auth_items, job_id)
 
-    primary_chunk_ids = {str(item.get("chunkId")) for item in doc_items if item.get("chunkId")}
-    fallback_chunk_ids = {str(item.get("chunkId")) for item in fallback_doc_items if item.get("chunkId")}
-    if primary_chunk_ids and primary_chunk_ids == fallback_chunk_ids:
-        logger.info(
-            "[Digester:Auth] DEFAULT_CRITERIA matched same chunks as AUTH_CRITERIA for session %s; skipping retry",
-            session_id,
-        )
-        return primary_result
+    # TODO: delete
+    logger.info(
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Result is: %s",
+        len(final_deduplicated_results),
+        final_deduplicated_results,
+    )
 
-    return await extract_auth(fallback_doc_items, job_id)
+    sorted_auth_items = await sort_auth_by_importance(final_deduplicated_results, job_id)
+
+    #TODO: delete
+    logger.info(
+        "[Digester:Auth] Sorting complete. Total: %s sorted auth items. Final result is: %s",
+        len(sorted_auth_items.auth) if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth else 0,
+        [
+            {
+                "name": item.name,
+                "type": item.type,
+            }
+            for item in sorted_auth_items.auth
+        ]
+        if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth
+        else sorted_auth_items,
+    )
+
+    return {
+        "result": sorted_auth_items.model_dump(by_alias=True) if hasattr(sorted_auth_items, "model_dump") else sorted_auth_items,
+        "relevantDocumentations": all_relevant_chunks,
+    }
 
 
 async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
