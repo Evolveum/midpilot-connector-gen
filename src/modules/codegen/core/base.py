@@ -24,6 +24,7 @@ from src.common.jobs import (
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
+from src.modules.codegen.utils.map_to_record import _without_relevant_documentations
 from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
 from src.modules.digester.schema import AttributeResponse, EndpointResponse
 
@@ -364,8 +365,8 @@ def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
     if isinstance(payload, AttributeResponse):
         records: List[Dict[str, Any]] = []
         for name, info in (payload.attributes or {}).items():
-            item: Dict[str, Any] = {"name": name}
-            item.update(info.model_dump())
+            item = {"name": name}
+            item.update(_without_relevant_documentations(info.model_dump()))
             records.append(item)
         return records
 
@@ -379,7 +380,7 @@ def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
         for name, info in attrs_map.items():
             item_alt: Dict[str, Any] = {"name": name}
             if isinstance(info, Mapping):
-                item_alt.update(dict(info))
+                item_alt.update(_without_relevant_documentations(info))
             records_alt.append(item_alt)
         return records_alt
     return []
@@ -388,11 +389,17 @@ def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
 def endpoints_to_records(payload: EndpointsPayload) -> List[Dict[str, Any]]:
     """Convert endpoints payload to list of records."""
     if isinstance(payload, EndpointResponse):
-        return [cast(Dict[str, Any], ep.model_dump()) for ep in (payload.endpoints or [])]
+        return [
+            _without_relevant_documentations(cast(Dict[str, Any], ep.model_dump())) for ep in (payload.endpoints or [])
+        ]
 
     if isinstance(payload, Mapping):
         if "endpoints" in payload and isinstance(payload["endpoints"], list):
-            return list(payload["endpoints"])
+            return [
+                _without_relevant_documentations(cast(Mapping[str, Any], endpoint))
+                for endpoint in payload["endpoints"]
+                if isinstance(endpoint, Mapping)
+            ]
         if all(k in payload for k in ("path", "method", "description")):
-            return [dict(payload)]
+            return [_without_relevant_documentations(payload)]
     return []
