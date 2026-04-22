@@ -10,8 +10,17 @@ from langchain_openai import ChatOpenAI
 
 from src.common.llm import get_default_llm
 from src.modules.discovery.core.search import search_web
-from src.modules.discovery.schema import CandidateLinksInput, DiscoverySearchBatch, PySearchPrompts
-from src.modules.discovery.utils.llm_helpers import generate_queries_via_llm, generate_queries_via_preset
+from src.modules.discovery.schema import (
+    CandidateLinksInput,
+    DiscoveryIntegrationType,
+    DiscoverySearchBatch,
+    PySearchPrompts,
+)
+from src.modules.discovery.utils.llm_helpers import (
+    generate_queries_via_llm,
+    generate_queries_via_preset,
+    get_prioritized_fallback_templates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,23 +183,27 @@ def query_and_search_candidates_llm(
     system_prompt: str,
     app: str,
     version: str,
+    integration_type: DiscoveryIntegrationType = "DUMMY",
     num_queries: int,
     max_results_per_query: int,
 ) -> Tuple[List[DiscoverySearchBatch], Any, PySearchPrompts]:
     """Generate multiple queries via LLM and run web search for each query."""
     logger.info(
-        "Running discovery for application='%s' version='%s' (num_queries=%d)",
+        "Running discovery for application='%s' version='%s' integration_type='%s' (num_queries=%d)",
         app,
         version,
+        integration_type,
         num_queries,
     )
 
+    fallback_templates = get_prioritized_fallback_templates(integration_type)
     queries, response, parsed = generate_queries_via_llm(
         model=model,
         parser_model=parser_model,
         user_prompt=user_prompt,
         system_prompt=system_prompt,
         num_queries=num_queries,
+        fallback_templates=fallback_templates,
     )
 
     patched_queries: List[str] = []
@@ -218,18 +231,26 @@ def query_and_search_candidates_template(
     *,
     app: str,
     version: str,
+    integration_type: DiscoveryIntegrationType = "DUMMY",
     num_queries: int,
     max_results_per_query: int,
 ) -> Tuple[List[DiscoverySearchBatch], str, PySearchPrompts]:
     """Generate multiple template queries and run web search for each query."""
     logger.info(
-        "Running discovery (templates) for application='%s' version='%s' (num_queries=%d)",
+        "Running discovery (templates) for application='%s' version='%s' integration_type='%s' (num_queries=%d)",
         app,
         version,
+        integration_type,
         num_queries,
     )
 
-    queries, preset_used, parsed = generate_queries_via_preset(app, version, num_queries=num_queries)
+    templates = get_prioritized_fallback_templates(integration_type)
+    queries, preset_used, parsed = generate_queries_via_preset(
+        app,
+        version,
+        num_queries=num_queries,
+        templates=templates,
+    )
 
     batches: List[DiscoverySearchBatch] = []
     for q in queries:
@@ -248,6 +269,7 @@ def fetch_candidate_links_simplified(
     system_prompt: str,
     app: str,
     version: str,
+    integration_type: DiscoveryIntegrationType = "DUMMY",
     llm_generated_search_query: bool,
     num_queries: int,
     max_results_per_query: int,
@@ -263,6 +285,7 @@ def fetch_candidate_links_simplified(
             system_prompt=system_prompt,
             app=app,
             version=version,
+            integration_type=integration_type,
             num_queries=num_queries,
             max_results_per_query=max_results_per_query,
         )
@@ -270,6 +293,7 @@ def fetch_candidate_links_simplified(
         batches, response, parsed_prompts = query_and_search_candidates_template(
             app=app,
             version=version,
+            integration_type=integration_type,
             num_queries=num_queries,
             max_results_per_query=max_results_per_query,
         )
