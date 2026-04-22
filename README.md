@@ -167,6 +167,16 @@ uv run poe start
 
 `dev` dependency group is used to distinguish from production ones.
 
+For first-time local setup:
+
+```bash
+# install project dependencies (including dev group)
+uv sync --dev
+
+# NOTE: browser binaries are not installed automatically by `uv sync`
+uv run playwright install
+```
+
 ```bash
 # install production dependency
 uv add mydep
