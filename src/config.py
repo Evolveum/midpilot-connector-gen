@@ -233,6 +233,18 @@ class DigesterSettings(BaseModel):
             "Values below this evidence ratio across processed documents are ignored as uncertain."
         ),
     )
+    fuzzy_marker_error_ratio: float = Field(
+        0.05,
+        description="Allowed fuzzy-match error ratio when validating extracted sequence markers.",
+    )
+    sequence_max_length: int = Field(
+        10000,
+        description="Maximum character distance allowed between matched start and end sequence markers.",
+    )
+    auth_min_documentation_items: int = Field(
+        15,
+        description="Minimum number of documentation items required to use the default auth criteria; otherwise extended criteria are used.",
+    )
 
 
 class DatabaseSettings(BaseModel):

@@ -7,7 +7,7 @@ import logging
 from typing import Dict, List, Optional, Set, Tuple, cast
 from uuid import UUID
 
-from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
@@ -15,39 +15,103 @@ from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
-from src.modules.digester.prompts.auth_prompts import get_auth_system_prompt, get_auth_user_prompt
+from src.modules.digester.prompts.auth_prompts import (
+    auth_build_system_prompt,
+    auth_build_user_prompt,
+    auth_deduplication_system_prompt,
+    auth_deduplication_user_prompt,
+    get_auth_discovery_system_prompt,
+    get_auth_discovery_user_prompt,
+)
 from src.modules.digester.prompts.rest.sorting_output_prompts import sort_auth_system_prompt, sort_auth_user_prompt
-from src.modules.digester.schema import AuthInfo, AuthResponse
+from src.modules.digester.schema import (
+    AuthBuildResponse,
+    AuthDedupResponse,
+    AuthDiscoveryResponse,
+    AuthInfo,
+    AuthProcessingInfo,
+    AuthResponse,
+    AuthType,
+    DiscoveryAuth,
+    DocProcessingSequenceItem,
+    DocSequenceItem,
+)
 from src.modules.digester.utils.chunk_extraction import extract_single_chunk
+from src.modules.digester.utils.sequences import extract_sequence
 
 logger = logging.getLogger(__name__)
 
+def _order_dedup_pairs(
+    dedup_pairs: List[Tuple[Tuple[str, str], Tuple[str, str]]],
+) -> List[Tuple[Tuple[str, str], Tuple[str, str]]]:
+    """Topologically order dedup pairs so transitive merges are applied safely.
+
+    If pair A deletes an entry that pair B keeps, B must run before A.
+    """
+
+    def _norm_key(item: Tuple[str, str]) -> Tuple[str, str]:
+        return (item[0].strip().lower(), AuthProcessingInfo._normalize_auth_type(item[1].strip().lower()))
+
+    indexed_pairs = list(enumerate(dedup_pairs))
+    keep_keys = {idx: _norm_key(pair[0]) for idx, pair in indexed_pairs}
+    delete_keys = {idx: _norm_key(pair[1]) for idx, pair in indexed_pairs}
+
+    # edge j -> i means j must be processed before i
+    deps: Dict[int, Set[int]] = {idx: set() for idx, _ in indexed_pairs}
+    indegree: Dict[int, int] = {idx: 0 for idx, _ in indexed_pairs}
+
+    for i, _ in indexed_pairs:
+        for j, _ in indexed_pairs:
+            if i == j:
+                continue
+            if delete_keys[i] == keep_keys[j]:
+                if i not in deps[j]:
+                    deps[j].add(i)
+                    indegree[i] += 1
+
+    queue: List[int] = [idx for idx, _ in indexed_pairs if indegree[idx] == 0]
+    ordered_indices: List[int] = []
+
+    while queue:
+        idx = queue.pop(0)
+        ordered_indices.append(idx)
+        for nxt in deps[idx]:
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0:
+                queue.append(nxt)
+
+    if len(ordered_indices) != len(dedup_pairs):
+        logger.warning("[Digester:Auth] Cyclic dedup pair dependencies detected; using original pair order.")
+        return dedup_pairs
+
+    return [dedup_pairs[idx] for idx in ordered_indices]
 
 async def extract_auth_raw(
     schema: str, job_id: UUID, chunk_id: Optional[UUID] = None, chunk_metadata: Optional[Dict] = None
-) -> Tuple[List[AuthInfo], bool]:
+) -> Tuple[List[DiscoveryAuth], bool]:
     """
     Extract raw auth info from a single chunk with one LLM call.
     Does NOT deduplicate or sort - that's done later across all chunks.
 
     Returns:
-        - List of raw AuthInfo instances
+        - List of raw DiscoveryAuth instances
         - Boolean indicating if relevant data was found
     """
 
-    def parse_fn(result: AuthResponse) -> List[AuthInfo]:
+    def parse_fn(result: AuthDiscoveryResponse) -> List[DiscoveryAuth]:
         return result.auth or []
 
     extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
-        pydantic_model=AuthResponse,
-        system_prompt=get_auth_system_prompt,
-        user_prompt=get_auth_user_prompt,
+        pydantic_model=AuthDiscoveryResponse,
+        system_prompt=get_auth_discovery_system_prompt,
+        user_prompt=get_auth_discovery_system_prompt,
         parse_fn=parse_fn,
         logger_prefix="[Digester:Auth] ",
         job_id=job_id,
         chunk_id=chunk_id,
         chunk_metadata=chunk_metadata,
+        enabled_sequence_checking=True,
     )
 
     logger.info(
