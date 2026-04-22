@@ -4,9 +4,11 @@
 
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+DiscoveryIntegrationType = Literal["SCIM", "REST", "DUMMY"]
 
 
 class IrrelevantLinks(BaseModel):
@@ -28,6 +30,18 @@ class RankedLinks(BaseModel):
 class CandidateLinksInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    @field_validator("integration_type", mode="before")
+    @classmethod
+    def normalize_integration_type(cls, value: Any) -> str:
+        if value is None:
+            return "DUMMY"
+        if not isinstance(value, str):
+            raise TypeError("integrationType must be a string")
+        normalized = value.strip().upper()
+        if normalized not in {"SCIM", "REST", "DUMMY"}:
+            raise ValueError("integrationType must be one of: SCIM, REST, DUMMY")
+        return normalized
+
     application_name: str = Field(
         ...,
         serialization_alias="applicationName",
@@ -39,6 +53,12 @@ class CandidateLinksInput(BaseModel):
         serialization_alias="applicationVersion",
         validation_alias="applicationVersion",
         description="Optional version string",
+    )
+    integration_type: DiscoveryIntegrationType = Field(
+        default="DUMMY",
+        serialization_alias="integrationType",
+        validation_alias="integrationType",
+        description="Discovery protocol priority: SCIM, REST, or DUMMY.",
     )
     llm_generated_search_query: bool = Field(
         default=False,
@@ -65,10 +85,12 @@ class CandidateLinksInput(BaseModel):
         description="Enable LLM-based ranking of candidate links",
     )
     num_queries: int = Field(
-        default=5,
+        default=8,
+        ge=1,
+        le=8,
         serialization_alias="numQueries",
         validation_alias="numQueries",
-        description="How many distinct search queries to run during discovery",
+        description="How many distinct search queries to run during discovery (allowed range: 1-8).",
     )
     max_results_per_query: int = Field(
         default=10,
@@ -77,7 +99,7 @@ class CandidateLinksInput(BaseModel):
         description="How many results to fetch per query (per backend)",
     )
     max_candidate_links: int = Field(
-        default=5,
+        default=10,
         serialization_alias="maxCandidateLinks",
         validation_alias="maxCandidateLinks",
         description="Max number of candidate links to return after ranking/selection",

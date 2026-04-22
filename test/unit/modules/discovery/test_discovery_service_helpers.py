@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage
 
 import src.modules.discovery.core.search as search
 import src.modules.discovery.utils.llm_helpers as llm_helpers
-from src.modules.discovery.schema import PyScrapeFetchReferences
+from src.modules.discovery.schema import PyScrapeFetchReferences, PySearchPrompts
 
 
 def test_search_with_ddgs():
@@ -94,3 +94,51 @@ def test_generate_query_via_llm(mock_llm, mock_llm_eval):
     assert "test search query 1" in queries
     assert parsed.search_prompts[0] == "test search query 1"
     mock_llm.return_value.invoke.assert_called_once()
+
+
+def test_generate_queries_via_preset_uses_available_templates_up_to_num_queries():
+    templates = [
+        "{app} REST API documentation {version}",
+        "{app} SCIM 2.0 documentation {version}",
+    ]
+    queries, _, parsed = llm_helpers.generate_queries_via_preset(
+        app="LiteLLM",
+        version="latest",
+        num_queries=8,
+        templates=templates,
+    )
+
+    assert len(queries) == 2
+    assert len(set(queries)) == 2
+    assert queries[0] == "LiteLLM REST API documentation latest"
+    assert queries[1] == "LiteLLM SCIM 2.0 documentation latest"
+    assert parsed.search_prompts == queries
+
+
+def test_generate_query_via_llm_adds_fallback_templates_when_llm_returns_too_few(mock_llm, mock_llm_eval):
+    mock_llm.return_value.invoke.return_value = AIMessage(content=json.dumps({"searchPrompts": ["query from llm"]}))
+
+    with (
+        patch("src.modules.discovery.utils.llm_helpers.OutputFixingParser") as mock_ofp,
+        patch("src.modules.discovery.utils.llm_helpers.PydanticOutputParser"),
+    ):
+        meta = MagicMock()
+        meta.parse.return_value = PySearchPrompts(search_prompts=["query from llm"])
+        mock_ofp.from_llm.return_value = meta
+
+        queries, _, _ = llm_helpers.generate_queries_via_llm(
+            model=mock_llm.return_value,
+            parser_model=mock_llm_eval.return_value,
+            user_prompt="test user prompt",
+            system_prompt="test system prompt",
+            num_queries=3,
+            fallback_templates=[
+                "{app} REST API documentation {version}",
+                "{app} SCIM 2.0 documentation {version}",
+            ],
+        )
+
+    assert len(queries) == 3
+    assert queries[0] == "query from llm"
+    assert "{app} REST API documentation {version}" in queries
+    assert "{app} SCIM 2.0 documentation {version}" in queries

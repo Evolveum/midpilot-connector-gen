@@ -56,7 +56,12 @@ async def discover_candidate_links(
     enable_ranking = resolve_ranking_settings(app_data)
 
     app_version = app_data.application_version or ""
-    user_prompt_fetch = get_discovery_fetch_user_prompt(app_data.application_name, app_version)
+    user_prompt_fetch = get_discovery_fetch_user_prompt(
+        app_data.application_name,
+        app_version,
+        integration_type=app_data.integration_type,
+        num_queries=app_data.num_queries,
+    )
     system_prompt_fetch = get_discovery_fetch_sys_prompt()
 
     filter_msg = "with filtering" if enable_filtering else "without filtering"
@@ -74,6 +79,7 @@ async def discover_candidate_links(
         system_prompt=system_prompt_fetch,
         app=app_data.application_name,
         version=app_version,
+        integration_type=app_data.integration_type,
         llm_generated_search_query=app_data.llm_generated_search_query,
         num_queries=app_data.num_queries,
         max_results_per_query=app_data.max_results_per_query,
@@ -86,6 +92,7 @@ async def discover_candidate_links(
             candidates_enriched=candidates_enriched,
             app=app_data.application_name,
             app_version=app_version,
+            integration_type=app_data.integration_type,
             max_llm_calls=max_filter_llm_calls,
         )
 
@@ -99,6 +106,7 @@ async def discover_candidate_links(
                 app=app_data.application_name,
                 app_version=app_version,
                 max_links=app_data.max_candidate_links,
+                integration_type=app_data.integration_type,
             )
             if ranked_links:
                 candidate_links = ranked_links
