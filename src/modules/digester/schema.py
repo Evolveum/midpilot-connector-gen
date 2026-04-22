@@ -16,6 +16,7 @@ from src.modules.digester.enums import (
     RelevantLevel,
 )
 
+
 class DocSequenceItem(BaseModel):
     """
     Represents a sequence from a chunk relevant to the extracted information.
@@ -38,6 +39,7 @@ class DocProcessingSequenceItem(DocSequenceItem):
     text: str = Field(
         ..., description="Full text of the document chunk from start_sequence to end_sequence for processing."
     )
+
 
 # --- Object Classes ---
 
@@ -285,8 +287,9 @@ class ObjectClassesRankedResponse(BaseModel):
 
 
 # --- Object Classes ---
-  
+
 # --- Auth ---
+
 
 class BaseAuth(BaseModel):
     """

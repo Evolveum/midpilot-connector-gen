@@ -9,7 +9,9 @@ from src.common.database.repositories.documentation_repository import Documentat
 logger = logging.getLogger(__name__)
 
 
-async def extract_sequence(chunk_id: str, start_pattern: str, end_pattern: str, enable_marker_blending: bool = False, logger_prefix: str = "") -> str:
+async def extract_sequence(
+    chunk_id: str, start_pattern: str, end_pattern: str, enable_marker_blending: bool = False, logger_prefix: str = ""
+) -> str:
     """
     Extract sequence from text using start and end sequences.
 
@@ -33,7 +35,9 @@ async def extract_sequence(chunk_id: str, start_pattern: str, end_pattern: str, 
     start_match = await asyncio.to_thread(lambda: re.search(re.escape(start_pattern), text))
     start_index = start_match.start() if start_match else 0
     offset = start_index + len(start_pattern) if not enable_marker_blending else start_index
-    end_match = await asyncio.to_thread(lambda: re.search(re.escape(end_pattern), text[offset:])) if start_match else None
+    end_match = (
+        await asyncio.to_thread(lambda: re.search(re.escape(end_pattern), text[offset:])) if start_match else None
+    )
 
     if not start_match or not end_match:
         logger.warning(

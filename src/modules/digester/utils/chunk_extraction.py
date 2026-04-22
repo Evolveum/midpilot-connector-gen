@@ -27,11 +27,13 @@ from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
+
 async def _calculate_fuzzy_error_budget(marker: str, fuzzy_marker_error_ratio: float) -> int:
     stripped_marker = marker.strip()
     if not stripped_marker:
         return 0
     return max(1, math.floor(len(stripped_marker) * fuzzy_marker_error_ratio))
+
 
 async def _find_best_fuzzy_literal(
     text: str, marker: str, start_pos: int = 0, fuzzy_marker_error_ratio: float = 0.05
@@ -62,7 +64,7 @@ async def _find_closest_best_fuzzy_literal(
     matches = await asyncio.get_event_loop().run_in_executor(
         pool.process_pool, fuzzy_search_worker, text, marker, start_pos, max_errors, start_pos + max_length
     )
-    
+
     if not matches:
         return None
 
@@ -150,9 +152,7 @@ async def _validate_relevant_sequence(
     seq.start_sequence = text[start_match.start : start_match.end]
     seq.end_sequence = text[end_match.start : end_match.end]
 
-    logger.info(
-        "%sNew validated start: %s, end: %s", logger_prefix, seq.start_sequence, seq.end_sequence
-    )
+    logger.info("%sNew validated start: %s, end: %s", logger_prefix, seq.start_sequence, seq.end_sequence)
 
     return seq
 
@@ -206,19 +206,21 @@ async def _validate_item_relevant_sequences(
     item.relevant_sequences = valid_sequences
     return item
 
+
 def _result_snippet(result: Any, limit: int = 2000) -> str:
-        """Best-effort stringify of a pydantic model or arbitrary object for logging/errors."""
-        try:
-            if hasattr(result, "model_dump_json"):
-                raw = result.model_dump_json()  # pydantic v2
-            elif hasattr(result, "model_dump"):
-                raw = json.dumps(result.model_dump(by_alias=True, mode="json"))
-            else:
-                raw = getattr(result, "content", None) or repr(result)
-        except Exception:
-            raw = repr(result)
-        raw = raw if isinstance(raw, str) else str(raw)
-        return raw if len(raw) <= limit else raw[:limit] + "...(truncated)"
+    """Best-effort stringify of a pydantic model or arbitrary object for logging/errors."""
+    try:
+        if hasattr(result, "model_dump_json"):
+            raw = result.model_dump_json()  # pydantic v2
+        elif hasattr(result, "model_dump"):
+            raw = json.dumps(result.model_dump(by_alias=True, mode="json"))
+        else:
+            raw = getattr(result, "content", None) or repr(result)
+    except Exception:
+        raw = repr(result)
+    raw = raw if isinstance(raw, str) else str(raw)
+    return raw if len(raw) <= limit else raw[:limit] + "...(truncated)"
+
 
 def build_chunk_extraction_chain(
     *,
@@ -367,6 +369,7 @@ async def extract_single_chunk(
         logger.exception(error_message)
         append_job_error(job_id, error_message)
         return [], False
+
 
 async def run_item_build_parallel(
     item: Any,

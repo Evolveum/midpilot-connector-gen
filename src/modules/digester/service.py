@@ -7,12 +7,16 @@ from typing import Any, Callable, Dict, List, cast
 from uuid import UUID
 
 from src.common.enums import JobStage
-from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.jobs import update_job_progress
 from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 
 # Shared extractors
-from src.modules.digester.extractors.auth import build_auth_items, deduplicate_auth, extract_auth_raw, sort_auth_by_importance
+from src.modules.digester.extractors.auth import (
+    build_auth_items,
+    deduplicate_auth,
+    extract_auth_raw,
+    sort_auth_by_importance,
+)
 from src.modules.digester.extractors.info import extract_info_metadata as _extract_info_metadata
 
 # REST extractors
@@ -28,9 +32,8 @@ from src.modules.digester.extractors.rest.relations import extract_relations as 
 from src.modules.digester.extractors.scim.attributes import extract_scim_attributes
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
-from src.modules.digester.schema import InfoMetadata, InfoResponse, DiscoveryAuth
+from src.modules.digester.schema import InfoMetadata, InfoResponse
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
-from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
 from src.modules.digester.utils.doc_chunk import select_doc_chunks
 from src.modules.digester.utils.merges import (
     merge_info_metadata,
@@ -262,7 +265,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
         return await extract_auth_raw(content, job_id, chunk_id, chunk_metadata)
 
     # Process all chunks in parallel using the generic function
-    discovery_results = await run_chunks_concurrently(
+    discovery_results = await _run_doc_extractors_concurrently(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
@@ -322,7 +325,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
 
     sorted_auth_items = await sort_auth_by_importance(final_deduplicated_results, job_id)
 
-    #TODO: delete
+    # TODO: delete
     logger.info(
         "[Digester:Auth] Sorting complete. Total: %s sorted auth items. Final result is: %s",
         len(sorted_auth_items.auth) if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth else 0,
@@ -338,7 +341,9 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     )
 
     return {
-        "result": sorted_auth_items.model_dump(by_alias=True) if hasattr(sorted_auth_items, "model_dump") else sorted_auth_items,
+        "result": sorted_auth_items.model_dump(by_alias=True)
+        if hasattr(sorted_auth_items, "model_dump")
+        else sorted_auth_items,
         "relevantDocumentations": all_relevant_chunks,
     }
 

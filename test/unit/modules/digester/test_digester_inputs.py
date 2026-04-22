@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester.utils.criteria import AUTH_CRITERIA, DEFAULT_CRITERIA
+from src.config import config
+from src.modules.digester.utils.criteria import DEFAULT_AUTH_CRITERIA, EXTENDED_AUTH_CRITERIA
 from src.modules.digester.utils.inputs import auth_input
 
 
@@ -15,7 +16,11 @@ from src.modules.digester.utils.inputs import auth_input
 async def test_auth_input_uses_auth_criteria_when_matches_docs():
     session_id = uuid4()
     db = MagicMock()
-    auth_docs = [{"chunkId": str(uuid4()), "docId": str(uuid4()), "content": "auth chunk"}]
+    # Create enough items to pass the minimum threshold (default is 15)
+    auth_docs = [
+        {"chunkId": str(uuid4()), "docId": str(uuid4()), "content": f"auth chunk {i}"}
+        for i in range(config.digester.auth_min_documentation_items + 5)
+    ]
 
     with patch("src.modules.digester.utils.inputs.filter_documentation_items", new_callable=AsyncMock) as mock_filter:
         mock_filter.return_value = auth_docs
@@ -23,8 +28,8 @@ async def test_auth_input_uses_auth_criteria_when_matches_docs():
 
     assert result["jobInput"]["documentationItems"] == auth_docs
     assert result["jobInput"]["usedAuthCriteria"] is True
-    assert result["args"] == (auth_docs, True, session_id)
-    mock_filter.assert_awaited_once_with(AUTH_CRITERIA, session_id, db=db)
+    assert result["args"] == (auth_docs,)
+    mock_filter.assert_awaited_once_with(DEFAULT_AUTH_CRITERIA, session_id, db=db)
 
 
 @pytest.mark.asyncio
@@ -39,10 +44,10 @@ async def test_auth_input_falls_back_to_default_when_auth_filter_empty():
 
     assert result["jobInput"]["documentationItems"] == default_docs
     assert result["jobInput"]["usedAuthCriteria"] is False
-    assert result["args"] == (default_docs, False, session_id)
+    assert result["args"] == (default_docs,)
     mock_filter.assert_has_awaits(
         [
-            call(AUTH_CRITERIA, session_id, db=db),
-            call(DEFAULT_CRITERIA, session_id, db=db),
+            call(DEFAULT_AUTH_CRITERIA, session_id, db=db),
+            call(EXTENDED_AUTH_CRITERIA, session_id, db=db),
         ]
     )

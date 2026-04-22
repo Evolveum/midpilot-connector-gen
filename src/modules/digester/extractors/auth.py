@@ -41,6 +41,7 @@ from src.modules.digester.utils.sequences import extract_sequence
 
 logger = logging.getLogger(__name__)
 
+
 def _order_dedup_pairs(
     dedup_pairs: List[Tuple[Tuple[str, str], Tuple[str, str]]],
 ) -> List[Tuple[Tuple[str, str], Tuple[str, str]]]:
@@ -86,6 +87,7 @@ def _order_dedup_pairs(
 
     return [dedup_pairs[idx] for idx in ordered_indices]
 
+
 async def extract_auth_raw(
     schema: str, job_id: UUID, chunk_id: Optional[UUID] = None, chunk_metadata: Optional[Dict] = None
 ) -> Tuple[List[DiscoveryAuth], bool]:
@@ -116,6 +118,7 @@ async def extract_auth_raw(
 
     logger.info("[Digester:Auth] Discovery extraction complete from document. Count: %d", len(extracted))
     return extracted, has_relevant_data
+
 
 async def build_auth_items(auth_info: List[AuthProcessingInfo], job_id: UUID) -> List[AuthProcessingInfo]:
     """
@@ -156,7 +159,7 @@ async def build_auth_items(auth_info: List[AuthProcessingInfo], job_id: UUID) ->
         await update_job_progress(job_id, stage=JobStage.building_failed, message=f"Auth item building failed: {e}")
         append_job_error(job_id, f"[Digester:Auth] Building failed: {e}")
         return []
-    
+
 
 async def deduplicate_auth(
     auth_info: List[DiscoveryAuth] | List[AuthProcessingInfo],
@@ -382,7 +385,8 @@ async def deduplicate_auth(
         await update_job_progress(job_id, stage=JobStage.deduplication_failed, message=f"Deduplication failed: {e}")
         append_job_error(job_id, f"[Digester:Auth] Deduplication LLM call failed: {e}")
         return []
-    
+
+
 async def processInfoToAuthInfo(info: AuthProcessingInfo) -> AuthInfo:
     return AuthInfo(
         name=info.name,
@@ -397,6 +401,7 @@ async def processInfoToAuthInfo(info: AuthProcessingInfo) -> AuthInfo:
             for seq in info.relevant_sequences
         ],
     )
+
 
 async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_id: UUID) -> AuthResponse:
     dedup_list = [await processInfoToAuthInfo(info) for info in raw_dedup_list]
