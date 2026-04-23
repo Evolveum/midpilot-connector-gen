@@ -21,7 +21,12 @@ from src.modules.digester.extractors.rest.object_class import (
     deduplicate_and_sort_object_classes,
     extract_object_classes_raw,
 )
-from src.modules.digester.extractors.rest.relations import extract_relations as _extract_relations
+from src.modules.digester.extractors.rest.relations import (
+    extract_relations as _extract_relations,
+)
+from src.modules.digester.extractors.rest.relations import (
+    sort_relation_dicts_by_iga_priority,
+)
 
 # SCIM extractors
 from src.modules.digester.extractors.scim.attributes import extract_scim_attributes
@@ -601,7 +606,7 @@ async def extract_endpoints(
     return result
 
 
-async def extract_relations(doc_items: List[dict], relevant_object_class: str, job_id: UUID):
+async def extract_relations(doc_items: List[dict], relevant_object_class: Any, job_id: UUID):
     """Extract relations from multiple documentation items."""
 
     chunk_metadata_map = build_doc_metadata_map(doc_items)
@@ -613,11 +618,21 @@ async def extract_relations(doc_items: List[dict], relevant_object_class: str, j
     def per_chunk_count(d: Dict[str, Any]) -> int:
         return len(cast(List[dict], d.get("relations", [])))
 
+    def merge_and_sort_relations(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        merged = merge_relations_results(results)
+        raw_relations = merged.get("relations", [])
+        if not isinstance(raw_relations, list):
+            merged["relations"] = []
+            return merged
+
+        merged["relations"] = sort_relation_dicts_by_iga_priority(raw_relations, relevant_object_class)
+        return merged
+
     return await _process_over_chunks(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor,
-        merger=merge_relations_results,
+        merger=merge_and_sort_relations,
         logger_scope="Digester:Relations",
         per_chunk_count=per_chunk_count,
     )

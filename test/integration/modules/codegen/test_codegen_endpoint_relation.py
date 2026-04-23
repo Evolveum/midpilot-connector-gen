@@ -27,7 +27,8 @@ async def test_generate_relation_code_success():
                 "subjectAttribute": "members",
                 "objectAttribute": "",
                 "shortDescription": "",
-                "name": "User to Group",
+                "name": "user_to_group",
+                "displayName": "User to Group",
             }
         ]
     }

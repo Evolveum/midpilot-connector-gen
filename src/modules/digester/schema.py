@@ -5,7 +5,14 @@
 import re
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    model_serializer,
+)
 
 from src.common.enums import ApiType
 from src.modules.digester.enums import (
@@ -826,7 +833,19 @@ class RelationRecord(BaseModel):
 
     name: str = Field(
         ...,
-        description="Human-readable name of the relation. ALWAYS provide a meaningful name based on the relationship (e.g., 'User to Group', 'Account to User', etc.). Never leave empty.",
+        description=(
+            "Stable machine-friendly relation identifier in lowercase snake_case "
+            "(e.g., 'user_to_group', 'membership_to_principal')."
+        ),
+    )
+    display_name: str = Field(
+        ...,
+        validation_alias=AliasChoices("displayName", "display_name"),
+        serialization_alias="displayName",
+        description=(
+            "Human-readable relation name shown to users based on documentation"
+            "(e.g., 'User to Group', 'Membership to Principal')."
+        ),
     )
     short_description: str = Field(
         default="",

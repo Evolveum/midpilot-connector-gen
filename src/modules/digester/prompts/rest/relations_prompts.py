@@ -41,10 +41,14 @@ Apply to class names:
 5) Do not infer from endpoints/paths, examples, or mere co-occurrence.
 
 ## RELATION NAMING (REQUIRED)
-- ALWAYS provide a meaningful, descriptive name for the `name` field.
-- Use patterns like: "Subject to Object", "Subject has Object", "Subject belongs to Object", etc.
-- Examples: "User to Group", "Account to User", "Employee to Department", "Order to Customer"
-- NEVER leave the name field empty or use generic names.
+- ALWAYS provide BOTH relation naming fields:
+  - `displayName`: meaningful, human-readable relation name.
+  - `idName`: machine-safe lowercase snake_case identifier derived from the display name.
+- Use display name patterns like: "Subject to Object", "Subject has Object", "Subject belongs to Object", etc.
+- Examples:
+  - displayName: "User to Group" -> idName: "user_to_group"
+  - displayName: "Membership to Principal" -> idName: "membership_to_principal"
+- NEVER leave `displayName` or `idName` empty.
 
 ## OUTPUT
 Use the structured output schema RelationsResponse. If none qualify (including cases where subject or object is not in the relevant list), return an empty list.
@@ -82,5 +86,5 @@ Task:
 - Normalize class names for subject/object per the system rules.
 - Ensure subject/object correspond to normalized forms of the relevant exact names above.
 - Consider the provided descriptions to better understand the domain context when identifying relationships.
-- IMPORTANT: Always provide meaningful, descriptive names for relations using patterns like "Subject to Object", "Subject has Object", etc.
+- IMPORTANT: Always provide both `displayName` and `idName` for each relation.
 - If none qualify, return an empty list.""")
