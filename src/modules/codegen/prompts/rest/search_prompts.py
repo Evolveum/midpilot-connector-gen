@@ -35,18 +35,6 @@ OUTPUT RULES:
 - Treat <result> as the current working Groovy code. Extend or minimally edit it, but you may replace conflicting parts.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment.
 - Preserve outer objectClass and search blocks when present in <result>.
-- Use ConnId-compatible filter DSL only:
-  - `supportedFilter(attribute("<attr>").eq().anySingleValue()) {{ ... }}`
-  - `supportedFilter(attribute("<attr>").contains().anySingleValue()) {{ ... }}`
-- Each `supportedFilter(...)` block must mutate `request` and use the provided `value`.
-- If API expects serialized filter payload (for example query parameter `filters`), build the payload inside each filter block, e.g.:
-  - `String filter = "[{{ \\"name\\": {{ \\"operator\\": \\"=\\", \\"values\\": [\\"${{value}}\\"] }} }}]"`
-  - `request.queryParameter("filters", filter)`
-- Never use non-ConnId pseudo syntax such as:
-  - `supportedFilter("name") {{ ... }}`
-  - `operator("=", true)`
-  - `filterType = "EQUAL"`
-  - `request.queryParameter("filters", filters)` when `filters` is not declared in the same scope
 - Return ONLY valid Groovy code, no explanation outside code.
 """)
 
@@ -69,6 +57,18 @@ INTENT PROFILE: `filter`
 - Keep `pagingSupport` only for pagination parameters; do not place filter parameters there.
 - Do not add generic get-all behavior.
 - Add `emptyFilterSupported true` only if the docs explicitly state filtered mode also supports empty search.
+- Use ConnId-compatible filter DSL only:
+  - `supportedFilter(attribute("<attr>").eq().anySingleValue()) {{ ... }}`
+  - `supportedFilter(attribute("<attr>").contains().anySingleValue()) {{ ... }}`
+- Each `supportedFilter(...)` block must mutate `request` and use the provided `value`.
+- If API expects serialized filter payload (for example query parameter `filters`), build the payload inside each filter block, e.g.:
+  - `String filter = "[{{ \\"name\\": {{ \\"operator\\": \\"=\\", \\"values\\": [\\"${{value}}\\"] }} }}]"`
+  - `request.queryParameter("filters", filter)`
+- Never use non-ConnId pseudo syntax such as:
+  - `supportedFilter("name") {{ ... }}`
+  - `operator("=", true)`
+  - `filterType = "EQUAL"`
+  - `request.queryParameter("filters", filters)` when `filters` is not declared in the same scope
 """)
 
 _SEARCH_SYSTEM_PROMPT_ID_RULES = textwrap.dedent("""\
@@ -76,13 +76,6 @@ _SEARCH_SYSTEM_PROMPT_ID_RULES = textwrap.dedent("""\
 INTENT PROFILE: `id`
 - Generate ONLY single-object lookup by unique identifier.
 - Prefer a dedicated id endpoint path like `users/{{id}}` when documented.
-- For id lookup, the endpoint block should follow this shape:
-  endpoint("users/{{id}}") {{
-      singleResult()
-      supportedFilter(attribute("id").eq().anySingleValue()) {{
-          request.pathParameter("id", value)
-      }}
-  }}
 - If the endpoint path placeholder name differs (e.g., `{{userId}}`), map that exact name in `request.pathParameter("<name>", value)`.
 - If no dedicated id path exists, use exact-match `supportedFilter(attribute("<id-attr>").eq().anySingleValue())` with the documented query parameter mapping.
 - Never generate id intent using only `objectExtractor` without both `singleResult()` and `supportedFilter(...)`.
