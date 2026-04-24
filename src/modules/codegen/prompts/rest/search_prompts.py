@@ -35,6 +35,18 @@ OUTPUT RULES:
 - Treat <result> as the current working Groovy code. Extend or minimally edit it, but you may replace conflicting parts.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment.
 - Preserve outer objectClass and search blocks when present in <result>.
+- Use ConnId-compatible filter DSL only:
+  - `supportedFilter(attribute("<attr>").eq().anySingleValue()) {{ ... }}`
+  - `supportedFilter(attribute("<attr>").contains().anySingleValue()) {{ ... }}`
+- Each `supportedFilter(...)` block must mutate `request` and use the provided `value`.
+- If API expects serialized filter payload (for example query parameter `filters`), build the payload inside each filter block, e.g.:
+  - `String filter = "[{{ \\"name\\": {{ \\"operator\\": \\"=\\", \\"values\\": [\\"${{value}}\\"] }} }}]"`
+  - `request.queryParameter("filters", filter)`
+- Never use non-ConnId pseudo syntax such as:
+  - `supportedFilter("name") {{ ... }}`
+  - `operator("=", true)`
+  - `filterType = "EQUAL"`
+  - `request.queryParameter("filters", filters)` when `filters` is not declared in the same scope
 - Return ONLY valid Groovy code, no explanation outside code.
 """)
 
@@ -51,8 +63,10 @@ _SEARCH_SYSTEM_PROMPT_FILTER_RULES = textwrap.dedent("""\
 
 INTENT PROFILE: `filter`
 - Generate ONLY filter-based search support.
-- Prefer explicit `supportedFilter(...) {{ ... }}` blocks for documented attributes/operators.
-- If the API expects serialized filter payloads (e.g., query parameter `filters`), build them exactly as documented.
+- Use `supportedFilter(attribute("<attr>").<op>().anySingleValue()) {{ ... }}` for each documented filter.
+- Map operators to ConnId filter ops (for example exact match -> `.eq()`, contains -> `.contains()`), creating separate blocks when needed.
+- If the API expects serialized filter payloads (e.g., query parameter `filters`), build them inside each `supportedFilter` block exactly as documented.
+- Keep `pagingSupport` only for pagination parameters; do not place filter parameters there.
 - Do not add generic get-all behavior.
 - Add `emptyFilterSupported true` only if the docs explicitly state filtered mode also supports empty search.
 """)
@@ -73,6 +87,7 @@ INTENT PROFILE: `id`
 - If no dedicated id path exists, use exact-match `supportedFilter(attribute("<id-attr>").eq().anySingleValue())` with the documented query parameter mapping.
 - Never generate id intent using only `objectExtractor` without both `singleResult()` and `supportedFilter(...)`.
 - Never output leading `/` in `endpoint("...")` for REST search.
+- Never use `supportedFilter("id")`, `operator(...)`, or `filterType = ...` in id intent output.
 - Do not add list/get-all logic or non-id filters.
 """)
 
