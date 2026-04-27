@@ -22,6 +22,7 @@ Prepare a valid Groovy code for update schema in Groovy based on the following `
 </update_docs>
 
 OUTPUT RULES:
+- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
 - Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the examples in <update_docs>.
 - If <preferred_endpoints> are provided, prioritize endpoints from this list whenever they are compatible with `<extracted_endpoints>` and docs.

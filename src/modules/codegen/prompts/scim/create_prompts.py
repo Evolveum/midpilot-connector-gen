@@ -20,6 +20,7 @@ Prepare a valid Groovy code for create schema in Groovy based on the following `
 </create_docs>
 
 Output rules:
+- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - Treat <extracted_attributes> as the primary sources of truth. Prefer them over the examples in <create_docs>.
 - If <preferred_endpoints> are provided, prioritize endpoints from this list whenever they are compatible with SCIM behavior and docs.
 - If <preferred_endpoints> conflict with docs or SCIM semantics, prefer documented behavior and leave a short TODO comment about the mismatch.

@@ -22,6 +22,7 @@ Prepare valid Groovy search schema code based on the following `.adoc` documenta
 </search_docs>
 
 OUTPUT RULES:
+- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly.
 - Treat <extracted_attributes> and <extracted_endpoints> as primary sources of truth.
 - If <preferred_endpoints> are provided, prioritize compatible endpoints from this list.
