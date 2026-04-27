@@ -20,6 +20,7 @@ Prepare a valid Groovy code for update schema in Groovy based on the following `
 </update_docs>
 
 Output rules:
+- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
 - SCIM updates typically use PATCH with PatchOp schema for partial updates, or PUT for full replacement.
 - Handle multi-valued complex attributes with path selectors when needed.

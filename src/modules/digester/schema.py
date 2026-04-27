@@ -5,7 +5,14 @@
 import re
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    model_serializer,
+)
 
 from src.common.enums import ApiType
 from src.modules.digester.enums import (
@@ -826,35 +833,60 @@ class RelationRecord(BaseModel):
 
     name: str = Field(
         ...,
-        description="Human-readable name of the relation. ALWAYS provide a meaningful name based on the relationship (e.g., 'User to Group', 'Account to User', etc.). Never leave empty.",
+        description=(
+            "Stable machine-friendly relation identifier in lowercase snake_case "
+            "(e.g., 'user_to_group', 'membership_to_project')."
+        ),
+    )
+    display_name: str = Field(
+        ...,
+        validation_alias=AliasChoices("displayName", "display_name"),
+        serialization_alias="displayName",
+        description=(
+            "Human-readable relation name shown to users based on documentation "
+            "(e.g., 'User to Group', 'Membership to Project')."
+        ),
     )
     short_description: str = Field(
         default="",
         validation_alias="shortDescription",
         serialization_alias="shortDescription",
-        description="Short description or summary if present. LLM can propose if documentation do not has description",
+        description=(
+            "One concise sentence describing the relation meaning, grounded in documentation evidence. "
+            "Leave empty when no trustworthy short description can be derived."
+        ),
     )
     subject: str = Field(
         ...,
         description=(
-            "Normalized lowercase name of the subject class (owner of the attribute). Must refer to a relevant class."
+            "Normalized subject object-class name (lowercase) selected from the relevant object classes list. "
+            "The subject is the side that consumes/receives membership, entitlement, assignment, or access."
         ),
     )
     subject_attribute: Optional[str] = Field(
         default="",
         validation_alias="subjectAttribute",
         serialization_alias="subjectAttribute",
-        description="Exact property name on the subject that establishes the relation (raw as in schema).",
+        description=(
+            "Attribute on the subject that points to object identifiers/references (e.g., groups, roles, projects). "
+            "Can be a virtual attribute name when the relation is explicit only via inverse/query evidence."
+        ),
     )
     object: str = Field(
         ...,
-        description="Normalized lowercase name of the object class being referenced by the subject's property.",
+        description=(
+            "Normalized object object-class name (lowercase) selected from the relevant object classes list. "
+            "The object is the target entity referenced/assigned/owned by the subject."
+        ),
     )
     object_attribute: Optional[str] = Field(
         default="",
         validation_alias="objectAttribute",
         serialization_alias="objectAttribute",
-        description="Exact back-reference property name on the object class if explicitly documented; else empty.",
+        description=(
+            "Inverse attribute on the object that points back to subject identifiers/references "
+            "(e.g., members, owners). Leave empty when not documented or not applicable."
+        ),
     )
 
 

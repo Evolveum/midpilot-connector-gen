@@ -14,68 +14,152 @@ from src.common.chunks import normalize_to_text
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.common.utils.normalize import normalize_object_class_name
+from src.modules.digester.enums import ConfidenceLevel
 from src.modules.digester.prompts.rest.relations_prompts import (
     get_relations_system_prompt,
     get_relations_user_prompt,
 )
-from src.modules.digester.schema import RelationRecord, RelationsResponse
+from src.modules.digester.schema import FinalObjectClass, ObjectClassesResponse, RelationRecord, RelationsResponse
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
+
+CONFIDENCE_PRIORITY: Dict[ConfidenceLevel, int] = {
+    ConfidenceLevel.HIGH: 0,
+    ConfidenceLevel.MEDIUM: 1,
+    ConfidenceLevel.LOW: 2,
+}
+MISSING_CLASS_PRIORITY = len(CONFIDENCE_PRIORITY)
+
+
+def _extract_relevant_object_classes(relevant_object_classes: Any) -> List[FinalObjectClass]:
+    """
+    Parse object classes from the canonical digester payload shape.
+    Expected input: {"objectClasses": [...]} (camelCase aliases supported by schema model).
+    """
+    try:
+        parsed = ObjectClassesResponse.model_validate(relevant_object_classes)
+        logger.debug(
+            "[Digester:Relations] Successfully extracted %d relevant object classes",
+            len(parsed.object_classes),
+        )
+        return parsed.object_classes
+
+    except Exception as exc:
+        logger.error("[Digester:Relations] Failed to parse object classes payload: %s", exc)
+        return []
 
 
 def _extract_relevant_names(relevant_object_classes: Any) -> List[Tuple[str, str]]:
     """
     Extract object class names and descriptions from the object classes payload.
     Returns a list of tuples (name, description).
-    Handles various input formats: JSON string, dict, list, or ObjectClassesResponse.
     """
-    try:
-        if hasattr(relevant_object_classes, "objectClasses"):
-            return [(obj.name, obj.description or "") for obj in relevant_object_classes.object_classes]
+    relevant_items = _extract_relevant_object_classes(relevant_object_classes)
+    return [(item.name, item.description) for item in relevant_items]
 
-        # Handle JSON string
-        if isinstance(relevant_object_classes, str):
-            logger.debug("[Digester:Relations] Parsing JSON string (relevant object classes)")
-            parsed_data = json.loads(relevant_object_classes)
-        else:
-            parsed_data = relevant_object_classes
 
-        # Handle dict with objectClasses key
-        if isinstance(parsed_data, dict):
-            object_classes = parsed_data.get("objectClasses") or parsed_data.get("objectClasses", [])
-            logger.debug(
-                "[Digester:Relations] Found %d object classes in dict relevant_object_classes", len(object_classes)
-            )
-        elif isinstance(parsed_data, list):
-            object_classes = parsed_data
-            logger.debug(
-                "[Digester:Relations] Processing list relevant_object_classes with %d items", len(object_classes)
-            )
-        else:
-            logger.warning(
-                "[Digester:Relations] Unsupported relevant_object_classes format: %s", type(parsed_data).__name__
-            )
-            return []
+def _confidence_order_key(confidence: ConfidenceLevel) -> int:
+    return CONFIDENCE_PRIORITY[confidence]
 
-        # Extract names and descriptions for all classes
-        relevant_items = []
-        for obj_class in object_classes:
-            if isinstance(obj_class, dict):
-                class_name = obj_class.get("name")
-                class_desc = obj_class.get("description", "") or ""
-                if class_name:
-                    relevant_items.append((class_name, class_desc))
-            elif hasattr(obj_class, "name"):
-                class_desc = getattr(obj_class, "description", "") or ""
-                relevant_items.append((obj_class.name, class_desc))
 
-        logger.debug("[Digester:Relations] Successfully extracted %d relevant items", len(relevant_items))
-        return relevant_items
+def _build_object_class_priority_map(relevant_object_classes: Any) -> Dict[str, Tuple[int, int, int]]:
+    """
+    Build deterministic object-class priority map:
+    1) confidence (high -> medium -> low)
+    2) relative order within the same confidence bucket
+    3) original global order as a stable tie-breaker
+    """
+    relevant_items = _extract_relevant_object_classes(relevant_object_classes)
+    priority_map: Dict[str, Tuple[int, int, int]] = {}
+    bucket_positions: Dict[int, int] = {}
 
-    except Exception as e:
-        logger.error("[Digester:Relations] Failed to extract relevant names: %s", e)
-        return []
+    for global_position, item in enumerate(relevant_items):
+        class_name = item.name.strip()
+        if not class_name:
+            continue
+
+        confidence_rank = _confidence_order_key(item.confidence)
+        bucket_position = bucket_positions.get(confidence_rank, 0)
+        bucket_positions[confidence_rank] = bucket_position + 1
+
+        class_key = normalize_object_class_name(class_name)
+        candidate = (confidence_rank, bucket_position, global_position)
+        existing = priority_map.get(class_key)
+        if existing is None or candidate < existing:
+            priority_map[class_key] = candidate
+
+    return priority_map
+
+
+def _sort_relations_by_iga_priority(
+    relations: List[RelationRecord],
+    relevant_object_classes: Any,
+) -> List[RelationRecord]:
+    """
+    Sort relations by object-class importance with deterministic fallback.
+    Subject class priority is primary because relation semantics are anchored to subject attributes.
+    """
+    if len(relations) <= 1:
+        return list(relations)
+
+    object_class_priority = _build_object_class_priority_map(relevant_object_classes)
+    if not object_class_priority:
+        return sorted(
+            relations,
+            key=lambda rel: (
+                normalize_object_class_name(rel.subject),
+                normalize_object_class_name(rel.subject_attribute or ""),
+                normalize_object_class_name(rel.object),
+                normalize_object_class_name(rel.object_attribute or ""),
+            ),
+        )
+
+    missing_class_bucket_position = len(object_class_priority) + 1
+    missing_class_priority = (MISSING_CLASS_PRIORITY, missing_class_bucket_position, missing_class_bucket_position)
+
+    def _sort_key(relation: RelationRecord) -> Tuple[int, int, int, int, int, int, str, str, str]:
+        subject_priority = object_class_priority.get(
+            normalize_object_class_name(relation.subject),
+            missing_class_priority,
+        )
+        object_priority = object_class_priority.get(
+            normalize_object_class_name(relation.object),
+            missing_class_priority,
+        )
+        return (
+            subject_priority[0],
+            subject_priority[1],
+            subject_priority[2],
+            object_priority[0],
+            object_priority[1],
+            object_priority[2],
+            normalize_object_class_name(relation.subject_attribute or ""),
+            normalize_object_class_name(relation.object),
+            normalize_object_class_name(relation.object_attribute or ""),
+        )
+
+    return sorted(relations, key=_sort_key)
+
+
+def sort_relation_dicts_by_iga_priority(
+    relations: List[Any],
+    relevant_object_classes: Any,
+) -> List[Dict[str, Any]]:
+    """
+    Parse, sort, and serialize relation payload items in one place.
+    Invalid relation records are skipped to preserve robust merge behavior.
+    """
+    parsed_relations: List[RelationRecord] = []
+    for relation in relations:
+        try:
+            parsed_relations.append(RelationRecord.model_validate(relation))
+        except Exception:
+            logger.debug("[Digester:Relations] Skipping invalid relation during final merge sort: %r", relation)
+
+    sorted_relations = _sort_relations_by_iga_priority(parsed_relations, relevant_object_classes)
+    return [relation.model_dump(by_alias=True) for relation in sorted_relations]
 
 
 def _parse_relations_result(
@@ -145,7 +229,6 @@ async def _extract_from_chunk(
     chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[RelationRecord]:
     try:
-        logger.info("[Digester:Relations] LLM call for chunk %s", idx + 1)
         summary, tags = extract_summary_and_tags(chunk_metadata)
 
         result = await chain.ainvoke(
@@ -241,7 +324,6 @@ async def extract_relations(
 
     chain = make_basic_chain(prompt, llm, parser)
 
-    logger.info("[Digester:Relations] Processing chunk for relation extraction")
     # Process the single pre-chunked input (no need for asyncio.gather with just one item)
     chunk_results = [
         await _extract_from_chunk(
@@ -254,13 +336,6 @@ async def extract_relations(
             chunk_metadata=chunk_metadata,
         )
     ]
-    logger.info("[Digester:Relations] Extraction completed")
-
-    # update_job_progress(
-    #     job_id,
-    #     stage="merging",
-    #     message="Merging and deduplicating relations",
-    # )
 
     merged_relations: List[RelationRecord] = []
     for relation_list in chunk_results:
@@ -277,13 +352,15 @@ async def extract_relations(
             deduplicated_relations[dedup_key] = relation
             continue
         current_relation = deduplicated_relations[dedup_key]
-        if (not (current_relation.name or "").strip()) and (relation.name or "").strip():
+        if (not (current_relation.display_name or "").strip()) and (relation.display_name or "").strip():
             deduplicated_relations[dedup_key] = relation
         elif len(relation.short_description or "") > len(current_relation.short_description or ""):
             deduplicated_relations[dedup_key] = relation
 
-    final_relations = list(deduplicated_relations.values())
-    final_relations.sort(key=lambda x: (x.subject, x.subject_attribute or "", x.object))
+    final_relations = _sort_relations_by_iga_priority(
+        list(deduplicated_relations.values()),
+        relevant_object_classes,
+    )
 
     logger.info(
         "[Digester:Relations] Extraction process completed successfully with %d final relations", len(final_relations)

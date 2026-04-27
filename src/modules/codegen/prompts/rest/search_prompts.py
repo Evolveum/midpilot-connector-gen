@@ -22,6 +22,7 @@ Prepare valid Groovy search schema code based on the following `.adoc` documenta
 </search_docs>
 
 OUTPUT RULES:
+- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly.
 - Treat <extracted_attributes> and <extracted_endpoints> as primary sources of truth.
 - If <preferred_endpoints> are provided, prioritize compatible endpoints from this list.
@@ -31,6 +32,9 @@ OUTPUT RULES:
 - If docs show `/api/v3/users` or absolute URLs but <extracted_endpoints> contains `/users`, normalize and use `users`.
 - Path parameters must stay as literal placeholders in braces, e.g. `users/{{id}}`.
 - If `base_api_url` contains a base path prefix (e.g., `/api/v1`), strip it from endpoint paths.
+- Only use request parameters from documentation for the same normalized endpoint path and HTTP method being generated.
+- Ignore parameters, examples, supported filter lists, and filter payload formats from unrelated endpoints in the same chunk.
+- Do not treat <extracted_attributes> as proof that an attribute can be used in a filter; extracted attributes only constrain names/types after the endpoint's own documentation proves filter support.
 - Never generate `sortingSupport {{ ... }}` blocks and never reference `sorting.*`.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it, but you may replace conflicting parts.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment.
@@ -51,12 +55,17 @@ _SEARCH_SYSTEM_PROMPT_FILTER_RULES = textwrap.dedent("""\
 
 INTENT PROFILE: `filter`
 - Generate ONLY filter-based search support.
+- A REST filter is documented only when the target endpoint's own GET documentation or <extracted_endpoints> explicitly includes a filter-capable request parameter (for example `filter`, `filters`, or an attribute-specific query parameter) and documents the specific filter attribute/operator or gives an example for that same endpoint.
 - Use `supportedFilter(attribute("<attr>").<op>().anySingleValue()) {{ ... }}` for each documented filter.
 - Map operators to ConnId filter ops (for example exact match -> `.eq()`, contains -> `.contains()`), creating separate blocks when needed.
 - If the API expects serialized filter payloads (e.g., query parameter `filters`), build them inside each `supportedFilter` block exactly as documented.
 - Keep `pagingSupport` only for pagination parameters; do not place filter parameters there.
 - Do not add generic get-all behavior.
 - Add `emptyFilterSupported true` only if the docs explicitly state filtered mode also supports empty search.
+- Do not infer filters from response fields, <extracted_attributes>, schema properties, sort fields, select fields, or examples for other endpoints.
+- Description-only hints such as "can choose to filter similar to ..." are insufficient unless the same endpoint also documents the filter request parameter and supported filter keys.
+- If the matching endpoint's parameter list is present and contains no filter-capable parameter, treat that endpoint as not supporting filters. In that case, do not emit an `endpoint(...)` for filter intent and remove unsupported `supportedFilter(...)` blocks from <result> for that endpoint.
+- If no documented filters are found in the current chunk, leave <result> unchanged.
 - Use ConnId-compatible filter DSL only:
   - `supportedFilter(attribute("<attr>").eq().anySingleValue()) {{ ... }}`
   - `supportedFilter(attribute("<attr>").contains().anySingleValue()) {{ ... }}`

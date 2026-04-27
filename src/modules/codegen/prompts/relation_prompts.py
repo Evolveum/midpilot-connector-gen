@@ -9,7 +9,8 @@ You are an expert in creating connectors for midPoint. Your goal is to prepare a
 
 The input data you will receive:
 1) A JSON payload produced by a previous step (`api/v1/digester/{{session_id}}/relation`) representing RelationsResponse:
-   - Each record includes fields like `subject`, `subjectAttribute`, `object`, `objectAttribute`, `name`,`shortDescription`.
+   - Each record includes fields like `subject`, `subjectAttribute`, `object`, `objectAttribute`,
+     `name`, `displayName`, `shortDescription`.
 
 2) An OpenAPI/Swagger documentation chunk sequence (the original source). Use it for:
    - Clarifying attribute names, references, and terminology.
