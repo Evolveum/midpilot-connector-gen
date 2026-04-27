@@ -20,6 +20,7 @@ Prepare a valid Groovy code for delete schema in Groovy based on the following `
 </delete_docs>
 
 Output rules:
+- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
 - SCIM deletes use DELETE method to the resource endpoint with ID: DELETE /Users/{{id}}.
 - Typically returns 204 No Content with no response body.

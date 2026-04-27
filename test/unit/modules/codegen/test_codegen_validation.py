@@ -92,3 +92,39 @@ async def test_base_generator_keeps_previous_result_when_chunk_validation_fails(
 
     assert result == 'objectClass("User") { search {} }'
     mock_append_job_error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_base_generator_cleanup_returns_cleaned_code_when_valid() -> None:
+    generator = _DummyGenerator()
+    original_code = 'objectClass("User") { search { supportedFilter("id") { // TODO: map id\n } } }'
+    cleaned_code = 'objectClass("User") { search { } }'
+
+    with (
+        patch("src.modules.codegen.core.base.get_default_llm"),
+        patch("src.modules.codegen.core.base.make_basic_chain", return_value=_DummyChain([cleaned_code])),
+        patch("src.modules.codegen.core.base.validate_groovy_code", return_value=None),
+    ):
+        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())
+
+    assert result == cleaned_code
+
+
+@pytest.mark.asyncio
+async def test_base_generator_cleanup_keeps_original_when_invalid() -> None:
+    generator = _DummyGenerator()
+    original_code = 'objectClass("User") { search { endpoint("users") { } } }'
+
+    with (
+        patch("src.modules.codegen.core.base.get_default_llm"),
+        patch(
+            "src.modules.codegen.core.base.make_basic_chain",
+            return_value=_DummyChain(['objectClass("User") { search { broken']),
+        ),
+        patch("src.modules.codegen.core.base.validate_groovy_code", return_value="syntax error"),
+        patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
+    ):
+        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())
+
+    assert result == original_code
+    mock_append_job_error.assert_called_once()
