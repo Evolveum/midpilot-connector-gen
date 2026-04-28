@@ -22,6 +22,7 @@ from src.modules.digester.prompts.rest.relations_prompts import (
 )
 from src.modules.digester.schema import FinalObjectClass, ObjectClassesResponse, RelationRecord, RelationsResponse
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
+from src.modules.digester.utils.relations import deduplicate_semantic_relations
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ def sort_relation_dicts_by_iga_priority(
     relevant_object_classes: Any,
 ) -> List[Dict[str, Any]]:
     """
-    Parse, sort, and serialize relation payload items in one place.
+    Parse, semantically deduplicate, sort, and serialize relation payload items in one place.
     Invalid relation records are skipped to preserve robust merge behavior.
     """
     parsed_relations: List[RelationRecord] = []
@@ -158,7 +159,8 @@ def sort_relation_dicts_by_iga_priority(
         except Exception:
             logger.debug("[Digester:Relations] Skipping invalid relation during final merge sort: %r", relation)
 
-    sorted_relations = _sort_relations_by_iga_priority(parsed_relations, relevant_object_classes)
+    deduplicated_relations = deduplicate_semantic_relations(parsed_relations)
+    sorted_relations = _sort_relations_by_iga_priority(deduplicated_relations, relevant_object_classes)
     return [relation.model_dump(by_alias=True) for relation in sorted_relations]
 
 
@@ -280,7 +282,7 @@ async def extract_relations(
         - Only relationships with strong evidence in the spec chunks are included
         - Deduplication is performed on (subject, subjectAttribute, object) tuples
     """
-    logger.info("[Digester:Relations] Starting relation extraction process")
+    logger.info("[Digester:Relations] LLM call for chunk %s", chunk_id)
     relevant_items = _extract_relevant_names(relevant_object_classes)
     if not relevant_items:
         logger.warning("[Digester:Relations] No relevant object classes; returning empty.")
@@ -357,8 +359,9 @@ async def extract_relations(
         elif len(relation.short_description or "") > len(current_relation.short_description or ""):
             deduplicated_relations[dedup_key] = relation
 
+    semantic_relations = deduplicate_semantic_relations(list(deduplicated_relations.values()))
     final_relations = _sort_relations_by_iga_priority(
-        list(deduplicated_relations.values()),
+        semantic_relations,
         relevant_object_classes,
     )
 
