@@ -49,6 +49,7 @@ async def extract_single_chunk(
     chunk_id: Optional[UUID] = None,
     track_chunk_per_item: bool = False,
     chunk_metadata: Optional[Dict[str, Any]] = None,
+    extraction_chain: Any | None = None,
 ) -> Tuple[List[Any], bool]:
     """
     Run LLM extraction on a pre-chunked documentation item.
@@ -67,6 +68,7 @@ async def extract_single_chunk(
         chunk_id: Optional chunk ID for tracking
         track_chunk_per_item: Deprecated (kept for backward compatibility, always sets index to 0)
         chunk_metadata: Optional metadata about the chunk (summary, tags, etc.)
+        extraction_chain: Optional pre-built reusable extraction chain. When not provided, one is built from prompts.
 
     Returns:
         - Flat list of extracted items
@@ -83,11 +85,12 @@ async def extract_single_chunk(
     )
 
     logger.info("%sLLM call for chunk %s", logger_prefix, chunk_id)
-    extraction_chain = build_chunk_extraction_chain(
-        pydantic_model=pydantic_model,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-    )
+    if extraction_chain is None:
+        extraction_chain = build_chunk_extraction_chain(
+            pydantic_model=pydantic_model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
 
     def _result_snippet(result: Any, limit: int = 2000) -> str:
         """Best-effort stringify of a pydantic model or arbitrary object for logging/errors."""

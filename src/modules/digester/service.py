@@ -18,6 +18,7 @@ from src.modules.digester.extractors.info import extract_info_metadata as _extra
 from src.modules.digester.extractors.rest.attributes import extract_attributes as _extract_rest_attributes
 from src.modules.digester.extractors.rest.endpoints import extract_endpoints as _extract_rest_endpoints
 from src.modules.digester.extractors.rest.object_class import (
+    build_object_class_extraction_chain,
     deduplicate_and_sort_object_classes,
     extract_object_classes_raw,
 )
@@ -183,10 +184,17 @@ async def _extract_rest_object_classes(
     chunk_id_to_doc_id = _build_chunk_id_to_doc_id(doc_items)
 
     chunk_metadata_map = build_doc_metadata_map(doc_items)
+    extraction_chain = build_object_class_extraction_chain() if doc_items else None
 
     async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
         chunk_metadata = chunk_metadata_map.get(str(chunk_id))
-        return await extract_object_classes_raw(content, job_id, chunk_id, chunk_metadata)
+        return await extract_object_classes_raw(
+            content,
+            job_id,
+            chunk_id,
+            chunk_metadata,
+            extraction_chain=extraction_chain,
+        )
 
     # Process all chunks in parallel using the generic function
     results = await _run_doc_extractors_concurrently(
