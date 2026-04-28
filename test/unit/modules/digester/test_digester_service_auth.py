@@ -36,7 +36,7 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
 
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_auth", new_callable=AsyncMock) as mock_dedupe,
-        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_parallel.return_value = [
             (
@@ -94,7 +94,7 @@ async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_prog
 
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_auth", new_callable=AsyncMock) as mock_dedupe,
-        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_parallel.return_value = [([], False, doc_uuid)]
 
@@ -226,7 +226,7 @@ async def test_extract_auth_with_fallback_switches_to_default_docs_without_real_
 
     with (
         patch(
-            "src.modules.digester.service._run_doc_extractors_concurrently",
+            "src.modules.digester.service.run_doc_extractors_concurrently",
             new_callable=AsyncMock,
             side_effect=parallel_side_effect,
         ) as mock_parallel,

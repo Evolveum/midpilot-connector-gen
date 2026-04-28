@@ -33,7 +33,7 @@ async def test_extract_relations_success(mock_llm, mock_digester_update_job_prog
     with (
         patch("src.modules.digester.service._extract_relations"),
         patch("src.modules.digester.service.merge_relations_results"),
-        patch("src.modules.digester.service._process_over_chunks") as mock_process,
+        patch("src.modules.digester.service.process_over_chunks") as mock_process,
     ):
         mock_process.return_value = {
             "result": {
@@ -69,7 +69,7 @@ async def test_extract_relations_no_relations_found(mock_llm, mock_digester_upda
     """Test extract_relations when no relations are discovered."""
     fake_doc_items = [{"uuid": str(uuid4()), "content": "No relations", "summary": "", "@metadata": {}}]
 
-    with patch("src.modules.digester.service._process_over_chunks") as mock_process:
+    with patch("src.modules.digester.service.process_over_chunks") as mock_process:
         mock_process.return_value = {"result": {"relations": []}, "relevantDocumentations": []}
 
         result = await service.extract_relations(fake_doc_items, "User", uuid4())
@@ -120,7 +120,7 @@ async def test_extract_relations_applies_final_sort_after_merge(mock_llm, mock_d
 
     with (
         patch("src.modules.digester.service._extract_relations"),
-        patch("src.modules.digester.service._process_over_chunks", side_effect=fake_process_over_chunks),
+        patch("src.modules.digester.service.process_over_chunks", side_effect=fake_process_over_chunks),
     ):
         result = await service.extract_relations(fake_doc_items, relevant_object_classes, uuid4())
 
