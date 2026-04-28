@@ -17,10 +17,86 @@ from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
+from src.modules.digester.utils.doc_chunk import build_chunk_id_to_doc_id
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
+
+
+async def run_doc_extractors_concurrently(
+    *,
+    chunk_items: List[dict],
+    job_id: UUID,
+    extractor: Callable[[str, UUID, UUID], Any],
+    logger_scope: str,
+):
+    """Run a digester extractor over stored documentation chunks."""
+    return await run_chunks_concurrently(
+        chunk_items=chunk_items,
+        job_id=job_id,
+        extractor=extractor,
+        logger_scope=logger_scope,
+    )
+
+
+async def process_over_chunks(
+    *,
+    chunk_items: List[dict],
+    job_id: UUID,
+    extractor: Callable[[str, UUID, UUID], Any],
+    merger: Callable[[List[Dict[str, Any]]], Dict[str, Any]],
+    logger_scope: str,
+    per_chunk_count: Callable[[Dict[str, Any]], int] | None = None,
+) -> Dict[str, Any]:
+    """
+    Process chunks in parallel, collect relevant chunk references, merge results, and return a digester payload.
+    """
+    all_results: List[Dict[str, Any]] = []
+    all_relevant_chunks: List[Dict[str, Any]] = []
+    chunk_id_to_doc_id = build_chunk_id_to_doc_id(chunk_items)
+
+    results = await run_doc_extractors_concurrently(
+        chunk_items=chunk_items,
+        job_id=job_id,
+        extractor=extractor,
+        logger_scope=logger_scope,
+    )
+
+    for raw_result, has_relevant_data, chunk_id in results:
+        if hasattr(raw_result, "model_dump"):
+            result_data = cast(Dict[str, Any], raw_result.model_dump(by_alias=True))
+        else:
+            result_data = cast(Dict[str, Any], raw_result or {})
+
+        if per_chunk_count is not None:
+            try:
+                count = per_chunk_count(result_data)
+            except Exception:
+                count = 0
+            logger.info("[%s] Chunk %s: extracted %s items", logger_scope, chunk_id, count)
+
+        if result_data:
+            all_results.append(result_data)
+        if has_relevant_data:
+            chunk_id_str = str(chunk_id)
+            doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+            if doc_id:
+                all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+            else:
+                logger.warning(
+                    "[%s] Missing docId for chunk %s, skipping relevant chunk mapping",
+                    logger_scope,
+                    chunk_id_str,
+                )
+
+    merged_result: Dict[str, Any] = merger(all_results)
+
+    return {
+        "result": merged_result,
+        "relevantDocumentations": all_relevant_chunks,
+    }
 
 
 def build_chunk_extraction_chain(

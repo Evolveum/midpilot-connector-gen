@@ -39,7 +39,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
         with (
             patch("src.modules.digester.service.build_object_class_extraction_chain", return_value=object()),
             patch(
-                "src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock
+                "src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock
             ) as mock_parallel,
             patch(
                 "src.modules.digester.service.deduplicate_and_sort_object_classes", new_callable=AsyncMock
