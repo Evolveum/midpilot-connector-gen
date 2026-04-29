@@ -31,6 +31,24 @@ AUTH_CRITERIA = ChunkFilterCriteria(
     ],
 )
 
+EXTENDED_AUTH_CRITERIA = ChunkFilterCriteria(
+    min_length=None,
+    min_endpoints_num=None,
+    allowed_categories=[
+        "spec_yaml",
+        "spec_json",
+        "overview",
+        "reference_api",
+    ],
+    allowed_tags=[
+        [
+            "authentication",
+            "auth",
+            "authorization",
+        ]
+    ],
+)
+
 ENDPOINT_CRITERIA = ChunkFilterCriteria(
     min_length=None,
     min_endpoints_num=1,

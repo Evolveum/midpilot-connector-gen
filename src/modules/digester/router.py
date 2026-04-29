@@ -680,7 +680,7 @@ async def extract_auth(
         input_payload={"usePreviousSessionData": use_previous_session_data},
         dynamic_input_enabled=True,
         dynamic_input_provider=auth_input,
-        worker=service.extract_auth_with_fallback,
+        worker=service.extract_auth,
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
