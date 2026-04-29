@@ -232,60 +232,8 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     }
 
 
-def _auth_result_has_items(extraction_result: Dict[str, Any]) -> bool:
-    result = extraction_result.get("result")
-    if not isinstance(result, dict):
-        return False
-    auth = result.get("auth")
-    return isinstance(auth, list) and len(auth) > 0
-
-
 def _endpoint_result_has_items(extraction_result: Dict[str, Any]) -> bool:
     return len(extract_endpoints_from_result(extraction_result)) > 0
-
-
-async def extract_auth_with_fallback(
-    doc_items: List[dict],
-    used_auth_criteria: bool,
-    session_id: UUID,
-    job_id: UUID,
-):
-    """
-    Run auth extraction on AUTH_CRITERIA results first.
-    If empty and AUTH_CRITERIA was used, retry once using DEFAULT_CRITERIA docs.
-    """
-    primary_result = await extract_auth(doc_items, job_id)
-    if not used_auth_criteria or _auth_result_has_items(primary_result):
-        return primary_result
-
-    logger.info(
-        "[Digester:Auth] AUTH_CRITERIA produced empty final auth result for session %s; retrying with DEFAULT_CRITERIA",
-        session_id,
-    )
-    await update_job_progress(
-        job_id,
-        stage="chunking",
-        message="No auth found in auth-focused chunks; retrying with broader documentation filter",
-    )
-
-    fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
-    if not fallback_doc_items:
-        logger.info(
-            "[Digester:Auth] DEFAULT_CRITERIA matched no documentation for session %s; keeping empty auth result",
-            session_id,
-        )
-        return primary_result
-
-    primary_chunk_ids = {str(item.get("chunkId")) for item in doc_items if item.get("chunkId")}
-    fallback_chunk_ids = {str(item.get("chunkId")) for item in fallback_doc_items if item.get("chunkId")}
-    if primary_chunk_ids and primary_chunk_ids == fallback_chunk_ids:
-        logger.info(
-            "[Digester:Auth] DEFAULT_CRITERIA matched same chunks as AUTH_CRITERIA for session %s; skipping retry",
-            session_id,
-        )
-        return primary_result
-
-    return await extract_auth(fallback_doc_items, job_id)
 
 
 async def _extract_rest_endpoints_from_relevant_chunks(
