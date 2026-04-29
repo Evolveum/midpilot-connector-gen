@@ -28,6 +28,11 @@ Prepare a relation in Groovy code based on the following `.adoc` documentations:
 
 AUTHORING REQUIREMENTS:
 - Preserve the RelationsResponse semantics: for each relation record, map `subjectAttribute` on `subject` to `object`.
+- Treat duplicate wording for the same subject/object/reference as one relationship. For example,
+  `user has membership`, `user membership`, and `user to membership` all mean one `user -> membership`
+  relationship; generate one Groovy `relationship` block and merge the available subject/object attributes into it.
+- A bidirectional relation is represented by one `relationship` block containing both `subject` and `object` sides.
+  Do not create a second block just because the source mentions both navigation directions.
 - Prefer concise, deterministic code. Add short inline comments only when they clarify decisions or cite evidence.
 
 OUTPUT POLICY:

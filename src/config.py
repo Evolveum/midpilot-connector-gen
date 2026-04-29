@@ -171,7 +171,7 @@ class ScrapeAndProcessSettings(BaseModel):
 
     # Chunking controls
     chunk_length: int = Field(
-        20000,
+        10000,
         description="Max tokens per chunk for LLM processing",
     )
     max_concurrent: int = Field(
@@ -232,6 +232,30 @@ class DigesterSettings(BaseModel):
             "Threshold ratio used by digester metadata merge. "
             "Values below this evidence ratio across processed documents are ignored as uncertain."
         ),
+    )
+    relation_generic_attribute_tokens: list[str] = Field(
+        default_factory=lambda: [
+            "a",
+            "an",
+            "are",
+            "as",
+            "by",
+            "has",
+            "have",
+            "id",
+            "ids",
+            "is",
+            "of",
+            "ref",
+            "refs",
+            "reference",
+            "references",
+            "the",
+            "to",
+            "via",
+            "with",
+        ],
+        description="Generic relation attribute tokens ignored when collapsing wording-only relation duplicates.",
     )
 
 
