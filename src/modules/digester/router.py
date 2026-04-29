@@ -644,7 +644,7 @@ async def get_relations_status(
 )
 async def override_relations(
     session_id: UUID = Path(..., description="Session ID"),
-    relations: Dict[str, Any] = Body(..., description="Relations data as JSON"),
+    relations: RelationsResponse = Body(..., description="Relations data as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -653,7 +653,7 @@ async def override_relations(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {"relationsOutput": relations})
+    await repo.update_session(session_id, {"relationsOutput": relations.model_dump(by_alias=True, mode="json")})
 
     return {"message": "Relations overridden successfully", "sessionId": session_id}
 
