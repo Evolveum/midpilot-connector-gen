@@ -45,7 +45,7 @@ router = APIRouter()
 async def generate_native_schema(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -68,7 +68,7 @@ async def generate_native_schema(
         input_payload={
             "attributes": attrs,
             "objectClass": object_class,
-            "usePreviousSessionData": usePreviousSessionData,
+            "skipCache": skip_cache,
         },
         worker=service.create_native_schema,
         worker_args=(attrs, object_class),
@@ -154,7 +154,7 @@ async def override_native_schema(
 async def generate_connid(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -177,7 +177,7 @@ async def generate_connid(
         input_payload={
             "attributes": attrs,
             "objectClass": object_class,
-            "usePreviousSessionData": usePreviousSessionData,
+            "skipCache": skip_cache,
         },
         worker=service.create_conn_id,
         worker_args=(attrs, object_class),
@@ -263,7 +263,7 @@ async def generate_search(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     intent: SearchIntent = Path(..., description="Intent"),
-    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
     preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
 ):
@@ -302,7 +302,7 @@ async def generate_search(
         "attributes": attrs,
         "object_class": object_class,
         "intent": intent,
-        "usePreviousSessionData": usePreviousSessionData,
+        "skipCache": skip_cache,
     }
     if preferred_endpoints is not None:
         job_input["preferredEndpoints"] = preferred_endpoints
@@ -416,7 +416,7 @@ async def override_search(
 async def generate_create(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
     preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
 ):
@@ -454,7 +454,7 @@ async def generate_create(
         "sessionId": session_id,
         "attributes": attrs,
         "object_class": object_class,
-        "usePreviousSessionData": usePreviousSessionData,
+        "skipCache": skip_cache,
     }
     if preferred_endpoints is not None:
         job_input["preferredEndpoints"] = preferred_endpoints
@@ -559,7 +559,7 @@ async def override_create(
 async def generate_update(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
     preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
 ):
@@ -597,7 +597,7 @@ async def generate_update(
         "sessionId": session_id,
         "attributes": attrs,
         "object_class": object_class,
-        "usePreviousSessionData": usePreviousSessionData,
+        "skipCache": skip_cache,
     }
     if preferred_endpoints is not None:
         job_input["preferredEndpoints"] = preferred_endpoints
@@ -702,7 +702,7 @@ async def override_update(
 async def generate_delete(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
     preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
 ):
@@ -740,7 +740,7 @@ async def generate_delete(
         "sessionId": session_id,
         "attributes": attrs,
         "object_class": object_class,
-        "usePreviousSessionData": usePreviousSessionData,
+        "skipCache": skip_cache,
     }
     if preferred_endpoints is not None:
         job_input["preferredEndpoints"] = preferred_endpoints
@@ -845,7 +845,7 @@ async def override_delete(
 async def generate_relation_code(
     session_id: UUID = Path(..., description="Session ID"),
     relation_name: str = Path(..., description="Relation name"),
-    usePreviousSessionData: bool = Query(True, description="Whether to use previous session data for generation"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -892,7 +892,7 @@ async def generate_relation_code(
             "relations": relations_payload,
             "relationName": relation_name,
             "sessionId": session_id,
-            "usePreviousSessionData": usePreviousSessionData,
+            "skipCache": skip_cache,
         },
         worker=service.create_relation,
         worker_kwargs={

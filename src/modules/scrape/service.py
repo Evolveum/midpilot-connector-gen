@@ -29,16 +29,16 @@ logger = logging.getLogger(__name__)
 
 
 async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Optional[UUID] = None) -> ScrapeResult:
-    if input.use_previous_session_data and session_id:
+    if not input.skip_cache and session_id:
         logger.info(
-            "[Scrape] Job %s (session %s): use_previous_session_data is True, checking for existing documentation items in all sessions for the same input",
+            "[Scrape] Job %s (session %s): skipCache is false, checking for existing documentation items in all sessions for the same input",
             str(job_id),
             str(session_id),
         )
         async with async_session_maker() as db:
             job_repo = JobRepository(db)
             created_at_limits = datetime.now() - config.scrape_and_process.scrape_input_check_interval
-            normalized_input = input.model_dump(by_alias=True, exclude={"use_previous_session_data"})
+            normalized_input = input.model_dump(by_alias=True, exclude={"skip_cache"})
             latest_job = await job_repo.get_job_by_input(
                 "scrape.getRelevantDocumentation", normalized_input, created_at_limits
             )

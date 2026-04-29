@@ -46,7 +46,7 @@ router = APIRouter()
 )
 async def extract_object_classes(
     session_id: UUID = Path(..., description="Session ID"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -61,7 +61,7 @@ async def extract_object_classes(
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
         input_payload={
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         dynamic_input_enabled=True,
         dynamic_input_provider=object_classes_input,
@@ -82,7 +82,7 @@ async def extract_object_classes(
         {
             "objectClassesJobId": str(job_id),
             "objectClassesInput": {
-                "usePreviousSessionData": use_previous_session_data,
+                "skipCache": skip_cache,
             },
         },
     )
@@ -250,7 +250,7 @@ async def upload_one_object_class(
 async def extract_class_attributes(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name (e.g., 'User', 'Group')"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -297,7 +297,7 @@ async def extract_class_attributes(
             "documentationItems": doc_items,
             "objectClass": object_class,
             "relevantDocumentations": relevant_chunks,
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         worker=service.extract_attributes,
         worker_args=(doc_items, object_class, session_id, relevant_chunks),
@@ -400,7 +400,7 @@ async def override_class_attributes(
 async def extract_class_endpoints(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -468,7 +468,7 @@ async def extract_class_endpoints(
             "objectClass": object_class,
             "baseApiUrl": base_api_url,
             "relevantDocumentations": relevant_chunks,
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         worker=service.extract_endpoints,
         worker_args=(doc_items, object_class, session_id, relevant_chunks),
@@ -557,7 +557,7 @@ async def override_class_endpoints(
 )
 async def extract_relations(
     session_id: UUID = Path(..., description="Session ID"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -587,7 +587,7 @@ async def extract_relations(
         input_payload={
             "documentationItems": doc_items,
             "relevantObjectClasses": relevant,
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         worker=service.extract_relations,
         worker_args=(doc_items, relevant),
@@ -603,7 +603,7 @@ async def extract_relations(
             "relationsJobId": str(job_id),
             "relationsInput": {
                 "relevantObjectClasses": relevant,
-                "usePreviousSessionData": use_previous_session_data,
+                "skipCache": skip_cache,
             },
         },
     )
@@ -666,7 +666,7 @@ async def override_relations(
 )
 async def extract_auth(
     session_id: UUID = Path(..., description="Session ID"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -677,7 +677,7 @@ async def extract_auth(
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getAuth",
-        input_payload={"usePreviousSessionData": use_previous_session_data},
+        input_payload={"skipCache": skip_cache},
         dynamic_input_enabled=True,
         dynamic_input_provider=auth_input,
         worker=service.extract_auth_with_fallback,
@@ -695,7 +695,7 @@ async def extract_auth(
         {
             "authJobId": str(job_id),
             "authInput": {
-                "usePreviousSessionData": use_previous_session_data,
+                "skipCache": skip_cache,
             },
         },
     )
@@ -737,7 +737,7 @@ async def get_auth_status(
 )
 async def extract_metadata(
     session_id: UUID = Path(..., description="Session ID"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -748,7 +748,7 @@ async def extract_metadata(
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getInfoMetadata",
-        input_payload={"usePreviousSessionData": use_previous_session_data},
+        input_payload={"skipCache": skip_cache},
         dynamic_input_enabled=True,
         dynamic_input_provider=metadata_input,
         worker=service.extract_info_metadata,
@@ -766,7 +766,7 @@ async def extract_metadata(
         {
             "metadataJobId": str(job_id),
             "metadataInput": {
-                "usePreviousSessionData": use_previous_session_data,
+                "skipCache": skip_cache,
             },
         },
     )

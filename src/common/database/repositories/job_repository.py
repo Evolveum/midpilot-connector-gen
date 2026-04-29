@@ -187,9 +187,9 @@ class JobRepository:
     #     :param date_since: Only include jobs created at or after this timestamp
     #     :return: Job model or None
     #     """
-    #     # usePreviousSessionData should not influence whether discovery output can be reused.
+    #     # skipCache should not influence whether discovery output can be reused.
     #     alternate_discovery_input = discovery_input.copy()
-    #     alternate_discovery_input["usePreviousSessionData"] = False
+    #     alternate_discovery_input["skipCache"] = False
     #     query = (
     #         select(Job)
     #         .where(

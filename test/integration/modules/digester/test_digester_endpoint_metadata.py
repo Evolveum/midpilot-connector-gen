@@ -31,13 +31,13 @@ async def test_extract_metadata_success():
         mock_schedule.return_value = job_id
 
         session_id = uuid4()
-        response = await extract_metadata(session_id=session_id, use_previous_session_data=True, db=MagicMock())
+        response = await extract_metadata(session_id=session_id, skip_cache=True, db=MagicMock())
 
     assert response.jobId == job_id
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_schedule.assert_awaited_once_with(
         job_type="digester.getInfoMetadata",
-        input_payload={"usePreviousSessionData": True},
+        input_payload={"skipCache": True},
         dynamic_input_enabled=True,
         dynamic_input_provider=ANY,
         worker=service.extract_info_metadata,
@@ -53,7 +53,7 @@ async def test_extract_metadata_success():
         session_id,
         {
             "metadataJobId": str(job_id),
-            "metadataInput": {"usePreviousSessionData": True},
+            "metadataInput": {"skipCache": True},
         },
     )
 
