@@ -37,6 +37,8 @@ OUTPUT RULES:
 - Do not treat <extracted_attributes> as proof that an attribute can be used in a filter; extracted attributes only constrain names/types after the endpoint's own documentation proves filter support.
 - Never generate `sortingSupport {{ ... }}` blocks and never reference `sorting.*`.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it, but you may replace conflicting parts.
+- Treat concrete code already present in <result> as accumulated evidence from earlier chunks. Preserve existing endpoint blocks, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and executable `supportedFilter(...) {{ ... }}` blocks unless the current chunk gives explicit same-endpoint evidence that they are wrong.
+- A current chunk that omits filters, pagination, extraction details, or an endpoint parameter list is not evidence that previously generated code is unsupported. If the current chunk adds no relevant or contradictory evidence, return <result> unchanged.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment.
 - Preserve outer objectClass and search blocks when present in <result>.
 - Return ONLY valid Groovy code, no explanation outside code.
@@ -64,8 +66,9 @@ INTENT PROFILE: `filter`
 - Add `emptyFilterSupported true` only if the docs explicitly state filtered mode also supports empty search.
 - Do not infer filters from response fields, <extracted_attributes>, schema properties, sort fields, select fields, or examples for other endpoints.
 - Description-only hints such as "can choose to filter similar to ..." are insufficient unless the same endpoint also documents the filter request parameter and supported filter keys.
-- If the matching endpoint's parameter list is present and contains no filter-capable parameter, treat that endpoint as not supporting filters. In that case, do not emit an `endpoint(...)` for filter intent and remove unsupported `supportedFilter(...)` blocks from <result> for that endpoint.
-- If no documented filters are found in the current chunk, leave <result> unchanged.
+- If the current chunk's matching endpoint parameter list is present and contains no filter-capable parameter, do not add new filters from that chunk.
+- Do not remove `supportedFilter(...)` blocks already present in <result> unless the current chunk explicitly documents, for the same normalized endpoint path and HTTP method, that the previous filter parameter or previous filter attribute is invalid or unsupported.
+- If no documented filters are found in the current chunk, leave <result> unchanged, including existing endpoint, `objectExtractor`, `pagingSupport`, and `supportedFilter(...)` blocks.
 - Use ConnId-compatible filter DSL only:
   - `supportedFilter(attribute("<attr>").eq().anySingleValue()) {{ ... }}`
   - `supportedFilter(attribute("<attr>").contains().anySingleValue()) {{ ... }}`

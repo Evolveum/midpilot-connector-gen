@@ -56,7 +56,7 @@ class LLMSettings(BaseModel):
 
     openai_api_key: str = ""
     openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-20b"
+    model_name: str = "openai/gpt-oss-120b"
     request_timeout: int = 120
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
