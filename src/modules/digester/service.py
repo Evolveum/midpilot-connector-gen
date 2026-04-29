@@ -244,6 +244,10 @@ def _endpoint_result_has_items(extraction_result: Dict[str, Any]) -> bool:
     return len(extract_endpoints_from_result(extraction_result)) > 0
 
 
+def _attribute_result_has_items(extraction_result: Dict[str, Any]) -> bool:
+    return len(extract_attributes_from_result(extraction_result)) > 0
+
+
 async def extract_auth_with_fallback(
     doc_items: List[dict],
     used_auth_criteria: bool,
@@ -286,6 +290,108 @@ async def extract_auth_with_fallback(
         return primary_result
 
     return await extract_auth(fallback_doc_items, job_id)
+
+
+async def _extract_rest_attributes_from_relevant_chunks(
+    doc_items: List[dict],
+    object_class: str,
+    relevant_chunks: List[Dict[str, Any]],
+    job_id: UUID,
+) -> Dict[str, Any] | None:
+    selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
+
+    if not selected_content:
+        return None
+
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
+    chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
+
+    total_chunks = len(selected_content)
+    logger.info(
+        "[Digester:Attributes] Processing %d pre-selected chunks for %s (chunk IDs: %s)",
+        total_chunks,
+        object_class,
+        chunk_ids,
+    )
+
+    return await _extract_rest_attributes(
+        selected_content,
+        object_class,
+        job_id,
+        chunk_ids,
+        chunk_metadata_map,
+        chunk_id_to_doc_id,
+    )
+
+
+async def _retry_rest_attributes_with_default_criteria(
+    primary_result: Dict[str, Any],
+    object_class: str,
+    session_id: UUID,
+    relevant_chunks: List[Dict[str, Any]],
+    job_id: UUID,
+) -> Dict[str, Any]:
+    if _attribute_result_has_items(primary_result):
+        return primary_result
+
+    logger.info(
+        "[Digester:Attributes] Object-class chunks produced empty final attributes for session %s, object class %s; "
+        "retrying with DEFAULT_CRITERIA",
+        session_id,
+        object_class,
+    )
+    await update_job_progress(
+        job_id,
+        stage="chunking",
+        message=f"No attributes found in object-class chunks for {object_class}; retrying with broader filter",
+    )
+
+    fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
+    if not fallback_doc_items:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA matched no documentation for session %s; "
+            "keeping empty attribute result",
+            session_id,
+        )
+        return primary_result
+
+    primary_chunk_ids = chunk_ids_from_relevant_chunks(relevant_chunks)
+    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
+    fallback_chunk_ids = chunk_ids_from_relevant_chunks(fallback_relevant_chunks)
+    if primary_chunk_ids and primary_chunk_ids == fallback_chunk_ids:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA matched same chunks for session %s, object class %s; "
+            "skipping retry",
+            session_id,
+            object_class,
+        )
+        return primary_result
+
+    fallback_doc_items = exclude_doc_items_by_chunk_id(fallback_doc_items, primary_chunk_ids)
+    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
+    if not fallback_relevant_chunks:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA produced no new chunks for session %s; "
+            "keeping empty attribute result",
+            session_id,
+        )
+        return primary_result
+
+    fallback_result = await _extract_rest_attributes_from_relevant_chunks(
+        fallback_doc_items,
+        object_class,
+        fallback_relevant_chunks,
+        job_id,
+    )
+    if fallback_result is None:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA chunks could not be selected for session %s; "
+            "keeping empty attribute result",
+            session_id,
+        )
+        return primary_result
+
+    return fallback_result
 
 
 async def _extract_rest_endpoints_from_relevant_chunks(
@@ -506,19 +612,21 @@ async def extract_attributes(
         relevant_chunks: List of {doc_id, chunk_id} dicts indicating which chunks to process
         job_id: Job ID for progress tracking
     """
-    selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
-
-    if not selected_content:
+    if not relevant_chunks:
         logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
         return {"result": {"attributes": {}}, "relevantDocumentations": []}
-
-    chunk_metadata_map = build_doc_metadata_map(doc_items)
-    chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
 
     api_type = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_type)
 
     if is_scim:
+        selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
+        if not selected_content:
+            logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
+            return {"result": {"attributes": {}}, "relevantDocumentations": []}
+
+        chunk_metadata_map = build_doc_metadata_map(doc_items)
+        chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
         result = await extract_scim_attributes(
             selected_content,
             object_class,
@@ -528,13 +636,24 @@ async def extract_attributes(
             chunk_id_to_doc_id,
         )
     else:
-        result = await _extract_rest_attributes(
-            selected_content,
+        rest_result = await _extract_rest_attributes_from_relevant_chunks(
+            doc_items,
             object_class,
+            relevant_chunks,
             job_id,
-            chunk_ids,
-            chunk_metadata_map,
-            chunk_id_to_doc_id,
+        )
+        if rest_result is None:
+            if not relevant_chunks:
+                logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
+                return {"result": {"attributes": {}}, "relevantDocumentations": []}
+            rest_result = {"result": {"attributes": {}}, "relevantDocumentations": []}
+
+        result = await _retry_rest_attributes_with_default_criteria(
+            rest_result,
+            object_class,
+            session_id,
+            relevant_chunks,
+            job_id,
         )
 
     try:
@@ -600,8 +719,10 @@ async def extract_endpoints(
             base_api_url,
         )
         if rest_result is None:
-            logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
-            return {"result": {"endpoints": []}, "relevantDocumentations": []}
+            if not relevant_chunks:
+                logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
+                return {"result": {"endpoints": []}, "relevantDocumentations": []}
+            rest_result = {"result": {"endpoints": []}, "relevantDocumentations": []}
 
         result = await _retry_rest_endpoints_with_default_criteria(
             rest_result,
