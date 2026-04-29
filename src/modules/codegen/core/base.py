@@ -282,7 +282,7 @@ class BaseGroovyGenerator(ABC):
             logger.warning("%s No documentation items available", self.config.logger_prefix)
             return [], [], {}, []
 
-        if relevant_chunk_pairs:
+        if relevant_chunk_pairs is not None:
             # Use selected chunks based on pairs
             chunks, provenance, per_chunk_counts, selected_chunk_ids = ChunkProcessor.build_chunks_from_pairs(
                 relevant_chunk_pairs, documentation_items, self.config.logger_prefix

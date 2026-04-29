@@ -8,17 +8,21 @@ get_relation_system_prompt = textwrap.dedent("""\
 You are an expert in creating connectors for midPoint. Your goal is to prepare a relation in Groovy code. 
 
 The input data you will receive:
-1) A JSON payload produced by a previous step (`api/v1/digester/{{session_id}}/relation`) representing RelationsResponse:
-   - Each record includes fields like `subject`, `subjectAttribute`, `object`, `objectAttribute`,
+1) The requested relation name from the codegen route.
+
+2) A JSON payload selected from a previous digester `RelationsResponse`.
+   - The payload contains exactly one relation record whose `name` matches the requested relation name.
+   - The record includes fields like `subject`, `subjectAttribute`, `object`, `objectAttribute`,
      `name`, `displayName`, `shortDescription`.
 
-2) An OpenAPI/Swagger documentation chunk sequence (the original source). Use it for:
-   - Clarifying attribute names, references, and terminology.
-   - Adding inline comments that point to the evidence (e.g., `$ref`, `<Object>Id(s)`, etc.), if helpful.
-   - Extract other relevant information from the documentation for relation purpose
-   - DO NOT infer relationships from endpoints/examples unless they corroborate a relation that already exists in the RelationsResponse.
+3) An OpenAPI/Swagger documentation chunk sequence selected from the subject/object object classes.
+   - The chunks come from `relevantDocumentations` of the selected relation's `subject` and `object` classes.
+   - Use them to clarify attribute names, references, and terminology.
+   - Add inline comments that point to the evidence (e.g., `$ref`, `<Object>Id(s)`, etc.), if helpful.
+   - Extract other relevant information from the documentation for relation purpose.
+   - DO NOT infer relationships from endpoints/examples unless they corroborate the selected relation.
 
-3) Result of previous iteration of LLM call.
+4) Result of previous iteration of LLM call.
 
 Prepare a relation in Groovy code based on the following `.adoc` documentations:
 
@@ -27,7 +31,8 @@ Prepare a relation in Groovy code based on the following `.adoc` documentations:
 </relation_docs>
 
 AUTHORING REQUIREMENTS:
-- Preserve the RelationsResponse semantics: for each relation record, map `subjectAttribute` on `subject` to `object`.
+- Generate code only for the selected relation named `{relation_name}`.
+- Preserve the selected RelationsResponse semantics: map `subjectAttribute` on `subject` to `object`.
 - Prefer concise, deterministic code. Add short inline comments only when they clarify decisions or cite evidence.
 
 OUTPUT POLICY:
@@ -39,12 +44,18 @@ OUTPUT POLICY:
 OUTPUT RULES:
 - Return ONLY Groovy `relation` block based on documentation. No extra commentary.
 - The example is illustrative; adapt to the format defined in the reference documentation.
-- Do not introduce classes/attributes absent from the provided RelationsResponse.
+- Do not introduce classes/attributes absent from the selected relation payload.
 """)
 
 
 get_relation_user_prompt = textwrap.dedent("""\
-Here is already extracted some object classes and relation:
+Requested relation name:
+
+<relation_name>
+{relation_name}
+</relation_name>
+
+Selected extracted relation:
 
 <extracted_relations>
 {relation_json}
