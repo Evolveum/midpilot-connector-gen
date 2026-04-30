@@ -5,25 +5,36 @@
 import re
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    model_serializer,
+)
 
+from src.common.enums import ApiType
+from src.modules.digester.enums import (
+    AuthType,
+    ConfidenceLevel,
+    EndpointMethod,
+    EndpointType,
+    RelevantLevel,
+)
 
 # --- Object Classes ---
-class ObjectClass(BaseModel):
+
+
+class BaseObjectClass(BaseModel):
     """
-    IGA/IDM domain object class as extracted from API schemas.
-    The model guides the LLM to return only first-class identity/access concepts
-    (e.g., User, Group, Role, Permission, Organization, Membership/Assignment, Credential,
-    Attachment, Attribute/FieldDefinition) and to annotate basic taxonomy metadata.
+    Minimal shared representation.
+    Used when only identity + short meaning of the class are needed.
     """
 
     model_config = {
-        "json_encoders": {
-            # Custom JSON encoder to exclude None values
-            type(None): lambda _: None,
-        },
         "json_schema_extra": {
-            "exclude_none": True,  # Exclude None values from JSON output
+            "exclude_none": True,
         },
         "populate_by_name": True,
     }
@@ -35,14 +46,20 @@ class ObjectClass(BaseModel):
             "This should be a primary domain concept or a first-class link between such concepts."
         ),
     )
-    relevant: Literal["true", "false", "maybe"] = Field(
-        default="true",
+    description: str = Field(
         description=(
-            "Indicates whether this object class is relevant to the IDM/IGA domain. "
-            "All extracted object classes SHOULD already be filtered for relevance, "
-            "so this value is typically 'true'."
+            "A brief explanation of what this class represents in the system. "
+            "Include key characteristics and usage context. Keep it concise (1-2 sentences)."
         ),
     )
+
+
+class ExtendedObjectClass(BaseObjectClass):
+    """
+    First-pass extraction model.
+    Extends base information with structural metadata from the schema.
+    """
+
     superclass: Optional[str] = Field(
         default=None,
         description=(
@@ -73,24 +90,54 @@ class ObjectClass(BaseModel):
             "Leave false if not applicable."
         ),
     )
-    description: str = Field(
+
+
+class ObjectClassWithConfidence(BaseObjectClass):
+    """
+    Second-pass enrichment model.
+    Contains only base data + confidence from classification.
+    """
+
+    confidence: ConfidenceLevel = Field(
+        ...,
         description=(
-            "A brief explanation of what this class represents in the system. "
-            "Include key characteristics and usage context. Keep it concise (1-2 sentences)."
+            "Reliability/confidence for IGA/IDM relevance assigned in dedicated enrichment. "
+            "Allowed values: low, medium, high."
         ),
     )
+
+
+class RankedObjectClass(ExtendedObjectClass):
+    """
+    Third-pass sorting model.
+    Contains all ranking-relevant fields, excluding endpoints/attributes/chunk references.
+    """
+
+    relevant: RelevantLevel = Field(
+        default=RelevantLevel.TRUE,
+        description="IGA/IDM relevance marker for the final payload.",
+    )
+    confidence: ConfidenceLevel = Field(
+        ...,
+        description="Reliability/confidence level for IGA/IDM relevance (low/medium/high).",
+    )
+
+
+class FinalObjectClass(RankedObjectClass):
+    """
+    Final user-facing object class model.
+    Adds system-populated fields not used in LLM ranking prompts.
+    """
+
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
         validation_alias="relevantDocumentations",
         serialization_alias="relevantDocumentations",
-        json_schema_extra={"exclude": True},
         description=(
             "List of chunks that contain relevant information about this object class. "
-            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
-            "This field is populated automatically by the system and should NOT be filled by the LLM."
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings."
         ),
     )
-    # These fields will be excluded from JSON when None
     endpoints: Optional[List[Any]] = Field(
         default=None,
         exclude=True,
@@ -139,62 +186,89 @@ class ObjectClass(BaseModel):
 
 class ObjectClassesResponse(BaseModel):
     """
-    Container for extracted IGA/IDM object classes. Use the alias 'objectClasses' in output.
-    Return an empty list when none are present in the chunk.
+    Final object classes returned to API consumers.
     """
 
-    # Primary Python attribute in snake_case for convenient access in code/tests
-    object_classes: List[ObjectClass] = Field(
+    object_classes: List[FinalObjectClass] = Field(
         default_factory=list,
         validation_alias="objectClasses",
         serialization_alias="objectClasses",
         description=(
-            "List of extracted IGA/IDM-relevant object classes. Use the alias 'objectClasses' in the final JSON."
+            "List of extracted object classes enriched with confidence and returned in final order. "
+            "Use alias 'objectClasses' in JSON payloads."
         ),
     )
 
     model_config = {"populate_by_name": True}
 
-    # Backward-compatible camelCase property used throughout prompts/utils
     @property
-    def objectClasses(self) -> List[ObjectClass]:  # pragma: no cover - simple alias
+    def objectClasses(self) -> List[FinalObjectClass]:
         return self.object_classes
 
 
-class ObjectClassRelevancyItem(BaseModel):
+class ObjectClassesExtendedResponse(BaseModel):
     """
-    Item representing an object class as string with its relevancy status.
+    First LLM call response container.
     """
 
-    name: str = Field(
-        ...,
-        description="Exact name of the object class as it appears in the documentation.",
-    )
-    relevant: Literal["low", "medium", "high"] = Field(
-        ...,
+    object_classes: List[ExtendedObjectClass] = Field(
+        default_factory=list,
+        validation_alias="objectClasses",
+        serialization_alias="objectClasses",
         description=(
-            "Relevance of this class to IGA/IDM use-cases. Use 'high' for mission-critical domain entities, "
-            "'medium' for important but not central classes, and 'low' for peripheral or non-domain types."
+            "List of extracted extended object classes from the first pass. Use alias 'objectClasses' in JSON payloads."
         ),
     )
 
+    model_config = {"populate_by_name": True}
 
-class ObjectClassesRelevancyResponse(BaseModel):
+    @property
+    def objectClasses(self) -> List[ExtendedObjectClass]:
+        return self.object_classes
+
+
+class ObjectClassesConfidenceResponse(BaseModel):
     """
-    Container for filtered IGA/IDM object classes based on relevancy.
+    Second LLM call response container.
     """
 
-    objectClasses: List[ObjectClassRelevancyItem] = Field(
+    object_classes: List[ObjectClassWithConfidence] = Field(
         default_factory=list,
-        description=("List of ObjectClassRelevancyItem representing object classes with their relevancy status."),
+        validation_alias="objectClasses",
+        serialization_alias="objectClasses",
+        description="List of object classes with assigned confidence levels.",
     )
+
+    model_config = {"populate_by_name": True}
+
+    @property
+    def objectClasses(self) -> List[ObjectClassWithConfidence]:
+        return self.object_classes
+
+
+class ObjectClassesRankedResponse(BaseModel):
+    """
+    Third LLM call response container.
+    """
+
+    object_classes: List[RankedObjectClass] = Field(
+        default_factory=list,
+        validation_alias="objectClasses",
+        serialization_alias="objectClasses",
+        description=(
+            "Reordered list of ranked object classes. "
+            "Each item includes fields needed for ranking and final output composition."
+        ),
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @property
+    def objectClasses(self) -> List[RankedObjectClass]:
+        return self.object_classes
 
 
 # --- Object Classes ---
-
-
-# --- Auth ---
-AuthType = Literal["basic", "bearer", "oauth2", "apiKey", "session", "digest", "mtls", "openidConnect", "other"]
 
 
 class AuthInfo(BaseModel):
@@ -228,64 +302,64 @@ class AuthInfo(BaseModel):
 
     @field_validator("type", mode="before")
     @classmethod
-    def _normalize_auth_type(cls, value: Any) -> str:
+    def _normalize_auth_type(cls, value: Any) -> AuthType:
         """
         Normalize auth type variations to a stable, closed vocabulary.
         """
         if not isinstance(value, str):
-            return "other"
+            return AuthType.OTHER
 
         normalized = re.sub(r"[^a-z0-9]+", "", value.strip().lower())
 
         aliases = {
             # basic
-            "basic": "basic",
-            "basicauth": "basic",
-            "httpbasic": "basic",
+            "basic": AuthType.BASIC,
+            "basicauth": AuthType.BASIC,
+            "httpbasic": AuthType.BASIC,
             # bearer
-            "bearer": "bearer",
-            "jwt": "bearer",
-            "token": "bearer",
-            "accesstoken": "bearer",
-            "personalaccesstoken": "bearer",
-            "pat": "bearer",
+            "bearer": AuthType.BEARER,
+            "jwt": AuthType.BEARER,
+            "token": AuthType.BEARER,
+            "accesstoken": AuthType.BEARER,
+            "personalaccesstoken": AuthType.BEARER,
+            "pat": AuthType.BEARER,
             # oauth2
-            "oauth": "oauth2",
-            "oauth2": "oauth2",
-            "oauth2.0": "oauth2",
-            "oauth 2.0": "oauth2",
-            "oauth20": "oauth2",
-            "authorizationcode": "oauth2",
-            "clientcredentials": "oauth2",
-            "devicecode": "oauth2",
-            "pkce": "oauth2",
+            "oauth": AuthType.OAUTH2,
+            "oauth2": AuthType.OAUTH2,
+            "oauth2.0": AuthType.OAUTH2,
+            "oauth 2.0": AuthType.OAUTH2,
+            "oauth20": AuthType.OAUTH2,
+            "authorizationcode": AuthType.OAUTH2,
+            "clientcredentials": AuthType.OAUTH2,
+            "devicecode": AuthType.OAUTH2,
+            "pkce": AuthType.OAUTH2,
             # api key
-            "apikey": "apiKey",
-            "api_key": "apiKey",
-            "apikeyauth": "apiKey",
-            "xapikey": "apiKey",
+            "apikey": AuthType.API_KEY,
+            "api_key": AuthType.API_KEY,
+            "apikeyauth": AuthType.API_KEY,
+            "xapikey": AuthType.API_KEY,
             # session
-            "session": "session",
-            "cookie": "session",
-            "cookiesession": "session",
-            "sessioncookie": "session",
+            "session": AuthType.SESSION,
+            "cookie": AuthType.SESSION,
+            "cookiesession": AuthType.SESSION,
+            "sessioncookie": AuthType.SESSION,
             # digest
-            "digest": "digest",
-            "httpdigest": "digest",
+            "digest": AuthType.DIGEST,
+            "httpdigest": AuthType.DIGEST,
             # mtls
-            "mtls": "mtls",
-            "mutualtls": "mtls",
-            "clientcertificate": "mtls",
+            "mtls": AuthType.MTLS,
+            "mutualtls": AuthType.MTLS,
+            "clientcertificate": AuthType.MTLS,
             # openid connect
-            "openidconnect": "openidConnect",
-            "oidc": "openidConnect",
-            "openid": "openidConnect",
+            "openidconnect": AuthType.OPENID_CONNECT,
+            "oidc": AuthType.OPENID_CONNECT,
+            "openid": AuthType.OPENID_CONNECT,
             # fallback bucket
-            "other": "other",
-            "custom": "other",
+            "other": AuthType.OTHER,
+            "custom": AuthType.OTHER,
         }
 
-        return aliases.get(normalized, "other")
+        return aliases.get(normalized, AuthType.OTHER)
 
 
 class AuthResponse(BaseModel):
@@ -324,11 +398,30 @@ class BaseAPIEndpoint(BaseModel):
     """
 
     uri: str = Field(..., description="Base URL or URI template to call the API (e.g., https://host/api/v1).")
-    type: Literal["constant", "dynamic"] = Field(
-        ..., description="'constant' if same for all deployments; 'dynamic' if varies per tenant/installation."
+    type: EndpointType = Field(
+        default=EndpointType.UNKNOWN,
+        description=(
+            "'constant' if same for all deployments; 'dynamic' if varies per tenant/installation; "
+            "empty string when unknown."
+        ),
     )
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _normalize_type(cls, value: Any) -> EndpointType:
+        if isinstance(value, EndpointType):
+            return value
+        if value is None:
+            return EndpointType.UNKNOWN
+        if not isinstance(value, str):
+            return EndpointType.UNKNOWN
+
+        normalized = value.strip().lower()
+        if normalized in {EndpointType.CONSTANT.value, EndpointType.DYNAMIC.value}:
+            return EndpointType(normalized)
+        return EndpointType.UNKNOWN
 
 
 class InfoMetadata(BaseModel):
@@ -353,7 +446,7 @@ class InfoMetadata(BaseModel):
         serialization_alias="apiVersion",
         description="API version string as documented (e.g., 'v1', '2024-05', semantic).",
     )
-    api_type: List[Literal["REST", "SCIM"]] = Field(
+    api_type: List[ApiType] = Field(
         default_factory=list,
         validation_alias="apiType",
         serialization_alias="apiType",
@@ -370,7 +463,7 @@ class InfoMetadata(BaseModel):
 
     @field_validator("api_type", mode="before")
     @classmethod
-    def _normalize_api_type(cls, value: Any) -> List[str]:
+    def _normalize_api_type(cls, value: Any) -> List[ApiType]:
         """
         Normalize api types from various upstream sources.
         Keep only supported values and canonicalize their casing.
@@ -386,12 +479,14 @@ class InfoMetadata(BaseModel):
         else:
             return []
 
-        aliases = {
-            "rest": "REST",
-            "scim": "SCIM",
+        aliases: Dict[str, ApiType] = {
+            "rest": ApiType.REST,
+            "openapi": ApiType.REST,
+            "swagger": ApiType.REST,
+            "scim": ApiType.SCIM,
         }
 
-        normalized: List[str] = []
+        normalized: List[ApiType] = []
         for item in raw_values:
             if not isinstance(item, str):
                 continue
@@ -420,7 +515,7 @@ class InfoMetadata(BaseModel):
     @field_validator("base_api_endpoint", mode="after")
     @classmethod
     def _dedupe_and_sort_base_api_endpoint(cls, endpoints: List[BaseAPIEndpoint]) -> List[BaseAPIEndpoint]:
-        unique: Dict[tuple[str, str], BaseAPIEndpoint] = {}
+        unique: Dict[tuple[str, EndpointType], BaseAPIEndpoint] = {}
         for endpoint in endpoints or []:
             uri = (endpoint.uri or "").strip()
             if not uri:
@@ -431,7 +526,7 @@ class InfoMetadata(BaseModel):
 
         return sorted(
             unique.values(),
-            key=lambda endpoint: (endpoint.uri.lower(), 0 if endpoint.type == "constant" else 1),
+            key=lambda endpoint: (endpoint.uri.lower(), 0 if endpoint.type == EndpointType.CONSTANT else 1),
         )
 
 
@@ -585,8 +680,17 @@ class AttributeResponse(BaseModel):
 # --- Attributes ---
 
 
-# --- Endpoints ---
-EndpointMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+EndpointSuggestedUse = Literal[
+    "create",
+    "update",
+    "delete",
+    "getById",
+    "getAll",
+    "list",
+    "search",
+    "activate",
+    "deactivate",
+]
 
 
 class EndpointInfo(BaseModel):
@@ -624,11 +728,11 @@ class EndpointInfo(BaseModel):
         serialization_alias="requestContentType",
         description="Primary request media type if specified (often for POST/PUT/PATCH).",
     )
-    suggested_use: List[str] = Field(
+    suggested_use: List[EndpointSuggestedUse] = Field(
         default_factory=list,
         validation_alias="suggestedUse",
         serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'list', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
     )
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
@@ -708,11 +812,11 @@ class EndpointParamInfo(BaseModel):
         serialization_alias="requestContentType",
         description="Primary request media type if specified (often for POST/PUT/PATCH).",
     )
-    suggested_use: List[str] = Field(
+    suggested_use: List[EndpointSuggestedUse] = Field(
         default_factory=list,
         validation_alias="suggestedUse",
         serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
     )
 
 
@@ -742,35 +846,60 @@ class RelationRecord(BaseModel):
 
     name: str = Field(
         ...,
-        description="Human-readable name of the relation. ALWAYS provide a meaningful name based on the relationship (e.g., 'User to Group', 'Account to User', etc.). Never leave empty.",
+        description=(
+            "Stable machine-friendly relation identifier in lowercase snake_case "
+            "(e.g., 'user_to_group', 'membership_to_project')."
+        ),
+    )
+    display_name: str = Field(
+        ...,
+        validation_alias=AliasChoices("displayName", "display_name"),
+        serialization_alias="displayName",
+        description=(
+            "Human-readable relation name shown to users based on documentation "
+            "(e.g., 'User to Group', 'Membership to Project')."
+        ),
     )
     short_description: str = Field(
         default="",
         validation_alias="shortDescription",
         serialization_alias="shortDescription",
-        description="Short description or summary if present. LLM can propose if documentation do not has description",
+        description=(
+            "One concise sentence describing the relation meaning, grounded in documentation evidence. "
+            "Leave empty when no trustworthy short description can be derived."
+        ),
     )
     subject: str = Field(
         ...,
         description=(
-            "Normalized lowercase name of the subject class (owner of the attribute). Must refer to a relevant class."
+            "Normalized subject object-class name (lowercase) selected from the relevant object classes list. "
+            "The subject is the side that consumes/receives membership, entitlement, assignment, or access."
         ),
     )
     subject_attribute: Optional[str] = Field(
         default="",
         validation_alias="subjectAttribute",
         serialization_alias="subjectAttribute",
-        description="Exact property name on the subject that establishes the relation (raw as in schema).",
+        description=(
+            "Attribute on the subject that points to object identifiers/references (e.g., groups, roles, projects). "
+            "Can be a virtual attribute name when the relation is explicit only via inverse/query evidence."
+        ),
     )
     object: str = Field(
         ...,
-        description="Normalized lowercase name of the object class being referenced by the subject's property.",
+        description=(
+            "Normalized object object-class name (lowercase) selected from the relevant object classes list. "
+            "The object is the target entity referenced/assigned/owned by the subject."
+        ),
     )
     object_attribute: Optional[str] = Field(
         default="",
         validation_alias="objectAttribute",
         serialization_alias="objectAttribute",
-        description="Exact back-reference property name on the object class if explicitly documented; else empty.",
+        description=(
+            "Inverse attribute on the object that points back to subject identifiers/references "
+            "(e.g., members, owners). Leave empty when not documented or not applicable."
+        ),
     )
 
 

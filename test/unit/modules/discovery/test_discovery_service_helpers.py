@@ -4,15 +4,12 @@
 
 import json
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
 
-import pytest
 from langchain_core.messages import AIMessage
 
 import src.modules.discovery.core.search as search
 import src.modules.discovery.utils.llm_helpers as llm_helpers
-from src.modules.discovery import service
-from src.modules.discovery.schema import CandidateLinksInput, PyScrapeFetchReferences, PySearchPrompts
+from src.modules.discovery.schema import PyScrapeFetchReferences, PySearchPrompts
 
 
 def test_search_with_ddgs():
@@ -95,51 +92,53 @@ def test_generate_query_via_llm(mock_llm, mock_llm_eval):
 
     assert len(queries) == 3
     assert "test search query 1" in queries
+    assert parsed.search_prompts[0] == "test search query 1"
     mock_llm.return_value.invoke.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_fetch_candidate_links(mock_llm, mock_llm_eval, mock_search_web, mock_discovery_update_job_progress):
-    """Test the main fetch_candidate_links function."""
-
-    # Main LLM returns JSON content used later in pipeline
-    mock_llm.return_value.invoke.return_value = AIMessage(
-        content=json.dumps({"name": "test", "urlsToCrawl": ["https://example.com/1"], "textOutput": "test output"})
+def test_generate_queries_via_preset_uses_available_templates_up_to_num_queries():
+    templates = [
+        "{app} REST API documentation {version}",
+        "{app} SCIM 2.0 documentation {version}",
+    ]
+    queries, _, parsed = llm_helpers.generate_queries_via_preset(
+        app="LiteLLM",
+        version="latest",
+        num_queries=8,
+        templates=templates,
     )
 
+    assert len(queries) == 2
+    assert len(set(queries)) == 2
+    assert queries[0] == "LiteLLM REST API documentation latest"
+    assert queries[1] == "LiteLLM SCIM 2.0 documentation latest"
+    assert parsed.search_prompts == queries
+
+
+def test_generate_query_via_llm_adds_fallback_templates_when_llm_returns_too_few(mock_llm, mock_llm_eval):
+    mock_llm.return_value.invoke.return_value = AIMessage(content=json.dumps({"searchPrompts": ["query from llm"]}))
+
     with (
-        patch("src.modules.discovery.utils.discovery_helpers.get_default_llm") as mock_llm_default,
         patch("src.modules.discovery.utils.llm_helpers.OutputFixingParser") as mock_ofp,
         patch("src.modules.discovery.utils.llm_helpers.PydanticOutputParser"),
     ):
-        # Mock the LLMs that get called inside _run_discovery_blocking
-        mock_llm_default.return_value = mock_llm.return_value
+        meta = MagicMock()
+        meta.parse.return_value = PySearchPrompts(search_prompts=["query from llm"])
+        mock_ofp.from_llm.return_value = meta
 
-        # First parser: for _generate_query_via_llm -> returns PySearchPrompt
-        meta_prompt = MagicMock()
-        meta_prompt.parse.return_value = PySearchPrompts(
-            search_prompts=["test search query 1", "test search query 2", "test search query 3"]
+        queries, _, _ = llm_helpers.generate_queries_via_llm(
+            model=mock_llm.return_value,
+            parser_model=mock_llm_eval.return_value,
+            user_prompt="test user prompt",
+            system_prompt="test system prompt",
+            num_queries=3,
+            fallback_templates=[
+                "{app} REST API documentation {version}",
+                "{app} SCIM 2.0 documentation {version}",
+            ],
         )
 
-        # Second parser: for fetch_parser_response -> returns PyScrapeFetchReferences
-        meta_refs = MagicMock()
-        meta_refs.parse.return_value = PyScrapeFetchReferences(
-            name="test", urls_to_crawl=["https://example.com/1"], text_output="ok"
-        )
-
-        # Ensure two distinct returns for two OutputFixingParser.from_llm(...) calls
-        mock_ofp.from_llm.side_effect = [meta_prompt, meta_refs]
-
-        input_data = CandidateLinksInput(
-            application_name="test-app",
-            application_version="1.0.0",
-            llm_generated_search_query=True,
-            enable_link_filtering=False,
-        )
-
-        result = await service.fetch_candidate_links(input_data, uuid4())
-
-        assert len(result.candidate_links) > 0
-        assert "https://example.com/1" in result.candidate_links
-        assert len(result.candidate_links_enriched) > 0
-        mock_discovery_update_job_progress.assert_called()
+    assert len(queries) == 3
+    assert queries[0] == "query from llm"
+    assert "{app} REST API documentation {version}" in queries
+    assert "{app} SCIM 2.0 documentation {version}" in queries

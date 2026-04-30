@@ -2,8 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 from dataclasses import dataclass
-from enum import Enum
-from typing import Literal
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -17,24 +16,6 @@ class OperationAssets:
     docs_path: str
 
 
-class ApiProtocol(str, Enum):
-    REST = "rest"
-    SCIM = "scim"
-
-
-SearchIntent = Literal["all", "filter", "id"]
-
-_SEARCH_INTENT_SUFFIX: dict[SearchIntent, str] = {
-    "all": "All",
-    "filter": "Filter",
-    "id": "Id",
-}
-
-
-def build_search_operation_key(object_class: str, intent: SearchIntent) -> str:
-    return f"{object_class}Search{_SEARCH_INTENT_SUFFIX[intent]}"
-
-
 class GroovyCodePayload(BaseModel):
     code: str = Field(..., description="Groovy code")
 
@@ -42,3 +23,40 @@ class GroovyCodePayload(BaseModel):
     @classmethod
     def validate_code(cls, value: str) -> str:
         return ensure_valid_groovy_code(value)
+
+
+class PreferredEndpointsPayload(BaseModel):
+    method: str = Field(..., description="HTTP method of the preferred endpoint.")
+    path: str = Field(..., description="Path of the preferred endpoint.")
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError("method cannot be empty")
+        return normalized
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("path cannot be empty")
+        return normalized
+
+
+class PreferredEndpointsInput(BaseModel):
+    preferred_endpoints: list[PreferredEndpointsPayload] = Field(
+        default_factory=list,
+        validation_alias="preferredEndpoints",
+        serialization_alias="preferredEndpoints",
+        description="Optional user-provided preferred endpoints used to focus code generation.",
+    )
+
+    @field_validator("preferred_endpoints", mode="before")
+    @classmethod
+    def normalize_preferred_endpoints(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        return value

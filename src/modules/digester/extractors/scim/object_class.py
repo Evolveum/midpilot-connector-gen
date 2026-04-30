@@ -14,15 +14,22 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from src.common.jobs import update_job_progress
+from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.prompts.scim.object_class_prompts import (
     scim_object_class_system_prompt,
     scim_object_class_user_prompt,
 )
-from src.modules.digester.schema import ObjectClass, ObjectClassesResponse
+from src.modules.digester.schema import (
+    ExtendedObjectClass,
+    FinalObjectClass,
+    ObjectClassesExtendedResponse,
+    ObjectClassesResponse,
+)
 from src.modules.digester.scim.loader import get_base_scim_object_classes, load_scim_base_schemas
-from src.modules.digester.utils.chunk_extraction import extract_single_chunk
+from src.modules.digester.utils.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.metadata_helper import build_doc_metadata_map
+from src.modules.digester.utils.object_classes import confidence_order_key
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +64,10 @@ async def extract_scim_object_classes(
     # Step 1: Load SCIM base object classes
     base_classes_data = get_base_scim_object_classes()
     base_classes = [
-        ObjectClass(
+        FinalObjectClass(
             name=cls["name"],
-            relevant="true",
+            relevant=RelevantLevel.TRUE,
+            confidence=ConfidenceLevel.HIGH,
             superclass=cls.get("superclass"),
             abstract=cls.get("abstract", False),
             embedded=cls.get("embedded", False),
@@ -71,7 +79,7 @@ async def extract_scim_object_classes(
     logger.info("[SCIM:ObjectClasses] Loaded %d base SCIM classes", len(base_classes))
 
     # Step 2: Extract custom extensions from documentation
-    all_custom_classes: List[ObjectClass] = []
+    all_custom_classes: List[ExtendedObjectClass] = []
     all_relevant_chunks: List[Dict[str, Any]] = []
     class_to_chunks: Dict[str, List[Dict[str, Any]]] = {}
     chunk_id_to_doc_id: Dict[str, str] = {}
@@ -85,6 +93,15 @@ async def extract_scim_object_classes(
 
     # Load base schemas for LLM context
     scim_schemas = load_scim_base_schemas()
+    extraction_chain = (
+        build_chunk_extraction_chain(
+            pydantic_model=ObjectClassesExtendedResponse,
+            system_prompt=scim_object_class_system_prompt,
+            user_prompt=scim_object_class_user_prompt,
+        )
+        if doc_items
+        else None
+    )
 
     # Create extractor function that includes SCIM schemas
     async def extractor_with_scim_schemas(content: str, job_id: UUID, chunk_id: UUID):
@@ -95,6 +112,7 @@ async def extract_scim_object_classes(
             chunk_id=chunk_id,
             scim_base_schemas=scim_schemas,
             chunk_metadata=chunk_metadata,
+            extraction_chain=extraction_chain,
         )
         return custom_classes, has_relevant_data
 
@@ -123,9 +141,7 @@ async def extract_scim_object_classes(
             if class_name not in class_to_chunks:
                 class_to_chunks[class_name] = []
 
-            if obj_class.relevant_documentations:
-                class_to_chunks[class_name].extend(obj_class.relevant_documentations)
-            elif doc_id:
+            if doc_id:
                 class_to_chunks[class_name].append({"doc_id": doc_id, "chunk_id": chunk_id})
             else:
                 logger.warning(
@@ -159,13 +175,27 @@ async def extract_scim_object_classes(
     )
 
     # Step 4: Merge base + custom
-    all_classes = base_classes + all_custom_classes
+    custom_classes = [
+        FinalObjectClass(
+            name=obj_class.name,
+            relevant=RelevantLevel.TRUE,
+            confidence=ConfidenceLevel.MEDIUM,
+            superclass=obj_class.superclass,
+            abstract=obj_class.abstract,
+            embedded=obj_class.embedded,
+            description=obj_class.description,
+        )
+        for obj_class in all_custom_classes
+    ]
+    all_classes = base_classes + custom_classes
 
     # Step 5: Attach relevant chunks to merged classes
     for obj_class in all_classes:
         class_name = obj_class.name.strip().lower()
         if class_name in class_to_chunks:
             obj_class.relevant_documentations = class_to_chunks[class_name]
+
+    all_classes.sort(key=lambda item: (confidence_order_key(item.confidence), item.name.strip().lower()))
 
     # Create response
     result = ObjectClassesResponse(object_classes=all_classes)
@@ -179,7 +209,7 @@ async def extract_scim_object_classes(
 
 
 async def _find_relevant_chunks_for_base_classes(
-    base_classes: List[ObjectClass],
+    base_classes: List[FinalObjectClass],
     doc_items: List[dict],
     class_to_chunks: Dict[str, List[Dict[str, Any]]],
 ) -> None:
@@ -253,7 +283,8 @@ async def extract_custom_scim_classes(
     chunk_id: Optional[UUID] = None,
     chunk_metadata: Optional[Dict[str, Any]] = None,
     scim_base_schemas: Optional[Dict[str, Any]] = None,
-) -> Tuple[List[ObjectClass], bool]:
+    extraction_chain: Any | None = None,
+) -> Tuple[List[ExtendedObjectClass], bool]:
     """
     Extract ONLY custom SCIM extensions and additional resources from a chunk.
     Does NOT extract standard User, Group, EnterpriseUser.
@@ -263,18 +294,19 @@ async def extract_custom_scim_classes(
         job_id: Job ID for progress tracking
         chunk_id: Optional chunk UUID
         scim_base_schemas: Optional SCIM base schemas for LLM context
+        extraction_chain: Optional pre-built reusable extraction chain
 
     Returns:
-        - List of custom ObjectClass instances
+        - List of custom ExtendedObjectClass instances
         - Boolean indicating if relevant data was found
     """
 
-    def parse_fn(result: ObjectClassesResponse) -> List[ObjectClass]:
+    def parse_fn(result: ObjectClassesExtendedResponse) -> List[ExtendedObjectClass]:
         return result.objectClasses or []
 
     extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
-        pydantic_model=ObjectClassesResponse,
+        pydantic_model=ObjectClassesExtendedResponse,
         system_prompt=scim_object_class_system_prompt,
         user_prompt=scim_object_class_user_prompt,
         parse_fn=parse_fn,
@@ -283,10 +315,11 @@ async def extract_custom_scim_classes(
         chunk_id=chunk_id,
         track_chunk_per_item=True,
         chunk_metadata=chunk_metadata,
+        extraction_chain=extraction_chain,
     )
 
     # Filter out any standard SCIM classes that LLM might have mistakenly extracted
-    custom_only: List[ObjectClass] = []
+    custom_only: List[ExtendedObjectClass] = []
     standard_classes = {"user", "group", "enterpriseuser"}
 
     for obj_class in extracted:

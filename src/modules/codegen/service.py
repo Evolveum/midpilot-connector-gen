@@ -8,7 +8,8 @@ from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
+from src.common.enums import ApiType
+from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.core.operations import (
     CreateGenerator,
@@ -17,16 +18,17 @@ from src.modules.codegen.core.operations import (
     SearchGenerator,
     UpdateGenerator,
 )
+from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
 from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_system_prompt,
     get_native_schema_user_prompt,
 )
-from src.modules.codegen.schema import SearchIntent
 from src.modules.codegen.selection.docs_loader import read_adoc_text
-from src.modules.codegen.selection.protocol_selectors import ApiProtocol, get_operation_assets
+from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.codegen.utils.map_to_record import attributes_to_records_for_codegen
 from src.modules.digester.schema import AttributeResponse, EndpointResponse, RelationsResponse
+from src.modules.digester.utils.object_classes import find_object_class, get_relevant_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,39 @@ def _merge_unique_pairs(*seqs: Iterable[Tuple[int, Optional[str]]]) -> List[Tupl
     return merged
 
 
+def _collect_relation_object_class_pairs(
+    relations: RelationsResponse, object_classes_output: Any
+) -> List[Dict[str, str]]:
+    """
+    Select object-class documentation chunks for the relation subject and object.
+    """
+    if not relations.relations or not isinstance(object_classes_output, dict):
+        return []
+
+    object_classes = object_classes_output.get("objectClasses", [])
+    if not isinstance(object_classes, list):
+        return []
+
+    selected_relation = relations.relations[0]
+    selected_chunks: List[Dict[str, str]] = []
+    seen_chunk_ids: set[str] = set()
+
+    for class_name in (selected_relation.subject, selected_relation.object):
+        object_class_data = find_object_class(object_classes, class_name)
+        if object_class_data is None:
+            logger.warning("[Codegen:Relation] Object class %s not found in objectClassesOutput", class_name)
+            continue
+
+        for chunk in get_relevant_chunks(object_class_data):
+            chunk_id = chunk["chunk_id"]
+            if chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(chunk_id)
+            selected_chunks.append({"doc_id": chunk["doc_id"], "chunk_id": chunk_id})
+
+    return selected_chunks
+
+
 async def _collect_relevant_chunks(
     session_id: UUID, object_class: str, operation_name: str
 ) -> Tuple[Optional[List[int]], Optional[List[Dict[str, Any]]]]:
@@ -159,7 +194,7 @@ async def create_native_schema(
     """
 
     api_types = await get_session_api_types(session_id)
-    protocol = ApiProtocol.SCIM if is_scim_api(api_types) else ApiProtocol.REST
+    protocol = ApiType.SCIM if is_scim_api(api_types) else ApiType.REST
     assets = get_operation_assets("native_schema", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
 
@@ -208,6 +243,7 @@ async def create_search(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
+    preferred_endpoints: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     intent: SearchIntent,
@@ -219,17 +255,20 @@ async def create_search(
     """
     # Get API types and select appropriate documentation
     api_types = await get_session_api_types(session_id)
-    protocol = ApiProtocol.SCIM if is_scim_api(api_types) else ApiProtocol.REST
-    assets = get_operation_assets("search", protocol)
+    protocol = ApiType.SCIM if is_scim_api(api_types) else ApiType.REST
+    assets = get_search_operation_assets(protocol, intent)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    base_api_url = await get_session_base_api_url(session_id)
 
     generator = SearchGenerator(
         object_class=object_class,
         intent=intent,
+        preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
+        base_api_url=base_api_url,
     )
 
     # Collect relevant chunks
@@ -252,6 +291,7 @@ async def create_create(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
+    preferred_endpoints: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -262,16 +302,19 @@ async def create_create(
     """
     # Get API types and select appropriate documentation
     api_types = await get_session_api_types(session_id)
-    protocol = ApiProtocol.SCIM if is_scim_api(api_types) else ApiProtocol.REST
+    protocol = ApiType.SCIM if is_scim_api(api_types) else ApiType.REST
     assets = get_operation_assets("create", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    base_api_url = await get_session_base_api_url(session_id)
 
     generator = CreateGenerator(
         object_class=object_class,
+        preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
+        base_api_url=base_api_url,
     )
 
     # Collect relevant chunks
@@ -293,6 +336,7 @@ async def create_update(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
+    preferred_endpoints: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -303,16 +347,19 @@ async def create_update(
     """
     # Get API types and select appropriate documentation
     api_types = await get_session_api_types(session_id)
-    protocol = ApiProtocol.SCIM if is_scim_api(api_types) else ApiProtocol.REST
+    protocol = ApiType.SCIM if is_scim_api(api_types) else ApiType.REST
     assets = get_operation_assets("update", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    base_api_url = await get_session_base_api_url(session_id)
 
     generator = UpdateGenerator(
         object_class=object_class,
+        preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
+        base_api_url=base_api_url,
     )
 
     # Collect relevant chunks
@@ -334,6 +381,7 @@ async def create_delete(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
+    preferred_endpoints: Optional[List[Dict[str, Any]]] = None,
     session_id: UUID,
     object_class: str,
     job_id: UUID,
@@ -344,16 +392,19 @@ async def create_delete(
     """
     # Get API types and select appropriate documentation
     api_types = await get_session_api_types(session_id)
-    protocol = ApiProtocol.SCIM if is_scim_api(api_types) else ApiProtocol.REST
+    protocol = ApiType.SCIM if is_scim_api(api_types) else ApiType.REST
     assets = get_operation_assets("delete", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    base_api_url = await get_session_base_api_url(session_id)
 
     generator = DeleteGenerator(
         object_class=object_class,
+        preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
+        base_api_url=base_api_url,
     )
 
     # Collect relevant chunks
@@ -374,6 +425,7 @@ async def create_delete(
 async def create_relation(
     *,
     relations: RelationsResponse,
+    relation_name: str,
     session_id: UUID,
     job_id: UUID,
 ) -> Dict[str, str]:
@@ -387,19 +439,23 @@ async def create_relation(
 
     async with async_session_maker() as db:
         repo = SessionRepository(db)
-        relevant_map = await repo.get_session_data(session_id, "relevantDocumentations")
+        object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
 
-    if relevant_map:
-        raw = relevant_map.get("relationsOutput")
-        pairs = _collect_pairs(raw)
-        if pairs:
-            relevant_indices = [i for i, _ in pairs]
-            relevant_pairs = [{"chunk_id": chunk_id} for _, chunk_id in pairs if chunk_id]
-            logger.info(
-                "[Codegen:Relation] Relevant chunks for indices_only=%d, pairs_with_uuid=%d",
-                len(relevant_indices or []),
-                len(relevant_pairs or []),
-            )
+    object_class_chunks = _collect_relation_object_class_pairs(relations, object_classes_output)
+    relevant_pairs = object_class_chunks
+    pairs = _collect_pairs(object_class_chunks)
+    if pairs:
+        relevant_indices = [i for i, _ in pairs]
+        selected_relation = relations.relations[0]
+        logger.info(
+            "[Codegen:Relation] Relevant chunks from objectClassesOutput for %s: subject=%s, object=%s, chunks=%d",
+            relation_name,
+            selected_relation.subject,
+            selected_relation.object,
+            len(relevant_pairs) if relevant_pairs else 0,
+        )
+    else:
+        logger.warning("[Codegen:Relation] No relevant object-class chunks found for relation %s", relation_name)
 
     generator = RelationGenerator(docs_text=relation_docs_text)
     code = await generator.generate(
@@ -408,5 +464,6 @@ async def create_relation(
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
         relations=relations,
+        relation_name=relation_name,
     )
     return {"code": code}

@@ -46,14 +46,13 @@ router = APIRouter()
 )
 async def extract_object_classes(
     session_id: UUID = Path(..., description="Session ID"),
-    filter_relevancy: bool = Query(True, description="Filter object classes by relevancy"),
-    min_relevancy_level: str = Query("high", description="Minimum relevancy level (low/medium/high)"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Extract object classes from documentation stored in or uploaded to the session.
-    Optionally filter documentation items based on provided criteria.
+    Returns all extracted object classes enriched with confidence (high/medium/low)
+    ordered from highest to lowest confidence.
     Returns jobId to poll for results.
     """
     repo = SessionRepository(db)
@@ -62,16 +61,12 @@ async def extract_object_classes(
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
         input_payload={
-            "filterRelevancy": filter_relevancy,
-            "minRelevancyLevel": min_relevancy_level,
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         dynamic_input_enabled=True,
         dynamic_input_provider=object_classes_input,
         worker=service.extract_object_classes,
         worker_kwargs={
-            "filter_relevancy": filter_relevancy,
-            "min_relevancy_level": min_relevancy_level,
             "session_id": session_id,
         },
         initial_stage="chunking",
@@ -87,9 +82,7 @@ async def extract_object_classes(
         {
             "objectClassesJobId": str(job_id),
             "objectClassesInput": {
-                "filterRelevancy": filter_relevancy,
-                "minRelevancyLevel": min_relevancy_level,
-                "usePreviousSessionData": use_previous_session_data,
+                "skipCache": skip_cache,
             },
         },
     )
@@ -115,7 +108,7 @@ async def get_object_classes_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -123,7 +116,7 @@ async def get_object_classes_status(
         job_label="object classes",
     )
 
-    response = await build_typed_job_status_response(jobId, ObjectClassesResponse)
+    response = await build_typed_job_status_response(resolved_job_id, ObjectClassesResponse)
 
     if response.status == JobStatus.finished:
         object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
@@ -257,7 +250,7 @@ async def upload_one_object_class(
 async def extract_class_attributes(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name (e.g., 'User', 'Group')"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -304,7 +297,7 @@ async def extract_class_attributes(
             "documentationItems": doc_items,
             "objectClass": object_class,
             "relevantDocumentations": relevant_chunks,
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         worker=service.extract_attributes,
         worker_args=(doc_items, object_class, session_id, relevant_chunks),
@@ -346,7 +339,7 @@ async def get_class_attributes_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -356,7 +349,7 @@ async def get_class_attributes_status(
     )
 
     # Get job status but override result with current session data
-    response = await build_typed_job_status_response(jobId, AttributeResponse)
+    response = await build_typed_job_status_response(resolved_job_id, AttributeResponse)
 
     # If job is finished, replace result with current session data (which may have been updated)
     if response.status == JobStatus.finished:
@@ -407,7 +400,7 @@ async def override_class_attributes(
 async def extract_class_endpoints(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -475,7 +468,7 @@ async def extract_class_endpoints(
             "objectClass": object_class,
             "baseApiUrl": base_api_url,
             "relevantDocumentations": relevant_chunks,
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         worker=service.extract_endpoints,
         worker_args=(doc_items, object_class, session_id, relevant_chunks),
@@ -518,7 +511,7 @@ async def get_class_endpoints_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -527,7 +520,7 @@ async def get_class_endpoints_status(
         not_found_detail=f"No endpoints job found for {object_class} in session {session_id}",
     )
 
-    return await build_typed_job_status_response(jobId, EndpointResponse)
+    return await build_typed_job_status_response(resolved_job_id, EndpointResponse)
 
 
 @router.put(
@@ -564,12 +557,12 @@ async def override_class_endpoints(
 )
 async def extract_relations(
     session_id: UUID = Path(..., description="Session ID"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Extract relations between object classes from documentation.
-    Loads relevant object classes from session (where relevant=true).
+    Loads object classes from session.
 
     NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
@@ -594,7 +587,7 @@ async def extract_relations(
         input_payload={
             "documentationItems": doc_items,
             "relevantObjectClasses": relevant,
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         worker=service.extract_relations,
         worker_args=(doc_items, relevant),
@@ -610,7 +603,7 @@ async def extract_relations(
             "relationsJobId": str(job_id),
             "relationsInput": {
                 "relevantObjectClasses": relevant,
-                "usePreviousSessionData": use_previous_session_data,
+                "skipCache": skip_cache,
             },
         },
     )
@@ -634,7 +627,7 @@ async def get_relations_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -642,7 +635,7 @@ async def get_relations_status(
         job_label="relations",
     )
 
-    return await build_typed_job_status_response(jobId, RelationsResponse)
+    return await build_typed_job_status_response(resolved_job_id, RelationsResponse)
 
 
 @router.put(
@@ -651,7 +644,7 @@ async def get_relations_status(
 )
 async def override_relations(
     session_id: UUID = Path(..., description="Session ID"),
-    relations: Dict[str, Any] = Body(..., description="Relations data as JSON"),
+    relations: RelationsResponse = Body(..., description="Relations data as JSON"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -660,7 +653,7 @@ async def override_relations(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {"relationsOutput": relations})
+    await repo.update_session(session_id, {"relationsOutput": relations.model_dump(by_alias=True, mode="json")})
 
     return {"message": "Relations overridden successfully", "sessionId": session_id}
 
@@ -673,7 +666,7 @@ async def override_relations(
 )
 async def extract_auth(
     session_id: UUID = Path(..., description="Session ID"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -684,10 +677,10 @@ async def extract_auth(
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getAuth",
-        input_payload={"usePreviousSessionData": use_previous_session_data},
+        input_payload={"skipCache": skip_cache},
         dynamic_input_enabled=True,
         dynamic_input_provider=auth_input,
-        worker=service.extract_auth,
+        worker=service.extract_auth_with_fallback,
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
@@ -702,7 +695,7 @@ async def extract_auth(
         {
             "authJobId": str(job_id),
             "authInput": {
-                "usePreviousSessionData": use_previous_session_data,
+                "skipCache": skip_cache,
             },
         },
     )
@@ -726,7 +719,7 @@ async def get_auth_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -734,7 +727,7 @@ async def get_auth_status(
         job_label="auth",
     )
 
-    return await build_typed_job_status_response(jobId, AuthResponse)
+    return await build_typed_job_status_response(resolved_job_id, AuthResponse)
 
 
 @router.post(
@@ -744,7 +737,7 @@ async def get_auth_status(
 )
 async def extract_metadata(
     session_id: UUID = Path(..., description="Session ID"),
-    use_previous_session_data: bool = Query(True, description="Whether to use previous session data if available"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -755,7 +748,7 @@ async def extract_metadata(
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getInfoMetadata",
-        input_payload={"usePreviousSessionData": use_previous_session_data},
+        input_payload={"skipCache": skip_cache},
         dynamic_input_enabled=True,
         dynamic_input_provider=metadata_input,
         worker=service.extract_info_metadata,
@@ -773,7 +766,7 @@ async def extract_metadata(
         {
             "metadataJobId": str(job_id),
             "metadataInput": {
-                "usePreviousSessionData": use_previous_session_data,
+                "skipCache": skip_cache,
             },
         },
     )
@@ -797,7 +790,7 @@ async def get_metadata_status(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    jobId = await resolve_session_job_id(
+    resolved_job_id = await resolve_session_job_id(
         repo,
         session_id,
         jobId,
@@ -805,4 +798,24 @@ async def get_metadata_status(
         job_label="metadata",
     )
 
-    return await build_typed_job_status_response(jobId, InfoResponse)
+    return await build_typed_job_status_response(resolved_job_id, InfoResponse)
+
+
+@router.put(
+    "/{session_id}/metadata",
+    summary="Restore metadata information",
+)
+async def restore_metadata(
+    session_id: UUID = Path(..., description="Session ID"),
+    metadata: InfoResponse = Body(..., description="Info metadata payload as JSON"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Restore metadataOutput in session from provided infoMetadata payload.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    await repo.update_session(session_id, {"metadataOutput": metadata.model_dump(by_alias=True)})
+
+    return {"message": "Metadata updated successfully", "sessionId": session_id}

@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from src.modules.codegen.schema import GroovyCodePayload
+from src.modules.codegen.schema import GroovyCodePayload, PreferredEndpointsInput
 from src.modules.codegen.utils.groovy_validation import GroovyValidationError, validate_groovy_code
 
 
@@ -37,3 +37,20 @@ def test_groovy_code_payload_raises_when_validation_fails() -> None:
     with patch("src.modules.codegen.schema.ensure_valid_groovy_code", side_effect=failure):
         with pytest.raises(ValidationError):
             GroovyCodePayload.model_validate({"code": 'objectClass("User") {'})
+
+
+def test_preferred_endpoints_input_accepts_preferred_payload() -> None:
+    wrapped_preferred = PreferredEndpointsInput.model_validate(
+        {
+            "preferredEndpoints": [
+                {"method": "POST", "path": "/users"},
+                {"method": "GET", "path": "/users/{id}"},
+            ]
+        }
+    )
+
+    expected = [
+        {"method": "POST", "path": "/users"},
+        {"method": "GET", "path": "/users/{id}"},
+    ]
+    assert [endpoint.model_dump() for endpoint in wrapped_preferred.preferred_endpoints] == expected

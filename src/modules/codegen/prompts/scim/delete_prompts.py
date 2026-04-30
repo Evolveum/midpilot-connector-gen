@@ -11,6 +11,7 @@ The input data you will receive:
 1. A fragment that was extracted in the previous step LLM from the SCIM attributes for {object_class}.
 2. A chunk of the original document (e.g., SCIM spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated, such as parameter semantics, data types, required vs optional fields, authentication hints, default values, example requests/responses, error behavior, soft delete behavior, and SCIM-specific constraints.
 3. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
+4. Optional user-provided preferred endpoints in JSON are `{preferred_endpoints_json}`.
 
 Prepare a valid Groovy code for delete schema in Groovy based on the following `.adoc` documentations:
 
@@ -19,11 +20,14 @@ Prepare a valid Groovy code for delete schema in Groovy based on the following `
 </delete_docs>
 
 Output rules:
+- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
 - SCIM deletes use DELETE method to the resource endpoint with ID: DELETE /Users/{{id}}.
 - Typically returns 204 No Content with no response body.
 - Consider soft delete behavior if provider uses active=false pattern.
 - Treat <extracted_attributes> as the primary sources of truth. Prefer them over the examples in <delete_docs>.
+- If <preferred_endpoints> are provided, prioritize endpoints from this list whenever they are compatible with SCIM behavior and docs.
+- If <preferred_endpoints> conflict with docs or SCIM semantics, prefer documented behavior and leave a short TODO comment about the mismatch.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it; do not discard or rename previously correct parts.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment instead of guessing.
 - Preserve the outer objectClass and delete blocks if already present in <result>.
@@ -41,6 +45,12 @@ Here is extracted object class attributes from SCIM schema wrapped into JSON fro
 <extracted_attributes>
 {attributes_json}
 </extracted_attributes>
+
+Optional user-provided preferred endpoints (JSON):
+
+<preferred_endpoints>
+{preferred_endpoints_json}
+</preferred_endpoints>
 
 Here is chunk where you have to find additional information:
 <chunk>

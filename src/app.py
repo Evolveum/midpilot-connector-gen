@@ -13,10 +13,7 @@ from src.router import root_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        await recover_stale_running_jobs()
-    except Exception:
-        pass
+    await recover_stale_running_jobs()
     yield
 
 

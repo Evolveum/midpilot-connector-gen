@@ -10,6 +10,42 @@ from src.common.chunks import normalize_to_text
 logger = logging.getLogger(__name__)
 
 
+def build_chunk_id_to_doc_id(chunk_items: List[dict]) -> Dict[str, str]:
+    """Build chunk_id -> doc_id mapping from documentation items."""
+    mapping: Dict[str, str] = {}
+    for item in chunk_items:
+        raw_chunk_id = item.get("chunkId")
+        raw_doc_id = item.get("docId")
+        if raw_chunk_id and raw_doc_id:
+            mapping[str(raw_chunk_id).strip()] = str(raw_doc_id).strip()
+    return mapping
+
+
+def build_relevant_chunks_from_doc_items(chunk_items: List[dict]) -> List[Dict[str, Any]]:
+    """Build relevant chunk descriptors from filtered documentation items."""
+    relevant_chunks: List[Dict[str, Any]] = []
+    for item in chunk_items:
+        raw_chunk_id = item.get("chunkId")
+        raw_doc_id = item.get("docId")
+        if raw_chunk_id and raw_doc_id:
+            relevant_chunks.append({"doc_id": str(raw_doc_id).strip(), "chunk_id": str(raw_chunk_id).strip()})
+    return relevant_chunks
+
+
+def chunk_ids_from_relevant_chunks(relevant_chunks: List[Dict[str, Any]]) -> set[str]:
+    return {
+        chunk_id
+        for chunk in relevant_chunks
+        if (chunk_id := str(chunk.get("chunk_id") or chunk.get("chunkId") or "").strip())
+    }
+
+
+def exclude_doc_items_by_chunk_id(chunk_items: List[dict], excluded_chunk_ids: set[str]) -> List[dict]:
+    if not excluded_chunk_ids:
+        return chunk_items
+    return [item for item in chunk_items if str(item.get("chunkId") or "").strip() not in excluded_chunk_ids]
+
+
 def select_doc_chunks(
     doc_items: List[dict], relevant_chunks: List[Dict[str, Any]], log_prefix: str
 ) -> Tuple[List[str], List[str]]:

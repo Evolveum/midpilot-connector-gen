@@ -1,0 +1,137 @@
+# Copyright (C) 2010-2026 Evolveum and contributors
+#
+# Licensed under the EUPL-1.2 or later.
+
+"""Integration tests for codegen native-schema endpoints."""
+
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+import pytest
+from fastapi import HTTPException
+
+from src.common.enums import JobStatus
+from src.modules.codegen.router import (
+    generate_native_schema,
+    get_native_schema_status,
+    override_native_schema,
+)
+from src.modules.codegen.schema import GroovyCodePayload
+
+
+# NATIVE SCHEMA
+@pytest.mark.asyncio
+async def test_generate_native_schema_success():
+    """Test successful generation of native schema."""
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.get_session_data = AsyncMock(return_value={"username": {"type": "string"}})
+    mock_repo.update_session = AsyncMock()
+
+    with (
+        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+    ):
+        job_id = uuid4()
+        session_id = uuid4()
+        mock_schedule.return_value = job_id
+
+        response = await generate_native_schema(
+            session_id,
+            "User",
+            skip_cache=True,
+            db=MagicMock(),
+        )
+
+        assert response.jobId == job_id
+        mock_repo.session_exists.assert_awaited_once_with(session_id)
+        mock_repo.get_session_data.assert_awaited_once_with(session_id, "UserAttributesOutput")
+        mock_schedule.assert_awaited_once_with(
+            job_type="codegen.getNativeSchema",
+            input_payload={
+                "attributes": {"username": {"type": "string"}},
+                "objectClass": "User",
+                "skipCache": True,
+            },
+            worker=ANY,
+            worker_args=({"username": {"type": "string"}}, "User"),
+            worker_kwargs={"session_id": session_id},
+            initial_stage="queue",
+            initial_message="Queued code generation",
+            session_id=session_id,
+            session_result_key="UserNativeSchemaOutput",
+        )
+        mock_repo.update_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_native_schema_status_found():
+    """Test getting native schema generation status when job exists."""
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+
+    fake_status = MagicMock(
+        jobId=ANY,
+        status=JobStatus.finished,
+        result={"code": "mocked groovy code"},
+        progress={"stage": "queued"},
+        errors=None,
+    )
+
+    with (
+        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch(
+            "src.modules.codegen.router.build_stage_status_response", new_callable=AsyncMock, return_value=fake_status
+        ) as mock_builder,
+    ):
+        job_id = uuid4()
+        session_id = uuid4()
+
+        response = await get_native_schema_status(session_id, "User", job_id, db=MagicMock())
+
+        assert response.status == JobStatus.finished
+        assert response.result == {"code": "mocked groovy code"}
+        mock_repo.session_exists.assert_awaited_once_with(session_id)
+        mock_builder.assert_awaited_once_with(job_id)
+
+
+@pytest.mark.asyncio
+async def test_override_native_schema_success():
+    """Test manual override of native schema."""
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.update_session = AsyncMock()
+
+    with patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo):
+        session_id = uuid4()
+        response = await override_native_schema(
+            session_id,
+            "User",
+            GroovyCodePayload(code='objectClass("User") {}'),
+            db=MagicMock(),
+        )
+
+        assert response["message"] == "Native schema for User overridden successfully"
+        assert response["sessionId"] == session_id
+        assert response["objectClass"] == "User"
+        mock_repo.update_session.assert_awaited_once_with(
+            session_id,
+            {"UserNativeSchemaOutput": {"code": 'objectClass("User") {}'}},
+        )
+
+
+# ERROR HANDLING
+@pytest.mark.asyncio
+async def test_generate_native_schema_missing_class():
+    """If attributes for the class don't exist in session, raise 404."""
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.get_session_data = AsyncMock(return_value=None)
+
+    with patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo):
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_native_schema(uuid4(), "NonExistentClass", db=MagicMock())
+
+    assert exc_info.value.status_code == 404
+    assert "No attributes found for NonExistentClass" in exc_info.value.detail
