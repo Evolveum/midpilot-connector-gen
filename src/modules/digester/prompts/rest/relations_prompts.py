@@ -21,6 +21,11 @@ A relation is an association between:
 - subject: entity that receives/consumes membership, entitlement, assignment, ownership, or access.
 - object: target entity that is referenced/assigned/owned/consumed.
 
+midPoint/ConnId modeling note:
+- The subject is the usual navigation start, e.g. a user/account/member asking "what memberships or groups do I hold?"
+- The object is the relationship target/end, e.g. the membership, group, role, organization, or entitlement.
+- A bidirectional association is still ONE relation with subject-side and object-side attributes, not two relations.
+
 Supported relation shapes:
 1) Direct (subject -> object):
    Subject has an attribute with object identifiers/references.
@@ -72,6 +77,10 @@ SUBJECT/OBJECT DECISION RULES
 - Self-relations are valid (e.g., `group -> group` for nested groups).
 
 FIELD RULES
+- Return at most one record for the same semantic subject/object/reference.
+- Do not emit label variants as separate records. For example, `user has membership`, `user membership`,
+  and `user to membership` are the same `user -> membership` relation. Keep one record and merge evidence into
+  `subjectAttribute`, `objectAttribute`, and `shortDescription`.
 - `name`:
   - stable snake_case id.
   - default pattern: `{{subject}}_to_{{object}}`.

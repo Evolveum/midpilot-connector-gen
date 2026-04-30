@@ -40,7 +40,7 @@ async def test_generate_native_schema_success():
         response = await generate_native_schema(
             session_id,
             "User",
-            usePreviousSessionData=True,
+            skip_cache=True,
             db=MagicMock(),
         )
 
@@ -52,7 +52,7 @@ async def test_generate_native_schema_success():
             input_payload={
                 "attributes": {"username": {"type": "string"}},
                 "objectClass": "User",
-                "usePreviousSessionData": True,
+                "skipCache": True,
             },
             worker=ANY,
             worker_args=({"username": {"type": "string"}}, "User"),

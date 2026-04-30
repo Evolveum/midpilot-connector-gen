@@ -56,7 +56,7 @@ class LLMSettings(BaseModel):
 
     openai_api_key: str = ""
     openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-20b"
+    model_name: str = "openai/gpt-oss-120b"
     request_timeout: int = 120
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
@@ -171,7 +171,7 @@ class ScrapeAndProcessSettings(BaseModel):
 
     # Chunking controls
     chunk_length: int = Field(
-        20000,
+        10000,
         description="Max tokens per chunk for LLM processing",
     )
     max_concurrent: int = Field(
@@ -239,6 +239,30 @@ class DigesterSettings(BaseModel):
             "Minimum number of documentation items required to use the default auth criteria; "
             "otherwise extended auth criteria are used."
         ),
+    )
+    relation_generic_attribute_tokens: list[str] = Field(
+        default_factory=lambda: [
+            "a",
+            "an",
+            "are",
+            "as",
+            "by",
+            "has",
+            "have",
+            "id",
+            "ids",
+            "is",
+            "of",
+            "ref",
+            "refs",
+            "reference",
+            "references",
+            "the",
+            "to",
+            "via",
+            "with",
+        ],
+        description="Generic relation attribute tokens ignored when collapsing wording-only relation duplicates.",
     )
 
 

@@ -115,7 +115,21 @@ async def test_override_relations_success():
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.update_session = AsyncMock()
 
-    relations_payload = {"relations": [{"from": "User", "to": "Group", "type": "membership"}]}
+    relations_payload = RelationsResponse.model_validate(
+        {
+            "relations": [
+                {
+                    "subject": "user",
+                    "object": "group",
+                    "subjectAttribute": "groups",
+                    "objectAttribute": "",
+                    "shortDescription": "",
+                    "name": "user_to_group",
+                    "displayName": "User to Group",
+                }
+            ]
+        }
+    )
 
     with patch("src.modules.digester.router.SessionRepository", return_value=mock_repo):
         session_id = uuid4()
@@ -126,6 +140,9 @@ async def test_override_relations_success():
         )
 
     mock_repo.session_exists.assert_awaited_once_with(session_id)
-    mock_repo.update_session.assert_awaited_once_with(session_id, {"relationsOutput": relations_payload})
+    mock_repo.update_session.assert_awaited_once_with(
+        session_id,
+        {"relationsOutput": relations_payload.model_dump(by_alias=True, mode="json")},
+    )
     assert response["message"].startswith("Relations overridden successfully")
     assert response["sessionId"] == session_id

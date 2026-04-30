@@ -77,8 +77,8 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
         normalized_input.pop("session_id")
     if "doc_id" in normalized_input:
         normalized_input.pop("doc_id")
-    if "usePreviousSessionData" in normalized_input:
-        normalized_input.pop("usePreviousSessionData")
+    if "skipCache" in normalized_input:
+        normalized_input.pop("skipCache")
     if "chunks" in normalized_input:
         normalized_input["chunks"] = sorted(
             normalized_input["chunks"], key=lambda x: x[0] if isinstance(x, tuple) and len(x) > 0 else ""

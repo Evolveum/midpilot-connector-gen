@@ -100,13 +100,16 @@ async def test_extract_attributes_no_relevant_chunks(mock_llm, mock_digester_upd
     session_id = uuid4()
     job_id = uuid4()
 
-    with patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks:
-        mock_extract_chunks.return_value = ([], [])
-
+    with (
+        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock) as mock_api_types,
+    ):
         result = await service.extract_attributes([], "User", session_id, [], job_id)
 
         assert result["result"]["attributes"] == {}
         assert result["relevantDocumentations"] == []
+        mock_extract_chunks.assert_not_called()
+        mock_api_types.assert_not_awaited()
 
 
 @pytest.mark.asyncio

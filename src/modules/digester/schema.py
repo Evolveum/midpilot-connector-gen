@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import (
     AliasChoices,
@@ -557,9 +557,10 @@ class InfoResponse(BaseModel):
 
 
 # --- Attributes ---
-class AttributeInfo(BaseModel):
+class ExtractedAttributeInfo(BaseModel):
     """
-    Attribute metadata for an object class property as described in OpenAPI/JSON Schema.
+    LLM extraction model for object class property metadata.
+    Contains only fields the LLM should produce.
     """
 
     type: Optional[str] = Field(
@@ -621,6 +622,14 @@ class AttributeInfo(BaseModel):
             "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
         ),
     )
+
+
+class AttributeInfo(ExtractedAttributeInfo):
+    """
+    Final API/session attribute metadata.
+    Adds system-populated fields not used in LLM extraction prompts.
+    """
+
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
         validation_alias="relevantDocumentations",
@@ -677,13 +686,37 @@ class AttributeResponse(BaseModel):
     )
 
 
+class ExtractedAttributeResponse(BaseModel):
+    """
+    LLM extraction response for attributes.
+    """
+
+    attributes: Dict[str, ExtractedAttributeInfo] = Field(
+        default_factory=dict,
+        description="Map of attribute name to extracted metadata.",
+    )
+
+
 # --- Attributes ---
 
 
-class EndpointInfo(BaseModel):
+EndpointSuggestedUse = Literal[
+    "create",
+    "update",
+    "delete",
+    "getById",
+    "getAll",
+    "list",
+    "search",
+    "activate",
+    "deactivate",
+]
+
+
+class ExtractedEndpointInfo(BaseModel):
     """
-    HTTP endpoint associated with a specific object class. Focus on endpoints that
-    represent or manipulate the given class (CRUD, lifecycle, membership operations).
+    LLM extraction model for an HTTP endpoint associated with a specific object class.
+    Contains only fields the LLM should produce.
     """
 
     model_config = {"populate_by_name": True}
@@ -715,12 +748,28 @@ class EndpointInfo(BaseModel):
         serialization_alias="requestContentType",
         description="Primary request media type if specified (often for POST/PUT/PATCH).",
     )
-    suggested_use: List[str] = Field(
+    suggested_use: List[EndpointSuggestedUse] = Field(
         default_factory=list,
         validation_alias="suggestedUse",
         serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'list', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
     )
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def _normalize_method(cls, value: Any) -> Any:
+        """Accept lowercase/mixed-case methods and normalize them before literal validation."""
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
+
+
+class EndpointInfo(ExtractedEndpointInfo):
+    """
+    Final API/session endpoint metadata.
+    Adds system-populated fields not used in LLM extraction prompts.
+    """
+
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
         validation_alias="relevantDocumentations",
@@ -764,14 +813,6 @@ class EndpointInfo(BaseModel):
             serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
         return serialized
 
-    @field_validator("method", mode="before")
-    @classmethod
-    def _normalize_method(cls, value: Any) -> Any:
-        """Accept lowercase/mixed-case methods and normalize them before literal validation."""
-        if isinstance(value, str):
-            return value.strip().upper()
-        return value
-
 
 class EndpointParamInfo(BaseModel):
     """
@@ -799,11 +840,11 @@ class EndpointParamInfo(BaseModel):
         serialization_alias="requestContentType",
         description="Primary request media type if specified (often for POST/PUT/PATCH).",
     )
-    suggested_use: List[str] = Field(
+    suggested_use: List[EndpointSuggestedUse] = Field(
         default_factory=list,
         validation_alias="suggestedUse",
         serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
     )
 
 
@@ -815,6 +856,17 @@ class EndpointResponse(BaseModel):
     endpoints: List[EndpointInfo] = Field(
         default_factory=list,
         description="List of HTTP endpoints related to the specified object class.",
+    )
+
+
+class ExtractedEndpointResponse(BaseModel):
+    """
+    LLM extraction response for endpoints.
+    """
+
+    endpoints: List[ExtractedEndpointInfo] = Field(
+        default_factory=list,
+        description="List of extracted HTTP endpoints related to the specified object class.",
     )
 
 
