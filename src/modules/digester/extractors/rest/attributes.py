@@ -27,7 +27,7 @@ from src.modules.digester.prompts.rest.attributes_prompts import (
     get_object_class_schema_system_prompt,
     get_object_class_schema_user_prompt,
 )
-from src.modules.digester.schema import AttributeResponse
+from src.modules.digester.schema import ExtractedAttributeResponse
 from src.modules.digester.utils.attribute_filters import (
     filter_ignored_attributes,
     ignore_attribute_name,
@@ -44,7 +44,9 @@ def _build_attribute_chain(total_chunks: int) -> Any:
     """
     Build the LLM chain for extracting attributes from a single chunk.
     """
-    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
+    parser: PydanticOutputParser[ExtractedAttributeResponse] = PydanticOutputParser(
+        pydantic_object=ExtractedAttributeResponse
+    )
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -59,7 +61,9 @@ def _build_dedupe_chain() -> Any:
     """
     Build the LLM chain used to resolve attribute duplicates across chunks.
     """
-    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
+    parser: PydanticOutputParser[ExtractedAttributeResponse] = PydanticOutputParser(
+        pydantic_object=ExtractedAttributeResponse
+    )
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -74,7 +78,9 @@ def _build_fill_missing_chain() -> Any:
     """
     Build the LLM chain used to fill missing attribute information from documentation.
     """
-    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
+    parser: PydanticOutputParser[ExtractedAttributeResponse] = PydanticOutputParser(
+        pydantic_object=ExtractedAttributeResponse
+    )
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -144,21 +150,18 @@ async def _extract_from_single_chunk(
             config={"callbacks": [langfuse_handler]},
         )
 
-        if isinstance(result, AttributeResponse):
+        if isinstance(result, ExtractedAttributeResponse):
             parsed = result
         elif isinstance(result, dict):
-            parsed = AttributeResponse.model_validate(result)
+            parsed = ExtractedAttributeResponse.model_validate(result)
         else:
             content = getattr(result, "content", None)
             if isinstance(content, str) and content.strip():
-                parsed = AttributeResponse.model_validate(json.loads(content))
+                parsed = ExtractedAttributeResponse.model_validate(json.loads(content))
             else:
                 return {}
 
-        return {
-            name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
-            for name, info in parsed.attributes.items()
-        }
+        return {name: info.model_dump(exclude={"scimAttribute"}) for name, info in parsed.attributes.items()}
 
     except Exception as exc:
         error_message = f"[Digester:Attributes] Failed to process chunk {chunk_id}: {exc}"
@@ -227,21 +230,18 @@ async def _fill_from_single_chunk(
             config={"callbacks": [langfuse_handler]},
         )
 
-        if isinstance(result, AttributeResponse):
+        if isinstance(result, ExtractedAttributeResponse):
             parsed = result
         elif isinstance(result, dict):
-            parsed = AttributeResponse.model_validate(result)
+            parsed = ExtractedAttributeResponse.model_validate(result)
         else:
             content = getattr(result, "content", None)
             if isinstance(content, str) and content.strip():
-                parsed = AttributeResponse.model_validate(json.loads(content))
+                parsed = ExtractedAttributeResponse.model_validate(json.loads(content))
             else:
                 return {}
 
-        return {
-            name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
-            for name, info in parsed.attributes.items()
-        }
+        return {name: info.model_dump(exclude={"scimAttribute"}) for name, info in parsed.attributes.items()}
 
     except Exception as exc:
         logger.error("[Digester:Attributes] Fill from chunk failed: %s", exc)

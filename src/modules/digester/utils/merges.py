@@ -16,10 +16,10 @@ from src.common.langfuse import langfuse_handler
 from src.config import config
 from src.modules.digester.enums import EndpointMethod, EndpointType
 from src.modules.digester.schema import (
-    AttributeResponse,
     BaseAPIEndpoint,
-    EndpointInfo,
     ExtendedObjectClass,
+    ExtractedAttributeResponse,
+    ExtractedEndpointInfo,
     InfoMetadata,
     InfoResponse,
 )
@@ -156,20 +156,17 @@ async def merge_attribute_candidates(
             config=RunnableConfig(callbacks=[langfuse_handler]),
         )
 
-        if isinstance(result, AttributeResponse):
+        if isinstance(result, ExtractedAttributeResponse):
             parsed = result
         else:
             content = getattr(result, "content", None)
             parsed = (
-                AttributeResponse.model_validate(json.loads(content))
+                ExtractedAttributeResponse.model_validate(json.loads(content))
                 if isinstance(content, (str, bytes, bytearray))
-                else AttributeResponse()
+                else ExtractedAttributeResponse()
             )
 
-        return {
-            name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
-            for name, info in parsed.attributes.items()
-        }
+        return {name: info.model_dump(exclude={"scimAttribute"}) for name, info in parsed.attributes.items()}
 
     except Exception as exc:
         logger.error("[Digester:Attributes] Dedupe failed: %s", exc)
@@ -185,7 +182,7 @@ async def merge_attribute_candidates(
 
 
 async def merge_endpoint_candidates(
-    extracted_endpoints: List[EndpointInfo], object_class: str, job_id: UUID
+    extracted_endpoints: List[ExtractedEndpointInfo], object_class: str, job_id: UUID
 ) -> List[Dict[str, Any]]:
     """
     Merge and deduplicate endpoint candidates extracted from multiple chunks.
@@ -205,10 +202,10 @@ async def merge_endpoint_candidates(
         EndpointMethod.DELETE: 4,
     }
 
-    def _endpoint_key(ep: EndpointInfo) -> tuple[str, EndpointMethod]:
+    def _endpoint_key(ep: ExtractedEndpointInfo) -> tuple[str, EndpointMethod]:
         return (ep.path.strip(), ep.method)
 
-    by_key: Dict[tuple[str, EndpointMethod], EndpointInfo] = {}
+    by_key: Dict[tuple[str, EndpointMethod], ExtractedEndpointInfo] = {}
 
     for ep in extracted_endpoints:
         if not ep.path:

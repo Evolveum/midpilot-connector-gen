@@ -355,19 +355,6 @@ async def _retry_rest_attributes_with_default_criteria(
         )
         return primary_result
 
-    primary_chunk_ids = chunk_ids_from_relevant_chunks(relevant_chunks)
-    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
-    fallback_chunk_ids = chunk_ids_from_relevant_chunks(fallback_relevant_chunks)
-    if primary_chunk_ids and primary_chunk_ids == fallback_chunk_ids:
-        logger.info(
-            "[Digester:Attributes] DEFAULT_CRITERIA matched same chunks for session %s, object class %s; "
-            "skipping retry",
-            session_id,
-            object_class,
-        )
-        return primary_result
-
-    fallback_doc_items = exclude_doc_items_by_chunk_id(fallback_doc_items, primary_chunk_ids)
     fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
     if not fallback_relevant_chunks:
         logger.info(

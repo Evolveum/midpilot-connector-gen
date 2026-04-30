@@ -27,7 +27,7 @@ from src.modules.digester.prompts.rest.endpoints_prompts import (
     get_endpoints_system_prompt,
     get_endpoints_user_prompt,
 )
-from src.modules.digester.schema import EndpointInfo, EndpointParamInfo, EndpointResponse
+from src.modules.digester.schema import EndpointParamInfo, ExtractedEndpointInfo, ExtractedEndpointResponse
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunk_groups_concurrently
 from src.modules.digester.utils.merges import merge_endpoint_candidates
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
@@ -122,7 +122,9 @@ async def extract_endpoints(
         "{base_api_url}", base_api_url
     )
 
-    parser: PydanticOutputParser[EndpointResponse] = PydanticOutputParser(pydantic_object=EndpointResponse)
+    parser: PydanticOutputParser[ExtractedEndpointResponse] = PydanticOutputParser(
+        pydantic_object=ExtractedEndpointResponse
+    )
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [("system", system_prompt + "\n\n{format_instructions}"), ("human", user_prompt)]
@@ -138,13 +140,13 @@ async def extract_endpoints(
     param_chain = make_basic_chain(param_prompt, llm, param_parser)
 
     # Process each chunk
-    extracted_endpoints: List[EndpointInfo] = []
+    extracted_endpoints: List[ExtractedEndpointInfo] = []
     relevant_chunk_info: List[Dict[str, Any]] = []
     endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]] = {}
 
     async def _extract_for_chunk_id(
         chunk_id: UUID, chunks_for_chunk_id: List[str]
-    ) -> Tuple[List[EndpointInfo], List[Dict[str, Any]]]:
+    ) -> Tuple[List[ExtractedEndpointInfo], List[Dict[str, Any]]]:
         """Extract endpoints from chunks associated with one chunk_id."""
         await update_job_progress(
             job_id,
@@ -159,7 +161,7 @@ async def extract_endpoints(
 
         relevant_chunks_for_id: List[Dict[str, Any]] = []
 
-        async def _process_chunk(chunk_idx: int, chunk: str) -> List[EndpointInfo]:
+        async def _process_chunk(chunk_idx: int, chunk: str) -> List[ExtractedEndpointInfo]:
             one_based = chunk_idx + 1
             try:
                 logger.info("[Digester:Endpoints] LLM call for chunk %s", chunk_id)
@@ -168,7 +170,7 @@ async def extract_endpoints(
                 summary, tags = extract_summary_and_tags(chunk_metadata)
 
                 result = cast(
-                    EndpointResponse,
+                    ExtractedEndpointResponse,
                     await chain.ainvoke(
                         {"chunk": chunk, "summary": summary, "tags": tags},
                         config=RunnableConfig(callbacks=[langfuse_handler]),
@@ -178,7 +180,7 @@ async def extract_endpoints(
                 if not result or not result.endpoints:
                     return []
 
-                valid_endpoints: List[EndpointInfo] = []
+                valid_endpoints: List[ExtractedEndpointInfo] = []
 
                 # Mark this chunk_id as relevant if we got endpoints
                 if result.endpoints and chunk_id:
@@ -247,7 +249,7 @@ async def extract_endpoints(
         results = await asyncio.gather(*tasks)
 
         # Collect results for this chunk_id
-        endpoints_for_id: List[EndpointInfo] = []
+        endpoints_for_id: List[ExtractedEndpointInfo] = []
         for endpoints_list in results:
             endpoints_for_id.extend(endpoints_list)
 
