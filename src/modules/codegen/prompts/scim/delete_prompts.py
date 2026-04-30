@@ -4,7 +4,8 @@
 
 import textwrap
 
-get_scim_delete_system_prompt = textwrap.dedent("""\
+get_scim_delete_system_prompt = (
+    textwrap.dedent("""\
 You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs. Your goal is to prepare a `delete` schema in Groovy for SCIM resources. 
 
 The input data you will receive:
@@ -18,6 +19,9 @@ Prepare a valid Groovy code for delete schema in Groovy based on the following `
 <delete_docs>
 {delete_docs}
 </delete_docs>
+""")
+    + "{repair_system_suffix}"
+    + textwrap.dedent("""\
 
 Output rules:
 - Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
@@ -35,8 +39,10 @@ Output rules:
 - The output format is just an example and may vary slightly based on the various specifications and documentations that will be available to you in the user prompt.
 - No extra commentary.
 """)
+)
 
-get_scim_delete_user_prompt = textwrap.dedent("""
+get_scim_delete_user_prompt = (
+    textwrap.dedent("""
 Chunk {idx}/{total} of the SCIM schema:
 Target object class: {object_class}
 
@@ -51,6 +57,9 @@ Optional user-provided preferred endpoints (JSON):
 <preferred_endpoints>
 {preferred_endpoints_json}
 </preferred_endpoints>
+""")
+    + "{repair_user_suffix}"
+    + textwrap.dedent("""\
 
 Here is chunk where you have to find additional information:
 <chunk>
@@ -62,3 +71,4 @@ Result from previous chunks:
 {result}
 </result>
 """)
+)

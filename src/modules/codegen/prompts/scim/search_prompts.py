@@ -4,7 +4,8 @@
 
 import textwrap
 
-_SCIM_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX = textwrap.dedent("""\
+_SCIM_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX = (
+    textwrap.dedent("""\
 You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs.
 Your goal is to prepare a `search` schema in Groovy for SCIM resources.
 
@@ -20,6 +21,9 @@ Prepare valid Groovy search schema code based on the following `.adoc` documenta
 <search_docs>
 {search_docs}
 </search_docs>
+""")
+    + "{repair_system_suffix}"
+    + textwrap.dedent("""\
 
 OUTPUT RULES:
 - Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
@@ -36,6 +40,7 @@ OUTPUT RULES:
 - Preserve outer objectClass and search blocks when present in <result>.
 - Return ONLY valid Groovy code, no explanation outside code.
 """)
+)
 
 _SCIM_SEARCH_SYSTEM_PROMPT_ALL_RULES = textwrap.dedent("""\
 
@@ -85,7 +90,8 @@ get_scim_search_id_system_prompt = (
     + _SCIM_SEARCH_SYSTEM_PROMPT_COMMON_SUFFIX
 )
 
-get_scim_search_user_prompt = textwrap.dedent("""\
+get_scim_search_user_prompt = (
+    textwrap.dedent("""\
 Chunk {idx}/{total} of the SCIM schema:
 Target object class: {object_class}
 Requested search intent: {intent}
@@ -107,6 +113,9 @@ Base API URL for endpoint-path normalization:
 <base_api_url>
 {base_api_url}
 </base_api_url>
+""")
+    + "{repair_user_suffix}"
+    + textwrap.dedent("""\
 
 Here is chunk where you have to find additional information:
 <chunk>
@@ -118,3 +127,4 @@ Result from previous chunks:
 {result}
 </result>
 """)
+)

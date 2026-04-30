@@ -10,6 +10,7 @@ import pytest
 
 from src.modules.codegen.core.base import BaseGroovyGenerator, OperationConfig
 from src.modules.codegen.core.generate_groovy import generate_groovy
+from src.modules.codegen.schema import CodegenRepairContext
 
 
 class _DummyChain:
@@ -18,6 +19,16 @@ class _DummyChain:
 
     async def ainvoke(self, *args, **kwargs):
         return self._responses.pop(0)
+
+
+class _RecordingChain(_DummyChain):
+    def __init__(self, responses):
+        super().__init__(responses)
+        self.calls = []
+
+    async def ainvoke(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return await super().ainvoke(*args, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -92,6 +103,35 @@ async def test_base_generator_keeps_previous_result_when_chunk_validation_fails(
 
     assert result == 'objectClass("User") { search {} }'
     mock_append_job_error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_base_generator_runs_repair_pass_without_documentation_chunks() -> None:
+    generator = _DummyGenerator()
+    repaired_code = 'objectClass("User") { search { } }'
+    chain = _RecordingChain([repaired_code])
+
+    with (
+        patch("src.modules.codegen.core.base.get_default_llm"),
+        patch("src.modules.codegen.core.base.make_basic_chain", return_value=chain),
+        patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.base.validate_groovy_code", return_value=None),
+        patch.object(generator, "_cleanup_generated_code", new_callable=AsyncMock, return_value=repaired_code),
+    ):
+        result = await generator.generate(
+            job_id=uuid4(),
+            repair_context=CodegenRepairContext(
+                currentScript='objectClass("User") { broken',
+                midpointErrors=["Missing method: request.pathParameter(...)"],
+            ),
+        )
+
+    assert result == repaired_code
+    prompt_vars = chain.calls[0][0][0]
+    assert prompt_vars["repair_system_suffix"] != ""
+    assert prompt_vars["repair_user_suffix"] != ""
+    assert prompt_vars["result"] == 'objectClass("User") { broken'
 
 
 @pytest.mark.asyncio
