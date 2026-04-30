@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import (
     AliasChoices,
@@ -680,6 +680,19 @@ class AttributeResponse(BaseModel):
 # --- Attributes ---
 
 
+EndpointSuggestedUse = Literal[
+    "create",
+    "update",
+    "delete",
+    "getById",
+    "getAll",
+    "list",
+    "search",
+    "activate",
+    "deactivate",
+]
+
+
 class EndpointInfo(BaseModel):
     """
     HTTP endpoint associated with a specific object class. Focus on endpoints that
@@ -715,11 +728,11 @@ class EndpointInfo(BaseModel):
         serialization_alias="requestContentType",
         description="Primary request media type if specified (often for POST/PUT/PATCH).",
     )
-    suggested_use: List[str] = Field(
+    suggested_use: List[EndpointSuggestedUse] = Field(
         default_factory=list,
         validation_alias="suggestedUse",
         serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'list', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
     )
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
@@ -799,11 +812,11 @@ class EndpointParamInfo(BaseModel):
         serialization_alias="requestContentType",
         description="Primary request media type if specified (often for POST/PUT/PATCH).",
     )
-    suggested_use: List[str] = Field(
+    suggested_use: List[EndpointSuggestedUse] = Field(
         default_factory=list,
         validation_alias="suggestedUse",
         serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
     )
 
 
