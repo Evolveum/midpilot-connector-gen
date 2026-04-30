@@ -15,6 +15,8 @@ from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.codegen.repair import build_repair_prompt_vars
+from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
 
@@ -29,6 +31,7 @@ async def generate_groovy(
     job_id: UUID,
     logger_prefix: str = "",
     extra_prompt_vars: Optional[Dict[str, Any]] = None,
+    repair_context: Optional[CodegenRepairContext] = None,
 ) -> str:
     """
     Ask the LLM to generate Groovy code given attribute records.
@@ -43,10 +46,12 @@ async def generate_groovy(
     vars_payload: Dict[str, Any] = {"object_class": object_class, "records_json": df_json}
     if extra_prompt_vars:
         vars_payload.update(extra_prompt_vars)
+    vars_payload.update(build_repair_prompt_vars(repair_context))
 
     try:
-        await update_job_progress(job_id, stage=JobStage.generating, message=f"Generating {logger_prefix or 'code'}")
-        logger.info("[Codegen:%s] Generating Groovy for %s", logger_prefix, object_class)
+        action = "Repairing" if repair_context else "Generating"
+        await update_job_progress(job_id, stage=JobStage.generating, message=f"{action} {logger_prefix or 'code'}")
+        logger.info("[Codegen:%s] %s Groovy for %s", logger_prefix, action, object_class)
         resp = await chain.ainvoke(vars_payload, config=RunnableConfig(callbacks=[langfuse_handler]))
         text = _coerce_llm_text(resp).strip()
         if not text:

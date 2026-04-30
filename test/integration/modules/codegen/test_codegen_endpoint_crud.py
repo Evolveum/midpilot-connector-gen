@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen.router import generate_create, generate_delete, generate_update
-from src.modules.codegen.schema import PreferredEndpointsInput
+from src.modules.codegen.schema import CodegenOperationInput
 
 
 @pytest.mark.asyncio
@@ -80,9 +80,7 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
             session_id,
             "User",
             db=MagicMock(),
-            preferred_endpoints_input=PreferredEndpointsInput.model_validate(
-                {"preferredEndpoints": preferred_endpoints}
-            ),
+            codegen_input=CodegenOperationInput.model_validate({"preferredEndpoints": preferred_endpoints}),
         )
 
     assert response.jobId == job_id
@@ -96,3 +94,56 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
     update_args = mock_repo.update_session.call_args[0]
     inputs = update_args[1]
     assert inputs[session_input_key]["preferredEndpoints"] == preferred_endpoints
+    assert "mode" not in inputs[session_input_key]
+
+
+@pytest.mark.asyncio
+async def test_generate_update_includes_repair_context_in_job_and_session_input():
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.update_session = AsyncMock()
+
+    attrs_payload = {"username": {"type": "string"}}
+    endpoints_payload = {"endpoints": [{"method": "PATCH", "path": "/users/{id}"}]}
+
+    async def fake_get_session_data(session_id, key):
+        if key.endswith("AttributesOutput"):
+            return attrs_payload
+        if key.endswith("EndpointsOutput"):
+            return endpoints_payload
+        return None
+
+    mock_repo.get_session_data = AsyncMock(side_effect=fake_get_session_data)
+
+    with (
+        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+    ):
+        job_id = uuid4()
+        session_id = uuid4()
+        mock_schedule.return_value = job_id
+
+        response = await generate_update(
+            session_id,
+            "User",
+            db=MagicMock(),
+            codegen_input=CodegenOperationInput.model_validate(
+                {
+                    "currentScript": 'objectClass("User") { update { endpoint("/users/{id}") { } } }',
+                    "midpointErrors": ["Missing method: request.pathParameter(...)"],
+                }
+            ),
+        )
+
+    assert response.jobId == job_id
+    _, schedule_kwargs = mock_schedule.call_args
+    assert "mode" not in schedule_kwargs["input_payload"]
+    assert schedule_kwargs["input_payload"]["currentScript"].startswith('objectClass("User")')
+    assert schedule_kwargs["input_payload"]["midpointErrors"] == ["Missing method: request.pathParameter(...)"]
+    assert schedule_kwargs["worker_kwargs"]["repair_context"].current_script.startswith('objectClass("User")')
+
+    update_args = mock_repo.update_session.call_args[0]
+    inputs = update_args[1]["UserUpdateInput"]
+    assert "mode" not in inputs
+    assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]
