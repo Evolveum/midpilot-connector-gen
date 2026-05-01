@@ -233,9 +233,13 @@ class DigesterSettings(BaseModel):
             "Values below this evidence ratio across processed documents are ignored as uncertain."
         ),
     )
-    fuzzy_marker_error_ratio: float = Field(
+    fuzzy_start_marker_error_ratio: float = Field(
         0.05,
         description="Allowed fuzzy-match error ratio when validating extracted sequence markers.",
+    )
+    fuzzy_end_marker_error_ratio: float = Field(
+        0.15,
+        description="Allowed fuzzy-match error ratio for end sequence markers, where required precision is lower.",
     )
     sequence_max_length: int = Field(
         10000,
@@ -244,6 +248,47 @@ class DigesterSettings(BaseModel):
     auth_min_documentation_items: int = Field(
         15,
         description="Minimum number of documentation items required to use the default auth criteria; otherwise extended criteria are used.",
+    )
+    build_from_sequences_step_size: int = Field(
+        2,
+        description="Number of sequences to process concurrently in the build_from_sequences function.",
+    )
+    min_start_sequence_len_attributes: int = Field(
+        5,
+        description="Minimum length in chars for start sequences when extracting attributes.",
+    )
+    max_start_sequence_len_attributes: int = Field(
+        2000,
+        description="Maximum length in chars for start sequences when extracting attributes.",
+    )
+    min_end_sequence_len_attributes: int = Field(
+        5,
+        description="Minimum length in chars for end sequences when extracting attributes.",
+    )
+    max_end_sequence_len_attributes: int = Field(
+        2000,
+        description="Maximum length in chars for end sequences when extracting attributes.",
+    )
+    min_start_sequence_len_auth: int = Field(
+        10,
+        description="Minimum length in chars for start sequences when extracting authentication information.",
+    )
+    max_start_sequence_len_auth: int = Field(
+        2000,
+        description="Maximum length in chars for start sequences when extracting authentication information.",
+    )
+    min_end_sequence_len_auth: int = Field(
+        10,
+        description="Minimum length in chars for end sequences when extracting authentication information.",
+    )
+    max_end_sequence_len_auth: int = Field(
+        2000,
+        description="Maximum length in chars for end sequences when extracting authentication information.",
+    )
+    marker_word_cutoff_length: int = Field(
+        50,
+        description="Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance." \
+        "This is only applied after fuzzy matching because in regex search, there is a significant drop in performance with a lot of \s patterns  ",
     )
 
 

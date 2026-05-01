@@ -40,6 +40,20 @@ class DocProcessingSequenceItem(DocSequenceItem):
         ..., description="Full text of the document chunk from start_sequence to end_sequence for processing."
     )
 
+class DocMarkerMatch(BaseModel):
+    """
+    Represents the actual matched marker in the document text after fuzzy matching.
+    """
+
+    start_position: int = Field(..., description="Character index of the start of the matched sequence in the original document text.")
+    start_position_collapsed: int = Field(..., description="Character index of the start of the matched sequence in the collapsed text used for fuzzy matching.")
+    end_position: int = Field(..., description="Character index of the end of the matched sequence in the original document text.")
+    end_position_collapsed: int = Field(..., description="Character index of the end of the matched sequence in the collapsed text used for fuzzy matching.")
+    distance: int = Field(
+        ...,
+        description="Levenshtein distance between the matched sequence and the original marker, used for confidence scoring."
+    )
+
 
 # --- Object Classes ---
 
@@ -674,9 +688,10 @@ class InfoResponse(BaseModel):
 
 
 # --- Attributes ---
-class AttributeInfo(BaseModel):
+
+class AttributeBase(BaseModel):
     """
-    Attribute metadata for an object class property as described in OpenAPI/JSON Schema.
+    Base class for attributes, can be extended with additional fields if needed.
     """
 
     type: Optional[str] = Field(
@@ -703,6 +718,37 @@ class AttributeInfo(BaseModel):
         default=None,
         description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
     )
+
+
+class DiscoveryAttribute(AttributeBase):
+
+    name: str = Field(
+        ...,
+        description=(
+            "The attribute name as it appears in the documentation. For OpenAPI/JSON Schema, use the property name. Preserve original casing and formatting (e.g., 'userName', 'startDate', 'is_active')."
+        ),
+    )
+
+    relevant_sequences: List[DocSequenceItem] = Field(
+        description=("List of relevant document sequences that support the presence of this attribute. ")
+    )
+
+class AttributeDiscoveryResponse(BaseModel):
+    """
+    Container for extracted attributes of an object class in discovery phase.
+    Return an empty list when none are present in the chunk.
+    """
+
+    attributes: List[DiscoveryAttribute] = Field(
+        default_factory=list,
+        description="List of extracted attributes for the object class.",
+    )
+
+
+class AttributeInfoBase(AttributeBase):
+
+    model_config = {"validate_by_name": True}
+
     mandatory: Optional[bool] = Field(
         default=None,
         description="Is attribute required? True if the attribute is required; otherwise false. Use null if unknown.",
@@ -731,13 +777,7 @@ class AttributeInfo(BaseModel):
             "requires extra expansion or separate endpoint fetches. Use null if unknown."
         ),
     )
-    scimAttribute: Optional[str] = Field(
-        default=None,
-        description=(
-            "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
-            "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
-        ),
-    )
+
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
         validation_alias="relevantDocumentations",
@@ -781,6 +821,91 @@ class AttributeInfo(BaseModel):
             serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
         return serialized
 
+class AttributeInfoRest(AttributeInfoBase):
+
+    relevant_sequences: List[DocSequenceItem] = Field(
+        description=("List of relevant document sequences that support the presence of this attribute. ")
+    )
+
+class AttributeBuildResponse(AttributeInfoBase):
+    """
+    Container for extracted attributes of an object class after building the attribute info.
+    Return an empty list when none are present in the chunk.
+    """
+
+    mandatory: Optional[bool] = Field(
+        default=None,
+        description="Is attribute required? True if the attribute is required; otherwise false. Use null if unknown.",
+    )
+    updatable: Optional[bool] = Field(
+        default=None,
+        description="Can be attribute modified? False if readOnly=true; otherwise true. Use null if unknown.",
+    )
+    creatable: Optional[bool] = Field(
+        default=None,
+        description="Can attribute be used during create operation? False if readOnly=true; otherwise true (do not infer from endpoints). Use null if unknown.",
+    )
+    readable: Optional[bool] = Field(
+        default=None,
+        description="Is attribute readable? False if writeOnly=true; otherwise true. Use null if unknown.",
+    )
+    multivalue: Optional[bool] = Field(
+        default=None,
+        description="Is attribute multivalue? True if the property's type is 'array'; otherwise false. Use null if unknown.",
+    )
+    returnedByDefault: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should."
+            "True if the attribute is returned by default without additional calls; set false when it "
+            "requires extra expansion or separate endpoint fetches. Use null if unknown."
+        ),
+    )
+
+class AttributeInfoScim(AttributeInfoBase):
+    """
+    Attribute metadata for an object class property as described in OpenAPI/JSON Schema.
+    """
+
+    scimAttribute: Optional[str] = Field(
+        default=None,
+        description=(
+            "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
+            "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
+        ),
+    )
+
+class AttributeProcessingInfo(AttributeInfoBase):
+
+    name: str = Field(
+        ...,
+        description=(
+            "The attribute name as it appears in the documentation. For OpenAPI/JSON Schema, use the property name. Preserve original casing and formatting (e.g., 'userName', 'startDate', 'is_active')."
+        ),
+    )
+
+    relevant_sequences: List[DocProcessingSequenceItem] = Field(
+        description=("List of document sequences that support the presence of this attribute, includes full text")
+    )
+
+class AttributeDedupResponse(BaseModel):
+    """
+    Container for deduplication LLM output for attributes.
+    """
+
+    duplicates: List[Tuple[str, str]] = Field(
+        ...,
+        description=(
+            "List of pairs of duplicate attributes. The pair consists of two attribute names that are considered duplicates. One with more complete documentation should be first"
+        ),
+    )
+
+    to_be_deleted: List[str] = Field(
+        ...,
+        description=(
+            "List of attribute names to be deleted because of having weak documentation or being irrelevant"
+        ),
+    )  
 
 class AttributeResponse(BaseModel):
     """
@@ -788,7 +913,7 @@ class AttributeResponse(BaseModel):
     Return an empty map when the object class has no properties in the fragment.
     """
 
-    attributes: Dict[str, AttributeInfo] = Field(
+    attributes: Dict[str, AttributeInfoScim | AttributeInfoRest] = Field(
         default_factory=dict,
         description="Map of attribute name to its normalized metadata (AttributeInfo).",
     )

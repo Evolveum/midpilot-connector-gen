@@ -3,7 +3,9 @@
 # Licensed under the EUPL-1.2 or later.
 
 import re
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, List, Mapping
+
+from modules.digester.schema import AttributeProcessingInfo
 
 _CUSTOM_FIELD_PATTERN = re.compile(r"^customfield(?:\d+)?$", re.IGNORECASE)
 
@@ -21,8 +23,8 @@ def ignore_attribute_name(attribute_name: str) -> bool:
     return normalized_lower in {"mail", "identityurl"}
 
 
-def filter_ignored_attributes(attributes: Mapping[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    return {name: info for name, info in attributes.items() if not ignore_attribute_name(name)}
+def filter_ignored_attributes(attributes: List[AttributeProcessingInfo]) -> List[str]:
+    return [attr.name for attr in attributes if not ignore_attribute_name(attr.name)]
 
 
 def normalize_readability_flags(

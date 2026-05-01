@@ -15,6 +15,7 @@ from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.config import config
 from src.modules.digester.prompts.auth_prompts import (
     auth_build_system_prompt,
     auth_build_user_prompt,
@@ -114,6 +115,10 @@ async def extract_auth_raw(
         chunk_id=chunk_id,
         chunk_metadata=chunk_metadata,
         enabled_sequence_checking=True,
+        min_start_sequence_length=config.digester.min_start_sequence_len_auth,
+        max_start_sequence_length=config.digester.max_start_sequence_len_auth,
+        min_end_sequence_length=config.digester.min_end_sequence_len_auth,
+        max_end_sequence_length=config.digester.max_end_sequence_len_auth,
     )
 
     logger.info("[Digester:Auth] Discovery extraction complete from document. Count: %d", len(extracted))
