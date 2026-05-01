@@ -26,6 +26,7 @@ from src.modules.digester.schema import (
     DocProcessingSequenceItem,
     EndpointInfo,
     ExtendedObjectClass,
+    ExtractedEndpointInfo,
     InfoMetadata,
     InfoResponse,
 )
@@ -347,7 +348,7 @@ async def merge_attribute_candidates(
 
 
 async def merge_endpoint_candidates(
-    extracted_endpoints: List[EndpointInfo], object_class: str, job_id: UUID
+    extracted_endpoints: List[ExtractedEndpointInfo], object_class: str, job_id: UUID
 ) -> List[Dict[str, Any]]:
     """
     Merge and deduplicate endpoint candidates extracted from multiple chunks.
@@ -367,10 +368,10 @@ async def merge_endpoint_candidates(
         EndpointMethod.DELETE: 4,
     }
 
-    def _endpoint_key(ep: EndpointInfo) -> tuple[str, EndpointMethod]:
+    def _endpoint_key(ep: ExtractedEndpointInfo) -> tuple[str, EndpointMethod]:
         return (ep.path.strip(), ep.method)
 
-    by_key: Dict[tuple[str, EndpointMethod], EndpointInfo] = {}
+    by_key: Dict[tuple[str, EndpointMethod], ExtractedEndpointInfo] = {}
 
     for ep in extracted_endpoints:
         if not ep.path:

@@ -3,9 +3,16 @@
 # Licensed under the EUPL-1.2 or later.
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_serializer
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    model_serializer,
+)
 
 from src.common.enums import ApiType
 from src.modules.digester.enums import (
@@ -719,35 +726,10 @@ class AttributeBase(BaseModel):
         description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
     )
 
-
-class DiscoveryAttribute(AttributeBase):
-
-    name: str = Field(
-        ...,
-        description=(
-            "The attribute name as it appears in the documentation. For OpenAPI/JSON Schema, use the property name. Preserve original casing and formatting (e.g., 'userName', 'startDate', 'is_active')."
-        ),
-    )
-
-    relevant_sequences: List[DocSequenceItem] = Field(
-        description=("List of relevant document sequences that support the presence of this attribute. ")
-    )
-
-class AttributeDiscoveryResponse(BaseModel):
+class AttributeEnhancedInfo(AttributeBase):
     """
-    Container for extracted attributes of an object class in discovery phase.
-    Return an empty list when none are present in the chunk.
+    Base attribute info class for both SCIM and REST
     """
-
-    attributes: List[DiscoveryAttribute] = Field(
-        default_factory=list,
-        description="List of extracted attributes for the object class.",
-    )
-
-
-class AttributeInfoBase(AttributeBase):
-
-    model_config = {"validate_by_name": True}
 
     mandatory: Optional[bool] = Field(
         default=None,
@@ -777,6 +759,49 @@ class AttributeInfoBase(AttributeBase):
             "requires extra expansion or separate endpoint fetches. Use null if unknown."
         ),
     )
+
+class ExtractedAttributeInfoSCIM(AttributeEnhancedInfo):
+    """
+    LLM extraction model for object class property metadata.
+    Contains only fields the LLM should produce.
+    """
+
+    scimAttribute: Optional[str] = Field(
+        default=None,
+        description=(
+            "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
+            "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
+        ),
+    )
+
+class DiscoveryAttribute(AttributeBase):
+
+    name: str = Field(
+        ...,
+        description=(
+            "The attribute name as it appears in the documentation. For OpenAPI/JSON Schema, use the property name. Preserve original casing and formatting (e.g., 'userName', 'startDate', 'is_active')."
+        ),
+    )
+
+    relevant_sequences: List[DocSequenceItem] = Field(
+        description=("List of relevant document sequences that support the presence of this attribute. ")
+    )
+
+class AttributeDiscoveryResponse(BaseModel):
+    """
+    Container for extracted attributes of an object class in discovery phase.
+    Return an empty list when none are present in the chunk.
+    """
+
+    attributes: List[DiscoveryAttribute] = Field(
+        default_factory=list,
+        description="List of extracted attributes for the object class.",
+    )
+
+
+class AttributeInfoBase(AttributeEnhancedInfo):
+
+    model_config = {"validate_by_name": True}
 
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
@@ -919,13 +944,37 @@ class AttributeResponse(BaseModel):
     )
 
 
+class ExtractedAttributeResponseSCIM(BaseModel):
+    """
+    LLM extraction response for attributes.
+    """
+
+    attributes: Dict[str, ExtractedAttributeInfoSCIM] = Field(
+        default_factory=dict,
+        description="Map of attribute name to extracted metadata.",
+    )
+
+
 # --- Attributes ---
 
 
-class EndpointInfo(BaseModel):
+EndpointSuggestedUse = Literal[
+    "create",
+    "update",
+    "delete",
+    "getById",
+    "getAll",
+    "list",
+    "search",
+    "activate",
+    "deactivate",
+]
+
+
+class ExtractedEndpointInfo(BaseModel):
     """
-    HTTP endpoint associated with a specific object class. Focus on endpoints that
-    represent or manipulate the given class (CRUD, lifecycle, membership operations).
+    LLM extraction model for an HTTP endpoint associated with a specific object class.
+    Contains only fields the LLM should produce.
     """
 
     model_config = {"populate_by_name": True}
@@ -957,12 +1006,28 @@ class EndpointInfo(BaseModel):
         serialization_alias="requestContentType",
         description="Primary request media type if specified (often for POST/PUT/PATCH).",
     )
-    suggested_use: List[str] = Field(
+    suggested_use: List[EndpointSuggestedUse] = Field(
         default_factory=list,
         validation_alias="suggestedUse",
         serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'list', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
     )
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def _normalize_method(cls, value: Any) -> Any:
+        """Accept lowercase/mixed-case methods and normalize them before literal validation."""
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
+
+
+class EndpointInfo(ExtractedEndpointInfo):
+    """
+    Final API/session endpoint metadata.
+    Adds system-populated fields not used in LLM extraction prompts.
+    """
+
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
         validation_alias="relevantDocumentations",
@@ -1006,14 +1071,6 @@ class EndpointInfo(BaseModel):
             serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
         return serialized
 
-    @field_validator("method", mode="before")
-    @classmethod
-    def _normalize_method(cls, value: Any) -> Any:
-        """Accept lowercase/mixed-case methods and normalize them before literal validation."""
-        if isinstance(value, str):
-            return value.strip().upper()
-        return value
-
 
 class EndpointParamInfo(BaseModel):
     """
@@ -1041,11 +1098,11 @@ class EndpointParamInfo(BaseModel):
         serialization_alias="requestContentType",
         description="Primary request media type if specified (often for POST/PUT/PATCH).",
     )
-    suggested_use: List[str] = Field(
+    suggested_use: List[EndpointSuggestedUse] = Field(
         default_factory=list,
         validation_alias="suggestedUse",
         serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases (e.g., 'create', 'update', 'delete', 'getById', 'getAll' 'search', 'activate', 'deactivate'). If unsure, leave empty.",
+        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
     )
 
 
@@ -1057,6 +1114,17 @@ class EndpointResponse(BaseModel):
     endpoints: List[EndpointInfo] = Field(
         default_factory=list,
         description="List of HTTP endpoints related to the specified object class.",
+    )
+
+
+class ExtractedEndpointResponse(BaseModel):
+    """
+    LLM extraction response for endpoints.
+    """
+
+    endpoints: List[ExtractedEndpointInfo] = Field(
+        default_factory=list,
+        description="List of extracted HTTP endpoints related to the specified object class.",
     )
 
 
@@ -1075,35 +1143,60 @@ class RelationRecord(BaseModel):
 
     name: str = Field(
         ...,
-        description="Human-readable name of the relation. ALWAYS provide a meaningful name based on the relationship (e.g., 'User to Group', 'Account to User', etc.). Never leave empty.",
+        description=(
+            "Stable machine-friendly relation identifier in lowercase snake_case "
+            "(e.g., 'user_to_group', 'membership_to_project')."
+        ),
+    )
+    display_name: str = Field(
+        ...,
+        validation_alias=AliasChoices("displayName", "display_name"),
+        serialization_alias="displayName",
+        description=(
+            "Human-readable relation name shown to users based on documentation "
+            "(e.g., 'User to Group', 'Membership to Project')."
+        ),
     )
     short_description: str = Field(
         default="",
         validation_alias="shortDescription",
         serialization_alias="shortDescription",
-        description="Short description or summary if present. LLM can propose if documentation do not has description",
+        description=(
+            "One concise sentence describing the relation meaning, grounded in documentation evidence. "
+            "Leave empty when no trustworthy short description can be derived."
+        ),
     )
     subject: str = Field(
         ...,
         description=(
-            "Normalized lowercase name of the subject class (owner of the attribute). Must refer to a relevant class."
+            "Normalized subject object-class name (lowercase) selected from the relevant object classes list. "
+            "The subject is the side that consumes/receives membership, entitlement, assignment, or access."
         ),
     )
     subject_attribute: Optional[str] = Field(
         default="",
         validation_alias="subjectAttribute",
         serialization_alias="subjectAttribute",
-        description="Exact property name on the subject that establishes the relation (raw as in schema).",
+        description=(
+            "Attribute on the subject that points to object identifiers/references (e.g., groups, roles, projects). "
+            "Can be a virtual attribute name when the relation is explicit only via inverse/query evidence."
+        ),
     )
     object: str = Field(
         ...,
-        description="Normalized lowercase name of the object class being referenced by the subject's property.",
+        description=(
+            "Normalized object object-class name (lowercase) selected from the relevant object classes list. "
+            "The object is the target entity referenced/assigned/owned by the subject."
+        ),
     )
     object_attribute: Optional[str] = Field(
         default="",
         validation_alias="objectAttribute",
         serialization_alias="objectAttribute",
-        description="Exact back-reference property name on the object class if explicitly documented; else empty.",
+        description=(
+            "Inverse attribute on the object that points back to subject identifiers/references "
+            "(e.g., members, owners). Leave empty when not documented or not applicable."
+        ),
     )
 
 

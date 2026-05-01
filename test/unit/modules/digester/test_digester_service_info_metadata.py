@@ -26,7 +26,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
     ]
 
     with (
-        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_parallel.return_value = [
             (
@@ -105,7 +105,7 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
 
     with (
         patch("src.modules.digester.service._extract_info_metadata", new_callable=AsyncMock) as mock_extract,
-        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_extract.side_effect = [
             (

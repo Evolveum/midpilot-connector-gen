@@ -38,7 +38,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
 
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
-        patch("src.modules.digester.service._run_doc_extractors_concurrently") as mock_parallel,
+        patch("src.modules.digester.service.run_doc_extractors_concurrently") as mock_parallel,
         patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = [
@@ -112,7 +112,7 @@ async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_
     """Test extract_object_classes with no documentation items."""
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
-        patch("src.modules.digester.service._run_doc_extractors_concurrently") as mock_parallel,
+        patch("src.modules.digester.service.run_doc_extractors_concurrently") as mock_parallel,
         patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_parallel.return_value = []

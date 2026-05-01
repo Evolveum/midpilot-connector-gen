@@ -3,6 +3,41 @@
 # Licensed under the EUPL-1.2 or later.
 from typing import Any, Dict, Iterable, List
 
+from src.modules.discovery.schema import DiscoveryIntegrationType
+
+
+def _normalize_integration_type(integration_type: str | None) -> DiscoveryIntegrationType:
+    normalized = str(integration_type or "DUMMY").strip().upper()
+    if normalized == "REST":
+        return "REST"
+    if normalized == "SCIM":
+        return "SCIM"
+    return "DUMMY"
+
+
+def _integration_search_priority_rules(integration_type: DiscoveryIntegrationType) -> str:
+    if integration_type == "REST":
+        return """- Priority target: REST API docs, endpoint references, OpenAPI/Swagger.
+- Include only a small SCIM cross-check set (max 2 queries) when possible."""
+    if integration_type == "SCIM":
+        return """- Priority target: SCIM 2.0 docs, provisioning, schema/resource references.
+- Include only a small REST cross-check set (max 2 queries) when possible."""
+    return """- Keep a balanced mix of REST and SCIM discovery queries."""
+
+
+def _integration_relevance_rules(integration_type: DiscoveryIntegrationType) -> str:
+    if integration_type == "REST":
+        return (
+            "- In borderline cases, prefer REST/OpenAPI/Swagger pages over SCIM-only pages.\n"
+            "- Keep SCIM pages only when they clearly help IDM integration."
+        )
+    if integration_type == "SCIM":
+        return (
+            "- In borderline cases, prefer SCIM provisioning/schema/resource pages over generic REST pages.\n"
+            "- Keep REST pages only when they clearly support SCIM/IDM implementation."
+        )
+    return "- Keep both REST and SCIM pages when relevant to IDM integration."
+
 
 def get_discovery_fetch_sys_prompt() -> str:
     return """
@@ -17,10 +52,18 @@ def get_discovery_fetch_sys_prompt() -> str:
     """
 
 
-def get_discovery_fetch_user_prompt(app: str = "APP", app_version: str = "VERSION") -> str:
-    return """Generate EXACTLY 5 distinct web search queries to find API documentation for:
+def get_discovery_fetch_user_prompt(
+    app: str = "APP",
+    app_version: str = "VERSION",
+    integration_type: DiscoveryIntegrationType = "DUMMY",
+    num_queries: int = 5,
+) -> str:
+    normalized_integration_type = _normalize_integration_type(integration_type)
+    priority_rules = _integration_search_priority_rules(normalized_integration_type)
+    return """Generate EXACTLY {num_queries} distinct web search queries to find API documentation for:
         - application: {app}
         - version: {app_version}
+        - integrationType: {integration_type}
         
         Return ONLY a JSON object in this format:
         {{
@@ -34,27 +77,43 @@ def get_discovery_fetch_user_prompt(app: str = "APP", app_version: str = "VERSIO
         }}
         
         Rules:
+        - Return exactly {num_queries} queries in searchPrompts.
         - Each query must be different (vary keywords: "developer docs", "API reference", "OpenAPI", "Swagger", "SCIM").
+        - Apply integration type priority:
+{priority_rules}
         - Do NOT include any text outside the JSON.
-        """.format(app=app, app_version=app_version)
+        """.format(
+        num_queries=num_queries,
+        app=app,
+        app_version=app_version,
+        integration_type=normalized_integration_type,
+        priority_rules=priority_rules,
+    )
 
 
 def get_irrelevant_filter_prompts(
     candidates: Iterable[Dict[str, Any]],
     app: str,
     app_version: str,
+    integration_type: DiscoveryIntegrationType = "DUMMY",
 ) -> tuple[str, str]:
     """
     Returns developer and user messages for filtering irrelevant links.
 
     :return: Tuple of (developer_message, user_message)
     """
+    normalized_integration_type = _normalize_integration_type(integration_type)
+    relevance_rules = _integration_relevance_rules(normalized_integration_type)
     developer_msg = f"""You are an expert documentation relevancy evaluator for {app} {app_version}.
 
 Your mission: Identify links that are clearly IRRELEVANT to a developer implementing IDM (Identity Management) integration for {app} {app_version}.
 
 # CORE PRINCIPLE:
 Prefer to keep links that might contain APIs, integration guidance, or identity/access management details. Only mark links as irrelevant when they are clearly off-topic.
+
+## TARGET PROTOCOL PRIORITY:
+- integrationType: {normalized_integration_type}
+{relevance_rules}
 
 ## ALWAYS RELEVANT (NEVER mark these as irrelevant):
 
@@ -187,15 +246,22 @@ def get_rank_links_prompts(
     candidates: Iterable[Dict[str, Any]],
     app: str,
     app_version: str,
+    integration_type: DiscoveryIntegrationType = "DUMMY",
 ) -> tuple[str, str]:
     """
     Returns developer and user messages for ranking links by relevance.
 
     :return: Tuple of (developer_message, user_message)
     """
+    normalized_integration_type = _normalize_integration_type(integration_type)
+    relevance_rules = _integration_relevance_rules(normalized_integration_type)
     developer_msg = f"""You are an expert documentation relevancy evaluator for {app} {app_version}.
 
 Your task: Rank the provided links from MOST relevant to LEAST relevant for a developer implementing IDM (Identity Management) integration for {app} {app_version}.
+
+Protocol priority:
+- integrationType: {normalized_integration_type}
+{relevance_rules}
 
 Guidelines:
 - Prefer API documentation, developer guides, SDKs, OpenAPI/Swagger, and SCIM/SSO/identity-related resources.

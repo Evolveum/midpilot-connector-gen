@@ -25,10 +25,86 @@ from src.common.llm import get_default_llm, make_basic_chain
 from src.config import config
 from src.modules.digester.schema import DocMarkerMatch
 from src.modules.digester.utils.fuzzysearch_worker import fuzzy_search_worker
+from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
+from src.modules.digester.utils.doc_chunk import build_chunk_id_to_doc_id
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
+
+
+async def run_doc_extractors_concurrently(
+    *,
+    chunk_items: List[dict],
+    job_id: UUID,
+    extractor: Callable[[str, UUID, UUID], Any],
+    logger_scope: str,
+):
+    """Run a digester extractor over stored documentation chunks."""
+    return await run_chunks_concurrently(
+        chunk_items=chunk_items,
+        job_id=job_id,
+        extractor=extractor,
+        logger_scope=logger_scope,
+    )
+
+
+async def process_over_chunks(
+    *,
+    chunk_items: List[dict],
+    job_id: UUID,
+    extractor: Callable[[str, UUID, UUID], Any],
+    merger: Callable[[List[Dict[str, Any]]], Dict[str, Any]],
+    logger_scope: str,
+    per_chunk_count: Callable[[Dict[str, Any]], int] | None = None,
+) -> Dict[str, Any]:
+    """
+    Process chunks in parallel, collect relevant chunk references, merge results, and return a digester payload.
+    """
+    all_results: List[Dict[str, Any]] = []
+    all_relevant_chunks: List[Dict[str, Any]] = []
+    chunk_id_to_doc_id = build_chunk_id_to_doc_id(chunk_items)
+
+    results = await run_doc_extractors_concurrently(
+        chunk_items=chunk_items,
+        job_id=job_id,
+        extractor=extractor,
+        logger_scope=logger_scope,
+    )
+
+    for raw_result, has_relevant_data, chunk_id in results:
+        if hasattr(raw_result, "model_dump"):
+            result_data = cast(Dict[str, Any], raw_result.model_dump(by_alias=True))
+        else:
+            result_data = cast(Dict[str, Any], raw_result or {})
+
+        if per_chunk_count is not None:
+            try:
+                count = per_chunk_count(result_data)
+            except Exception:
+                count = 0
+            logger.info("[%s] Chunk %s: extracted %s items", logger_scope, chunk_id, count)
+
+        if result_data:
+            all_results.append(result_data)
+        if has_relevant_data:
+            chunk_id_str = str(chunk_id)
+            doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+            if doc_id:
+                all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+            else:
+                logger.warning(
+                    "[%s] Missing docId for chunk %s, skipping relevant chunk mapping",
+                    logger_scope,
+                    chunk_id_str,
+                )
+
+    merged_result: Dict[str, Any] = merger(all_results)
+
+    return {
+        "result": merged_result,
+        "relevantDocumentations": all_relevant_chunks,
+    }
 
 
 async def _calculate_fuzzy_error_budget(marker: str, fuzzy_marker_error_ratio: float) -> int:
@@ -408,6 +484,7 @@ async def extract_single_chunk(
     min_end_sequence_length: Optional[int] = None,
     max_end_sequence_length: Optional[int] = None,
     marker_word_cutoff_length: Optional[int] = None,
+    extraction_chain: Any | None = None,
 ) -> Tuple[List[Any], bool]:
     """
     Run LLM extraction on a pre-chunked documentation item.
@@ -435,6 +512,8 @@ async def extract_single_chunk(
         min_end_sequence_length: Minimum length for the end sequence
         max_end_sequence_length: Maximum length for the end sequence
         marker_word_cutoff_length: Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance
+        extraction_chain: Optional pre-built reusable extraction chain. When not provided, one is built from prompts.
+
     Returns:
         - Flat list of extracted items
         - Boolean indicating if any relevant data was found
@@ -463,11 +542,12 @@ async def extract_single_chunk(
     )
 
     logger.info("%sLLM call for chunk %s", logger_prefix, chunk_id)
-    extraction_chain = build_chunk_extraction_chain(
-        pydantic_model=pydantic_model,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-    )
+    if extraction_chain is None:
+        extraction_chain = build_chunk_extraction_chain(
+            pydantic_model=pydantic_model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
 
     # Process the chunk (already pre-chunked)
     try:

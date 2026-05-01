@@ -22,6 +22,7 @@ Prepare valid Groovy search schema code based on the following `.adoc` documenta
 </search_docs>
 
 OUTPUT RULES:
+- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly.
 - Treat <extracted_attributes> and <extracted_endpoints> as primary sources of truth.
 - If <preferred_endpoints> are provided, prioritize compatible endpoints from this list.
@@ -31,8 +32,13 @@ OUTPUT RULES:
 - If docs show `/api/v3/users` or absolute URLs but <extracted_endpoints> contains `/users`, normalize and use `users`.
 - Path parameters must stay as literal placeholders in braces, e.g. `users/{{id}}`.
 - If `base_api_url` contains a base path prefix (e.g., `/api/v1`), strip it from endpoint paths.
+- Only use request parameters from documentation for the same normalized endpoint path and HTTP method being generated.
+- Ignore parameters, examples, supported filter lists, and filter payload formats from unrelated endpoints in the same chunk.
+- Do not treat <extracted_attributes> as proof that an attribute can be used in a filter; extracted attributes only constrain names/types after the endpoint's own documentation proves filter support.
 - Never generate `sortingSupport {{ ... }}` blocks and never reference `sorting.*`.
 - Treat <result> as the current working Groovy code. Extend or minimally edit it, but you may replace conflicting parts.
+- Treat concrete code already present in <result> as accumulated evidence from earlier chunks. Preserve existing endpoint blocks, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and executable `supportedFilter(...) {{ ... }}` blocks unless the current chunk gives explicit same-endpoint evidence that they are wrong.
+- A current chunk that omits filters, pagination, extraction details, or an endpoint parameter list is not evidence that previously generated code is unsupported. If the current chunk adds no relevant or contradictory evidence, return <result> unchanged.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment.
 - Preserve outer objectClass and search blocks when present in <result>.
 - Return ONLY valid Groovy code, no explanation outside code.
@@ -51,10 +57,30 @@ _SEARCH_SYSTEM_PROMPT_FILTER_RULES = textwrap.dedent("""\
 
 INTENT PROFILE: `filter`
 - Generate ONLY filter-based search support.
-- Prefer explicit `supportedFilter(...) {{ ... }}` blocks for documented attributes/operators.
-- If the API expects serialized filter payloads (e.g., query parameter `filters`), build them exactly as documented.
+- A REST filter is documented only when the target endpoint's own GET documentation or <extracted_endpoints> explicitly includes a filter-capable request parameter (for example `filter`, `filters`, or an attribute-specific query parameter) and documents the specific filter attribute/operator or gives an example for that same endpoint.
+- Use `supportedFilter(attribute("<attr>").<op>().anySingleValue()) {{ ... }}` for each documented filter.
+- Map operators to ConnId filter ops (for example exact match -> `.eq()`, contains -> `.contains()`), creating separate blocks when needed.
+- If the API expects serialized filter payloads (e.g., query parameter `filters`), build them inside each `supportedFilter` block exactly as documented.
+- Keep `pagingSupport` only for pagination parameters; do not place filter parameters there.
 - Do not add generic get-all behavior.
 - Add `emptyFilterSupported true` only if the docs explicitly state filtered mode also supports empty search.
+- Do not infer filters from response fields, <extracted_attributes>, schema properties, sort fields, select fields, or examples for other endpoints.
+- Description-only hints such as "can choose to filter similar to ..." are insufficient unless the same endpoint also documents the filter request parameter and supported filter keys.
+- If the current chunk's matching endpoint parameter list is present and contains no filter-capable parameter, do not add new filters from that chunk.
+- Do not remove `supportedFilter(...)` blocks already present in <result> unless the current chunk explicitly documents, for the same normalized endpoint path and HTTP method, that the previous filter parameter or previous filter attribute is invalid or unsupported.
+- If no documented filters are found in the current chunk, leave <result> unchanged, including existing endpoint, `objectExtractor`, `pagingSupport`, and `supportedFilter(...)` blocks.
+- Use ConnId-compatible filter DSL only:
+  - `supportedFilter(attribute("<attr>").eq().anySingleValue()) {{ ... }}`
+  - `supportedFilter(attribute("<attr>").contains().anySingleValue()) {{ ... }}`
+- Each `supportedFilter(...)` block must mutate `request` and use the provided `value`.
+- If API expects serialized filter payload (for example query parameter `filters`), build the payload inside each filter block, e.g.:
+  - `String filter = "[{{ \\"name\\": {{ \\"operator\\": \\"=\\", \\"values\\": [\\"${{value}}\\"] }} }}]"`
+  - `request.queryParameter("filters", filter)`
+- Never use non-ConnId pseudo syntax such as:
+  - `supportedFilter("name") {{ ... }}`
+  - `operator("=", true)`
+  - `filterType = "EQUAL"`
+  - `request.queryParameter("filters", filters)` when `filters` is not declared in the same scope
 """)
 
 _SEARCH_SYSTEM_PROMPT_ID_RULES = textwrap.dedent("""\
@@ -62,17 +88,11 @@ _SEARCH_SYSTEM_PROMPT_ID_RULES = textwrap.dedent("""\
 INTENT PROFILE: `id`
 - Generate ONLY single-object lookup by unique identifier.
 - Prefer a dedicated id endpoint path like `users/{{id}}` when documented.
-- For id lookup, the endpoint block should follow this shape:
-  endpoint("users/{{id}}") {{
-      singleResult()
-      supportedFilter(attribute("id").eq().anySingleValue()) {{
-          request.pathParameter("id", value)
-      }}
-  }}
 - If the endpoint path placeholder name differs (e.g., `{{userId}}`), map that exact name in `request.pathParameter("<name>", value)`.
 - If no dedicated id path exists, use exact-match `supportedFilter(attribute("<id-attr>").eq().anySingleValue())` with the documented query parameter mapping.
 - Never generate id intent using only `objectExtractor` without both `singleResult()` and `supportedFilter(...)`.
 - Never output leading `/` in `endpoint("...")` for REST search.
+- Never use `supportedFilter("id")`, `operator(...)`, or `filterType = ...` in id intent output.
 - Do not add list/get-all logic or non-id filters.
 """)
 

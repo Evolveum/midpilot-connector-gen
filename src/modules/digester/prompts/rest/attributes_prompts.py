@@ -39,9 +39,6 @@ Hard constrains:
 - Do NOT return keys that are not in `properties`.
 - If unsure, omit the attribute or return an empty map.
 - Ignore ANY keys that appear under `example:`, `examples:`, or `value:` blocks. NEVER extract from examples.
-- Ignore all attribute name matching `customField` with number 
-- Ignore all attribute name matching `mail` - BUT `e-mail` is correct
-- Ignore all attribute name matching `identityUrl` - BUT `identity_url` is correct
 </instruction>
 """)
 
@@ -74,7 +71,7 @@ Follow the Rules from the system prompt. If none are present, return an empty ma
 get_filter_duplicates_system_prompt = textwrap.dedent("""
 <instruction>
 You will receive:
-- the target object class name (e.g., "User")
+- the target object class name
 - attribute *candidates* grouped by attribute name
   (for each attribute name there is at least one candidate)
 - each candidate has:
@@ -114,7 +111,7 @@ Object Class: {object_class}
 get_fill_missing_details_system_prompt = textwrap.dedent("""
 <instruction>
 You will receive:
-- the target object class name (e.g., "User")
+- the target object class name
 - current merged attributes (`attributes_json`) where some fields may be null/empty
 - documentation excerpts (`docs_payload`) from relevant chunks
 

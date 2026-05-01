@@ -5,6 +5,7 @@
 """Unit tests for codegen service helper utilities."""
 
 from src.modules.codegen import service
+from src.modules.digester.schema import RelationsResponse
 
 
 def test_collect_pairs_new_format():
@@ -37,3 +38,49 @@ def test_collect_pairs_empty_input():
     assert service._collect_pairs(None) == []
     assert service._collect_pairs([]) == []
     assert service._collect_pairs("") == []
+
+
+def test_collect_relation_object_class_pairs_uses_subject_and_object_chunks():
+    relations = RelationsResponse.model_validate(
+        {
+            "relations": [
+                {
+                    "name": "principal_to_membership",
+                    "displayName": "Principal to Membership",
+                    "shortDescription": "",
+                    "subject": "principal",
+                    "subjectAttribute": "memberships",
+                    "object": "membership",
+                    "objectAttribute": "",
+                }
+            ]
+        }
+    )
+    object_classes_output = {
+        "objectClasses": [
+            {
+                "name": "Principal",
+                "relevantDocumentations": [
+                    {"docId": "doc-1", "chunkId": "principal-1"},
+                    {"docId": "doc-2", "chunkId": "shared"},
+                ],
+            },
+            {
+                "name": "Membership",
+                "relevantDocumentations": [
+                    {"docId": "doc-2", "chunkId": "shared"},
+                    {"docId": "doc-3", "chunkId": "membership-1"},
+                ],
+            },
+            {
+                "name": "Role",
+                "relevantDocumentations": [{"docId": "doc-4", "chunkId": "role-1"}],
+            },
+        ]
+    }
+
+    assert service._collect_relation_object_class_pairs(relations, object_classes_output) == [
+        {"doc_id": "doc-1", "chunk_id": "principal-1"},
+        {"doc_id": "doc-2", "chunk_id": "shared"},
+        {"doc_id": "doc-3", "chunk_id": "membership-1"},
+    ]

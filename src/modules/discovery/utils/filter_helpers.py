@@ -13,7 +13,7 @@ from langchain_core.runnables.config import RunnableConfig
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
 from src.modules.discovery.prompts.prompts import get_irrelevant_filter_prompts, get_rank_links_prompts
-from src.modules.discovery.schema import RankedLinks
+from src.modules.discovery.schema import DiscoveryIntegrationType, RankedLinks
 from src.modules.scrape.llms import get_irrelevant_llm_response
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ async def filter_candidate_links(
     candidates_enriched: List[Dict[str, Any]],
     app: str,
     app_version: str,
+    integration_type: DiscoveryIntegrationType = "DUMMY",
     max_llm_calls: int = 3,
 ) -> tuple[List[str], List[str]]:
     """
@@ -44,6 +45,7 @@ async def filter_candidate_links(
         candidates_enriched: List of candidate links with metadata (href/title/body)
         app: Application name
         app_version: Application version
+        integration_type: Discovery integration type
         max_llm_calls: Maximum number of LLM filtering iterations
 
     Returns:
@@ -111,7 +113,12 @@ async def filter_candidate_links(
 
         try:
             relevant_entries = [entry for entry in filtered_entries if entry["url"] in relevant_links]
-            irrelevant_prompts = get_irrelevant_filter_prompts(relevant_entries, app, app_version)
+            irrelevant_prompts = get_irrelevant_filter_prompts(
+                relevant_entries,
+                app,
+                app_version,
+                integration_type=integration_type,
+            )
             irrelevant_llm_response = await get_irrelevant_llm_response(irrelevant_prompts)
 
             if irrelevant_llm_response and irrelevant_llm_response.links:
@@ -144,6 +151,7 @@ async def rank_candidate_links(
     app: str,
     app_version: str,
     max_links: int,
+    integration_type: DiscoveryIntegrationType = "DUMMY",
 ) -> List[str]:
     """
     Rank candidate links by relevance using LLM and return ordered URLs.
@@ -152,6 +160,7 @@ async def rank_candidate_links(
         candidates_enriched: List of candidate links with metadata (href/title/body)
         app: Application name
         app_version: Application version
+        integration_type: Discovery integration type
         max_links: Maximum number of links to return (<=0 means no limit)
 
     Returns:
@@ -167,7 +176,12 @@ async def rank_candidate_links(
         max_links if max_links > 0 else "all",
     )
 
-    developer_msg, user_msg = get_rank_links_prompts(entries, app, app_version)
+    developer_msg, user_msg = get_rank_links_prompts(
+        entries,
+        app,
+        app_version,
+        integration_type=integration_type,
+    )
 
     llm = get_default_llm(temperature=0.7)
     developer_message = SystemMessage(content=developer_msg)

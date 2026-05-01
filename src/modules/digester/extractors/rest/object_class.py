@@ -40,7 +40,7 @@ from src.modules.digester.schema import (
     ObjectClassesResponse,
     RankedObjectClass,
 )
-from src.modules.digester.utils.chunk_extraction import extract_single_chunk
+from src.modules.digester.utils.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
 from src.modules.digester.utils.merges import merge_object_classes
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,15 @@ CONFIDENCE_ORDER: tuple[ConfidenceLevel, ...] = (
     ConfidenceLevel.LOW,
 )
 FALLBACK_CONFIDENCE: ConfidenceLevel = ConfidenceLevel.LOW
+
+
+def build_object_class_extraction_chain() -> Any:
+    """Build the reusable chain for REST object-class extraction across chunks."""
+    return build_chunk_extraction_chain(
+        pydantic_model=ObjectClassesExtendedResponse,
+        system_prompt=get_object_class_system_prompt,
+        user_prompt=get_object_class_user_prompt,
+    )
 
 
 def _alpha_sort_key(obj_class: BaseObjectClass) -> str:
@@ -177,10 +186,18 @@ async def extract_object_classes_raw(
     job_id: UUID,
     chunk_id: Optional[UUID] = None,
     chunk_metadata: Optional[Dict[str, Any]] = None,
+    extraction_chain: Any | None = None,
 ) -> Tuple[List[ExtendedObjectClass], bool]:
     """
     Extract raw object classes from a single chunk with one LLM call.
     Does NOT deduplicate or sort - that's done later across all chunks.
+
+    Args:
+        schema: Chunk content to extract from.
+        job_id: Job ID for progress tracking.
+        chunk_id: Optional chunk UUID.
+        chunk_metadata: Optional metadata for summary/tag prompt context.
+        extraction_chain: Optional pre-built reusable extraction chain.
     """
 
     def parse_fn(result: ObjectClassesExtendedResponse) -> List[ExtendedObjectClass]:
@@ -197,6 +214,7 @@ async def extract_object_classes_raw(
         chunk_id=chunk_id,
         track_chunk_per_item=True,
         chunk_metadata=chunk_metadata,
+        extraction_chain=extraction_chain,
     )
 
     extracted_valid: List[ExtendedObjectClass] = []

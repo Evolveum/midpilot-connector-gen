@@ -26,7 +26,7 @@ from src.modules.digester.schema import (
     ObjectClassesResponse,
 )
 from src.modules.digester.scim.loader import get_base_scim_object_classes, load_scim_base_schemas
-from src.modules.digester.utils.chunk_extraction import extract_single_chunk
+from src.modules.digester.utils.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.metadata_helper import build_doc_metadata_map
 from src.modules.digester.utils.object_classes import confidence_order_key
@@ -93,6 +93,15 @@ async def extract_scim_object_classes(
 
     # Load base schemas for LLM context
     scim_schemas = load_scim_base_schemas()
+    extraction_chain = (
+        build_chunk_extraction_chain(
+            pydantic_model=ObjectClassesExtendedResponse,
+            system_prompt=scim_object_class_system_prompt,
+            user_prompt=scim_object_class_user_prompt,
+        )
+        if doc_items
+        else None
+    )
 
     # Create extractor function that includes SCIM schemas
     async def extractor_with_scim_schemas(content: str, job_id: UUID, chunk_id: UUID):
@@ -103,6 +112,7 @@ async def extract_scim_object_classes(
             chunk_id=chunk_id,
             scim_base_schemas=scim_schemas,
             chunk_metadata=chunk_metadata,
+            extraction_chain=extraction_chain,
         )
         return custom_classes, has_relevant_data
 
@@ -273,6 +283,7 @@ async def extract_custom_scim_classes(
     chunk_id: Optional[UUID] = None,
     chunk_metadata: Optional[Dict[str, Any]] = None,
     scim_base_schemas: Optional[Dict[str, Any]] = None,
+    extraction_chain: Any | None = None,
 ) -> Tuple[List[ExtendedObjectClass], bool]:
     """
     Extract ONLY custom SCIM extensions and additional resources from a chunk.
@@ -283,6 +294,7 @@ async def extract_custom_scim_classes(
         job_id: Job ID for progress tracking
         chunk_id: Optional chunk UUID
         scim_base_schemas: Optional SCIM base schemas for LLM context
+        extraction_chain: Optional pre-built reusable extraction chain
 
     Returns:
         - List of custom ExtendedObjectClass instances
@@ -303,6 +315,7 @@ async def extract_custom_scim_classes(
         chunk_id=chunk_id,
         track_chunk_per_item=True,
         chunk_metadata=chunk_metadata,
+        extraction_chain=extraction_chain,
     )
 
     # Filter out any standard SCIM classes that LLM might have mistakenly extracted

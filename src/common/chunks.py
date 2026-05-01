@@ -26,7 +26,7 @@ def encoding(encoding_type: str) -> "tiktoken.Encoding":
 
 
 def split_text_with_token_overlap(
-    text: str | None, max_tokens: int = 35000, overlap_ratio: float = 0.05, encoding_type: str | None = "cl100k_base"
+    text: str | None, max_tokens: int = 10000, overlap_ratio: float = 0.08, encoding_type: str = "cl100k_base"
 ) -> List[tuple[str, int]]:
     """
     Split *text* into token‑bounded chunks with a configurable overlap.

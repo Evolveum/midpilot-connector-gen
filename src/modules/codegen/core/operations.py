@@ -202,8 +202,9 @@ class RelationGenerator(BaseGroovyGenerator):
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         relations = kwargs.get("relations")
+        relation_name = str(kwargs.get("relation_name") or "")
         if isinstance(relations, RelationsResponse):
-            relation_json = relations.model_dump_json()
+            relation_json = relations.model_dump_json(by_alias=True)
         elif isinstance(relations, str):
             relation_json = relations
         else:
@@ -211,7 +212,7 @@ class RelationGenerator(BaseGroovyGenerator):
                 relation_json = json.dumps(relations, ensure_ascii=False)
             except Exception:
                 relation_json = json.dumps({"relations": []})
-        return {"relation_json": relation_json}
+        return {"relation_json": relation_json, "relation_name": relation_name}
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return ""

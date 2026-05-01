@@ -384,9 +384,7 @@ async def upload_documentation_by_id(
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation ID"),
     documentation: UploadFile = File(..., description="OpenAPI/Swagger YAML or JSON file"),
-    use_previous_session_data: bool = Query(
-        True, description="Whether to use previous session data for processing the new documentation"
-    ),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -432,7 +430,7 @@ async def upload_documentation_by_id(
             "chunks": chunks,
             "app": app,
             "app_version": app_version,
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         worker=process_documentation_worker,
         worker_kwargs={
@@ -468,9 +466,7 @@ async def upload_documentation_by_id(
 async def replace_documentation(
     session_id: UUID = Path(..., description="Session ID"),
     documentation: UploadFile = File(..., description="OpenAPI/Swagger YAML or JSON file"),
-    use_previous_session_data: bool = Query(
-        True, description="Whether to use previous session data for processing the new documentation"
-    ),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -520,7 +516,7 @@ async def replace_documentation(
             "chunks": chunks,
             "app": app,
             "app_version": app_version,
-            "usePreviousSessionData": use_previous_session_data,
+            "skipCache": skip_cache,
         },
         worker=process_documentation_worker,
         worker_kwargs={

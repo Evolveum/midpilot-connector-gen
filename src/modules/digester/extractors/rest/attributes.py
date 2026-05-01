@@ -16,12 +16,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from modules.digester.utils.chunk_extraction import extract_single_chunk
 from src.common.enums import JobStage
 from src.common.jobs import (
-    append_job_error,
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
-from src.common.utils.normalize import normalize_chunk_pair
 from src.config import config
 from src.modules.digester.prompts.rest.attributes_prompts import (
     attribute_deduplication_system_prompt,
@@ -32,10 +30,6 @@ from src.modules.digester.prompts.rest.attributes_prompts import (
     get_build_from_sequences_user_prompt,
     get_consolidate_attributes_system_prompt,
     get_consolidate_attributes_user_prompt,
-    get_fill_missing_details_system_prompt,
-    get_fill_missing_details_user_prompt,
-    get_object_class_schema_system_prompt,
-    get_object_class_schema_user_prompt,
 )
 from src.modules.digester.schema import (
     AttributeBuildResponse,
@@ -49,12 +43,9 @@ from src.modules.digester.schema import (
 )
 from src.modules.digester.utils.attribute_filters import (
     filter_ignored_attributes,
-    ignore_attribute_name,
-    normalize_readability_flags,
 )
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.merges import merge_attribute_candidates
-from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 
@@ -121,21 +112,6 @@ def _format_attributes_as_table(attributes: Dict[str, AttributeInfoRest]) -> str
     return "\n".join([separator, header, separator, *rows, separator])
 
 
-def _build_attribute_chain(total_chunks: int) -> Any:
-    """
-    Build the LLM chain for extracting attributes from a single chunk.
-    """
-    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_object_class_schema_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_object_class_schema_user_prompt),
-        ]
-    ).partial(total=total_chunks, format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
-
-
 def _build_dedupe_chain() -> Any:
     """
     Build the LLM chain used to resolve attribute duplicates across chunks.
@@ -146,21 +122,6 @@ def _build_dedupe_chain() -> Any:
         [
             ("system", attribute_deduplication_system_prompt + "\n\n{format_instructions}"),
             ("human", attribute_deduplication_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
-
-
-def _build_fill_missing_chain() -> Any:
-    """
-    Build the LLM chain used to fill missing attribute information from documentation.
-    """
-    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_fill_missing_details_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_fill_missing_details_user_prompt),
         ]
     ).partial(format_instructions=parser.get_format_instructions())
     return make_basic_chain(prompt, llm, parser)
@@ -192,247 +153,6 @@ def _build_consolidation_chain() -> Any:
         ]
     ).partial(format_instructions=parser.get_format_instructions())
     return make_basic_chain(prompt, llm, parser)
-
-
-def _attach_relevant_documentations_per_attribute(
-    attributes: Dict[str, Dict[str, Any]],
-    attribute_chunk_pairs: Dict[str, Set[Tuple[str, str]]],
-) -> Dict[str, Dict[str, Any]]:
-    """Attach per-attribute relevantDocumentations in camelCase."""
-    enriched: Dict[str, Dict[str, Any]] = {}
-    normalized_pairs: Dict[str, Set[Tuple[str, str]]] = {}
-
-    for raw_name, pairs in attribute_chunk_pairs.items():
-        normalized = str(raw_name).strip().lower()
-        if not normalized:
-            continue
-        if normalized not in normalized_pairs:
-            normalized_pairs[normalized] = set()
-        normalized_pairs[normalized].update(pairs)
-
-    for attr_name, attr_info in attributes.items():
-        info = dict(attr_info)
-        direct_pairs = attribute_chunk_pairs.get(attr_name, set())
-        if direct_pairs:
-            sorted_pairs = sorted(direct_pairs, key=lambda pair: (pair[0], pair[1]))
-        else:
-            fallback_pairs = normalized_pairs.get(str(attr_name).strip().lower(), set())
-            sorted_pairs = sorted(fallback_pairs, key=lambda pair: (pair[0], pair[1]))
-        info["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in sorted_pairs]
-        enriched[attr_name] = info
-
-    return enriched
-
-
-async def _extract_from_single_chunk(
-    chain: Any,
-    *,
-    chunk_text: str,
-    object_class: str,
-    job_id: UUID,
-    chunk_id: Optional[UUID] = None,
-    chunk_metadata: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Dict[str, Any]]:
-    """
-    Run the attribute-extraction LLM on a single chunk and normalize the result to:
-        { attribute_name: attribute_info_dict }
-    """
-    try:
-        logger.info("[Digester:Attributes] LLM call for chunk %s", chunk_id)
-
-        # Extract summary and tags from chunk metadata
-        summary, tags = extract_summary_and_tags(chunk_metadata)
-
-        result = await chain.ainvoke(
-            {
-                "chunk": chunk_text,
-                "object_class": object_class,
-                "summary": summary,
-                "tags": tags,
-            },
-            config={"callbacks": [langfuse_handler]},
-        )
-
-        if isinstance(result, AttributeResponse):
-            parsed = result
-        elif isinstance(result, dict):
-            parsed = AttributeResponse.model_validate(result)
-        else:
-            content = getattr(result, "content", None)
-            if isinstance(content, str) and content.strip():
-                parsed = AttributeResponse.model_validate(json.loads(content))
-            else:
-                return {}
-
-        return {
-            name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
-            for name, info in parsed.attributes.items()
-        }
-
-    except Exception as exc:
-        error_message = f"[Digester:Attributes] Failed to process chunk {chunk_id}: {exc}"
-        logger.exception(error_message)
-        append_job_error(job_id, error_message)
-        return {}
-
-
-async def _extract_attributes_from_chunks(
-    *,
-    object_class: str,
-    chunks_for_chunk_id: List[str],
-    job_id: UUID,
-    chunk_id: UUID,
-    chunk_metadata: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Dict[str, Any]]]:
-    """
-    Extract attribute maps from all chunks associated with one chunk_id.
-    Returns a list aligned with chunks_for_chunk_id: index -> {attribute_name: info}
-    """
-    total_chunks = len(chunks_for_chunk_id)
-    await update_job_progress(
-        job_id,
-        stage=JobStage.processing_chunks,
-        message="Processing chunks and try to extract relevant information",
-    )
-
-    chain = _build_attribute_chain(total_chunks)
-
-    tasks = [
-        _extract_from_single_chunk(
-            chain,
-            chunk_text=chunk_text,
-            object_class=object_class,
-            job_id=job_id,
-            chunk_id=chunk_id,
-            chunk_metadata=chunk_metadata,
-        )
-        for i, chunk_text in enumerate(chunks_for_chunk_id)
-    ]
-    results = list(await asyncio.gather(*tasks))
-
-    logger.info("[Digester:Attributes] Extraction completed for chunk %s", chunk_id)
-    return results
-
-
-async def _fill_from_single_chunk(
-    chain: Any,
-    *,
-    chunk_text: str,
-    object_class: str,
-    attributes_json: str,
-    job_id: UUID,
-) -> Dict[str, Dict[str, Any]]:
-    """
-    Run the fill-missing LLM on a single chunk to fill null attribute values.
-    Returns updated attributes for this chunk.
-    """
-    try:
-        result = await chain.ainvoke(
-            {
-                "object_class": object_class,
-                "attributes_json": attributes_json,
-                "docs_payload": chunk_text,
-            },
-            config={"callbacks": [langfuse_handler]},
-        )
-
-        if isinstance(result, AttributeResponse):
-            parsed = result
-        elif isinstance(result, dict):
-            parsed = AttributeResponse.model_validate(result)
-        else:
-            content = getattr(result, "content", None)
-            if isinstance(content, str) and content.strip():
-                parsed = AttributeResponse.model_validate(json.loads(content))
-            else:
-                return {}
-
-        return {
-            name: info.model_dump(exclude={"relevant_documentations", "scimAttribute"})
-            for name, info in parsed.attributes.items()
-        }
-
-    except Exception as exc:
-        logger.error("[Digester:Attributes] Fill from chunk failed: %s", exc)
-        return {}
-
-
-async def fill_missing_details(
-    *,
-    object_class: str,
-    attributes: Dict[str, Dict[str, Any]],
-    chunks: List[str],
-    job_id: UUID,
-) -> Dict[str, Dict[str, Any]]:
-    """
-    Fill missing (null) attribute information by re-analyzing documentation chunks.
-
-    Takes deduplicated attributes and runs them through the LLM again with each
-    chunk individually to fill in any null/missing parameter values.
-
-    Args:
-        object_class: Name of the object class
-        attributes: Deduplicated attributes map with potentially null values
-        chunks: List of documentation chunks to analyze
-        job_id: Job ID for progress tracking
-
-    Returns:
-        Updated attributes dictionary with filled information
-    """
-    if not attributes:
-        return attributes
-
-    # Check if there are any null values that need filling
-    has_nulls = any(value is None for attr_info in attributes.values() for value in attr_info.values())
-
-    if not has_nulls:
-        logger.info("[Digester:Attributes] No null values found, skipping fill step")
-        return attributes
-
-    await update_job_progress(
-        job_id,
-        stage=JobStage.processing_chunks,
-        message=f"Filling missing attribute information for {object_class}",
-    )
-
-    # Prepare attributes JSON once
-    attributes_json = json.dumps(attributes, ensure_ascii=False, indent=2)
-
-    fill_chain = _build_fill_missing_chain()
-
-    logger.info("[Digester:Attributes] Processing %d chunks to fill missing info for %s", len(chunks), object_class)
-
-    # Process each chunk in parallel
-    tasks = [
-        _fill_from_single_chunk(
-            fill_chain,
-            chunk_text=chunk_text,
-            object_class=object_class,
-            attributes_json=attributes_json,
-            job_id=job_id,
-        )
-        for chunk_text in chunks
-    ]
-
-    chunk_results = list(await asyncio.gather(*tasks))
-
-    filled_attributes = dict(attributes)
-
-    for chunk_result in chunk_results:
-        if not chunk_result:
-            continue
-
-        for attr_name, attr_info in chunk_result.items():
-            if attr_name not in filled_attributes:
-                continue
-
-            # For each field in the attribute, fill if currently null and chunk has value
-            for field_name, field_value in attr_info.items():
-                if field_value is not None and filled_attributes[attr_name].get(field_name) is None:
-                    filled_attributes[attr_name][field_name] = field_value
-
-    logger.info("[Digester:Attributes] Successfully filled missing info for %s", object_class)
-    return filled_attributes
 
 async def _build_attr_from_sequences(chain: Any, object_class: str, attr: AttributeProcessingInfo, use_steps: bool) -> AttributeProcessingInfo | None:
     """
