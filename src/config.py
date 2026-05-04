@@ -52,16 +52,18 @@ class LLMSettings(BaseModel):
     :param openai_api_base: Base URL for the API endpoint.
     :param model_name: Default model identifier to use.
     :param request_timeout: Timeout for API requests in seconds.
+    :param ca_cert_file: Optional CA certificate file for internal TLS.
     """
 
     openai_api_key: str = ""
     openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-120b"
+    model_name: str = "hosted_vllm/openai/gpt-oss-120b"
     request_timeout: int = 120
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
         description="List of LLM providers in order of preference",
     )
+    ca_cert_file: Optional[str] = None
 
 
 class LangfuseSettings(BaseModel):
