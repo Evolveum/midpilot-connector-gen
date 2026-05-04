@@ -56,7 +56,6 @@ async def process_scraped_documentation(
         documentation_chunk = DocumentationItem(
             doc_id=documentation.id,
             url=str(documentation.url),
-            # chunk_number=idx,
             source=source,
             scrape_job_ids=[scraper_job_id] if scraper_job_id else [],
             summary=data.summary,

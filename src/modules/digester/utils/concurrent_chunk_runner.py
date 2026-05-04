@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Tuple, TypeVar
 from uuid import UUID
 
 from src.common.jobs import increment_processed_documents, update_job_progress
+from src.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -39,16 +40,19 @@ async def run_chunks_concurrently(
     """
     total_chunks = len(chunk_items)
     await update_job_progress(job_id, total_processing=total_chunks, message="Processing chunks")
+    max_concurrent = max(1, config.digester.max_concurrent_chunk_llm_calls)
+    semaphore = asyncio.Semaphore(max_concurrent)
 
     async def _process_single_chunk_item(chunk_item: dict) -> Tuple[T, bool, UUID]:
         """Process a single chunk and return its results."""
-        chunk_id = UUID(chunk_item["chunkId"])
-        chunk_content = chunk_item["content"]
+        async with semaphore:
+            chunk_id = UUID(chunk_item["chunkId"])
+            chunk_content = chunk_item["content"]
 
-        result, has_relevant_data = await extractor(chunk_content, job_id, chunk_id)
+            result, has_relevant_data = await extractor(chunk_content, job_id, chunk_id)
 
-        await increment_processed_documents(job_id, delta=1)
-        return result, has_relevant_data, chunk_id
+            await increment_processed_documents(job_id, delta=1)
+            return result, has_relevant_data, chunk_id
 
     return list(await asyncio.gather(*(_process_single_chunk_item(chunk_item) for chunk_item in chunk_items)))
 
@@ -84,11 +88,14 @@ async def run_chunk_groups_concurrently(
         processing_completed=0,
         message="Processing selected chunks",
     )
+    max_concurrent = max(1, config.digester.max_concurrent_chunk_llm_calls)
+    semaphore = asyncio.Semaphore(max_concurrent)
 
     async def _process_single_chunk(chunk_id: UUID, chunks: List[str]) -> Tuple[T, List[Dict[str, Any]]]:
-        result, relevant_chunks = await extractor(chunk_id, chunks)
-        await increment_processed_documents(job_id, delta=1)
-        return result, relevant_chunks
+        async with semaphore:
+            result, relevant_chunks = await extractor(chunk_id, chunks)
+            await increment_processed_documents(job_id, delta=1)
+            return result, relevant_chunks
 
     tasks = [_process_single_chunk(UUID(chunk_id), chunks) for chunk_id, chunks in chunks_by_id.items()]
 

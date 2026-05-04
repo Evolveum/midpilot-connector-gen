@@ -52,16 +52,18 @@ class LLMSettings(BaseModel):
     :param openai_api_base: Base URL for the API endpoint.
     :param model_name: Default model identifier to use.
     :param request_timeout: Timeout for API requests in seconds.
+    :param ca_cert_file: Optional CA certificate file for internal TLS.
     """
 
     openai_api_key: str = ""
     openai_api_base: str = "https://openrouter.ai/api/v1"
     model_name: str = "hosted_vllm/openai/gpt-oss-120b"
-    request_timeout: int = 600
+    request_timeout: int = 120
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
         description="List of LLM providers in order of preference",
     )
+    ca_cert_file: Optional[str] = None
 
 
 class LangfuseSettings(BaseModel):
@@ -225,6 +227,21 @@ class DigesterSettings(BaseModel):
     digester_input_check_interval: timedelta = Field(
         timedelta(weeks=4),
         description="Time interval for checking if the same digester input has been processed before.",
+    )
+    max_concurrent_chunk_llm_calls: int = Field(
+        20,
+        ge=1,
+        description="Maximum number of concurrent digester chunk LLM calls.",
+    )
+    chunk_llm_retry_attempts: int = Field(
+        2,
+        ge=1,
+        description="Maximum attempts for transient digester chunk LLM failures.",
+    )
+    chunk_llm_retry_base_delay_seconds: float = Field(
+        1.0,
+        ge=0,
+        description="Initial backoff delay for transient digester chunk LLM retries.",
     )
     info_metadata_uncertainty_threshold: float = Field(
         0.05,

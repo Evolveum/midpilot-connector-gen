@@ -27,6 +27,8 @@ from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
     get_groovy_cleanup_user_prompt,
 )
+from src.modules.codegen.repair import build_repair_prompt_vars, get_repair_initial_result
+from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.map_to_record import _without_relevant_documentations
 from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
@@ -162,6 +164,7 @@ class BaseGroovyGenerator(ABC):
         session_id: Optional[UUID] = None,
         relevant_chunk_pairs: Optional[List[Dict[str, Any]]] = None,
         job_id: UUID,
+        repair_context: Optional[CodegenRepairContext] = None,
         **operation_specific_kwargs,
     ) -> str:
         """
@@ -183,6 +186,13 @@ class BaseGroovyGenerator(ABC):
             relevant_chunk_pairs=relevant_chunk_pairs,
         )
 
+        if not chunks and repair_context is not None:
+            chunks = [""]
+            provenance_chunk_ids = [None]
+            per_chunk_counts = {}
+            chunk_ids_included = []
+            logger.info("%s Repair mode has no chunks; running single repair pass", self.config.logger_prefix)
+
         if not chunks:
             logger.warning("%s No chunks to process", self.config.logger_prefix)
             return self.config.default_scaffold
@@ -192,10 +202,12 @@ class BaseGroovyGenerator(ABC):
 
         # Step 3: Prepare input data and LLM chain
         input_data = self.prepare_input_data(**operation_specific_kwargs)
+        input_data.update(build_repair_prompt_vars(repair_context))
         chain = self._build_llm_chain(len(chunks))
 
         # Step 4: Process chunks iteratively
-        initial_result = self.get_initial_result(**operation_specific_kwargs)
+        fallback_result = self.get_initial_result(**operation_specific_kwargs)
+        initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result=fallback_result)
         result = initial_result
         result = await self._process_chunks(
             chunks=chunks,
@@ -219,7 +231,7 @@ class BaseGroovyGenerator(ABC):
             error_message = f"{self.config.logger_prefix} Final generated Groovy is invalid: {validation_error}"
             logger.warning(error_message)
             append_job_error(job_id, error_message)
-            return initial_result
+            return fallback_result
 
         return strip_markdown_fences(result)
 
