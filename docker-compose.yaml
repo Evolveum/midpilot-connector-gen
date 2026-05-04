@@ -4,7 +4,10 @@
 
 services:
   midpilot-connector-gen:
-    build: .
+    build:
+      context: .
+      args:
+        BASE_IMAGE: ${CONNECTOR_GEN_BASE_IMAGE:-midpilot-connector-gen-base:python3.13-playwright1.58.0}
     image: midpilot-connector-gen:latest
     container_name: api
     depends_on:
