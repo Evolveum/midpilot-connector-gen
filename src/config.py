@@ -57,7 +57,7 @@ class LLMSettings(BaseModel):
 
     openai_api_key: str = ""
     openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "hosted_vllm/openai/gpt-oss-120b"
+    model_name: str = "openai/gpt-oss-120b"
     request_timeout: int = 120
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
@@ -229,7 +229,7 @@ class DigesterSettings(BaseModel):
         description="Time interval for checking if the same digester input has been processed before.",
     )
     max_concurrent_chunk_llm_calls: int = Field(
-        20,
+        100,
         ge=1,
         description="Maximum number of concurrent digester chunk LLM calls.",
     )
