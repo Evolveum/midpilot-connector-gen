@@ -9,7 +9,8 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_filter.filter import filter_documentation_items
-from src.modules.digester.utils.criteria import AUTH_CRITERIA, DEFAULT_CRITERIA
+from src.config import config
+from src.modules.digester.utils.criteria import AUTH_CRITERIA, DEFAULT_CRITERIA, EXTENDED_AUTH_CRITERIA
 
 logger = logging.getLogger(__name__)
 
@@ -51,23 +52,27 @@ async def auth_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
             sessionInput - dict with documentationItemsCount and totalLength - used for input in session field
             jobInput - dict for job input field
     """
-    # Prefer auth-specific chunks, but fall back to the broader default digester set
-    # if the static auth filter is too restrictive for the current session metadata.
+    # Prefer auth-specific chunks, but broaden the category set when the default
+    # auth filter is likely too narrow for the current session metadata.
     doc_items = await filter_documentation_items(AUTH_CRITERIA, session_id, db=db)
-    used_auth_criteria = bool(doc_items)
-    if not doc_items:
+    min_doc_items = config.digester.auth_min_documentation_items
+    used_auth_criteria = True
+    if len(doc_items) < min_doc_items:
         logger.info(
-            "[Digester:Auth] AUTH_CRITERIA matched no documentation for session %s, falling back to DEFAULT_CRITERIA",
+            "[Digester:Auth] AUTH_CRITERIA matched %d documentation items for session %s; "
+            "falling back to EXTENDED_AUTH_CRITERIA",
+            len(doc_items),
             session_id,
         )
-        doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
+        doc_items = await filter_documentation_items(EXTENDED_AUTH_CRITERIA, session_id, db=db)
+        used_auth_criteria = False
     return {
         "sessionInput": {},
         "jobInput": {
             "documentationItems": doc_items,
             "usedAuthCriteria": used_auth_criteria,
         },
-        "args": (doc_items, used_auth_criteria, session_id),
+        "args": (doc_items,),
     }
 
 

@@ -235,6 +235,13 @@ class DigesterSettings(BaseModel):
             "Values below this evidence ratio across processed documents are ignored as uncertain."
         ),
     )
+    auth_min_documentation_items: int = Field(
+        15,
+        description=(
+            "Minimum number of documentation items required to use the default auth criteria; "
+            "otherwise extended auth criteria are used."
+        ),
+    )
     relation_generic_attribute_tokens: list[str] = Field(
         default_factory=lambda: [
             "a",
