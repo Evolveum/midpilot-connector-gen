@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
 import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
@@ -17,12 +18,71 @@ from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.config import config
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.doc_chunk import build_chunk_id_to_doc_id
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
+TRANSIENT_LLM_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+
+
+def _is_transient_llm_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code in TRANSIENT_LLM_STATUS_CODES:
+        return True
+
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "504 gateway time-out",
+            "504 gateway timeout",
+            "gateway time-out",
+            "gateway timeout",
+            "temporarily unavailable",
+            "rate limit",
+            "timed out",
+            "timeout",
+        )
+    )
+
+
+async def _invoke_extraction_chain_with_retry(
+    extraction_chain: Any,
+    payload: Dict[str, Any],
+    *,
+    logger_prefix: str,
+    chunk_id: Optional[UUID],
+) -> Any:
+    max_attempts = max(1, config.digester.chunk_llm_retry_attempts)
+    base_delay = max(0.0, config.digester.chunk_llm_retry_base_delay_seconds)
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await extraction_chain.ainvoke(
+                payload,
+                config=RunnableConfig(callbacks=[langfuse_handler]),
+            )
+        except Exception as exc:
+            if attempt >= max_attempts or not _is_transient_llm_error(exc):
+                raise
+
+            delay = base_delay * (2 ** (attempt - 1))
+            logger.warning(
+                "%sTransient LLM chunk failure for chunk %s; retrying attempt %s/%s in %.1fs: %s",
+                logger_prefix,
+                chunk_id,
+                attempt + 1,
+                max_attempts,
+                delay,
+                exc,
+            )
+            if delay:
+                await asyncio.sleep(delay)
+
+    raise RuntimeError("LLM extraction retry loop exited unexpectedly")
 
 
 async def run_doc_extractors_concurrently(
@@ -189,9 +249,11 @@ async def extract_single_chunk(
 
         result = cast(
             T,
-            await extraction_chain.ainvoke(
+            await _invoke_extraction_chain_with_retry(
+                extraction_chain,
                 {"chunk": text, "summary": summary, "tags": tags},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                logger_prefix=logger_prefix,
+                chunk_id=chunk_id,
             ),
         )
         logger.debug("%sLLM result: %r", logger_prefix, (result or ""))

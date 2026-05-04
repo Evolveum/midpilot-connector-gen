@@ -228,6 +228,21 @@ class DigesterSettings(BaseModel):
         timedelta(weeks=4),
         description="Time interval for checking if the same digester input has been processed before.",
     )
+    max_concurrent_chunk_llm_calls: int = Field(
+        20,
+        ge=1,
+        description="Maximum number of concurrent digester chunk LLM calls.",
+    )
+    chunk_llm_retry_attempts: int = Field(
+        2,
+        ge=1,
+        description="Maximum attempts for transient digester chunk LLM failures.",
+    )
+    chunk_llm_retry_base_delay_seconds: float = Field(
+        1.0,
+        ge=0,
+        description="Initial backoff delay for transient digester chunk LLM retries.",
+    )
     info_metadata_uncertainty_threshold: float = Field(
         0.05,
         description=(
