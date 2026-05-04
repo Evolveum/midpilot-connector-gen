@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-ARG BASE_IMAGE=midpilot-connector-gen-base:python3.13-playwright1.58.0
+ARG BASE_IMAGE=registry.evolveum.com/public/midpilot-connector-gen-base:python3.13-playwright1.58.0
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
