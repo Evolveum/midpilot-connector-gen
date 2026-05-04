@@ -7,7 +7,7 @@ Codegen endpoints for V2 API (session-centric).
 All codegen operations are nested under sessions.
 """
 
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
@@ -28,12 +28,31 @@ from src.common.utils.status_response import build_multi_doc_status_response, bu
 from src.modules.codegen import service
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.schema import (
+    CodegenOperationInput,
+    CodegenRepairContext,
     GroovyCodePayload,
-    PreferredEndpointsInput,
 )
 from src.modules.digester.schema import RelationsResponse
 
 router = APIRouter()
+
+
+def _preferred_endpoints_from_input(codegen_input: Optional[CodegenOperationInput]) -> Optional[list[dict]]:
+    if codegen_input is None or not codegen_input.preferred_endpoints:
+        return None
+    return [endpoint.model_dump() for endpoint in codegen_input.preferred_endpoints]
+
+
+def _repair_context_from_input(codegen_input: Optional[CodegenOperationInput]) -> Optional[CodegenRepairContext]:
+    if codegen_input is None:
+        return None
+    return codegen_input.repair_context()
+
+
+def _context_payload_from_input(codegen_input: Optional[CodegenOperationInput]) -> dict:
+    if codegen_input is None:
+        return {}
+    return codegen_input.context_payload()
 
 
 # Codegen Operations - Native Schema
@@ -47,6 +66,7 @@ async def generate_native_schema(
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
+    codegen_input: Optional[CodegenOperationInput] = None,
 ):
     """
     Generate native Groovy schema from attributes.
@@ -63,16 +83,23 @@ async def generate_native_schema(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
+    repair_context = _repair_context_from_input(codegen_input)
+    job_input = {
+        "attributes": attrs,
+        "objectClass": object_class,
+        "skipCache": skip_cache,
+    }
+    job_input.update(_context_payload_from_input(codegen_input))
+    worker_kwargs: dict[str, Any] = {"session_id": session_id}
+    if repair_context is not None:
+        worker_kwargs["repair_context"] = repair_context
+
     job_id = await schedule_coroutine_job(
         job_type="codegen.getNativeSchema",
-        input_payload={
-            "attributes": attrs,
-            "objectClass": object_class,
-            "skipCache": skip_cache,
-        },
+        input_payload=job_input,
         worker=service.create_native_schema,
         worker_args=(attrs, object_class),
-        worker_kwargs={"session_id": session_id},
+        worker_kwargs=worker_kwargs,
         initial_stage="queue",
         initial_message="Queued code generation",
         session_id=session_id,
@@ -83,7 +110,11 @@ async def generate_native_schema(
         session_id,
         {
             f"{object_class}NativeSchemaJobId": str(job_id),
-            f"{object_class}NativeSchemaInput": {"attributes": attrs, "objectClass": object_class},
+            f"{object_class}NativeSchemaInput": {
+                "attributes": attrs,
+                "objectClass": object_class,
+                **_context_payload_from_input(codegen_input),
+            },
         },
     )
 
@@ -156,6 +187,7 @@ async def generate_connid(
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
+    codegen_input: Optional[CodegenOperationInput] = None,
 ):
     """
     Generate ConnID Groovy code from attributes.
@@ -172,15 +204,23 @@ async def generate_connid(
             detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
         )
 
+    repair_context = _repair_context_from_input(codegen_input)
+    job_input = {
+        "attributes": attrs,
+        "objectClass": object_class,
+        "skipCache": skip_cache,
+    }
+    job_input.update(_context_payload_from_input(codegen_input))
+    worker_kwargs: dict[str, Any] = {}
+    if repair_context is not None:
+        worker_kwargs["repair_context"] = repair_context
+
     job_id = await schedule_coroutine_job(
         job_type="codegen.getConnID",
-        input_payload={
-            "attributes": attrs,
-            "objectClass": object_class,
-            "skipCache": skip_cache,
-        },
+        input_payload=job_input,
         worker=service.create_conn_id,
         worker_args=(attrs, object_class),
+        worker_kwargs=worker_kwargs,
         initial_stage="queue",
         initial_message="Queued code generation",
         session_id=session_id,
@@ -191,7 +231,11 @@ async def generate_connid(
         session_id,
         {
             f"{object_class}ConnidJobId": str(job_id),
-            f"{object_class}ConnidInput": {"attributes": attrs, "objectClass": object_class},
+            f"{object_class}ConnidInput": {
+                "attributes": attrs,
+                "objectClass": object_class,
+                **_context_payload_from_input(codegen_input),
+            },
         },
     )
 
@@ -265,7 +309,7 @@ async def generate_search(
     intent: SearchIntent = Path(..., description="Intent"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
-    preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
+    codegen_input: Optional[CodegenOperationInput] = None,
 ):
     """
     Generate Groovy search code for the given object class.
@@ -284,11 +328,8 @@ async def generate_search(
 
     api_types = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_types)
-    preferred_endpoints = (
-        [endpoint.model_dump() for endpoint in preferred_endpoints_input.preferred_endpoints]
-        if preferred_endpoints_input
-        else None
-    )
+    preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
+    repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -304,6 +345,7 @@ async def generate_search(
         "intent": intent,
         "skipCache": skip_cache,
     }
+    job_input.update(_context_payload_from_input(codegen_input))
     if preferred_endpoints is not None:
         job_input["preferredEndpoints"] = preferred_endpoints
     worker_kwargs = {
@@ -313,6 +355,8 @@ async def generate_search(
         "intent": intent,
         "preferred_endpoints": preferred_endpoints,
     }
+    if repair_context is not None:
+        worker_kwargs["repair_context"] = repair_context
     if eps is not None:
         job_input["endpoints"] = eps
         worker_kwargs["endpoints"] = eps
@@ -332,6 +376,7 @@ async def generate_search(
     )
 
     session_input = {"objectClass": object_class, "attributes": attrs, "intent": intent}
+    session_input.update(_context_payload_from_input(codegen_input))
     if eps is not None:
         session_input["endpoints"] = eps
     if preferred_endpoints is not None:
@@ -418,7 +463,7 @@ async def generate_create(
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
-    preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
+    codegen_input: Optional[CodegenOperationInput] = None,
 ):
     """
     Generate Groovy create code for the given object class.
@@ -437,11 +482,8 @@ async def generate_create(
 
     api_types = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_types)
-    preferred_endpoints = (
-        [endpoint.model_dump() for endpoint in preferred_endpoints_input.preferred_endpoints]
-        if preferred_endpoints_input
-        else None
-    )
+    preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
+    repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -456,6 +498,7 @@ async def generate_create(
         "object_class": object_class,
         "skipCache": skip_cache,
     }
+    job_input.update(_context_payload_from_input(codegen_input))
     if preferred_endpoints is not None:
         job_input["preferredEndpoints"] = preferred_endpoints
     worker_kwargs = {
@@ -464,6 +507,8 @@ async def generate_create(
         "object_class": object_class,
         "preferred_endpoints": preferred_endpoints,
     }
+    if repair_context is not None:
+        worker_kwargs["repair_context"] = repair_context
     if eps is not None:
         job_input["endpoints"] = eps
         worker_kwargs["endpoints"] = eps
@@ -481,6 +526,7 @@ async def generate_create(
     )
 
     session_input = {"objectClass": object_class, "attributes": attrs}
+    session_input.update(_context_payload_from_input(codegen_input))
     if eps is not None:
         session_input["endpoints"] = eps
     if preferred_endpoints is not None:
@@ -561,7 +607,7 @@ async def generate_update(
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
-    preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
+    codegen_input: Optional[CodegenOperationInput] = None,
 ):
     """
     Generate Groovy update code for the given object class.
@@ -580,11 +626,8 @@ async def generate_update(
 
     api_types = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_types)
-    preferred_endpoints = (
-        [endpoint.model_dump() for endpoint in preferred_endpoints_input.preferred_endpoints]
-        if preferred_endpoints_input
-        else None
-    )
+    preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
+    repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -599,6 +642,7 @@ async def generate_update(
         "object_class": object_class,
         "skipCache": skip_cache,
     }
+    job_input.update(_context_payload_from_input(codegen_input))
     if preferred_endpoints is not None:
         job_input["preferredEndpoints"] = preferred_endpoints
     worker_kwargs = {
@@ -607,6 +651,8 @@ async def generate_update(
         "object_class": object_class,
         "preferred_endpoints": preferred_endpoints,
     }
+    if repair_context is not None:
+        worker_kwargs["repair_context"] = repair_context
     if eps is not None:
         job_input["endpoints"] = eps
         worker_kwargs["endpoints"] = eps
@@ -624,6 +670,7 @@ async def generate_update(
     )
 
     session_input = {"objectClass": object_class, "attributes": attrs}
+    session_input.update(_context_payload_from_input(codegen_input))
     if eps is not None:
         session_input["endpoints"] = eps
     if preferred_endpoints is not None:
@@ -704,7 +751,7 @@ async def generate_delete(
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
-    preferred_endpoints_input: Optional[PreferredEndpointsInput] = None,
+    codegen_input: Optional[CodegenOperationInput] = None,
 ):
     """
     Generate Groovy delete code for the given object class.
@@ -723,11 +770,8 @@ async def generate_delete(
 
     api_types = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_types)
-    preferred_endpoints = (
-        [endpoint.model_dump() for endpoint in preferred_endpoints_input.preferred_endpoints]
-        if preferred_endpoints_input
-        else None
-    )
+    preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
+    repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and not is_scim:
@@ -742,6 +786,7 @@ async def generate_delete(
         "object_class": object_class,
         "skipCache": skip_cache,
     }
+    job_input.update(_context_payload_from_input(codegen_input))
     if preferred_endpoints is not None:
         job_input["preferredEndpoints"] = preferred_endpoints
     worker_kwargs = {
@@ -750,6 +795,8 @@ async def generate_delete(
         "object_class": object_class,
         "preferred_endpoints": preferred_endpoints,
     }
+    if repair_context is not None:
+        worker_kwargs["repair_context"] = repair_context
     if eps is not None:
         job_input["endpoints"] = eps
         worker_kwargs["endpoints"] = eps
@@ -767,6 +814,7 @@ async def generate_delete(
     )
 
     session_input = {"objectClass": object_class, "attributes": attrs}
+    session_input.update(_context_payload_from_input(codegen_input))
     if eps is not None:
         session_input["endpoints"] = eps
     if preferred_endpoints is not None:

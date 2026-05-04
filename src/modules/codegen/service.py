@@ -24,6 +24,7 @@ from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_system_prompt,
     get_native_schema_user_prompt,
 )
+from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.selection.docs_loader import read_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.codegen.utils.map_to_record import attributes_to_records_for_codegen
@@ -188,6 +189,7 @@ async def create_native_schema(
     *,
     session_id: UUID,
     job_id: UUID,
+    repair_context: Optional[CodegenRepairContext] = None,
 ) -> Dict[str, str]:
     """
     Generate Groovy for native schema mapping from attributes.
@@ -209,6 +211,7 @@ async def create_native_schema(
         logger_prefix="NativeSchema",
         extra_prompt_vars={"user_schema_docs": docs_text},
         job_id=job_id,
+        repair_context=repair_context,
     )
     return {"code": code}
 
@@ -218,6 +221,7 @@ async def create_conn_id(
     object_class: str,
     *,
     job_id: UUID,
+    repair_context: Optional[CodegenRepairContext] = None,
 ) -> Dict[str, str]:
     """
     Generate Groovy for ConnID attribute mapping from attributes.
@@ -235,6 +239,7 @@ async def create_conn_id(
         logger_prefix="ConnID",
         extra_prompt_vars={"connID_docs": docs_text},
         job_id=job_id,
+        repair_context=repair_context,
     )
     return {"code": code}
 
@@ -248,6 +253,7 @@ async def create_search(
     object_class: str,
     intent: SearchIntent,
     job_id: UUID,
+    repair_context: Optional[CodegenRepairContext] = None,
 ) -> Dict[str, str]:
     """
     Generate the Groovy `search {}` block using relevant chunks + docs.
@@ -280,6 +286,7 @@ async def create_search(
         relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
+        repair_context=repair_context,
         attributes=attributes,
         endpoints=endpoints,
     )
@@ -295,6 +302,7 @@ async def create_create(
     session_id: UUID,
     object_class: str,
     job_id: UUID,
+    repair_context: Optional[CodegenRepairContext] = None,
 ) -> Dict[str, str]:
     """
     Generate the Groovy `create {}` block using relevant chunks + docs.
@@ -326,6 +334,7 @@ async def create_create(
         relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
+        repair_context=repair_context,
         attributes=attributes,
         endpoints=endpoints,
     )
@@ -340,6 +349,7 @@ async def create_update(
     session_id: UUID,
     object_class: str,
     job_id: UUID,
+    repair_context: Optional[CodegenRepairContext] = None,
 ) -> Dict[str, str]:
     """
     Generate the Groovy `update {}` block using relevant chunks + docs.
@@ -371,6 +381,7 @@ async def create_update(
         relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
+        repair_context=repair_context,
         attributes=attributes,
         endpoints=endpoints,
     )
@@ -385,6 +396,7 @@ async def create_delete(
     session_id: UUID,
     object_class: str,
     job_id: UUID,
+    repair_context: Optional[CodegenRepairContext] = None,
 ) -> Dict[str, str]:
     """
     Generate the Groovy `delete {}` block using relevant chunks + docs.
@@ -416,6 +428,7 @@ async def create_delete(
         relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
+        repair_context=repair_context,
         attributes=attributes,
         endpoints=endpoints,
     )

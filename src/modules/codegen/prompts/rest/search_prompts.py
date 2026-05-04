@@ -4,7 +4,8 @@
 
 import textwrap
 
-_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX = textwrap.dedent("""\
+_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX = (
+    textwrap.dedent("""\
 You are an expert in creating connectors (connID and midPoint). Your goal is to prepare a `search` schema in Groovy.
 
 The input data you will receive:
@@ -20,6 +21,9 @@ Prepare valid Groovy search schema code based on the following `.adoc` documenta
 <search_docs>
 {search_docs}
 </search_docs>
+""")
+    + "{repair_system_suffix}"
+    + textwrap.dedent("""\
 
 OUTPUT RULES:
 - Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
@@ -43,6 +47,7 @@ OUTPUT RULES:
 - Preserve outer objectClass and search blocks when present in <result>.
 - Return ONLY valid Groovy code, no explanation outside code.
 """)
+)
 
 _SEARCH_SYSTEM_PROMPT_ALL_RULES = textwrap.dedent("""\
 
@@ -111,7 +116,8 @@ get_search_id_system_prompt = (
     _SEARCH_SYSTEM_PROMPT_COMMON_PREFIX + _SEARCH_SYSTEM_PROMPT_ID_RULES + _SEARCH_SYSTEM_PROMPT_COMMON_SUFFIX
 )
 
-get_search_user_prompt = textwrap.dedent("""\
+get_search_user_prompt = (
+    textwrap.dedent("""\
 Chunk {idx}/{total} of the API schema:
 Requested search intent: {intent}
 
@@ -138,6 +144,9 @@ Base API URL for endpoint-path normalization:
 <base_api_url>
 {base_api_url}
 </base_api_url>
+""")
+    + "{repair_user_suffix}"
+    + textwrap.dedent("""\
 
 Here are docs where you have to find additional information:
 
@@ -151,3 +160,4 @@ Result from previous docs:
 {result}
 </result>
 """)
+)

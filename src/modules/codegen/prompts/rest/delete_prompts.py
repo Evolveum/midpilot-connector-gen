@@ -4,7 +4,8 @@
 
 import textwrap
 
-get_delete_system_prompt = textwrap.dedent("""\
+get_delete_system_prompt = (
+    textwrap.dedent("""\
 You are an expert in creating connectors for midPoint. Your goal is to prepare a `delete` schema in Groovy. 
 
 The input data you will receive:
@@ -20,6 +21,9 @@ Prepare a valid Groovy code for delete schema in Groovy based on the following `
 <delete_docs>
 {delete_docs}
 </delete_docs>
+""")
+    + "{repair_system_suffix}"
+    + textwrap.dedent("""\
 
 OUTPUT RULES:
 - Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
@@ -38,8 +42,10 @@ OUTPUT RULES:
 - The output format is just an example and may vary slightly based on the various specifications and documentations that will be available to you in the user prompt.
 - No extra commentary.
 """)
+)
 
-get_delete_user_prompt = textwrap.dedent("""
+get_delete_user_prompt = (
+    textwrap.dedent("""
 Chunk {idx}/{total} of the API schema:
 Target object class: {object_class}
 Here is extracted object class attributes from OpenAPI/Swagger schema wrapped into JSON from previous LLM for {object_class}:
@@ -65,6 +71,9 @@ Base API URL for endpoint-path normalization:
 <base_api_url>
 {base_api_url}
 </base_api_url>
+""")
+    + "{repair_user_suffix}"
+    + textwrap.dedent("""\
 
 Here is chunk where you have to find additional information:
 
@@ -78,3 +87,4 @@ Result from previous chunks:
 {result}
 </result>
 """)
+)
