@@ -159,18 +159,18 @@ get_attribute_discovery_system_prompt = textwrap.dedent("""
 <instruction>
 You are an expert IGA/IDM analyst. You will be given:
 - an object class name (e.g. "User", "Group", ...)
-- a fragment, focused excerpt of the application’s OpenAPI schema containing definition and description
+- a fragment, focused excerpt of the application’s OpenAPI schema or API documentation containing definition and description
   (its `properties`, and possibly `required`, `readOnly`/`writeOnly`, `deprecated`, or $refs).
 
-Your task: extract ONLY attributes that are explicitly defined under that object’s `properties`.
+Your task: extract ONLY attributes that are explicitly defined as that object's `properties` in the documentation.
 Use the structured output schema to respond.
 Do NOT infer or invent attributes. If the object is not present or has no `properties`, return an empty map.
 
 Rules:
-- Include a property **only if it appears under this object's `properties`**.
+- The attribute should be clearly described as a property of the given object class.
 - type:
   - Use the JSON Schema type if present.
-  - If `$ref: '#/components/schemas/Other'`, set: "type": "reference Other", "format": "reference".
+  - If `$ref: '#/components/schemas/NAME'`, set: "type": "reference NAME", "format": "reference".
   - If inline object (has nested `properties`) → "type": "object", "format": "embedded".
   - If not explicitly stated in this chunk, set type to null.
 - format:
@@ -182,12 +182,12 @@ Rules:
 
 Hard constrains:
 - Do NOT add attributes from examples, other objects, or unrelated sections.
-- Do NOT return keys that are not in `properties`.
 - If unsure, omit the attribute or return an empty map.
 - Ignore ANY keys that appear under `example:`, `examples:`, or `value:` blocks. NEVER extract from examples.
 - Ignore all attribute name matching `customField` with number 
 - Ignore all attribute name matching `mail` - BUT `e-mail` is correct
 - Ignore all attribute name matching `identityUrl` - BUT `identity_url` is correct
+- Ignore all deprecated, in progress, not yet implemented (whole attributes or any other relevant part) or other non release-ready attributes
                                                         
 **OUTPUT REQUIREMENTS**
 
@@ -198,26 +198,34 @@ For each attribute you extract, provide:
 3. **format** - The attribute format as defined above.
 4. **description** - The attribute description as defined above.
 5. **sequences** - An array of objects, each containing:
-   - **start_marker** - The exact opening phrase from the documentation (word-for-word, searchable)
-   - **end_marker** - The exact closing phrase from the documentation (word-for-word, searchable)
+   - **start_sequence** - The exact opening phrase, start of the sequence - marker from the documentation (word-for-word, searchable)
+   - **end_sequence** - The exact closing phrase, end of the sequence - marker from the documentation (word-for-word, searchable)
+                                
+**Sequences**
+- Sequences are fragments of text that define the attribute in the documentation.
+- Sequences are used for extracting details about the attribute so they should encompass all of the relevant information about the attribute and nothing more.
+- Sequences is an array of objects - you should return all relevant sequences, each object is defined as text between two unique markers - start_marker and end_marker. Text of the marker is also used as a part of the sequence.
+- Sequences for an attribute must be unique - while multiple sequences per attribute are encuraged, they should not be an exact copy of each other.
+                                
+***MARKER EXTRACTION RULES**
 
-**MARKER EXTRACTION RULES**
-
-- Copy markers exactly as they appear in the source—no paraphrasing, abbreviation, or alteration
-- Always leave examples and other supporting text in the sequence; the markers should encompass the entire relevant section, including examples, edge cases, and quirks
-- Markers must be unique strings that can locate the exact position in the documentation
-- Markers must be phrases that are part of the actual relevant content
-- Markers must be at least 10 characters long to ensure uniqueness and avoid common words or patterns, shorter ones will be discarded
-- Markers should be less than 300 characters long to ensure searchability and relevance; the content should be between markers, not in them
-- Ideal start marker is the title or the start of the first sentence introducing the attribute; ideal end marker is the ending of the last sentence that concludes the method's description
-- In case of json or yaml documentation, the ultimate focus should be on uniqueness of the markers, always include some specific text in the markers.
-- Markers should be as concise as possible while still being unique and clearly tied to the attribute's description
-- Each sequence should be as short as possible while capturing the core context of that attribute
-- If an attribute is discussed in multiple locations, return separate start/end marker pairs for each section rather than spanning unrelated content
-- Return only the markers themselves—do not include the text between them
-- NEVER include another attribute's name or type as a marker for a different attribute
-- NEVER use title from another attribute as a marker for a different attribute even as end marker
-- Don't forget about any non word characters in the markers, such as punctuation, parentheses, colons, newlines, etc.
+- **Accuracy**: Copy markers exactly as they appear—word-for-word, character-for-character, including punctuation, whitespace, and line breaks. No paraphrasing or abbreviation.
+- **Content span**: Markers should encompass the entire relevant section, including examples, edge cases, constraints, and related context.
+- **Uniqueness**: Markers must be distinctive strings that can reliably locate the exact position in the documentation. Avoid common words or patterns.
+  - Uniqueness of the start marker is crucial for accurate extraction, but some leniency can be applied to end markers.
+- **Length constraints**:
+  - Minimum: 10 characters (shorter markers will be discarded as insufficiently unique)
+  - Maximum: 300 characters (longer markers reduce searchability)
+- **Positioning**:
+  - Ideal start marker: The title or opening sentence introducing the attribute
+  - Ideal end marker: The final sentence concluding the attribute's description
+- **JSON/YAML documentation**: Prioritize uniqueness of markers; include specific text that distinguishes this attribute from others.
+- **Conciseness**: Make markers as short as possible while maintaining uniqueness and clear attribution to the attribute.
+- **Multiple locations**: If an attribute is discussed in multiple documentation sections, return separate start/end marker pairs for each section—do not span unrelated content.
+- **Forbidden practices**:
+  - Never include the content between markers—return only the markers themselves
+- **Special characters**: Do not forget punctuation, parentheses, colons, newlines, and other non-word characters present in the markers.
+- **Relevance**: Markers should be extracted only and only from sections that are clearly tied to the given object class. Never include markers from sections that are about a different object class, even if the attribute name is the same.
 </instruction>""")
 
 get_attribute_discovery_user_prompt = textwrap.dedent("""
@@ -266,6 +274,8 @@ Rules for `duplicates`:
 Rules for `to_be_deleted`:
 - Include names that should be removed because evidence is weak, irrelevant to the object class, or clearly noise.
 - Do not include names already listed as `delete_name` in duplicates unless absolutely necessary.
+- Include all attributes that are deprecated, marked as "in progress" or "not yet implemented", or otherwise clearly not release-ready.
+- Include non-relevant attributes for IDM integration like "self".
 - Use names exactly as present in the input.
 
 Quality guidance:
@@ -306,6 +316,21 @@ However, with this second task be very conservative in making corrections. Only 
 Rules:
 - For each field currently null or missing, fill it only if there is explicit, unambiguous evidence in the relevant sequences.
 - For each field currently non-null, only change it if the relevant sequences provide overwhelmingly clear and irrefutable evidence that it is incorrect.
+- Be careful to not set a field if the evidence is missing, unclear, or contradictory. In such cases, keep the field null or unchanged.
+- Implied evidence is not sufficient; there must be direct, explicit statements in the relevant sequences to support any changes or fillings.               
+- Be careful with time related attributes (e.g., "created", "modified" times) and their mandatory flag - there can be differences between "mandatory" flag in IDM integration sense and the application's point of view.
+- Only set the mandatory flag to true if the documentation explicitly states that the attribute is required in IDM integration point of view.                                    
+- When a field can be filled as a list, set the multivalue flag to true.
+- type:
+  - Use the JSON Schema type if present.
+  - If `$ref: '#/components/schemas/NAME'`, set: "type": "reference NAME", "format": "reference".
+  - If inline object (has nested `properties`) → "type": "object", "format": "embedded".
+  - If not explicitly stated in this chunk, set type to null.
+- format:
+  - For primitives, use OpenAPI format registry values if present (e.g., "email", "uri", "int64", "date-time"); otherwise null.
+  - For arrays, set format to the **item** format (null if none).
+  - For object/reference, "embedded" or "reference" as above (no custom values).
+  - If not explicitly stated in this chunk, set format to null.
 
 Hard constraints:
   - Do NOT invent data.
@@ -343,6 +368,16 @@ Your primary task is to review the provided attribute information and produce a 
 Rules:
 - Be very conservative in making any changes to the existing non-null values. Only change them if the relevant sequences provide overwhelmingly clear and irrefutable evidence that they are incorrect.
 - Do not add any flags that are currently null
+- type:
+  - Use the JSON Schema type if present.
+  - If `$ref: '#/components/schemas/NAME'`, set: "type": "reference NAME", "format": "reference".
+  - If inline object (has nested `properties`) → "type": "object", "format": "embedded".
+  - If not explicitly stated in this chunk, set type to null.
+- format:
+  - For primitives, use OpenAPI format registry values if present (e.g., "email", "uri", "int64", "date-time"); otherwise null.
+  - For arrays, set format to the **item** format (null if none).
+  - For object/reference, "embedded" or "reference" as above (no custom values).
+  - If not explicitly stated in this chunk, set format to null.
 
 Hard constraints:
 - Do NOT invent data.

@@ -319,6 +319,72 @@ async def _extract_rest_endpoints_from_relevant_chunks(
         chunk_id_to_doc_id,
     )
 
+async def _retry_attributes_with_default_criteria(
+    doc_items: List[dict],
+    object_class: str,
+    session_id: UUID,
+    job_id: UUID,
+    old_relevant_chunks: List[Dict[str, Any]],
+    chunk_metadata_map: Dict[str, Any],
+    chunk_id_to_doc_id: Dict[str, str],
+    is_scim: bool = False,
+) -> Dict[str, Any] | None:
+    fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
+    if not fallback_doc_items:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA matched no documentation for session %s; keeping empty attribute result",
+            session_id,
+        )
+        return None
+
+    primary_chunk_ids = chunk_ids_from_relevant_chunks(old_relevant_chunks)
+    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
+    fallback_chunk_ids = chunk_ids_from_relevant_chunks(fallback_relevant_chunks)
+    if primary_chunk_ids and primary_chunk_ids == fallback_chunk_ids:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA matched same chunks for session %s, object class %s; skipping retry",
+            session_id,
+            object_class,
+        )
+        return None
+
+    fallback_doc_items = exclude_doc_items_by_chunk_id(fallback_doc_items, primary_chunk_ids)
+    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
+    if not fallback_relevant_chunks:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA produced no new chunks for session %s; keeping empty attribute result",
+            session_id,
+        )
+        return None
+    
+    fallback_selected_content, fallback_chunk_ids = select_doc_chunks(doc_items, fallback_relevant_chunks, "Digester:Attributes")
+    
+    if is_scim:
+        fallback_result = await extract_scim_attributes(
+            fallback_selected_content,
+            object_class,
+            job_id,
+            fallback_chunk_ids,
+            chunk_metadata_map,
+            chunk_id_to_doc_id,
+        )
+    else:
+        fallback_result = await _extract_rest_attributes(
+            fallback_selected_content,
+            object_class,
+            job_id,
+            fallback_chunk_ids,
+            chunk_metadata_map,
+            chunk_id_to_doc_id,
+        )
+
+    if not fallback_result:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA chunks could not be selected for session %s; keeping empty attribute result",
+            session_id,
+        )
+
+    return fallback_result
 
 async def _retry_rest_endpoints_with_default_criteria(
     primary_result: Dict[str, Any],
@@ -538,6 +604,25 @@ async def extract_attributes(
     try:
         attributes_dict = extract_attributes_from_result(result)
         logger.info("[Digester:Attributes] Extracted %d attributes for %s", len(attributes_dict), object_class)
+
+        if len(attributes_dict) == 0:
+            logger.warning(f"[Digester:Attributes] No attributes extracted for {object_class} from relevant chunks, retrying with default criteria")
+            # Retry with default criteria
+            result = await _retry_attributes_with_default_criteria(
+                doc_items,
+                object_class,
+                session_id,
+                job_id,
+                relevant_chunks,
+                chunk_metadata_map,
+                chunk_id_to_doc_id,
+                is_scim=is_scim,
+            )
+            attributes_dict_retry = extract_attributes_from_result(result)
+
+            if attributes_dict_retry:
+                logger.info("[Digester:Attributes] Extracted %d attributes for %s on retry with default criteria", len(attributes_dict_retry), object_class)
+                attributes_dict = attributes_dict_retry
 
         updated = await update_object_class_field_in_session(
             session_id=session_id,

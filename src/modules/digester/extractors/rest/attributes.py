@@ -43,6 +43,7 @@ from src.modules.digester.schema import (
 )
 from src.modules.digester.utils.attribute_filters import (
     filter_ignored_attributes,
+    normalize_readability_flags,
 )
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.merges import merge_attribute_candidates
@@ -460,7 +461,7 @@ async def extract_attributes(
     logger.info("[Digester:Attributes] Attributes after final consolidation: %s", json.dumps(consolidated_attributes.model_dump(exclude={'attributes': {'__all__': {'relevant_documentations', 'relevant_sequences'}}}), indent=2, ensure_ascii=False))
 
     # Log attributes as a formatted table
-    attributes_table = _format_attributes_as_table(consolidated_attributes.attributes)
+    attributes_table = _format_attributes_as_table(consolidated_attributes.attributes) # type: ignore
     logger.info("[Digester:Attributes] Final attributes table for %s:\n%s", object_class, attributes_table)
 
     relevant_chunks = []
@@ -470,6 +471,9 @@ async def extract_attributes(
             if chk["chunk_id"] not in seen_chunk_ids:
                 relevant_chunks.append({"chunkId": chk["chunk_id"], "docId": chk.get("doc_id", "unknown")})
                 seen_chunk_ids.add(chk["chunk_id"])
+
+    normalized_attributes = normalize_readability_flags(consolidated_attributes.model_dump()["attributes"])
+    logger.info("[Digester:Attributes] Normalized attributes after readability flags adjustment: %s", json.dumps(normalized_attributes, indent=2, ensure_ascii=False))
 
     # for chunk_per_group, chunk_relevant in results:
     #     all_per_chunk.extend(chunk_per_group)
@@ -506,4 +510,4 @@ async def extract_attributes(
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
-    return {"result": {"attributes": consolidated_attributes}, "relevantDocumentations": relevant_chunks}
+    return {"result": {"attributes": normalized_attributes}, "relevantDocumentations": relevant_chunks}

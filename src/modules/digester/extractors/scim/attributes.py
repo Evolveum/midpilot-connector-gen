@@ -25,7 +25,7 @@ from src.modules.digester.prompts.scim.attributes_prompts import (
     get_scim_attributes_system_prompt,
     get_scim_attributes_user_prompt,
 )
-from src.modules.digester.schema import ExtractedAttributeResponse
+from src.modules.digester.schema import ExtractedAttributeResponseSCIM
 from src.modules.digester.scim.loader import get_base_scim_attributes, is_scim_standard_class
 from src.modules.digester.utils.attribute_filters import normalize_readability_flags
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
@@ -74,8 +74,8 @@ def _build_scim_attribute_chain(object_class: str, base_attributes: Dict[str, Di
     Returns:
         Configured LangChain runnable
     """
-    parser: PydanticOutputParser[ExtractedAttributeResponse] = PydanticOutputParser(
-        pydantic_object=ExtractedAttributeResponse
+    parser: PydanticOutputParser[ExtractedAttributeResponseSCIM] = PydanticOutputParser(
+        pydantic_object=ExtractedAttributeResponseSCIM
     )
     llm = get_default_llm()
 
@@ -315,10 +315,10 @@ async def extract_custom_scim_attributes(
             config={"callbacks": [langfuse_handler] if langfuse_handler else []},
         )
 
-        if isinstance(result, ExtractedAttributeResponse):
+        if isinstance(result, ExtractedAttributeResponseSCIM):
             attributes = result.attributes or {}
         elif isinstance(result, dict):
-            parsed = ExtractedAttributeResponse.model_validate(result)
+            parsed = ExtractedAttributeResponseSCIM.model_validate(result)
             attributes = parsed.attributes or {}
         else:
             logger.warning("[SCIM:Attributes] Unexpected result type: %s", type(result))

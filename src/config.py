@@ -56,8 +56,8 @@ class LLMSettings(BaseModel):
 
     openai_api_key: str = ""
     openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-120b"
-    request_timeout: int = 120
+    model_name: str = "hosted_vllm/openai/gpt-oss-120b"
+    request_timeout: int = 600
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
         description="List of LLM providers in order of preference",
@@ -288,7 +288,7 @@ class DigesterSettings(BaseModel):
     marker_word_cutoff_length: int = Field(
         50,
         description="Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance." \
-        "This is only applied after fuzzy matching because in regex search, there is a significant drop in performance with a lot of \s patterns  ",
+        "This is only applied after fuzzy matching because in regex search, there is a significant drop in performance with a lot of \\s patterns  ",
     )
     relation_generic_attribute_tokens: list[str] = Field(
         default_factory=lambda: [
