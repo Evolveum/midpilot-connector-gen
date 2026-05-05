@@ -41,6 +41,7 @@ def get_default_llm(temperature: float = 1, reasoning_effort: str = "high") -> C
         extra_body={"provider": {"order": config.llm.provider_order}},
         reasoning_effort=reasoning_effort,
         http_async_client=http_client,
+        max_retries=0,
     )
 
 

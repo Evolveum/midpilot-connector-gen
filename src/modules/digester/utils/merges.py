@@ -4,14 +4,11 @@
 
 import json
 import logging
-from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from common.llm import get_default_llm, make_basic_chain
-from modules.digester.utils.sequences import extract_sequence
 from src.common.enums import ApiType, JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
@@ -20,16 +17,15 @@ from src.modules.digester.enums import EndpointMethod, EndpointType
 from src.modules.digester.schema import (
     AttributeDedupResponse,
     AttributeProcessingInfo,
-    AttributeResponse,
     BaseAPIEndpoint,
     DiscoveryAttribute,
     DocProcessingSequenceItem,
-    EndpointInfo,
     ExtendedObjectClass,
     ExtractedEndpointInfo,
     InfoMetadata,
     InfoResponse,
 )
+from src.modules.digester.utils.sequences import extract_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +130,11 @@ async def merge_attribute_candidates(
 
     """
 
-    logger.info("[Digester:Attributes] Original names of candidates for %s: %s", object_class, [attr.name for attr in attribute_objects])
+    logger.info(
+        "[Digester:Attributes] Original names of candidates for %s: %s",
+        object_class,
+        [attr.name for attr in attribute_objects],
+    )
 
     await update_job_progress(
         job_id,
@@ -259,8 +259,12 @@ async def merge_attribute_candidates(
 
     merged = list(seen.values())
     logger.info("[Digester:Attributes] Heuristic merge complete. Unique count: %d", len(merged))
-    #TODO: DELETE
-    logger.info("[Digester:Attributes] Names of candidates after heuristic merge for %s: %s", object_class, [attr.name for attr in merged])
+    # TODO: DELETE
+    logger.info(
+        "[Digester:Attributes] Names of candidates after heuristic merge for %s: %s",
+        object_class,
+        [attr.name for attr in merged],
+    )
 
     if len(merged) <= 1:
         await update_job_progress(
@@ -269,7 +273,6 @@ async def merge_attribute_candidates(
             message="Attribute deduplication finished",
         )
         return merged
-
 
     try:
         dedup_chain = build_dedup_chain()
@@ -344,7 +347,6 @@ async def merge_attribute_candidates(
         )
         append_job_error(job_id, f"[Digester:Attributes] Deduplication LLM call failed: {exc}")
         return merged
-
 
 
 async def merge_endpoint_candidates(

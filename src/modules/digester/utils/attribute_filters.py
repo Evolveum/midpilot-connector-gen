@@ -5,7 +5,7 @@
 import re
 from typing import Any, Dict, List, Mapping
 
-from modules.digester.schema import AttributeProcessingInfo
+from src.modules.digester.schema import AttributeProcessingInfo
 
 _CUSTOM_FIELD_PATTERN = re.compile(r"^customfield(?:\d+)?$", re.IGNORECASE)
 

@@ -7,13 +7,12 @@ import copy
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from modules.digester.utils.chunk_extraction import extract_single_chunk
 from src.common.enums import JobStage
 from src.common.jobs import (
     update_job_progress,
@@ -45,6 +44,7 @@ from src.modules.digester.utils.attribute_filters import (
     filter_ignored_attributes,
     normalize_readability_flags,
 )
+from src.modules.digester.utils.chunk_extraction import extract_single_chunk
 from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.merges import merge_attribute_candidates
 
@@ -105,9 +105,11 @@ def _format_attributes_as_table(attributes: Dict[str, AttributeInfoRest]) -> str
             _bool_or_dash(attr_info.multivalue),
             _bool_or_dash(attr_info.returnedByDefault),
         ]
-        row = "| " + " | ".join(
-            _normalize_cell(value, width) for value, (_, width) in zip(values, columns, strict=True)
-        ) + " |"
+        row = (
+            "| "
+            + " | ".join(_normalize_cell(value, width) for value, (_, width) in zip(values, columns, strict=True))
+            + " |"
+        )
         rows.append(row)
 
     return "\n".join([separator, header, separator, *rows, separator])
@@ -127,6 +129,7 @@ def _build_dedupe_chain() -> Any:
     ).partial(format_instructions=parser.get_format_instructions())
     return make_basic_chain(prompt, llm, parser)
 
+
 def _build_build_attr_chain() -> Any:
     """
     Build the LLM chain used to build complete attribute information from sequences.
@@ -140,6 +143,7 @@ def _build_build_attr_chain() -> Any:
         ]
     ).partial(format_instructions=parser.get_format_instructions())
     return make_basic_chain(prompt, llm, parser)
+
 
 def _build_consolidation_chain() -> Any:
     """
@@ -155,7 +159,10 @@ def _build_consolidation_chain() -> Any:
     ).partial(format_instructions=parser.get_format_instructions())
     return make_basic_chain(prompt, llm, parser)
 
-async def _build_attr_from_sequences(chain: Any, object_class: str, attr: AttributeProcessingInfo, use_steps: bool) -> AttributeProcessingInfo | None:
+
+async def _build_attr_from_sequences(
+    chain: Any, object_class: str, attr: AttributeProcessingInfo, use_steps: bool
+) -> AttributeProcessingInfo | None:
     """
     Calls llm on existing AttributeProcessingInfo object with sequences, optionally in steps.
     Primary function is to fill missing details in the AttributeInfoRest object based on the sequences provided.
@@ -176,7 +183,7 @@ async def _build_attr_from_sequences(chain: Any, object_class: str, attr: Attrib
         end = min(begin + seq_step, len(attr.relevant_sequences))
         attr_temp = copy.deepcopy(attr)
         attr_temp.relevant_sequences = attr_temp.relevant_sequences[begin:end]
-        attr_json = json.dumps(attr_temp.model_dump(exclude={'relevant_documentations'}), ensure_ascii=False, indent=2)
+        attr_json = json.dumps(attr_temp.model_dump(exclude={"relevant_documentations"}), ensure_ascii=False, indent=2)
         try:
             result = await chain.ainvoke(
                 {
@@ -196,23 +203,41 @@ async def _build_attr_from_sequences(chain: Any, object_class: str, attr: Attrib
                     parsed = AttributeBuildResponse.model_validate(json.loads(content))
                 else:
                     return None
-                
-            for param in ["type", "format", "description", "mandatory", "updatable", "creatable", "readable", "multivalue", "returnedByDefault"]:
+
+            for param in [
+                "type",
+                "format",
+                "description",
+                "mandatory",
+                "updatable",
+                "creatable",
+                "readable",
+                "multivalue",
+                "returnedByDefault",
+            ]:
                 value = getattr(parsed, param, None)
                 if value is not None:
                     setattr(attr, param, value)
-        
+
         except Exception as exc:
-            logger.warning("[Digester:Attributes] Build from sequences failed for attribute %s: %s, sequences number: %s - %s", attr.name, exc, begin, end)
+            logger.warning(
+                "[Digester:Attributes] Build from sequences failed for attribute %s: %s, sequences number: %s - %s",
+                attr.name,
+                exc,
+                begin,
+                end,
+            )
             pass
 
     return attr
 
-    
-async def build_attributes_from_sequences(attrs: List[AttributeProcessingInfo], object_class: str) -> List[AttributeProcessingInfo]:
+
+async def build_attributes_from_sequences(
+    attrs: List[AttributeProcessingInfo], object_class: str
+) -> List[AttributeProcessingInfo]:
     """
     Run the build-from-sequences chain for each attribute that has relevant sequences, in order to fill missing details and correct existing ones based on the sequences.
-    
+
     Args:
         attrs: List of AttributeProcessingInfo objects to process
         object_class: Name of the object class for context
@@ -222,13 +247,15 @@ async def build_attributes_from_sequences(attrs: List[AttributeProcessingInfo], 
 
     tasks = [
         _build_attr_from_sequences(build_chain, object_class, attr, use_steps=True)
-        for attr in attrs if attr.relevant_sequences
+        for attr in attrs
+        if attr.relevant_sequences
     ]
 
     all_builded_attrs = await asyncio.gather(*tasks)
-    filtered_builded_attrs = [attr for attr in all_builded_attrs if attr is not None]
+    filtered_builded_attrs: List[AttributeProcessingInfo] = [attr for attr in all_builded_attrs if attr is not None]
 
     return filtered_builded_attrs
+
 
 async def consolidate_attributes(attrs: List[AttributeProcessingInfo], object_class: str) -> AttributeResponse:
     """
@@ -248,27 +275,28 @@ async def consolidate_attributes(attrs: List[AttributeProcessingInfo], object_cl
         if attr.relevant_sequences:
             tasks.append(_build_attr_from_sequences(build_chain, object_class, attr, use_steps=False))
         else:
-            logger.warning("[Digester:Attributes] Attribute %s has no relevant sequences; skipping final consolidation", attr.name)
-            tasks.append(None)
+            logger.warning(
+                "[Digester:Attributes] Attribute %s has no relevant sequences; skipping final consolidation", attr.name
+            )
 
-    processed_attrs = await asyncio.gather(*tasks)
+    processed_attrs: List[AttributeProcessingInfo | None] = await asyncio.gather(*tasks)
 
     consolidated_attrs: AttributeResponse = AttributeResponse(attributes={})
-    for attr in processed_attrs:
-        if attr is None:
+    for attr_prc in processed_attrs:
+        if attr_prc is None or not attr_prc.name:
             continue
-        consolidated_attrs.attributes[attr.name] = AttributeInfoRest(
-            type=attr.type,
-            format=attr.format,
-            description=attr.description,
-            mandatory=attr.mandatory,
-            updatable=attr.updatable,
-            creatable=attr.creatable,
-            readable=attr.readable,
-            multivalue=attr.multivalue,
-            returnedByDefault=attr.returnedByDefault,
-            relevant_documentations=attr.relevant_documentations,
-            relevant_sequences=[DocSequenceItem(**seq.__dict__) for seq in attr.relevant_sequences],
+        consolidated_attrs.attributes[attr_prc.name] = AttributeInfoRest(
+            type=attr_prc.type,
+            format=attr_prc.format,
+            description=attr_prc.description,
+            mandatory=attr_prc.mandatory,
+            updatable=attr_prc.updatable,
+            creatable=attr_prc.creatable,
+            readable=attr_prc.readable,
+            multivalue=attr_prc.multivalue,
+            returnedByDefault=attr_prc.returnedByDefault,
+            relevant_documentations=attr_prc.relevant_documentations,
+            relevant_sequences=[DocSequenceItem(**seq.__dict__) for seq in attr_prc.relevant_sequences],
         )
 
     return consolidated_attrs
@@ -304,7 +332,9 @@ async def extract_attributes(
     """
     if not chunk_details:
         logger.error("[Digester:Attributes] chunk_details is required but was empty")
-        await update_job_progress(job_id, stage=JobStage.failed, message="No chunk details provided, cannot extract attributes")
+        await update_job_progress(
+            job_id, stage=JobStage.failed, message="No chunk details provided, cannot extract attributes"
+        )
         return {"result": {"attributes": {}}, "relevantDocumentations": []}
 
     if len(chunks) != len(chunk_details):
@@ -313,12 +343,16 @@ async def extract_attributes(
             len(chunks),
             len(chunk_details),
         )
-        await update_job_progress(job_id, stage=JobStage.failed, message="Chunk length mismatch, cannot extract attributes")
+        await update_job_progress(
+            job_id, stage=JobStage.failed, message="Chunk length mismatch, cannot extract attributes"
+        )
         return {"result": {"attributes": {}}, "relevantDocumentations": []}
 
     if len(chunk_details) != len(set(chunk_details)):
         logger.error("[Digester:Attributes] Duplicate chunk IDs found in chunk_details")
-        await update_job_progress(job_id, stage=JobStage.failed, message="Duplicate chunk IDs found, cannot extract attributes")
+        await update_job_progress(
+            job_id, stage=JobStage.failed, message="Duplicate chunk IDs found, cannot extract attributes"
+        )
         return {"result": {"attributes": {}}, "relevantDocumentations": []}
 
     logger.info(
@@ -341,12 +375,11 @@ async def extract_attributes(
         message="Processing chunks and try to extract relevant information",
     )
 
-    # all_per_chunk: List[Dict[str, Dict[str, Any]]] = []
-    # attribute_chunk_pairs: Dict[str, Set[Tuple[str, str]]] = {}
-
     all_discovery_results: List[DiscoveryAttribute] = []
 
-    async def _extract_for_chunk_id(chunk_text: str, job_id_ext: UUID, chunk_id: UUID) -> Tuple[List[DiscoveryAttribute], bool]:
+    async def _extract_for_chunk_id(
+        chunk_text: str, job_id_ext: UUID, chunk_id: UUID
+    ) -> Tuple[List[DiscoveryAttribute], bool]:
         chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map else None
 
         def parse_fn(result: AttributeDiscoveryResponse) -> List[DiscoveryAttribute]:
@@ -371,15 +404,12 @@ async def extract_attributes(
             max_end_sequence_length=config.digester.max_end_sequence_len_attributes,
         )
 
-        # if any(bool(x) for x in per_chunk_results):
-        #     chunk_id_str = str(chunk_id)
-        #     doc_id = chunk_id_to_doc_id.get(chunk_id_str) if chunk_id_to_doc_id else None
-        #     if doc_id:
-        #         return per_chunk_results, [{"doc_id": doc_id, "chunk_id": chunk_id_str}]
-        #     logger.warning(
-        #         "[Digester:Attributes] Missing docId for chunk %s, skipping relevant chunk mapping",
-        #         chunk_id_str,
-        #     )
+        logger.info(
+            "[Digester:Attributes] Extraction complete for chunk %s. Found %d attributes.",
+            chunk_id,
+            len(per_chunk_results),
+        )
+
         return per_chunk_results, relevant_data
 
     results = await run_chunks_concurrently(
@@ -389,23 +419,13 @@ async def extract_attributes(
         logger_scope="Digester:Attributes",
     )
 
-    #TODO: delete
-    for res, relevant_data, chunk_id in results:
-        logger.info(
+    for chunk_results, relevant_data, chunk_id_debug in results:
+        logger.debug(
             "[Digester:Attributes] Discovery results for document %s: %d attributes, relevant: %s, whole attributes: %s",
-            chunk_id,
-            len(res),
-            relevant_data,
-            res
-        )
-
-    for chunk_results, relevant_data, chunk_id in results:
-        logger.info(
-            "[Digester:Attributes] Discovery results for document %s: %d attributes, relevant: %s, whole attributes: %s",
-            chunk_id,
+            str(chunk_id_debug),
             len(chunk_results),
             relevant_data,
-            chunk_results
+            chunk_results,
         )
         for res in chunk_results:
             if res:
@@ -421,13 +441,11 @@ async def extract_attributes(
 
     logger.info("[Digester:Attributes] Total unique attributes after merging: %d", len(merged_attributes))
 
-    logger.info(
+    logger.debug(
         "[Digester:Attributes] Final merged attributes for %s: %s",
         object_class,
         [attr.name for attr in merged_attributes],
     )
-
-    logger.info("[Digester:Attributes] Complete objects: %s", merged_attributes)
 
     attributes_filtered_names = filter_ignored_attributes(merged_attributes)
     filtered_attributes = [attr for attr in merged_attributes if attr.name in attributes_filtered_names]
@@ -445,24 +463,57 @@ async def extract_attributes(
         [attr.name for attr in filtered_attributes],
     )
 
-    logger.info("[Digester:Attributes] Complete filtered objects: %s", json.dumps([attr.model_dump(exclude={'relevant_sequences', 'relevant_documentations'}) for attr in filtered_attributes], indent=2, ensure_ascii=False))
+    logger.debug(
+        "[Digester:Attributes] Complete filtered objects: %s",
+        json.dumps(
+            [
+                attr.model_dump(exclude={"relevant_sequences", "relevant_documentations"})
+                for attr in filtered_attributes
+            ],
+            indent=2,
+            ensure_ascii=False,
+        ),
+    )
 
     builded_attributes = await build_attributes_from_sequences(filtered_attributes, object_class)
 
-    logger.info("[Digester:Attributes] Attributes after building from sequences: %s", json.dumps([attr.model_dump(exclude={'relevant_sequences', 'relevant_documentations'}) for attr in builded_attributes], indent=2, ensure_ascii=False))
+    logger.info(
+        "[Digester:Attributes] Attribute building complete for %s",
+        object_class,
+    )
+
+    logger.debug(
+        "[Digester:Attributes] Attributes after building from sequences: %s",
+        json.dumps(
+            [attr.model_dump(exclude={"relevant_sequences", "relevant_documentations"}) for attr in builded_attributes],
+            indent=2,
+            ensure_ascii=False,
+        ),
+    )
 
     if not builded_attributes:
         logger.error("[Digester:Attributes] No attributes left after building from sequences, returning empty result")
-        await update_job_progress(job_id, stage=JobStage.failed, message="Attribute extraction complete with no attributes found")
+        await update_job_progress(
+            job_id, stage=JobStage.failed, message="Attribute extraction complete with no attributes found"
+        )
         return {"result": {"attributes": {}}, "relevantDocumentations": []}
 
     consolidated_attributes = await consolidate_attributes(builded_attributes, object_class)
 
-    logger.info("[Digester:Attributes] Attributes after final consolidation: %s", json.dumps(consolidated_attributes.model_dump(exclude={'attributes': {'__all__': {'relevant_documentations', 'relevant_sequences'}}}), indent=2, ensure_ascii=False))
+    logger.debug(
+        "[Digester:Attributes] Attributes after final consolidation: %s",
+        json.dumps(
+            consolidated_attributes.model_dump(
+                exclude={"attributes": {"__all__": {"relevant_documentations", "relevant_sequences"}}}
+            ),
+            indent=2,
+            ensure_ascii=False,
+        ),
+    )
 
-    # Log attributes as a formatted table
-    attributes_table = _format_attributes_as_table(consolidated_attributes.attributes) # type: ignore
-    logger.info("[Digester:Attributes] Final attributes table for %s:\n%s", object_class, attributes_table)
+    if config.digester.attributes_debug_table_log:
+        attributes_table = _format_attributes_as_table(consolidated_attributes.attributes)  # type: ignore
+        logger.info("[Digester:Attributes] Final attributes table for %s:\n%s", object_class, attributes_table)
 
     relevant_chunks = []
     seen_chunk_ids = set()
@@ -473,40 +524,6 @@ async def extract_attributes(
                 seen_chunk_ids.add(chk["chunk_id"])
 
     normalized_attributes = normalize_readability_flags(consolidated_attributes.model_dump()["attributes"])
-    logger.info("[Digester:Attributes] Normalized attributes after readability flags adjustment: %s", json.dumps(normalized_attributes, indent=2, ensure_ascii=False))
-
-    # for chunk_per_group, chunk_relevant in results:
-    #     all_per_chunk.extend(chunk_per_group)
-    #     relevant_chunks.extend(chunk_relevant)
-
-    #     normalized_pairs = [normalize_chunk_pair(chunk_ref) for chunk_ref in chunk_relevant]
-    #     valid_pairs = [pair for pair in normalized_pairs if pair is not None]
-    #     if not valid_pairs:
-    #         continue
-
-    #     extracted_attribute_names = {
-    #         str(attr_name).strip()
-    #         for partial in chunk_per_group
-    #         if isinstance(partial, dict)
-    #         for attr_name in partial.keys()
-    #         if isinstance(attr_name, str) and attr_name.strip()
-    #     }
-    #     for attr_name in extracted_attribute_names:
-    #         seen_pairs = attribute_chunk_pairs.setdefault(attr_name, set())
-    #         for doc_id, chunk_id in valid_pairs:
-    #             seen_pairs.add((doc_id, chunk_id))
-
-    # filled_attributes = await fill_missing_details(
-    #     object_class=object_class,
-    #     attributes=filtered_attributes,
-    #     chunks=chunks,
-    #     job_id=job_id,
-    # )
-    # postprocessed_attributes = normalize_readability_flags(filled_attributes)
-    # attributes_with_references = _attach_relevant_documentations_per_attribute(
-    #     postprocessed_attributes,
-    #     attribute_chunk_pairs,
-    # )
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 

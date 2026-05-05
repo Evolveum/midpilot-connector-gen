@@ -47,18 +47,29 @@ class DocProcessingSequenceItem(DocSequenceItem):
         ..., description="Full text of the document chunk from start_sequence to end_sequence for processing."
     )
 
+
 class DocMarkerMatch(BaseModel):
     """
     Represents the actual matched marker in the document text after fuzzy matching.
     """
 
-    start_position: int = Field(..., description="Character index of the start of the matched sequence in the original document text.")
-    start_position_collapsed: int = Field(..., description="Character index of the start of the matched sequence in the collapsed text used for fuzzy matching.")
-    end_position: int = Field(..., description="Character index of the end of the matched sequence in the original document text.")
-    end_position_collapsed: int = Field(..., description="Character index of the end of the matched sequence in the collapsed text used for fuzzy matching.")
+    start_position: int = Field(
+        ..., description="Character index of the start of the matched sequence in the original document text."
+    )
+    start_position_collapsed: int = Field(
+        ...,
+        description="Character index of the start of the matched sequence in the collapsed text used for fuzzy matching.",
+    )
+    end_position: int = Field(
+        ..., description="Character index of the end of the matched sequence in the original document text."
+    )
+    end_position_collapsed: int = Field(
+        ...,
+        description="Character index of the end of the matched sequence in the collapsed text used for fuzzy matching.",
+    )
     distance: int = Field(
         ...,
-        description="Levenshtein distance between the matched sequence and the original marker, used for confidence scoring."
+        description="Levenshtein distance between the matched sequence and the original marker, used for confidence scoring.",
     )
 
 
@@ -696,6 +707,7 @@ class InfoResponse(BaseModel):
 
 # --- Attributes ---
 
+
 class AttributeBase(BaseModel):
     """
     Base class for attributes, can be extended with additional fields if needed.
@@ -725,6 +737,7 @@ class AttributeBase(BaseModel):
         default=None,
         description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
     )
+
 
 class AttributeEnhancedInfo(AttributeBase):
     """
@@ -760,6 +773,7 @@ class AttributeEnhancedInfo(AttributeBase):
         ),
     )
 
+
 class ExtractedAttributeInfoSCIM(AttributeEnhancedInfo):
     """
     LLM extraction model for object class property metadata.
@@ -774,8 +788,8 @@ class ExtractedAttributeInfoSCIM(AttributeEnhancedInfo):
         ),
     )
 
-class DiscoveryAttribute(AttributeBase):
 
+class DiscoveryAttribute(AttributeBase):
     name: str = Field(
         ...,
         description=(
@@ -786,6 +800,7 @@ class DiscoveryAttribute(AttributeBase):
     relevant_sequences: List[DocSequenceItem] = Field(
         description=("List of relevant document sequences that support the presence of this attribute. ")
     )
+
 
 class AttributeDiscoveryResponse(BaseModel):
     """
@@ -800,7 +815,6 @@ class AttributeDiscoveryResponse(BaseModel):
 
 
 class AttributeInfoBase(AttributeEnhancedInfo):
-
     model_config = {"validate_by_name": True}
 
     relevant_documentations: List[Dict[str, str]] = Field(
@@ -846,11 +860,12 @@ class AttributeInfoBase(AttributeEnhancedInfo):
             serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
         return serialized
 
-class AttributeInfoRest(AttributeInfoBase):
 
+class AttributeInfoRest(AttributeInfoBase):
     relevant_sequences: List[DocSequenceItem] = Field(
         description=("List of relevant document sequences that support the presence of this attribute. ")
     )
+
 
 class AttributeBuildResponse(AttributeInfoBase):
     """
@@ -887,6 +902,7 @@ class AttributeBuildResponse(AttributeInfoBase):
         ),
     )
 
+
 class AttributeInfoScim(AttributeInfoBase):
     """
     Attribute metadata for an object class property as described in OpenAPI/JSON Schema.
@@ -900,8 +916,8 @@ class AttributeInfoScim(AttributeInfoBase):
         ),
     )
 
-class AttributeProcessingInfo(AttributeInfoBase):
 
+class AttributeProcessingInfo(AttributeInfoBase):
     name: str = Field(
         ...,
         description=(
@@ -912,6 +928,7 @@ class AttributeProcessingInfo(AttributeInfoBase):
     relevant_sequences: List[DocProcessingSequenceItem] = Field(
         description=("List of document sequences that support the presence of this attribute, includes full text")
     )
+
 
 class AttributeDedupResponse(BaseModel):
     """
@@ -927,10 +944,9 @@ class AttributeDedupResponse(BaseModel):
 
     to_be_deleted: List[str] = Field(
         ...,
-        description=(
-            "List of attribute names to be deleted because of having weak documentation or being irrelevant"
-        ),
-    )  
+        description=("List of attribute names to be deleted because of having weak documentation or being irrelevant"),
+    )
+
 
 class AttributeResponse(BaseModel):
     """

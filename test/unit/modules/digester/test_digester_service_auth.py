@@ -46,7 +46,7 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
         patch("src.modules.digester.service.deduplicate_auth", new_callable=AsyncMock) as mock_deduplicate,
         patch("src.modules.digester.service.build_auth_items", new_callable=AsyncMock) as mock_build,
         patch("src.modules.digester.service.sort_auth_by_importance", new_callable=AsyncMock) as mock_sort,
-        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         oauth_doc_seq = DocSequenceItem(
             chunk_id=doc_uuid1,
@@ -191,7 +191,7 @@ async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_prog
         patch("src.modules.digester.service.deduplicate_auth", new_callable=AsyncMock) as mock_deduplicate,
         patch("src.modules.digester.service.build_auth_items", new_callable=AsyncMock) as mock_build,
         patch("src.modules.digester.service.sort_auth_by_importance", new_callable=AsyncMock) as mock_sort,
-        patch("src.modules.digester.service._run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
     ):
         mock_parallel.return_value = [([], False, doc_uuid)]
 

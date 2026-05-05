@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from src.modules.digester.schema import AttributeProcessingInfo
 from src.modules.digester.utils.attribute_filters import (
     filter_ignored_attributes,
     ignore_attribute_name,
@@ -19,16 +20,16 @@ def test_ignore_attribute_name():
 
 
 def test_filter_ignored_attributes():
-    attributes = {
-        "_private": {"type": "string"},
-        "customfield10001": {"type": "string"},
-        "mail": {"type": "string"},
-        "username": {"type": "string"},
-    }
+    attributes = [
+        AttributeProcessingInfo(name="_private", type="string", relevant_sequences=[]),
+        AttributeProcessingInfo(name="customfield10001", type="string", relevant_sequences=[]),
+        AttributeProcessingInfo(name="mail", type="string", relevant_sequences=[]),
+        AttributeProcessingInfo(name="username", type="string", relevant_sequences=[]),
+    ]
 
     filtered = filter_ignored_attributes(attributes)
 
-    assert set(filtered.keys()) == {"username"}
+    assert set(filtered) == set(["username"])
 
 
 def test_normalize_readability_flags():

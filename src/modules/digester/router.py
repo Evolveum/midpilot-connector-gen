@@ -279,12 +279,14 @@ async def extract_class_attributes(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Object class '{object_class}' not found in session {session_id}.",
         )
-    
+
     criteria = DEFAULT_CRITERIA.model_copy()
-    criteria.allowed_tags = [[normalize_object_class_name(object_class), normalize_object_class_name(object_class) + "s"]]
+    criteria.allowed_tags = [
+        [normalize_object_class_name(object_class), normalize_object_class_name(object_class) + "s"]
+    ]
     relevant_chunks_full = await filter_documentation_items(criteria, session_id, db=db)
 
-    #relevant_chunks = get_relevant_chunks(target_object_class)
+    # relevant_chunks = get_relevant_chunks(target_object_class)
     relevant_chunks = [
         {"doc_id": str(chunk["docId"]), "chunk_id": str(chunk["chunkId"])}
         for chunk in relevant_chunks_full

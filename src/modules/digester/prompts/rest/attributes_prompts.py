@@ -396,4 +396,3 @@ Review the provided attribute information and produce a consolidated and refined
 Do not change the null flags/fields.
 Return the json object based on format instructions.
 """)
-

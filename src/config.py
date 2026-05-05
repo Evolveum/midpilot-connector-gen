@@ -58,7 +58,7 @@ class LLMSettings(BaseModel):
     openai_api_key: str = ""
     openai_api_base: str = "https://openrouter.ai/api/v1"
     model_name: str = "hosted_vllm/openai/gpt-oss-120b"
-    request_timeout: int = 120
+    request_timeout: int = 600
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
         description="List of LLM providers in order of preference",
@@ -229,7 +229,7 @@ class DigesterSettings(BaseModel):
         description="Time interval for checking if the same digester input has been processed before.",
     )
     max_concurrent_chunk_llm_calls: int = Field(
-        20,
+        100,
         ge=1,
         description="Maximum number of concurrent digester chunk LLM calls.",
     )
@@ -304,7 +304,7 @@ class DigesterSettings(BaseModel):
     )
     marker_word_cutoff_length: int = Field(
         50,
-        description="Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance." \
+        description="Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance."
         "This is only applied after fuzzy matching because in regex search, there is a significant drop in performance with a lot of \\s patterns  ",
     )
     relation_generic_attribute_tokens: list[str] = Field(
@@ -330,6 +330,10 @@ class DigesterSettings(BaseModel):
             "with",
         ],
         description="Generic relation attribute tokens ignored when collapsing wording-only relation duplicates.",
+    )
+    attributes_debug_table_log: bool = Field(
+        False,
+        description="Enable detailed logging of extracted attributes as formatted tables for debugging purposes.",
     )
 
 

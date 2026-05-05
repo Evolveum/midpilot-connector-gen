@@ -16,7 +16,6 @@ from src.router import root_router
 async def lifespan(app: FastAPI):
     try:
         pool.process_pool = pool.create_pool()
-        print(f"[lifespan] pool.process_pool = {pool.process_pool}")
         await recover_stale_running_jobs()
     except Exception:
         pass

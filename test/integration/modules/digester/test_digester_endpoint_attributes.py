@@ -15,7 +15,7 @@ from src.modules.digester.router import (
     get_class_attributes_status,
     override_class_attributes,
 )
-from src.modules.digester.schema import AttributeInfo, AttributeResponse
+from src.modules.digester.schema import AttributeInfoScim, AttributeResponse
 
 
 # CLASS ATTRIBUTES
@@ -89,7 +89,7 @@ async def test_get_class_attributes_status_found():
             str(job_id),
             {
                 "attributes": {
-                    "id": AttributeInfo(
+                    "id": AttributeInfoScim(
                         type="string",
                         description="Unique identifier",
                         mandatory=True,
