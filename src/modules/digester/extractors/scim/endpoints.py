@@ -27,7 +27,7 @@ from src.modules.digester.prompts.scim.endpoints_prompts import (
     scim_endpoints_system_prompt,
     scim_endpoints_user_prompt,
 )
-from src.modules.digester.schema import EndpointInfo, EndpointResponse
+from src.modules.digester.schema import ExtractedEndpointInfo, ExtractedEndpointResponse
 from src.modules.digester.scim.loader import (
     generate_scim_crud_endpoints,
     get_base_scim_endpoints,
@@ -128,7 +128,9 @@ def _build_scim_endpoint_chain(object_class: str, base_api_url: str, base_endpoi
     Returns:
         Configured LangChain runnable
     """
-    parser: PydanticOutputParser[EndpointResponse] = PydanticOutputParser(pydantic_object=EndpointResponse)
+    parser: PydanticOutputParser[ExtractedEndpointResponse] = PydanticOutputParser(
+        pydantic_object=ExtractedEndpointResponse
+    )
     llm = get_default_llm()
 
     formatted_base = _format_endpoints_for_prompt(base_endpoints)
@@ -203,7 +205,7 @@ async def extract_scim_endpoints(
 
     # Convert to EndpointInfo objects
     base_endpoints = [
-        EndpointInfo(
+        ExtractedEndpointInfo(
             path=ep["path"],
             method=ep["method"],
             description=ep["description"],
@@ -247,7 +249,7 @@ async def extract_scim_endpoints(
     if total_chunks:
         await increment_processed_documents(job_id, delta=total_chunks)
 
-    all_custom_endpoints: List[List[EndpointInfo]] = []
+    all_custom_endpoints: List[List[ExtractedEndpointInfo]] = []
     relevant_chunks: List[Dict[str, Any]] = []
     endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]] = {}
     for custom_eps, chunk_id in zip(all_results, chunk_details, strict=False):
@@ -302,7 +304,7 @@ async def extract_custom_scim_endpoints(
     chunk: str,
     object_class: str,
     chunk_metadata: Optional[Dict[str, Any]] = None,
-) -> List[EndpointInfo]:
+) -> List[ExtractedEndpointInfo]:
     """
     Extract ONLY custom endpoints and deviations from a single chunk.
 
@@ -327,10 +329,10 @@ async def extract_custom_scim_endpoints(
             config={"callbacks": [langfuse_handler] if langfuse_handler else []},
         )
 
-        if isinstance(result, EndpointResponse):
+        if isinstance(result, ExtractedEndpointResponse):
             endpoints = result.endpoints or []
         elif isinstance(result, dict):
-            parsed = EndpointResponse.model_validate(result)
+            parsed = ExtractedEndpointResponse.model_validate(result)
             endpoints = parsed.endpoints or []
         else:
             logger.warning("[SCIM:Endpoints] Unexpected result type: %s", type(result))

@@ -18,7 +18,7 @@ We want only the primary, first-class domain types — not variants or wrappers.
 Keep names exactly as in the spec when they are main/root. Prefer canonical,
 singular forms that correspond to own endpoints and stable identifiers.
 
-Use the structured output schema (ObjectClassesResponse with field alias
+Use the structured output schema (ObjectClassesExtendedResponse with field alias
 "objectClasses"). You will receive explicit format instructions; follow them exactly.
 
 WHAT TO EXTRACT (canonical buckets with common aliases):
@@ -120,7 +120,7 @@ Task:
   instructions. Exclude Model/Schema/DTO/Response/Resource/View/Summary variants,
   plurals/collections, and helper wrappers. Deduplicate within a family and keep
   just one canonical main class.
-- Use the structured output schema (ObjectClassesResponse). If none found in this
+- Use the structured output schema (ObjectClassesExtendedResponse). If none found in this
   chunk, return an empty list via the schema.
 
 """

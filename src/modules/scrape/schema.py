@@ -28,47 +28,12 @@ class ScrapeRequest(BaseModel):
         validation_alias="applicationVersion",
         serialization_alias="applicationVersion",
     )
-    use_previous_session_data: bool = Field(
-        True,
-        description="Whether to use the already processed data from a different session if the scraper input is the same.",
-        validation_alias="usePreviousSessionData",
-        serialization_alias="usePreviousSessionData",
+    skip_cache: bool = Field(
+        False,
+        description="Whether to skip already processed data from a different session when scraper input is the same.",
+        validation_alias="skipCache",
+        serialization_alias="skipCache",
     )
-    # forbidden_url_parts: List[str] = Field(
-    #     default_factory=lambda: [
-    #         "logout",
-    #         "login",
-    #         "signup",
-    #         "register",
-    #         "subscribe",
-    #         "pricing",
-    #         "plans",
-    #         "terms",
-    #         "privacy",
-    #         "contact",
-    #         "about",
-    #         "blog",
-    #         "news",
-    #         "forum",
-    #         "release-notes",
-    #         "changelog",
-    #         "es",
-    #         "pt",
-    #         "de",
-    #         "fr",
-    #         "jp",
-    #         "zh",
-    #         "sk",
-    #         "ru",
-    #         "it",
-    #         "nl",
-    #         "pl",
-    #         "tr",
-    #     ],
-    #     description="URL substrings to consider irrelevant a priori",
-    #     validation_alias="forbiddenUrlParts",
-    #     serialization_alias="forbiddenUrlParts",
-    # )
 
 
 class ScrapeResult(BaseModel):

@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Any, List, Tuple
 
-from langchain.output_parsers import OutputFixingParser
+from langchain_classic.output_parsers import OutputFixingParser
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -15,17 +15,56 @@ from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 
 from src.common.langfuse import langfuse_handler
-from src.modules.discovery.schema import PyScrapeFetchReferences, PySearchPrompts
+from src.modules.discovery.schema import DiscoveryIntegrationType, PyScrapeFetchReferences, PySearchPrompts
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_FALLBACK_TEMPLATES: list[str] = [
-    "{app} API documentation {version}",
-    "{app} developer API docs {version}",
+PRIMARY_TEMPLATE_COUNT = 5
+SECONDARY_TEMPLATE_COUNT = 3
+
+REST_FALLBACK_TEMPLATES: list[str] = [
+    "{app} REST API documentation {version}",
+    "{app} {version} REST API reference",
+    "{app} developer REST API docs {version}",
     "{app} OpenAPI swagger {version}",
-    "{app} REST API reference {version}",
-    "{app} SCIM documentation {version}",
+    "{app} API authentication docs {version}",
 ]
+
+SCIM_FALLBACK_TEMPLATES: list[str] = [
+    "{app} SCIM 2.0 documentation {version}",
+    "{app} SCIM API reference {version}",
+    "{app} developer SCIM docs {version}",
+    "{app} SCIM provisioning guide {version}",
+    "{app} SCIM /Users /Groups endpoints {version}",
+]
+
+DEFAULT_FALLBACK_TEMPLATES: list[str] = [
+    *REST_FALLBACK_TEMPLATES[:4],
+    *SCIM_FALLBACK_TEMPLATES[:4],
+]
+
+
+def get_prioritized_fallback_templates(integration_type: DiscoveryIntegrationType) -> list[str]:
+    normalized = str(integration_type or "DUMMY").upper()
+    if normalized == "REST":
+        primary_templates = REST_FALLBACK_TEMPLATES
+        secondary_templates = SCIM_FALLBACK_TEMPLATES
+    elif normalized == "SCIM":
+        primary_templates = SCIM_FALLBACK_TEMPLATES
+        secondary_templates = REST_FALLBACK_TEMPLATES
+    else:
+        return DEFAULT_FALLBACK_TEMPLATES.copy()
+
+    ordered_templates = [
+        *primary_templates[:PRIMARY_TEMPLATE_COUNT],
+        *secondary_templates[:SECONDARY_TEMPLATE_COUNT],
+    ]
+    deduped_templates: list[str] = []
+    for template in ordered_templates:
+        if template not in deduped_templates:
+            deduped_templates.append(template)
+
+    return deduped_templates or DEFAULT_FALLBACK_TEMPLATES.copy()
 
 
 def make_eval_prompt(system_prompt: str) -> ChatPromptTemplate:

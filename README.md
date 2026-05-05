@@ -1,6 +1,6 @@
 # Connector Generator AI Service
 
-Smart Integration Microservice for scraping, digester and CodeGen built with FastAPI.
+Midpilot Connector Generator for discovery, scraping, digester and CodeGen built with FastAPI.
 
 ## Project structure
 
@@ -19,6 +19,7 @@ Important files:
 - [`src/config.py`](src/config.py) - project configuration
 - [`pyproject.toml`](pyproject.toml) - dependencies, tools, tasks
 - [`Dockerfile`](Dockerfile) - docker file
+- [`Dockerfile.base`](Dockerfile.base) - reusable Python + Playwright base image
 
 ## API Documentation
 
@@ -51,6 +52,9 @@ cp .env.test-example .env.test
 ### Run using docker compose
 
 ```bash
+# build base image when Python, uv.lock, pyproject.toml, or Playwright changes
+docker build -f Dockerfile.base -t midpilot-connector-gen-base:python3.13-playwright1.58.0 .
+
 # build image
 docker compose build
 
@@ -166,6 +170,16 @@ uv run poe start
 ### Installing dependencies
 
 `dev` dependency group is used to distinguish from production ones.
+
+For first-time local setup:
+
+```bash
+# install project dependencies (including dev group)
+uv sync --dev
+
+# NOTE: browser binaries are not installed automatically by `uv sync`
+uv run playwright install
+```
 
 ```bash
 # install production dependency

@@ -51,7 +51,7 @@ DO NOT extract:
 
 ### OUTPUT FORMAT
 
-Use the structured output schema (ObjectClassesResponse with field alias
+Use the structured output schema (ObjectClassesExtendedResponse with field alias
 "objectClasses"). You will receive explicit format instructions; follow them exactly.
 
 For each custom extension or resource, provide:
@@ -70,7 +70,6 @@ Example 1 - Slack custom extension:
     {{
       "name": "SlackUserExtension",
       "schemaUrn": "urn:scim:schemas:extension:slack:2.0:User",
-      "relevant": "true",
       "superclass": "User",
       "abstract": false,
       "embedded": true,
@@ -87,7 +86,6 @@ Example 2 - Custom resource type:
     {{
       "name": "Application",
       "schemaUrn": "urn:scim:schemas:core:2.0:Application",
-      "relevant": "true",
       "superclass": null,
       "abstract": false,
       "embedded": false,
@@ -127,6 +125,6 @@ Text from documentation:
 
 Task:
 Extract ONLY custom SCIM extensions and additional resource types (NOT standard User/Group/EnterpriseUser).
-Use the structured output schema (ObjectClassesResponse). If none found in this chunk, return an empty list via the schema.
+Use the structured output schema (ObjectClassesExtendedResponse). If none found in this chunk, return an empty list via the schema.
 """
 )

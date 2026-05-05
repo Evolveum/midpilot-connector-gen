@@ -25,8 +25,9 @@ from src.modules.digester.prompts.scim.attributes_prompts import (
     get_scim_attributes_system_prompt,
     get_scim_attributes_user_prompt,
 )
-from src.modules.digester.schema import AttributeResponse
+from src.modules.digester.schema import ExtractedAttributeResponse
 from src.modules.digester.scim.loader import get_base_scim_attributes, is_scim_standard_class
+from src.modules.digester.utils.attribute_filters import normalize_readability_flags
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,9 @@ def _build_scim_attribute_chain(object_class: str, base_attributes: Dict[str, Di
     Returns:
         Configured LangChain runnable
     """
-    parser: PydanticOutputParser[AttributeResponse] = PydanticOutputParser(pydantic_object=AttributeResponse)
+    parser: PydanticOutputParser[ExtractedAttributeResponse] = PydanticOutputParser(
+        pydantic_object=ExtractedAttributeResponse
+    )
     llm = get_default_llm()
 
     # Format base attributes for prompt context
@@ -263,8 +266,9 @@ async def extract_scim_attributes(
 
     # Step 3: Merge custom attributes
     merged_custom = _merge_custom_attributes(all_custom_attributes)
+    postprocessed_custom = normalize_readability_flags(merged_custom)
     merged_custom_with_references = _attach_relevant_documentations_per_attribute(
-        merged_custom,
+        postprocessed_custom,
         attribute_chunk_pairs,
     )
 
@@ -311,10 +315,10 @@ async def extract_custom_scim_attributes(
             config={"callbacks": [langfuse_handler] if langfuse_handler else []},
         )
 
-        if isinstance(result, AttributeResponse):
+        if isinstance(result, ExtractedAttributeResponse):
             attributes = result.attributes or {}
         elif isinstance(result, dict):
-            parsed = AttributeResponse.model_validate(result)
+            parsed = ExtractedAttributeResponse.model_validate(result)
             attributes = parsed.attributes or {}
         else:
             logger.warning("[SCIM:Attributes] Unexpected result type: %s", type(result))
@@ -334,7 +338,7 @@ async def extract_custom_scim_attributes(
             if not normalized_name:
                 continue
 
-            info_dict = info.model_dump(exclude={"relevant_documentations"})
+            info_dict = info.model_dump()
             scim_attribute = info_dict.get("scimAttribute")
             if isinstance(scim_attribute, str):
                 scim_attribute = scim_attribute.strip()

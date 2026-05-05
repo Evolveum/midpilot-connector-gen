@@ -1,30 +1,16 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
-# Python + uv base
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+
+ARG BASE_IMAGE=registry.evolveum.com/public/midpilot-connector-gen-base:python3.13-playwright1.58.0
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
-
-# ---- uv settings ----
-ENV UV_COMPILE_BYTECODE=1
-ENV UV_LINK_MODE=copy
-
-# ---- Python deps (without project) ----
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --locked --no-install-project --no-dev
 
 # ---- Project code + install ----
 COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev
-ENV PATH="/app/.venv/bin:$PATH"
-
-# ---- Playwright: install browsers during build ----
-RUN python -m playwright install --with-deps chromium
-
-ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+RUN python -c "from pathlib import Path; import importlib.metadata; base = Path('/opt/playwright-python-version').read_text().strip(); actual = importlib.metadata.version('playwright'); assert actual == base, f'Playwright version mismatch: base image has {base}, app installs {actual}. Rebuild Dockerfile.base.'"
 
 # Expose only the FastAPI port
 EXPOSE 8090

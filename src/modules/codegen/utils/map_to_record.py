@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 
 def attributes_to_records_for_codegen(merged: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -28,3 +28,10 @@ def attributes_to_records_for_codegen(merged: Dict[str, Dict[str, Any]]) -> List
         )
     records.sort(key=lambda r: str(r.get("name", "")).lower())
     return records
+
+
+def _without_relevant_documentations(record: Mapping[str, Any]) -> Dict[str, Any]:
+    cleaned = dict(record)
+    cleaned.pop("relevantDocumentations", None)
+    cleaned.pop("relevant_documentations", None)
+    return cleaned

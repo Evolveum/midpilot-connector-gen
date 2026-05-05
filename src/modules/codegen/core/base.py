@@ -23,7 +23,14 @@ from src.common.jobs import (
 )
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.modules.codegen.prompts.cleanup_prompts import (
+    get_groovy_cleanup_system_prompt,
+    get_groovy_cleanup_user_prompt,
+)
+from src.modules.codegen.repair import build_repair_prompt_vars, get_repair_initial_result
+from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
+from src.modules.codegen.utils.map_to_record import _without_relevant_documentations
 from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
 from src.modules.digester.schema import AttributeResponse, EndpointResponse
 
@@ -157,6 +164,7 @@ class BaseGroovyGenerator(ABC):
         session_id: Optional[UUID] = None,
         relevant_chunk_pairs: Optional[List[Dict[str, Any]]] = None,
         job_id: UUID,
+        repair_context: Optional[CodegenRepairContext] = None,
         **operation_specific_kwargs,
     ) -> str:
         """
@@ -178,6 +186,13 @@ class BaseGroovyGenerator(ABC):
             relevant_chunk_pairs=relevant_chunk_pairs,
         )
 
+        if not chunks and repair_context is not None:
+            chunks = [""]
+            provenance_chunk_ids = [None]
+            per_chunk_counts = {}
+            chunk_ids_included = []
+            logger.info("%s Repair mode has no chunks; running single repair pass", self.config.logger_prefix)
+
         if not chunks:
             logger.warning("%s No chunks to process", self.config.logger_prefix)
             return self.config.default_scaffold
@@ -187,10 +202,12 @@ class BaseGroovyGenerator(ABC):
 
         # Step 3: Prepare input data and LLM chain
         input_data = self.prepare_input_data(**operation_specific_kwargs)
+        input_data.update(build_repair_prompt_vars(repair_context))
         chain = self._build_llm_chain(len(chunks))
 
         # Step 4: Process chunks iteratively
-        initial_result = self.get_initial_result(**operation_specific_kwargs)
+        fallback_result = self.get_initial_result(**operation_specific_kwargs)
+        initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result=fallback_result)
         result = initial_result
         result = await self._process_chunks(
             chunks=chunks,
@@ -207,14 +224,58 @@ class BaseGroovyGenerator(ABC):
             logger.warning("%s No code produced; returning default scaffold", self.config.logger_prefix)
             return self.config.default_scaffold
 
+        result = await self._cleanup_generated_code(code=result, job_id=job_id)
+
         validation_error = validate_groovy_code(result)
         if validation_error is not None:
             error_message = f"{self.config.logger_prefix} Final generated Groovy is invalid: {validation_error}"
             logger.warning(error_message)
             append_job_error(job_id, error_message)
-            return initial_result
+            return fallback_result
 
         return strip_markdown_fences(result)
+
+    async def _cleanup_generated_code(self, code: str, job_id: UUID) -> str:
+        """
+        Run one final LLM cleanup pass to remove TODO/comment-only scaffolding.
+
+        Falls back to original code if cleanup fails or produces invalid Groovy.
+        """
+        if not code.strip():
+            return code
+
+        try:
+            logger.info("%s Running final cleanup LLM pass", self.config.logger_prefix)
+            llm = get_default_llm()
+            prompt = ChatPromptTemplate.from_messages(
+                [("system", get_groovy_cleanup_system_prompt), ("human", get_groovy_cleanup_user_prompt)]
+            )
+            chain = make_basic_chain(prompt, llm, StrOutputParser())
+            response = await chain.ainvoke(
+                {"groovy_code": code},
+                config=RunnableConfig(callbacks=[langfuse_handler]),
+            )
+            candidate = strip_markdown_fences(_coerce_llm_text(response).strip())
+            if not candidate:
+                logger.warning(
+                    "%s Cleanup pass returned empty output; keeping previous code", self.config.logger_prefix
+                )
+                return code
+
+            validation_error = validate_groovy_code(candidate)
+            if validation_error is not None:
+                error_message = f"{self.config.logger_prefix} Cleanup pass produced invalid Groovy: {validation_error}"
+                logger.warning(error_message)
+                append_job_error(job_id, error_message)
+                return code
+
+            return candidate
+
+        except Exception as exc:
+            error_message = f"{self.config.logger_prefix} Cleanup pass failed: {exc}"
+            logger.exception(error_message)
+            append_job_error(job_id, error_message)
+            return code
 
     async def _load_documentation_items(self, session_id: UUID) -> List[Dict[str, Any]]:
         """Load documentation items from session."""
@@ -233,7 +294,7 @@ class BaseGroovyGenerator(ABC):
             logger.warning("%s No documentation items available", self.config.logger_prefix)
             return [], [], {}, []
 
-        if relevant_chunk_pairs:
+        if relevant_chunk_pairs is not None:
             # Use selected chunks based on pairs
             chunks, provenance, per_chunk_counts, selected_chunk_ids = ChunkProcessor.build_chunks_from_pairs(
                 relevant_chunk_pairs, documentation_items, self.config.logger_prefix
@@ -364,8 +425,8 @@ def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
     if isinstance(payload, AttributeResponse):
         records: List[Dict[str, Any]] = []
         for name, info in (payload.attributes or {}).items():
-            item: Dict[str, Any] = {"name": name}
-            item.update(info.model_dump())
+            item = {"name": name}
+            item.update(_without_relevant_documentations(info.model_dump()))
             records.append(item)
         return records
 
@@ -379,7 +440,7 @@ def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
         for name, info in attrs_map.items():
             item_alt: Dict[str, Any] = {"name": name}
             if isinstance(info, Mapping):
-                item_alt.update(dict(info))
+                item_alt.update(_without_relevant_documentations(info))
             records_alt.append(item_alt)
         return records_alt
     return []
@@ -388,11 +449,17 @@ def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
 def endpoints_to_records(payload: EndpointsPayload) -> List[Dict[str, Any]]:
     """Convert endpoints payload to list of records."""
     if isinstance(payload, EndpointResponse):
-        return [cast(Dict[str, Any], ep.model_dump()) for ep in (payload.endpoints or [])]
+        return [
+            _without_relevant_documentations(cast(Dict[str, Any], ep.model_dump())) for ep in (payload.endpoints or [])
+        ]
 
     if isinstance(payload, Mapping):
         if "endpoints" in payload and isinstance(payload["endpoints"], list):
-            return list(payload["endpoints"])
+            return [
+                _without_relevant_documentations(cast(Mapping[str, Any], endpoint))
+                for endpoint in payload["endpoints"]
+                if isinstance(endpoint, Mapping)
+            ]
         if all(k in payload for k in ("path", "method", "description")):
-            return [dict(payload)]
+            return [_without_relevant_documentations(payload)]
     return []

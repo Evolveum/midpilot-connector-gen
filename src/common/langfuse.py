@@ -74,9 +74,12 @@ class ObservedRoute(APIRoute):
                     # Body is not valid JSON; leave as None to avoid crashing
                     request_json = None
 
-            with langfuse.start_as_current_span(name="api_request", input=request_json) as span:
-                span.update_trace(name=request.url.path, tags=["midpilot-connector-gen"])
-
+            with langfuse.start_as_current_observation(
+                name=request.url.path,
+                as_type="span",
+                input=request_json,
+                metadata={"tags": ["midpilot-connector-gen"]},
+            ) as span:
                 # Execute the actual route handler
                 response: Response = await original_route_handler(request)
 

@@ -43,7 +43,9 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
     md_generator = DefaultMarkdownGenerator(
         content_filter=prune_filter, options={"ignore_images": True, "skip_internal_links": True}
     )
-    browser_config = BrowserConfig()  # accept_downloads=True, browser_type="firefox"
+    browser_config = BrowserConfig(
+        verbose=config.scrape_and_process.crawl4ai_verbose
+    )  # accept_downloads=True, browser_type="firefox"
     run_config = CrawlerRunConfig(
         # user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
         # simulate_user= True,
@@ -55,6 +57,8 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
         # delay_before_return_html=10.0,
         # screenshot=True,
         markdown_generator=md_generator,
+        verbose=config.scrape_and_process.crawl4ai_verbose,
+        log_console=False,
     )
 
     max_attempts = 3
@@ -426,7 +430,7 @@ async def scraper_loop(
             "blog",
         ]
 
-    logger.info("[Scrape:Loop] Iteration %s: Starting to scrape %s links", curr_iteration, len(links_to_scrape))
+    logger.info("[Scrape:Loop] Iteration %s: Starting with %s candidate links", curr_iteration, len(links_to_scrape))
     content_types = await get_all_content_types(links_to_scrape)
 
     data_links = [
@@ -438,8 +442,16 @@ async def scraper_loop(
         or "text/plain" in content_types[url]
     ]
     other_links = [url for url in content_types.keys() if url not in data_links]
+    logger.info(
+        "[Scrape:Loop] Iteration %s: Link type split -> %s data-file links, %s HTML links",
+        curr_iteration,
+        len(data_links),
+        len(other_links),
+    )
 
     http_results = await scrape_all_data_documentations(data_links)
+    data_documentations_count = 0
+    data_fallback_to_html_count = 0
 
     for url, content in http_results:
         if validate_pydantic_object(url, HttpUrl):
@@ -447,6 +459,7 @@ async def scraper_loop(
                 other_links.append(
                     url
                 )  # If fetching as data documentation failed, add to other links for regular scraping
+                data_fallback_to_html_count += 1
                 continue
             logger.debug("[Scrape:Loop] Loading %s as data file", str(url))
             documentation = SavedDocumentation(
@@ -457,12 +470,26 @@ async def scraper_loop(
             )
             logger.debug("[Scrape:Loop] Fetched data documentation %s", str(url))
             saved_documentations[str(url)] = documentation
+            data_documentations_count += 1
             if on_documentation_scraped:
                 await on_documentation_scraped(documentation)
+
+    if data_fallback_to_html_count:
+        logger.debug(
+            "[Scrape:Loop] Iteration %s: %s data-file links fell back to HTML scraping",
+            curr_iteration,
+            data_fallback_to_html_count,
+        )
 
     new_links_to_scrape: List[str] = []
     scraped_documentations_count = 0
     current_scraped_urls = [url.rstrip("/") for url in other_links]
+
+    logger.info(
+        "[Scrape:Loop] Iteration %s: Starting HTML scrape for %s URLs",
+        curr_iteration,
+        len(other_links),
+    )
 
     async for scraped_link in scrape_urls(other_links):
         scraped_documentations_count += 1
@@ -625,8 +652,15 @@ async def scraper_loop(
                 saved_documentations[str(scraped_link.url)] = documentation
 
     logger.info(
-        "[Scrape:Loop] Iteration %s: Scraped %s documentations successfully",
+        "[Scrape:Loop] Iteration %s: Scraped %s HTML documentations successfully",
         curr_iteration,
+        scraped_documentations_count,
+    )
+    logger.info(
+        "[Scrape:Loop] Iteration %s: Processed %s documentations in total (%s data-file, %s HTML)",
+        curr_iteration,
+        data_documentations_count + scraped_documentations_count,
+        data_documentations_count,
         scraped_documentations_count,
     )
 
@@ -699,7 +733,8 @@ async def filterOutIrrelevantLinks(
         list - filtered list of relevant links
     """
     links_set = set(links)
-    logger.info("[Scrape:Filter] Starting to filter %s unique links", len(links_set))
+    logger.info("[Scrape:Filter] Filtering %s unique candidate links", len(links_set))
+
     current_links = [
         link
         for link in list(links_set)
@@ -710,12 +745,19 @@ async def filterOutIrrelevantLinks(
             or (link not in current_scraped_urls and link + "/" not in current_scraped_urls)
         )
     ]
-    logger.info("[Scrape:Filter] After removing already scraped: %s links remain", len(current_links))
+    logger.debug(
+        "[Scrape:Filter] Remove already-processed links: %s -> %s (removed %s)",
+        len(links_set),
+        len(current_links),
+        len(links_set) - len(current_links),
+    )
 
     current_links_past_filtered = list(set(current_links) - set(past_irrelevant_links))
-    logger.info(
-        "[Scrape:Filter] After removing past irrelevant links: %s links remain",
+    logger.debug(
+        "[Scrape:Filter] Remove links previously marked irrelevant: %s -> %s (removed %s)",
+        len(current_links),
         len(current_links_past_filtered),
+        len(current_links) - len(current_links_past_filtered),
     )
 
     current_links_trusted = [
@@ -723,10 +765,20 @@ async def filterOutIrrelevantLinks(
         for link in current_links_past_filtered
         if get_base_domain(link) in trusted_domains or "netsuite" in get_base_domain(link)
     ]
-    logger.info("[Scrape:Filter] After filtering by trusted domains: %s links remain", len(current_links_trusted))
+    logger.debug(
+        "[Scrape:Filter] Keep trusted domains only: %s -> %s (removed %s)",
+        len(current_links_past_filtered),
+        len(current_links_trusted),
+        len(current_links_past_filtered) - len(current_links_trusted),
+    )
 
     current_links_trusted_valid = [link for link in current_links_trusted if validate_pydantic_object(link, HttpUrl)]
-    logger.info("[Scrape:Filter] After validating URLs: %s links remain", len(current_links_trusted_valid))
+    logger.debug(
+        "[Scrape:Filter] Validate URL format: %s -> %s (removed %s)",
+        len(current_links_trusted),
+        len(current_links_trusted_valid),
+        len(current_links_trusted) - len(current_links_trusted_valid),
+    )
     past_irrelevant_links.extend(list(set(current_links_past_filtered) - set(current_links_trusted_valid)))
 
     links_to_remove = []
@@ -743,19 +795,32 @@ async def filterOutIrrelevantLinks(
                 break
 
     current_links_not_forbidden = [link for link in current_links_trusted_valid if link not in links_to_remove]
-    logger.info(
-        "[Scrape:Filter] After removing forbidden URL parts: %s links remain (removed %s)",
+    logger.debug(
+        "[Scrape:Filter] Remove forbidden URL parts: %s -> %s (removed %s)",
+        len(current_links_trusted_valid),
         len(current_links_not_forbidden),
         len(links_to_remove),
     )
 
     if not call_llm:
         new_irrelevant_links = list(links_set - set(current_links_not_forbidden))
+        logger.debug("[Scrape:Filter] LLM filtering disabled")
+        logger.info(
+            "[Scrape:Filter] Filtering complete: %s relevant links, %s irrelevant in this batch, %s total tracked irrelevant",
+            len(current_links_not_forbidden),
+            len(new_irrelevant_links),
+            len(set(past_irrelevant_links)),
+        )
         return new_irrelevant_links, current_links_not_forbidden
 
     curr_run = 0
     while curr_run < llm_calls and len(current_links_not_forbidden) > 0:
-        logger.info("[Scrape:Filter] Starting LLM filtering call %s/%s", curr_run + 1, llm_calls)
+        logger.debug(
+            "[Scrape:Filter] Starting LLM filtering call %s/%s for %s links",
+            curr_run + 1,
+            llm_calls,
+            len(current_links_not_forbidden),
+        )
 
         link_parts: List[List[str]] = []
 
@@ -781,9 +846,11 @@ async def filterOutIrrelevantLinks(
             for resp in irrelevant_llm_responses:
                 if resp is not None:
                     irrelevant_llm_links.extend(resp.links)
-            logger.debug("[Scrape:Filter] LLM identified %s RAW irrelevant links", len(irrelevant_llm_links))
+            logger.debug("[Scrape:Filter] LLM identified %s raw irrelevant links", len(irrelevant_llm_links))
             irrelevant_llm_links = list(set(irrelevant_llm_links) & set(current_links_not_forbidden))
-            logger.info("[Scrape:Filter] LLM identified %s irrelevant links", len(irrelevant_llm_links))
+            logger.debug(
+                "[Scrape:Filter] LLM identified %s relevant candidates as irrelevant", len(irrelevant_llm_links)
+            )
             logger.debug("[Scrape:Filter] LLM irrelevant links: %s", irrelevant_llm_links)
 
             past_irrelevant_links.extend(irrelevant_llm_links)
@@ -792,13 +859,13 @@ async def filterOutIrrelevantLinks(
 
         curr_run += 1
 
-    logger.info(
-        "[Scrape:Filter] Filtering complete: %s relevant links, %s total irrelevant links",
-        len(current_links_not_forbidden),
-        len(past_irrelevant_links),
-    )
-
     new_irrelevant_links = list(links_set - set(current_links_not_forbidden))
+    logger.info(
+        "[Scrape:Filter] Filtering complete: %s relevant links, %s irrelevant in this batch, %s total tracked irrelevant",
+        len(current_links_not_forbidden),
+        len(new_irrelevant_links),
+        len(set(past_irrelevant_links)),
+    )
 
     return new_irrelevant_links, current_links_not_forbidden
 

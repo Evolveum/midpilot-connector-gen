@@ -56,7 +56,6 @@ async def process_scraped_documentation(
         documentation_chunk = DocumentationItem(
             doc_id=documentation.id,
             url=str(documentation.url),
-            # chunk_number=idx,
             source=source,
             scrape_job_ids=[scraper_job_id] if scraper_job_id else [],
             summary=data.summary,
@@ -121,9 +120,4 @@ async def process_all_documentations(
     for documentation_chunks in results:
         all_chunks.extend(documentation_chunks)
 
-    logger.info(
-        "[Scrape:Process] Processing complete: generated %s total chunks from %s documentations",
-        len(all_chunks),
-        len(documentations),
-    )
     return all_chunks

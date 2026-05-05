@@ -52,16 +52,18 @@ class LLMSettings(BaseModel):
     :param openai_api_base: Base URL for the API endpoint.
     :param model_name: Default model identifier to use.
     :param request_timeout: Timeout for API requests in seconds.
+    :param ca_cert_file: Optional CA certificate file for internal TLS.
     """
 
     openai_api_key: str = ""
     openai_api_base: str = "https://openrouter.ai/api/v1"
-    model_name: str = "openai/gpt-oss-20b"
+    model_name: str = "openai/gpt-oss-120b"
     request_timeout: int = 120
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
         description="List of LLM providers in order of preference",
     )
+    ca_cert_file: Optional[str] = None
 
 
 class LangfuseSettings(BaseModel):
@@ -111,6 +113,10 @@ class ScrapeAndProcessSettings(BaseModel):
     )
 
     # Scraper controls
+    crawl4ai_verbose: bool = Field(
+        False,
+        description="Enable verbose Crawl4AI console logs (FETCH/SCRAPE/COMPLETE).",
+    )
     max_scraper_iterations: int = Field(
         4,
         description="Max outer iterations of the scraper loop",
@@ -167,7 +173,7 @@ class ScrapeAndProcessSettings(BaseModel):
 
     # Chunking controls
     chunk_length: int = Field(
-        20000,
+        10000,
         description="Max tokens per chunk for LLM processing",
     )
     max_concurrent: int = Field(
@@ -222,12 +228,58 @@ class DigesterSettings(BaseModel):
         timedelta(weeks=4),
         description="Time interval for checking if the same digester input has been processed before.",
     )
+    max_concurrent_chunk_llm_calls: int = Field(
+        100,
+        ge=1,
+        description="Maximum number of concurrent digester chunk LLM calls.",
+    )
+    chunk_llm_retry_attempts: int = Field(
+        2,
+        ge=1,
+        description="Maximum attempts for transient digester chunk LLM failures.",
+    )
+    chunk_llm_retry_base_delay_seconds: float = Field(
+        1.0,
+        ge=0,
+        description="Initial backoff delay for transient digester chunk LLM retries.",
+    )
     info_metadata_uncertainty_threshold: float = Field(
         0.05,
         description=(
             "Threshold ratio used by digester metadata merge. "
             "Values below this evidence ratio across processed documents are ignored as uncertain."
         ),
+    )
+    auth_min_documentation_items: int = Field(
+        15,
+        description=(
+            "Minimum number of documentation items required to use the default auth criteria; "
+            "otherwise extended auth criteria are used."
+        ),
+    )
+    relation_generic_attribute_tokens: list[str] = Field(
+        default_factory=lambda: [
+            "a",
+            "an",
+            "are",
+            "as",
+            "by",
+            "has",
+            "have",
+            "id",
+            "ids",
+            "is",
+            "of",
+            "ref",
+            "refs",
+            "reference",
+            "references",
+            "the",
+            "to",
+            "via",
+            "with",
+        ],
+        description="Generic relation attribute tokens ignored when collapsing wording-only relation duplicates.",
     )
 
 
@@ -290,9 +342,9 @@ class AppSettings(BaseModel):
     :param ssl_keyfile: Optional path to SSL key file.
     """
 
-    title: str = "Smart Integration Microservice"
+    title: str = "Midpilot Connector Generator"
     version: str = "0.1.0"
-    description: str = "Smart Integration Microservice for scraping, digester and CodeGen"
+    description: str = "Midpilot Connector Generator - discovery, scraping, digester and CodeGen"
     api_base_url: str = "/api"
 
     host: str = "0.0.0.0"

@@ -14,8 +14,8 @@ from src.modules.codegen.core.base import (
     attributes_to_records,
     endpoints_to_records,
 )
+from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
-from src.modules.codegen.schema import SearchIntent
 from src.modules.digester.schema import RelationsResponse
 
 logger = logging.getLogger(__name__)
@@ -27,10 +27,12 @@ class SearchGenerator(BaseGroovyGenerator):
         *,
         object_class: str,
         intent: SearchIntent,
+        preferred_endpoints: Optional[list[Dict[str, Any]]] = None,
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
+        base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -44,6 +46,8 @@ class SearchGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["intent"] = intent
         config.extra_prompt_vars["search_docs"] = docs_text
+        config.extra_prompt_vars["base_api_url"] = base_api_url
+        config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
 
@@ -65,10 +69,12 @@ class CreateGenerator(BaseGroovyGenerator):
         self,
         *,
         object_class: str,
+        preferred_endpoints: Optional[list[Dict[str, Any]]] = None,
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
+        base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -81,6 +87,8 @@ class CreateGenerator(BaseGroovyGenerator):
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["create_docs"] = docs_text
+        config.extra_prompt_vars["base_api_url"] = base_api_url
+        config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
 
@@ -102,10 +110,12 @@ class UpdateGenerator(BaseGroovyGenerator):
         self,
         *,
         object_class: str,
+        preferred_endpoints: Optional[list[Dict[str, Any]]] = None,
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
+        base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -118,6 +128,8 @@ class UpdateGenerator(BaseGroovyGenerator):
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["update_docs"] = docs_text
+        config.extra_prompt_vars["base_api_url"] = base_api_url
+        config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
 
@@ -139,10 +151,12 @@ class DeleteGenerator(BaseGroovyGenerator):
         self,
         *,
         object_class: str,
+        preferred_endpoints: Optional[list[Dict[str, Any]]] = None,
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
+        base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -155,6 +169,8 @@ class DeleteGenerator(BaseGroovyGenerator):
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["delete_docs"] = docs_text
+        config.extra_prompt_vars["base_api_url"] = base_api_url
+        config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
 
@@ -186,8 +202,9 @@ class RelationGenerator(BaseGroovyGenerator):
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         relations = kwargs.get("relations")
+        relation_name = str(kwargs.get("relation_name") or "")
         if isinstance(relations, RelationsResponse):
-            relation_json = relations.model_dump_json()
+            relation_json = relations.model_dump_json(by_alias=True)
         elif isinstance(relations, str):
             relation_json = relations
         else:
@@ -195,7 +212,7 @@ class RelationGenerator(BaseGroovyGenerator):
                 relation_json = json.dumps(relations, ensure_ascii=False)
             except Exception:
                 relation_json = json.dumps({"relations": []})
-        return {"relation_json": relation_json}
+        return {"relation_json": relation_json, "relation_name": relation_name}
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return ""
