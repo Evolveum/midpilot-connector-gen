@@ -19,6 +19,7 @@ Important files:
 - [`src/config.py`](src/config.py) - project configuration
 - [`pyproject.toml`](pyproject.toml) - dependencies, tools, tasks
 - [`Dockerfile`](Dockerfile) - docker file
+- [`Dockerfile.base`](Dockerfile.base) - reusable Python + Playwright base image
 
 ## API Documentation
 
@@ -51,6 +52,9 @@ cp .env.test-example .env.test
 ### Run using docker compose
 
 ```bash
+# build base image when Python, uv.lock, pyproject.toml, or Playwright changes
+docker build -f Dockerfile.base -t midpilot-connector-gen-base:python3.13-playwright1.58.0 .
+
 # build image
 docker compose build
 
