@@ -58,3 +58,25 @@ ENDPOINT_CRITERIA = ChunkFilterCriteria(
         "reference_api",
     ],
 )
+
+CONNECTIVITY_ENDPOINT_CRITERIA = ChunkFilterCriteria(
+    min_length=None,
+    min_endpoints_num=1,
+    allowed_categories=[
+        "spec_yaml",
+        "spec_json",
+        "reference_api",
+        "overview",
+    ],
+)
+
+CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA = ChunkFilterCriteria(
+    min_length=None,
+    min_endpoints_num=None,
+    allowed_categories=[
+        "spec_yaml",
+        "spec_json",
+        "reference_api",
+        "overview",
+    ],
+)
