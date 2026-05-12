@@ -12,6 +12,7 @@ from src.common.enums import ApiType
 from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.core.operations import (
+    AuthorizationGenerator,
     CreateGenerator,
     DeleteGenerator,
     RelationGenerator,
@@ -25,6 +26,11 @@ from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_user_prompt,
 )
 from src.modules.codegen.schema import CodegenRepairContext
+from src.modules.codegen.selection.authorization import (
+    AuthPayload,
+    enrich_preferred_authorizations,
+    select_authorization_chunk_refs,
+)
 from src.modules.codegen.selection.docs_loader import read_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.codegen.utils.map_to_record import attributes_to_records_for_codegen
@@ -183,6 +189,29 @@ async def _collect_relevant_chunks(
     return relevant_indices, relevant_pairs
 
 
+async def _collect_authorization_relevant_chunks(
+    session_id: UUID,
+    auth_payload: AuthPayload,
+    preferred_authorizations: Optional[List[Dict[str, Any]]],
+) -> Tuple[Optional[List[int]], Optional[List[Dict[str, Any]]]]:
+    async with async_session_maker() as db:
+        repo = SessionRepository(db)
+        relevant_map = await repo.get_session_data(session_id, "relevantDocumentations")
+
+    auth_pairs = select_authorization_chunk_refs(relevant_map, auth_payload, preferred_authorizations)
+    if not auth_pairs:
+        return None, None
+
+    relevant_indices = list(range(len(auth_pairs)))
+
+    logger.info(
+        "[Codegen:Authorization] Relevant auth chunks selected=%d preferred=%s",
+        len(auth_pairs),
+        bool(preferred_authorizations),
+    )
+    return relevant_indices, auth_pairs
+
+
 async def create_native_schema(
     attributes_payload: AttributesPayload,
     object_class: str,
@@ -212,6 +241,51 @@ async def create_native_schema(
         extra_prompt_vars={"user_schema_docs": docs_text},
         job_id=job_id,
         repair_context=repair_context,
+    )
+    return {"code": code}
+
+
+async def create_authorization(
+    *,
+    auth_payload: AuthPayload,
+    preferred_authorizations: Optional[List[Dict[str, Any]]] = None,
+    session_id: UUID,
+    job_id: UUID,
+    repair_context: Optional[CodegenRepairContext] = None,
+) -> Dict[str, str]:
+    """
+    Generate connector-level Groovy for authentication/authorization configuration.
+    """
+    preferred_authorizations = enrich_preferred_authorizations(auth_payload, preferred_authorizations)
+
+    api_types = await get_session_api_types(session_id)
+    protocol = ApiType.SCIM if is_scim_api(api_types) else ApiType.REST
+    assets = get_operation_assets("authorization", protocol)
+    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    base_api_url = await get_session_base_api_url(session_id)
+
+    generator = AuthorizationGenerator(
+        preferred_authorizations=preferred_authorizations,
+        docs_text=docs_text,
+        system_prompt=assets.system_prompt,
+        user_prompt=assets.user_prompt,
+        protocol_label=protocol.name,
+        base_api_url=base_api_url,
+    )
+
+    relevant_indices, relevant_pairs = await _collect_authorization_relevant_chunks(
+        session_id,
+        auth_payload,
+        preferred_authorizations,
+    )
+
+    code = await generator.generate(
+        session_id=session_id,
+        relevant_chunk_indices=relevant_indices,
+        relevant_chunk_pairs=relevant_pairs,
+        job_id=job_id,
+        repair_context=repair_context,
+        auth_payload=auth_payload,
     )
     return {"code": code}
 

@@ -7,7 +7,12 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from src.modules.codegen.schema import CodegenOperationInput, GroovyCodePayload, PreferredEndpointsInput
+from src.modules.codegen.schema import (
+    AuthorizationCodegenInput,
+    CodegenOperationInput,
+    GroovyCodePayload,
+    PreferredEndpointsInput,
+)
 from src.modules.codegen.utils.groovy_validation import GroovyValidationError, validate_groovy_code
 
 
@@ -54,6 +59,14 @@ def test_preferred_endpoints_input_accepts_preferred_payload() -> None:
         {"method": "GET", "path": "/users/{id}"},
     ]
     assert [endpoint.model_dump() for endpoint in wrapped_preferred.preferred_endpoints] == expected
+
+
+def test_authorization_input_requires_preferred_authorizations() -> None:
+    with pytest.raises(ValidationError):
+        AuthorizationCodegenInput.model_validate({})
+
+    with pytest.raises(ValidationError):
+        AuthorizationCodegenInput.model_validate({"preferredAuthorizations": []})
 
 
 def test_codegen_operation_input_derives_repair_mode_without_validating_current_script() -> None:

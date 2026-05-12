@@ -7,7 +7,7 @@ Codegen endpoints for V2 API (session-centric).
 All codegen operations are nested under sessions.
 """
 
-from typing import Any, Optional
+from typing import Any, Mapping, Optional, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
@@ -28,10 +28,12 @@ from src.common.utils.status_response import build_multi_doc_status_response, bu
 from src.modules.codegen import service
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.schema import (
+    AuthorizationCodegenInput,
     CodegenOperationInput,
     CodegenRepairContext,
     GroovyCodePayload,
 )
+from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
 from src.modules.digester.schema import RelationsResponse
 
 router = APIRouter()
@@ -53,6 +55,142 @@ def _context_payload_from_input(codegen_input: Optional[CodegenOperationInput]) 
     if codegen_input is None:
         return {}
     return codegen_input.context_payload()
+
+
+def _preferred_authorizations_from_input(
+    codegen_input: Optional[AuthorizationCodegenInput],
+) -> Optional[list[dict]]:
+    if codegen_input is None or not codegen_input.preferred_authorizations:
+        return None
+    return [authorization.model_dump(exclude_none=True) for authorization in codegen_input.preferred_authorizations]
+
+
+# Codegen Operations - Authorization
+@router.post(
+    "/{session_id}/authorization",
+    response_model=JobCreateResponse,
+    summary="Generate authorization code",
+)
+async def generate_authorization(
+    session_id: UUID = Path(..., description="Session ID"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
+    db: AsyncSession = Depends(get_db),
+    codegen_input: AuthorizationCodegenInput = Body(...),
+):
+    """
+    Generate connector-level Groovy authentication/authorization code from digester auth output.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    auth_output_raw = await repo.get_session_data(session_id, "authOutput")
+    if not isinstance(auth_output_raw, Mapping) or not auth_output_raw:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No auth output found in session {session_id}. Please run /digester/{session_id}/auth endpoint first.",
+        )
+    auth_output = cast(Mapping[str, Any], auth_output_raw)
+
+    preferred_authorizations = enrich_preferred_authorizations(
+        auth_output,
+        _preferred_authorizations_from_input(codegen_input),
+    )
+    repair_context = codegen_input.repair_context() if codegen_input else None
+    context_payload = codegen_input.context_payload() if codegen_input else {}
+
+    job_input: dict[str, Any] = {
+        "sessionId": session_id,
+        "auth": auth_output,
+        "skipCache": skip_cache,
+    }
+    job_input.update(context_payload)
+    if preferred_authorizations is not None:
+        job_input["preferredAuthorizations"] = preferred_authorizations
+
+    worker_kwargs: dict[str, Any] = {
+        "auth_payload": auth_output,
+        "preferred_authorizations": preferred_authorizations,
+        "session_id": session_id,
+    }
+    if repair_context is not None:
+        worker_kwargs["repair_context"] = repair_context
+
+    job_id = await schedule_coroutine_job(
+        job_type="codegen.getAuthorization",
+        input_payload=job_input,
+        worker=service.create_authorization,
+        worker_args=(),
+        worker_kwargs=worker_kwargs,
+        initial_stage="preparing",
+        initial_message="Preparing authorization code generation from relevant chunks",
+        session_id=session_id,
+        session_result_key="authorizationOutput",
+    )
+
+    session_input: dict[str, Any] = {}
+    session_input.update(context_payload)
+    if preferred_authorizations is not None:
+        session_input["preferredAuthorizations"] = preferred_authorizations
+    await repo.update_session(
+        session_id,
+        {
+            "authorizationJobId": str(job_id),
+            "authorizationInput": session_input,
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/authorization",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get authorization generation status",
+)
+async def get_authorization_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the status of authorization code generation job.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="authorizationJobId",
+        job_label="authorization",
+        not_found_detail=f"No authorization job found in session {session_id}",
+    )
+
+    return await build_multi_doc_status_response(jobId)
+
+
+@router.put(
+    "/{session_id}/authorization",
+    summary="Override authorization code",
+)
+async def override_authorization(
+    session_id: UUID = Path(..., description="Session ID"),
+    authorization_code: GroovyCodePayload = Body(..., description="Authorization code as JSON"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually override the authorization code.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    await repo.update_session(session_id, {"authorizationOutput": authorization_code.model_dump()})
+
+    return {
+        "message": "Authorization code overridden successfully",
+        "sessionId": session_id,
+    }
 
 
 # Codegen Operations - Native Schema
