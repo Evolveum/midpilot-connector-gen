@@ -92,19 +92,18 @@ class PreferredAuthorizationsInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     preferred_authorizations: list[PreferredAuthorizationPayload] = Field(
-        default_factory=list,
+        ...,
+        min_length=1,
         validation_alias=AliasChoices(
             "preferredAuthorizations",
         ),
         serialization_alias="preferredAuthorizations",
-        description="Optional user-selected authentication/authorization methods used to focus code generation.",
+        description="Required user-selected authentication/authorization methods used to focus code generation.",
     )
 
     @field_validator("preferred_authorizations", mode="before")
     @classmethod
     def normalize_preferred_authorizations(cls, value: Any) -> Any:
-        if value is None:
-            return []
         if isinstance(value, dict):
             return [value]
         return value

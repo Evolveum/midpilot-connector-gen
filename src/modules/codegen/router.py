@@ -75,7 +75,7 @@ async def generate_authorization(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
-    codegen_input: Optional[AuthorizationCodegenInput] = None,
+    codegen_input: AuthorizationCodegenInput = Body(...),
 ):
     """
     Generate connector-level Groovy authentication/authorization code from digester auth output.
