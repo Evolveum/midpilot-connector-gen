@@ -1,0 +1,138 @@
+= SCIM Authentication Script
+
+This script describes connector-level authentication behavior for SCIM-style target applications.
+Generate only the authentication methods selected by the user.
+
+== Required output shape
+
+SCIM authentication scripts use the SCIMREST authentication DSL with a `scim` protocol block:
+
+[source,groovy]
+----
+authentication {
+    scim {
+        // selected SCIM authentication method goes here
+    }
+}
+----
+
+Do not generate `connector { authorization { ... } }`.
+Do not generate object-class schema, search, create, update, or delete blocks.
+Do not include Java classes, imports, packages, test code, WireMock code, or XML resource/security-policy configuration.
+
+== OAuth2 hook DSL
+
+For OAuth2 customizations, use the hook style below. Generate only the hook blocks required by the selected
+authorization and target documentation.
+
+[source,groovy]
+----
+authentication {
+    scim {
+        oauth2 { oauth2Context ->
+            buildTokenRequest { request ->
+                request.formParam("grant_type", "client_credentials")
+                request.formParam("client_id", configuration.clientId)
+            }
+
+            parseTokenResponse { response ->
+                oauth2Context["access_token"] = response.access_token
+            }
+
+            applyToken { request ->
+                request.header("Authorization", "Bearer ${oauth2Context['access_token']}")
+            }
+        }
+    }
+}
+----
+
+Supported OAuth2 hooks:
+
+* `validateToken { ... }` validates or seeds values in `oauth2Context` and returns a boolean.
+* `buildTokenRequest { request -> ... }` customizes the token request using `request.formParam(...)`.
+* `parseTokenResponse { response -> ... }` reads standard or custom token response fields into `oauth2Context`.
+* `applyToken { request -> ... }` decorates outgoing SCIM requests using `request.header(...)` or another documented request mutator.
+
+== Common SCIM patterns
+
+Custom token request parameter:
+
+[source,groovy]
+----
+authentication {
+    scim {
+        oauth2 { oauth2Context ->
+            buildTokenRequest { request ->
+                request.formParam("grant_type", "client_credentials")
+                request.formParam("client_id", configuration.clientId)
+                request.formParam("custom_param", "scim-extra")
+            }
+        }
+    }
+}
+----
+
+Custom token response shape:
+
+[source,groovy]
+----
+authentication {
+    scim {
+        oauth2 { oauth2Context ->
+            buildTokenRequest { request ->
+                request.formParam("grant_type", "client_credentials")
+            }
+            parseTokenResponse { response ->
+                oauth2Context["access_token"] = response.data?.token
+            }
+            applyToken { request ->
+                request.header("Authorization", "Bearer ${oauth2Context['access_token']}")
+            }
+        }
+    }
+}
+----
+
+Refresh token flow:
+
+[source,groovy]
+----
+authentication {
+    scim {
+        oauth2 { oauth2Context ->
+            validateToken {
+                if (!oauth2Context["access_token"]) {
+                    oauth2Context["access_token"] = "mocked-expired-token"
+                    oauth2Context["expires_at"] = java.time.Instant.now().minusSeconds(300)
+                    oauth2Context["refresh_token"] = "mocked-refresh-token"
+                    return false
+                }
+                def expiresAt = oauth2Context["expires_at"]
+                expiresAt != null && expiresAt.isAfter(java.time.Instant.now())
+            }
+            buildTokenRequest { request ->
+                if (oauth2Context["refresh_token"]) {
+                    request.formParam("grant_type", "refresh_token")
+                    request.formParam("refresh_token", oauth2Context["refresh_token"])
+                }
+            }
+            parseTokenResponse { response ->
+                oauth2Context["access_token"] = response.access_token
+                oauth2Context["expires_in"] = response.expires_in ?: 3600
+            }
+            applyToken { request ->
+                request.header("Authorization", "Bearer ${oauth2Context['access_token']}")
+            }
+        }
+    }
+}
+----
+
+SCIM requests commonly use the standard `Authorization` header, but the selected target may require a custom header.
+If documentation says to use a custom header, implement it in `applyToken { request -> ... }`.
+
+For API keys, Basic auth, session cookies, or mTLS, use the same `authentication { scim { ... } }` container and keep the
+implementation small. Prefer documented request mutators such as `request.header(...)` and `request.formParam(...)`.
+When the exact non-OAuth2 DSL method is not documented, produce a minimal valid block with a short TODO comment instead
+of inventing framework method names.

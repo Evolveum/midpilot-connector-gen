@@ -10,6 +10,10 @@ from typing import Mapping
 
 from src.common.enums import ApiType
 from src.modules.codegen.enums import SearchIntent
+from src.modules.codegen.prompts.authorization_prompts import (
+    get_authorization_system_prompt,
+    get_authorization_user_prompt,
+)
 from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_system_prompt,
     get_native_schema_user_prompt,
@@ -59,6 +63,19 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
         ),
         ApiType.SCIM: OperationAssets(
             get_native_schema_system_prompt, get_native_schema_user_prompt, "scim/25-schema-customization.adoc"
+        ),
+    },
+    # TODO add new documentation for authorization
+    "authorization": {
+        ApiType.REST: OperationAssets(
+            get_authorization_system_prompt,
+            get_authorization_user_prompt,
+            "rest/xx-authorization.adoc",
+        ),
+        ApiType.SCIM: OperationAssets(
+            get_authorization_system_prompt,
+            get_authorization_user_prompt,
+            "scim/xx-authorization.adoc",
         ),
     },
 }
