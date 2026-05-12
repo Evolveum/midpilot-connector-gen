@@ -22,13 +22,19 @@ from src.modules.digester import service
 from src.modules.digester.schema import (
     AttributeResponse,
     AuthResponse,
+    ConnectivityEndpointResponse,
     EndpointResponse,
     InfoResponse,
     ObjectClassesResponse,
     RelationsResponse,
 )
 from src.modules.digester.utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
-from src.modules.digester.utils.inputs import auth_input, metadata_input, object_classes_input
+from src.modules.digester.utils.inputs import (
+    auth_input,
+    connectivity_endpoint_input,
+    metadata_input,
+    object_classes_input,
+)
 from src.modules.digester.utils.object_classes import (
     find_object_class,
     get_relevant_chunks,
@@ -667,6 +673,119 @@ async def override_relations(
     await repo.update_session(session_id, {"relationsOutput": relations.model_dump(by_alias=True, mode="json")})
 
     return {"message": "Relations overridden successfully", "sessionId": session_id}
+
+
+# Digester Operations - Connectivity Endpoint
+@router.post(
+    "/{session_id}/connectivity-endpoint",
+    response_model=JobCreateResponse,
+    summary="Extract connectivity test endpoint",
+)
+async def extract_connectivity_endpoint(
+    session_id: UUID = Path(..., description="Session ID"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Extract one documented endpoint suitable for testing connectivity to the target application.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    base_api_url = await get_session_base_api_url(session_id)
+    job_id = await schedule_coroutine_job(
+        job_type="digester.getConnectivityEndpoint",
+        input_payload={
+            "baseApiUrl": base_api_url,
+            "skipCache": skip_cache,
+        },
+        dynamic_input_enabled=True,
+        dynamic_input_provider=connectivity_endpoint_input,
+        worker=service.extract_connectivity_endpoint,
+        worker_kwargs={
+            "session_id": session_id,
+            "base_api_url": base_api_url,
+        },
+        initial_stage="chunking",
+        initial_message="Preparing documentation for connectivity endpoint extraction",
+        session_id=session_id,
+        session_result_key="connectivityEndpointOutput",
+        await_documentation=True,
+        await_documentation_timeout=750,
+    )
+
+    await repo.update_session(
+        session_id,
+        {
+            "connectivityEndpointJobId": str(job_id),
+            "connectivityEndpointInput": {
+                "baseApiUrl": base_api_url,
+                "skipCache": skip_cache,
+            },
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/connectivity-endpoint",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get connectivity endpoint extraction status",
+)
+async def get_connectivity_endpoint_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the status of connectivity endpoint extraction job.
+    Returns current session data when the job has finished, including manual overrides.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    resolved_job_id = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="connectivityEndpointJobId",
+        job_label="connectivity endpoint",
+    )
+
+    response = await build_typed_job_status_response(resolved_job_id, ConnectivityEndpointResponse)
+    if response.status == JobStatus.finished:
+        connectivity_endpoint_output = await repo.get_session_data(session_id, "connectivityEndpointOutput")
+        if connectivity_endpoint_output:
+            try:
+                response.result = ConnectivityEndpointResponse.model_validate(connectivity_endpoint_output)
+            except Exception:
+                pass
+
+    return response
+
+
+@router.put(
+    "/{session_id}/connectivity-endpoint",
+    summary="Override connectivity test endpoint",
+)
+async def override_connectivity_endpoint(
+    session_id: UUID = Path(..., description="Session ID"),
+    connectivity_endpoint: ConnectivityEndpointResponse = Body(..., description="Connectivity endpoint payload"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually override the selected connectivity endpoint in the session.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    await repo.update_session(
+        session_id,
+        {"connectivityEndpointOutput": connectivity_endpoint.model_dump(by_alias=True, mode="json")},
+    )
+
+    return {"message": "Connectivity endpoint overridden successfully", "sessionId": session_id}
 
 
 # Digester Operations - Auth & Metadata

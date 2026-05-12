@@ -70,7 +70,7 @@ async def test_get_auth_status_found():
     fake_status = MagicMock(
         jobId=job_id,
         status=JobStatus.finished,
-        result=AuthResponse(auth=[AuthInfo(name="OAuth2", type=AuthType.OAUTH2)]),
+        result=AuthResponse(auth=[AuthInfo(name="OAuth2", type=AuthType.OAUTH2, relevant_sequences=[])]),
     )
 
     with (

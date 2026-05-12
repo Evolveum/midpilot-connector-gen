@@ -58,6 +58,10 @@ async def test_extract_class_attributes_success():
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
         patch(
+            "src.modules.digester.router.filter_documentation_items",
+            new=AsyncMock(return_value=[{"docId": doc_id, "chunkId": chunk_id}]),
+        ),
+        patch(
             "src.modules.digester.router.get_session_documentation",
             new=AsyncMock(return_value=fake_docs),
         ),
