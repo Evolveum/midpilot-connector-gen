@@ -389,7 +389,7 @@ async def deduplicate_auth(
         logger.error("[Digester:Auth] Deduplication LLM call failed. Error: %s", e)
         await update_job_progress(job_id, stage=JobStage.deduplication_failed, message=f"Deduplication failed: {e}")
         append_job_error(job_id, f"[Digester:Auth] Deduplication LLM call failed: {e}")
-        return []
+        return auth_list
 
 
 async def processInfoToAuthInfo(info: AuthProcessingInfo) -> AuthInfo:

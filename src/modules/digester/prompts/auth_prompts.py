@@ -42,8 +42,8 @@ For each authentication method you extract, provide:
 1. **type** - Exactly one value from the list above
 2. **name** - The authentication method name as presented in the documentation
 4. **sequences** - An array of objects, each containing:
-   - **start_marker** - The exact opening phrase from the documentation (word-for-word, searchable)
-   - **end_marker** - The exact closing phrase from the documentation (word-for-word, searchable)
+   - **start_sequence** - The exact opening phrase from the documentation (word-for-word, searchable)
+   - **end_sequence** - The exact closing phrase from the documentation (word-for-word, searchable)
 
 **MARKER EXTRACTION RULES**
 
