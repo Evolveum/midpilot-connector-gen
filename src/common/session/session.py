@@ -18,7 +18,6 @@ from src.common.database.repositories.documentation_repository import Documentat
 from src.common.database.repositories.job_repository import JobRepository
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage
-from src.common.session.schema import DocumentationItem
 from src.config import config
 
 logger = logging.getLogger(__name__)
@@ -86,16 +85,12 @@ async def process_documentation_worker(
 
         processed_chunks = await asyncio.gather(*[process_chunk(i, ch) for i, ch in enumerate(chunks)])
 
-        doc_items: List[DocumentationItem] = []
         async with async_session_maker() as db_persist:
             doc_repo = DocumentationRepository(db_persist)
             job_repo = JobRepository(db_persist)
-            session_repo = SessionRepository(db_persist)
-
-            existing_docs = await session_repo.get_session_data(session_id, "documentationItems") or []
 
             for item in processed_chunks:
-                chunk_id = await doc_repo.create_documentation_item(
+                await doc_repo.create_documentation_item(
                     session_id=session_id,
                     source="upload",
                     content=item["chunk_text"],
@@ -106,32 +101,17 @@ async def process_documentation_worker(
                     metadata=item["metadata"],
                 )
                 await job_repo.increment_processed_documents(job_id, 1)
-
-                doc_item = DocumentationItem(
-                    chunk_id=chunk_id,
-                    source="upload",
-                    doc_id=doc_id,
-                    scrape_job_ids=[job_id],
-                    url=f"upload://{filename}",
-                    summary=item["summary"],
-                    content=item["chunk_text"],
-                    metadata=item["metadata"],
-                )
-                doc_items.append(doc_item)
-                existing_docs.append(doc_item.model_dump(by_alias=True, mode="json"))
-
-            await session_repo.update_session(session_id, {"documentationItems": existing_docs})
             await db_persist.commit()
 
         logger.info(
             "[Upload:Job] Completed processing for session %s (job %s): generated %s chunks",
             session_id,
             job_id,
-            len(doc_items),
+            len(processed_chunks),
         )
 
         return {
-            "chunks_processed": len(doc_items),
+            "chunks_processed": len(processed_chunks),
             "doc_id": doc_id,
             "filename": filename,
         }
@@ -159,10 +139,11 @@ async def _get_session_documentation_impl(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
+    doc_repo = DocumentationRepository(db)
+
     if documentation is not None:
         doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
 
-        doc_repo = DocumentationRepository(db)
         doc_id = uuid.uuid4()
         chunk_id = await doc_repo.create_documentation_item(
             session_id=session_id,
@@ -174,27 +155,35 @@ async def _get_session_documentation_impl(
             metadata={"filename": documentation.filename or "unknown", "length": len(doc_text)},
         )
 
-        existing_docs: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
-        doc_item = DocumentationItem(
-            chunk_id=chunk_id,
-            source="upload",
-            doc_id=doc_id,
-            url=None,
-            summary=None,
-            scrape_job_ids=[],
-            content=doc_text,
-            metadata={"filename": documentation.filename or "unknown", "length": len(doc_text)},
-        )
-        doc_dict = doc_item.model_dump(by_alias=True, mode="json")
-        existing_docs.append(doc_dict)
-        await repo.update_session(session_id, {"documentationItems": existing_docs})
         await db.commit()
+        return [
+            {
+                "chunkId": str(chunk_id),
+                "docId": str(doc_id),
+                "source": "upload",
+                "scrapeJobIds": [],
+                "url": None,
+                "summary": None,
+                "content": doc_text,
+                "@metadata": {"filename": documentation.filename or "unknown", "length": len(doc_text)},
+            }
+        ]
 
-        return [doc_dict]
-
-    doc_items = await repo.get_session_data(session_id, "documentationItems")
-    if doc_items and len(doc_items) > 0:
-        return doc_items
+    doc_items = await doc_repo.get_documentation_items_by_session(session_id)
+    if doc_items:
+        return [
+            {
+                "chunkId": item.get("chunkId"),
+                "docId": item.get("docId"),
+                "source": item.get("source"),
+                "scrapeJobIds": item.get("scrapeJobIds", []),
+                "url": item.get("url"),
+                "summary": item.get("summary"),
+                "content": item.get("content", ""),
+                "@metadata": item.get("metadata", {}) or {},
+            }
+            for item in doc_items
+        ]
 
     raise HTTPException(
         status_code=400,

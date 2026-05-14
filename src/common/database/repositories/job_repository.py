@@ -12,7 +12,6 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.models import Job, JobProgress
-from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from src.common.enums import JobStage, JobStatus
 from src.common.utils.normalize import normalize_input
 
@@ -53,64 +52,6 @@ class JobRepository:
         :param db: SQLAlchemy AsyncSession
         """
         self.db = db
-        self.relevant_chunk_repo = RelevantChunkRepository(db)
-
-    async def save_relevant_chunks(self, job_id: UUID, session_id: UUID, result: Dict[str, Any]) -> None:
-        """
-        Extract relevant chunks from job result and save them to the relevant_chunks table.
-        Stores object class names directly as entity_type.
-
-        :param job_id: Job ID
-        :param session_id: Session ID
-        :param result: Job result containing relevantDocumentations
-        """
-        try:
-            chunks_to_save = []
-
-            # Save object-class-level relevantDocumentations (if present in result.objectClasses)
-            result_data = result.get("result", {})
-            object_classes = result_data.get("objectClasses", [])
-
-            if isinstance(object_classes, list):
-                for obj_class in object_classes:
-                    if not isinstance(obj_class, dict):
-                        continue
-
-                    class_name = obj_class.get("name")
-                    class_chunks = obj_class.get("relevantDocumentations", [])
-
-                    if class_name and class_chunks:
-                        # Prepare chunks for bulk insert
-                        for chunk_info in class_chunks:
-                            chunk_id_str = chunk_info.get("chunk_id") or chunk_info.get("chunkId")
-                            if chunk_id_str:
-                                chunks_to_save.append(
-                                    {
-                                        "entity_type": class_name,
-                                        "doc_id": chunk_id_str,
-                                    }
-                                )
-
-            if chunks_to_save:
-                # Deduplicate chunks_to_save before inserting to avoid constraint violations
-                # within the same batch (multiple object classes may reference same doc)
-                seen = set()
-                unique_chunks = []
-                for chunk in chunks_to_save:
-                    key = (chunk["entity_type"], str(chunk["doc_id"]))
-                    if key not in seen:
-                        seen.add(key)
-                        unique_chunks.append(chunk)
-
-                chunks_saved = await self.relevant_chunk_repo.bulk_add_relevant_chunks(
-                    session_id=session_id,
-                    chunks=unique_chunks,
-                )
-                if chunks_saved > 0:
-                    logger.info(f"Saved {chunks_saved} relevant chunks for job {job_id}")
-
-        except Exception as e:
-            logger.warning(f"Failed to save relevant chunks for job {job_id}: {e}", exc_info=True)
 
     async def create_job(self, input_payload: Dict[str, Any], job_type: str, session_id: UUID) -> UUID:
         """
@@ -256,13 +197,6 @@ class JobRepository:
 
         # Flush the main job changes first
         await self.db.flush()
-
-        # Extract and save relevant chunks to the database (non-critical, so catch errors)
-        try:
-            await self.save_relevant_chunks(job_id, job.session_id, result)
-        except Exception as e:
-            logger.warning(f"Failed to save relevant chunks for job {job_id}: {e}", exc_info=True)
-            # Don't fail the entire job if chunk saving fails
 
         logger.info(f"Job {job_id} set to finished")
 

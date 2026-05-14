@@ -20,3 +20,28 @@ def test_cache_control_defaults_to_reuse_for_request_models() -> None:
     assert discovery_input.model_dump(by_alias=True)["skipCache"] is False
     assert scrape_input.skip_cache is False
     assert scrape_input.model_dump(by_alias=True)["skipCache"] is False
+
+
+def test_normalize_input_handles_missing_relevant_documentations() -> None:
+    normalized = normalize_input(
+        {
+            "skipCache": True,
+            "relevantObjectClasses": {
+                "objectClasses": [
+                    {"name": "User"},
+                    {
+                        "name": "Group",
+                        "relevantDocumentations": [{"docId": "doc-1", "chunkId": "chunk-1"}],
+                    },
+                    {"name": "Role", "relevant_chunk_indices": [0, 1]},
+                ]
+            },
+        }
+    )
+
+    assert "skipCache" not in normalized
+    assert normalized["relevantObjectClasses"]["objectClasses"] == [
+        {"name": "User"},
+        {"name": "Group"},
+        {"name": "Role"},
+    ]

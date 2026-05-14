@@ -23,6 +23,7 @@ from src.common.schema import (
     JobStatusStageResponse,
 )
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
+from src.common.utils.relevance import hydrate_auth_sequences_from_relevance as _hydrate_auth_sequences_from_relevance
 from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
 from src.modules.codegen import service
@@ -45,16 +46,22 @@ def _preferred_endpoints_from_input(codegen_input: Optional[CodegenOperationInpu
     return [endpoint.model_dump() for endpoint in codegen_input.preferred_endpoints]
 
 
-def _repair_context_from_input(codegen_input: Optional[CodegenOperationInput]) -> Optional[CodegenRepairContext]:
-    if codegen_input is None:
+def _repair_context_from_input(codegen_input: Optional[CodegenRepairContext]) -> Optional[CodegenRepairContext]:
+    if codegen_input is None or not codegen_input.is_repair:
         return None
-    return codegen_input.repair_context()
+    return CodegenRepairContext(
+        current_script=codegen_input.current_script,
+        midpoint_errors=codegen_input.midpoint_errors,
+    )
 
 
-def _context_payload_from_input(codegen_input: Optional[CodegenOperationInput]) -> dict:
-    if codegen_input is None:
+def _context_payload_from_input(codegen_input: Optional[CodegenRepairContext]) -> dict:
+    if codegen_input is None or not codegen_input.is_repair:
         return {}
-    return codegen_input.context_payload()
+    return CodegenRepairContext(
+        current_script=codegen_input.current_script,
+        midpoint_errors=codegen_input.midpoint_errors,
+    ).to_payload()
 
 
 def _preferred_authorizations_from_input(
@@ -90,6 +97,14 @@ async def generate_authorization(
             detail=f"No auth output found in session {session_id}. Please run /digester/{session_id}/auth endpoint first.",
         )
     auth_output = cast(Mapping[str, Any], auth_output_raw)
+    try:
+        auth_output = cast(
+            Mapping[str, Any],
+            await _hydrate_auth_sequences_from_relevance(db, session_id, auth_output),
+        )
+    except Exception:
+        # Keep existing payload when relevance rows are unavailable (e.g., tests/mocks or partial sessions).
+        pass
 
     preferred_authorizations = enrich_preferred_authorizations(
         auth_output,
@@ -204,7 +219,7 @@ async def generate_native_schema(
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
-    codegen_input: Optional[CodegenOperationInput] = None,
+    codegen_input: Optional[CodegenRepairContext] = None,
 ):
     """
     Generate native Groovy schema from attributes.
@@ -325,7 +340,7 @@ async def generate_connid(
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
-    codegen_input: Optional[CodegenOperationInput] = None,
+    codegen_input: Optional[CodegenRepairContext] = None,
 ):
     """
     Generate ConnID Groovy code from attributes.

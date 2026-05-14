@@ -28,7 +28,7 @@ async def test_generate_create():
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
         patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
@@ -37,8 +37,8 @@ async def test_generate_create():
         mock_db = AsyncMock()
         mock_db_cm.__aenter__.return_value = mock_db
 
-        mock_repo_instance = mock_session_repository.return_value
-        mock_repo_instance.get_session_data = AsyncMock(return_value=None)
+        mock_repo_instance = mock_relevant_chunk_repository.return_value
+        mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value={})
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_create_generator_class.return_value
@@ -80,7 +80,7 @@ async def test_generate_update():
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
         patch("src.modules.codegen.service.UpdateGenerator") as mock_update_generator_class,
@@ -89,8 +89,8 @@ async def test_generate_update():
         mock_db = AsyncMock()
         mock_db_cm.__aenter__.return_value = mock_db
 
-        mock_repo_instance = mock_session_repository.return_value
-        mock_repo_instance.get_session_data = AsyncMock(return_value=None)
+        mock_repo_instance = mock_relevant_chunk_repository.return_value
+        mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value={})
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_update_generator_class.return_value
@@ -128,7 +128,7 @@ async def test_generate_delete():
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
         patch("src.modules.codegen.service.DeleteGenerator") as mock_delete_generator_class,
@@ -137,8 +137,8 @@ async def test_generate_delete():
         mock_db = AsyncMock()
         mock_db_cm.__aenter__.return_value = mock_db
 
-        mock_repo_instance = mock_session_repository.return_value
-        mock_repo_instance.get_session_data = AsyncMock(return_value=None)
+        mock_repo_instance = mock_relevant_chunk_repository.return_value
+        mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value={})
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_delete_generator_class.return_value

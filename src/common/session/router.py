@@ -215,13 +215,8 @@ async def check_documentation_item(
         if not await repo.session_exists(session_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-        doc_items: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
-
-        # Find item by UUID
-        index_to_check = next(
-            (i for i, d in enumerate(doc_items) if str(d.get("docId")) == str(documentation_id)), None
-        )
-        if index_to_check is not None:
+        doc_repo = DocumentationRepository(db)
+        if await doc_repo.get_documentation_items_by_doc_id(session_id, documentation_id):
             return Response(status_code=status.HTTP_204_NO_CONTENT)
 
         # If the item is not yet persisted, check if an upload job for this doc is queued/running.
@@ -493,7 +488,6 @@ async def replace_documentation(
         filename = documentation.filename or "unknown"
 
         # Clear existing documentation first
-        await repo.update_session(session_id, {"documentationItems": []})
         await doc_repo.delete_documentation_items_by_session(session_id)
 
         # Chunk the content
@@ -573,15 +567,7 @@ async def import_documentation_by_id(
 
     doc_repo = DocumentationRepository(db)
 
-    existing_session_doc_items: list[Dict[str, Any]] = (
-        await session_repo.get_session_data(session_id, "documentationItems") or []
-    )
-    remaining_session_doc_items = [
-        item for item in existing_session_doc_items if str(item.get("docId")) != str(documentation_id)
-    ]
-
     flat_items: list[Dict[str, Any]] = []
-    imported_session_doc_items: list[Dict[str, Any]] = []
     seen_chunk_ids: set[str] = set()
 
     for chunk in document.chunks:
@@ -605,18 +591,6 @@ async def import_documentation_by_id(
             "scrapeJobIds": [str(job_id) for job_id in chunk.scrape_job_ids],
         }
         flat_items.append(flat_chunk)
-        imported_session_doc_items.append(
-            {
-                "chunkId": flat_chunk["chunkId"],
-                "docId": flat_chunk["docId"],
-                "source": flat_chunk["source"],
-                "url": flat_chunk["url"],
-                "summary": flat_chunk["summary"],
-                "content": flat_chunk["content"],
-                "metadata": flat_chunk["metadata"],
-                "scrapeJobIds": flat_chunk["scrapeJobIds"],
-            }
-        )
 
     await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
 
@@ -635,9 +609,6 @@ async def import_documentation_by_id(
                 f"DB says: {db_message}"
             ),
         ) from exc
-
-    updated_session_doc_items = remaining_session_doc_items + imported_session_doc_items
-    await session_repo.update_session(session_id, {"documentationItems": updated_session_doc_items})
 
     return {
         "message": "Documentation imported successfully",
@@ -678,7 +649,6 @@ async def delete_documentation(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    await repo.update_session(session_id, {"documentationItems": []})
     await doc_repo.delete_documentation_items_by_session(session_id)
     return {"message": "All documentation deleted successfully", "sessionId": session_id}
 
@@ -694,40 +664,27 @@ async def delete_documentation_item(
     Since uploaded documentation is chunked, this removes all chunks belonging to the same document.
     Returns 404 if the session or any documentation with that doc_id is not found.
     """
-    # TODO: Maybe we should handle relevantDocumentations
     repo = SessionRepository(db)
     doc_repo = DocumentationRepository(db)
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    doc_items: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
-    doc_items_with_doc_id = [item for item in doc_items if str(item.get("docId")) == str(documentation_id)]
-    source = doc_items_with_doc_id[0].get("source") if len(doc_items_with_doc_id) > 0 else ""
+    doc_items_with_doc_id = await doc_repo.get_documentation_items_by_doc_id(session_id, documentation_id)
+    source = doc_items_with_doc_id[0].get("source") if doc_items_with_doc_id else ""
     if not source:
         logger.warning(
             "Could not determine source for documentation with doc_id %s in session %s", documentation_id, session_id
         )
     else:
         await doc_repo.remove_job_ids_from_documentation_items(session_id, source)
-    if not doc_items:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"No documentation found in session {session_id}"
-        )
 
-    # Filter out all items with the specified doc_id
-    initial_count = len(doc_items)
-    filtered_items = [item for item in doc_items if item.get("docId") != str(documentation_id)]
-    deleted_count = initial_count - len(filtered_items)
-
-    if deleted_count == 0:
+    if not doc_items_with_doc_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Documentation with documentation_id {documentation_id} not found in session {session_id}",
         )
 
-    # Update session with filtered items
-    await repo.update_session(session_id, {"documentationItems": filtered_items})
-    await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
+    deleted_count = await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
 
     return {
         "message": f"Documentation deleted successfully ({deleted_count} chunk(s) removed)",

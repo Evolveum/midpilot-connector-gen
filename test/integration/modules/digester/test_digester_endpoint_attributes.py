@@ -138,8 +138,13 @@ async def test_override_class_attributes_success():
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.update_session = AsyncMock()
+    mock_relevant_repo = MagicMock()
+    mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()
 
-    with patch("src.modules.digester.router.SessionRepository", return_value=mock_repo):
+    with (
+        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevant_repo),
+    ):
         session_id = uuid4()
         response = await override_class_attributes(
             session_id=session_id,
@@ -150,6 +155,7 @@ async def test_override_class_attributes_success():
 
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_repo.update_session.assert_awaited_once_with(session_id, {"userAttributesOutput": {"id": {"type": "string"}}})
+    mock_relevant_repo.replace_relevant_chunks_for_result.assert_awaited_once()
     assert response["message"].startswith("Attributes for user overridden successfully")
     assert response["sessionId"] == session_id
     assert response["objectClass"] == "user"

@@ -4,7 +4,7 @@
 
 """Integration tests for digester class-endpoints endpoints."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 import pytest
@@ -91,7 +91,18 @@ async def test_get_class_endpoints_status_found():
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     job_id = uuid4()
-    mock_repo.get_session_data = AsyncMock(return_value=str(job_id))
+    mock_repo.get_session_data = AsyncMock(
+        side_effect=[
+            str(job_id),
+            {
+                "endpoints": [
+                    EndpointInfo(method=EndpointMethod.GET, path="/users", description="List users").model_dump(
+                        by_alias=True
+                    )
+                ]
+            },
+        ]
+    )
 
     fake_status = MagicMock(
         jobId=job_id,
@@ -123,7 +134,10 @@ async def test_get_class_endpoints_status_found():
     assert response.result.endpoints[0].method == "GET"
     assert response.result.endpoints[0].path == "/users"
     mock_repo.session_exists.assert_awaited_once_with(session_id)
-    mock_repo.get_session_data.assert_awaited_once_with(session_id, "UserEndpointsJobId")
+    assert mock_repo.get_session_data.await_args_list == [
+        call(session_id, "UserEndpointsJobId"),
+        call(session_id, "UserEndpointsOutput"),
+    ]
     mock_status_builder.assert_awaited_once()
 
 
@@ -133,8 +147,13 @@ async def test_override_class_endpoints_success():
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.update_session = AsyncMock()
+    mock_relevant_repo = MagicMock()
+    mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()
 
-    with patch("src.modules.digester.router.SessionRepository", return_value=mock_repo):
+    with (
+        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevant_repo),
+    ):
         session_id = uuid4()
         response = await override_class_endpoints(
             session_id=session_id,
@@ -148,6 +167,7 @@ async def test_override_class_endpoints_success():
         session_id,
         {"userEndpointsOutput": {"listUsers": {"method": "GET", "path": "/users"}}},
     )
+    mock_relevant_repo.replace_relevant_chunks_for_result.assert_awaited_once()
     assert response["message"].startswith("Endpoints for user overridden successfully")
     assert response["sessionId"] == session_id
     assert response["objectClass"] == "user"

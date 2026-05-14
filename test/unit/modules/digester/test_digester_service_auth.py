@@ -207,3 +207,30 @@ async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_prog
         assert mock_deduplicate.await_count == 2
         mock_build.assert_awaited_once_with([], job_id)
         mock_sort.assert_awaited_once_with([], job_id)
+
+
+def test_auth_response_serializes_relevant_sequences_in_camel_case():
+    response = AuthResponse(
+        auth=[
+            AuthInfo(
+                name="OAuth2",
+                type=AuthType.OAUTH2,
+                quirks="",
+                relevant_sequences=[
+                    DocSequenceItem(
+                        chunk_id="chunk-1",
+                        start_sequence="start marker",
+                        end_sequence="end marker",
+                    )
+                ],
+            )
+        ]
+    )
+
+    dumped = response.model_dump(by_alias=True, mode="json")
+    sequence = dumped["auth"][0]["relevantSequences"][0]
+    assert sequence == {
+        "chunkId": "chunk-1",
+        "startSequence": "start marker",
+        "endSequence": "end marker",
+    }
