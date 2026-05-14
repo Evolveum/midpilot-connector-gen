@@ -261,13 +261,16 @@ def extract_relevant_rows_for_storage(
     rows: List[Dict[str, Any]] = []
     payload = unwrap_result_payload(result_dict)
 
-    rows.extend(
-        normalize_chunk_refs_for_storage(
-            result_dict.get("relevantDocumentations"),
-            result_key=result_key,
-            chunk_to_doc=chunk_to_doc,
+    # For auth outputs we persist only sequence-based evidence per auth entity.
+    # Top-level relevantDocumentations would create duplicate rows with empty relevant_sequence.
+    if result_key != "authOutput":
+        rows.extend(
+            normalize_chunk_refs_for_storage(
+                result_dict.get("relevantDocumentations"),
+                result_key=result_key,
+                chunk_to_doc=chunk_to_doc,
+            )
         )
-    )
 
     if result_key == "objectClassesOutput":
         object_classes = payload.get("objectClasses")
@@ -311,17 +314,22 @@ def extract_relevant_rows_for_storage(
                 if not isinstance(attr_name, str) or not isinstance(attr_info, Mapping):
                     continue
                 entity_key = normalize_object_class_name(attr_name)
+                sequence_value = attr_info.get("relevant_sequences") or attr_info.get("relevantSequences")
+                has_sequence_field = "relevant_sequences" in attr_info or "relevantSequences" in attr_info
+                sequence_rows = _sequence_rows(
+                    sequence_value,
+                    result_key=result_key,
+                    entity_key=entity_key,
+                    chunk_to_doc=chunk_to_doc,
+                )
+                if has_sequence_field:
+                    # Sequence-aware payload: persist only rows with valid sequence boundaries.
+                    rows.extend(sequence_rows)
+                    continue
+
                 rows.extend(
                     normalize_chunk_refs_for_storage(
                         attr_info.get("relevantDocumentations") or attr_info.get("relevant_documentations"),
-                        result_key=result_key,
-                        entity_key=entity_key,
-                        chunk_to_doc=chunk_to_doc,
-                    )
-                )
-                rows.extend(
-                    _sequence_rows(
-                        attr_info.get("relevant_sequences") or attr_info.get("relevantSequences"),
                         result_key=result_key,
                         entity_key=entity_key,
                         chunk_to_doc=chunk_to_doc,
@@ -488,16 +496,21 @@ def extract_attribute_relevance_rows(payload: Dict[str, Any], result_key: str) -
         entity_key = attribute_entity_key(attribute_name)
         if not entity_key:
             continue
+        sequence_value = info.get("relevant_sequences") or info.get("relevantSequences")
+        has_sequence_field = "relevant_sequences" in info or "relevantSequences" in info
+        sequence_rows = _sequence_rows(
+            sequence_value,
+            result_key=result_key,
+            entity_key=entity_key,
+        )
+        if has_sequence_field:
+            # Sequence-aware payload: persist only rows with valid sequence boundaries.
+            rows.extend(sequence_rows)
+            continue
+
         rows.extend(
             normalize_chunk_refs_for_storage(
                 info.get("relevantDocumentations") or info.get("relevant_documentations"),
-                result_key=result_key,
-                entity_key=entity_key,
-            )
-        )
-        rows.extend(
-            _sequence_rows(
-                info.get("relevant_sequences") or info.get("relevantSequences"),
                 result_key=result_key,
                 entity_key=entity_key,
             )
