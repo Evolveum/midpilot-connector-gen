@@ -29,12 +29,25 @@ class DocSequenceItem(BaseModel):
     Represents a sequence from a chunk relevant to the extracted information.
     """
 
-    chunk_id: str = Field(..., description="Unique identifier for the document chunk.")
+    model_config = {"populate_by_name": True}
+
+    chunk_id: str = Field(
+        ...,
+        validation_alias=AliasChoices("chunk_id", "chunkId"),
+        serialization_alias="chunkId",
+        description="Unique identifier for the document chunk.",
+    )
     start_sequence: str = Field(
-        ..., description="Unique token / word sequence that identifies the start of the relevant chunk."
+        ...,
+        description="Unique token / word sequence that identifies the start of the relevant chunk.",
+        validation_alias=AliasChoices("start_sequence", "startSequence"),
+        serialization_alias="startSequence",
     )
     end_sequence: str = Field(
-        ..., description="Unique token / word sequence that identifies the end of the relevant chunk."
+        ...,
+        description="Unique token / word sequence that identifies the end of the relevant chunk.",
+        validation_alias=AliasChoices("end_sequence", "endSequence"),
+        serialization_alias="endSequence",
     )
 
 
@@ -421,7 +434,9 @@ class DiscoveryAuth(BaseAuth):
     # )
 
     relevant_sequences: List[DocSequenceItem] = Field(
-        description=("List of relevant document sequences that support the presence of this auth method. ")
+        description=("List of relevant document sequences that support the presence of this auth method. "),
+        validation_alias=AliasChoices("relevant_sequences", "relevantSequences"),
+        serialization_alias="relevantSequences",
     )
 
 

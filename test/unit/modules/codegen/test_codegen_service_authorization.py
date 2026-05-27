@@ -47,7 +47,7 @@ async def test_create_authorization_uses_preferred_authorizations_and_auth_relev
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
         patch("src.modules.codegen.service.AuthorizationGenerator") as mock_generator_class,
@@ -56,8 +56,8 @@ async def test_create_authorization_uses_preferred_authorizations_and_auth_relev
         mock_db = AsyncMock()
         mock_db_cm.__aenter__.return_value = mock_db
 
-        mock_repo_instance = mock_session_repository.return_value
-        mock_repo_instance.get_session_data = AsyncMock(return_value=relevant_map)
+        mock_repo_instance = mock_relevant_chunk_repository.return_value
+        mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value=relevant_map)
 
         mock_generator_instance = mock_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked authorization code")

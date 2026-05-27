@@ -93,14 +93,12 @@ async def test_get_connectivity_endpoint_status_uses_session_output_when_finishe
                 "description": "Checks API status",
                 "requiresAuth": True,
                 "responseContentType": "application/json",
-                "relevantDocumentations": [{"docId": "doc-1", "chunkId": "chunk-1"}],
             },
             {
                 "path": "/users",
                 "method": "GET",
                 "description": "List users",
                 "requiresAuth": True,
-                "relevantDocumentations": [],
             },
         ]
     }
@@ -108,10 +106,18 @@ async def test_get_connectivity_endpoint_status_uses_session_output_when_finishe
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.get_session_data = AsyncMock(side_effect=[str(job_id), session_output])
+    mock_relevant_repo = MagicMock()
+    mock_relevant_repo.get_relevant_chunks_grouped_by_entity = AsyncMock(
+        return_value={
+            "GET /status": [{"docId": "doc-1", "chunkId": "chunk-1"}],
+            "GET /users": [],
+        }
+    )
     fake_status = MagicMock(jobId=job_id, status=JobStatus.finished, result=ConnectivityEndpointResponse())
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.common.utils.relevance.RelevantChunkRepository", return_value=mock_relevant_repo),
         patch(
             "src.modules.digester.router.build_typed_job_status_response",
             new_callable=AsyncMock,
@@ -126,6 +132,7 @@ async def test_get_connectivity_endpoint_status_uses_session_output_when_finishe
     assert response.result.endpoints[0].path == "/status"
     assert response.result.endpoints[0].method == EndpointMethod.GET
     assert response.result.endpoints[0].requires_auth is True
+    assert response.result.endpoints[0].relevant_documentations == [{"doc_id": "doc-1", "chunk_id": "chunk-1"}]
     assert response.result.endpoints[1].path == "/users"
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_repo.get_session_data.assert_has_awaits(
@@ -157,8 +164,13 @@ async def test_override_connectivity_endpoint_success():
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.update_session = AsyncMock()
+    mock_relevant_repo = MagicMock()
+    mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()
 
-    with patch("src.modules.digester.router.SessionRepository", return_value=mock_repo):
+    with (
+        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevant_repo),
+    ):
         response = await override_connectivity_endpoint(
             session_id=session_id,
             connectivity_endpoint=payload,
@@ -168,7 +180,21 @@ async def test_override_connectivity_endpoint_success():
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_repo.update_session.assert_awaited_once_with(
         session_id,
-        {"connectivityEndpointOutput": payload.model_dump(by_alias=True, mode="json")},
+        {
+            "connectivityEndpointOutput": {
+                "endpoints": [
+                    {
+                        "path": "/ServiceProviderConfig",
+                        "method": "GET",
+                        "description": "SCIM service provider config",
+                        "requiresAuth": True,
+                        "responseContentType": None,
+                        "requestContentType": None,
+                    }
+                ]
+            }
+        },
     )
+    mock_relevant_repo.replace_relevant_chunks_for_result.assert_awaited_once()
     assert response["message"].startswith("Connectivity endpoint overridden successfully")
     assert response["sessionId"] == session_id

@@ -4,6 +4,11 @@
 
 """Unit tests for codegen service helper utilities."""
 
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
+
+import pytest
+
 from src.modules.codegen import service
 from src.modules.digester.schema import RelationsResponse
 
@@ -40,7 +45,8 @@ def test_collect_pairs_empty_input():
     assert service._collect_pairs("") == []
 
 
-def test_collect_relation_object_class_pairs_uses_subject_and_object_chunks():
+@pytest.mark.asyncio
+async def test_collect_relation_object_class_pairs_uses_subject_and_object_chunks():
     relations = RelationsResponse.model_validate(
         {
             "relations": [
@@ -56,31 +62,33 @@ def test_collect_relation_object_class_pairs_uses_subject_and_object_chunks():
             ]
         }
     )
-    object_classes_output = {
-        "objectClasses": [
-            {
-                "name": "Principal",
-                "relevantDocumentations": [
+    with (
+        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_repository,
+    ):
+        mock_db_cm = mock_session_maker.return_value
+        mock_db = AsyncMock()
+        mock_db_cm.__aenter__.return_value = mock_db
+
+        mock_repo_instance = mock_relevant_repository.return_value
+        mock_repo_instance.get_relevant_chunks_grouped_by_entity = AsyncMock(
+            return_value={
+                "principal": [
                     {"docId": "doc-1", "chunkId": "principal-1"},
                     {"docId": "doc-2", "chunkId": "shared"},
                 ],
-            },
-            {
-                "name": "Membership",
-                "relevantDocumentations": [
+                "membership": [
                     {"docId": "doc-2", "chunkId": "shared"},
                     {"docId": "doc-3", "chunkId": "membership-1"},
                 ],
-            },
-            {
-                "name": "Role",
-                "relevantDocumentations": [{"docId": "doc-4", "chunkId": "role-1"}],
-            },
-        ]
-    }
+                "role": [{"docId": "doc-4", "chunkId": "role-1"}],
+            }
+        )
 
-    assert service._collect_relation_object_class_pairs(relations, object_classes_output) == [
-        {"doc_id": "doc-1", "chunk_id": "principal-1"},
-        {"doc_id": "doc-2", "chunk_id": "shared"},
-        {"doc_id": "doc-3", "chunk_id": "membership-1"},
-    ]
+        result = await service._collect_relation_object_class_pairs(relations, uuid4())
+
+        assert result == [
+            {"doc_id": "doc-1", "chunk_id": "principal-1"},
+            {"doc_id": "doc-2", "chunk_id": "shared"},
+            {"doc_id": "doc-3", "chunk_id": "membership-1"},
+        ]

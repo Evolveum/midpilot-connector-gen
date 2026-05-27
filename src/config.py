@@ -125,6 +125,10 @@ class ScrapeAndProcessSettings(BaseModel):
         5,
         description="Max LLM filtering passes per iteration",
     )
+    max_links_per_documentation: int = Field(
+        3000,
+        description="Maximum number of raw links to process from a single scraped documentation page",
+    )
     irrelevant_links_parts: int = Field(
         5,
         description="Number of parts to split links into for LLM filtering",
@@ -167,6 +171,11 @@ class ScrapeAndProcessSettings(BaseModel):
             "internal",
             "stg",
             "staging",
+            "index-all.html",
+            "allclasses-index.html",
+            "allpackages-index.html",
+            "deprecated-list.html",
+            "help-doc.html",
         ],
         description="URL substrings to consider irrelevant while scraping",
     )

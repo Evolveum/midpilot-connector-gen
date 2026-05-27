@@ -93,14 +93,19 @@ def _normalize_chunk_refs(value: Any) -> List[Dict[str, Any]]:
         return []
 
     normalized: List[Dict[str, Any]] = []
+    seen_chunk_ids: set[str] = set()
     for item in value:
         if not isinstance(item, Mapping):
             continue
         chunk_id = item.get("chunk_id") or item.get("chunkId")
         if not chunk_id:
             continue
+        chunk_id_str = str(chunk_id)
+        if chunk_id_str in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(chunk_id_str)
 
-        chunk_ref: Dict[str, Any] = {"chunk_id": str(chunk_id)}
+        chunk_ref: Dict[str, Any] = {"chunk_id": chunk_id_str}
         doc_id = item.get("doc_id") or item.get("docId")
         if doc_id:
             chunk_ref["doc_id"] = str(doc_id)

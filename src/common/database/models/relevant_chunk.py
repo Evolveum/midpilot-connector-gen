@@ -6,7 +6,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,7 +16,7 @@ from src.common.database.models.session import Session
 
 
 class RelevantChunk(Base):
-    """Relevant chunks table - tracks which documentation items are relevant for specific entities (e.g., object classes)."""
+    """Relevant chunks table - tracks which documentation chunks are relevant for specific extraction outputs."""
 
     __tablename__ = "relevant_chunks"
 
@@ -30,15 +30,25 @@ class RelevantChunk(Base):
         PGUUID(as_uuid=True),
         ForeignKey("sessions.session_id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
-    entity_type: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     doc_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=False,
+    )
+    chunk_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("documentation_items.chunk_id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
+    relevant_sequence: Mapped[dict[str, str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+
+    result_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    entity_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -52,9 +62,18 @@ class RelevantChunk(Base):
     documentation_item: Mapped["DocumentationItem"] = relationship("DocumentationItem")
 
     __table_args__ = (
-        UniqueConstraint("session_id", "entity_type", "doc_id", name="uq_relevant_chunk_unique"),
+        UniqueConstraint(
+            "session_id",
+            "result_key",
+            "entity_key",
+            "chunk_id",
+            "relevant_sequence",
+            name="uq_relevant_chunk_unique",
+        ),
         Index("idx_relevant_chunks_session_id", "session_id"),
-        Index("idx_relevant_chunks_entity_type", "entity_type"),
+        Index("idx_relevant_chunks_result_key", "result_key"),
         Index("idx_relevant_chunks_doc_id", "doc_id"),
-        Index("idx_relevant_chunks_session_entity", "session_id", "entity_type"),
+        Index("idx_relevant_chunks_chunk_id", "chunk_id"),
+        Index("idx_relevant_chunks_entity_key", "entity_key"),
+        Index("idx_relevant_chunks_session_result", "session_id", "result_key"),
     )
