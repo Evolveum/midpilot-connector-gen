@@ -41,38 +41,27 @@ async def test_generate_relation():
 
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.SessionRepository") as mock_session_repository,
+        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_repository,
         patch("src.modules.codegen.service.RelationGenerator") as mock_relation_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
         mock_db = AsyncMock()
         mock_db_cm.__aenter__.return_value = mock_db
 
-        mock_repo_instance = mock_session_repository.return_value
-        mock_repo_instance.get_session_data = AsyncMock(
+        mock_repo_instance = mock_relevant_repository.return_value
+        mock_repo_instance.get_relevant_chunks_grouped_by_entity = AsyncMock(
             return_value={
-                "objectClasses": [
-                    {
-                        "name": "Project",
-                        "relevantDocumentations": [
-                            {"docId": "doc-1", "chunkId": "project-chunk"},
-                            {"docId": "doc-2", "chunkId": "shared-chunk"},
-                        ],
-                    },
-                    {
-                        "name": "Membership",
-                        "relevantDocumentations": [
-                            {"docId": "doc-2", "chunkId": "shared-chunk"},
-                            {"docId": "doc-3", "chunkId": "membership-chunk"},
-                        ],
-                    },
-                    {
-                        "name": "Principal",
-                        "relevantDocumentations": [
-                            {"docId": "doc-4", "chunkId": "principal-chunk"},
-                        ],
-                    },
-                ]
+                "project": [
+                    {"docId": "doc-1", "chunkId": "project-chunk"},
+                    {"docId": "doc-2", "chunkId": "shared-chunk"},
+                ],
+                "membership": [
+                    {"docId": "doc-2", "chunkId": "shared-chunk"},
+                    {"docId": "doc-3", "chunkId": "membership-chunk"},
+                ],
+                "principal": [
+                    {"docId": "doc-4", "chunkId": "principal-chunk"},
+                ],
             }
         )
 

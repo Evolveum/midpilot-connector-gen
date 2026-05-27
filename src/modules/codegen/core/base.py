@@ -14,7 +14,7 @@ from langchain_core.runnables.config import RunnableConfig
 
 from src.common.chunks import normalize_to_text
 from src.common.database.config import async_session_maker
-from src.common.database.repositories.session_repository import SessionRepository
+from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.enums import JobStage
 from src.common.jobs import (
     append_job_error,
@@ -278,10 +278,10 @@ class BaseGroovyGenerator(ABC):
             return code
 
     async def _load_documentation_items(self, session_id: UUID) -> List[Dict[str, Any]]:
-        """Load documentation items from session."""
+        """Load documentation items from documentation_items table."""
         async with async_session_maker() as db:
-            repo = SessionRepository(db)
-            doc_items = await repo.get_session_data(session_id, "documentationItems")
+            repo = DocumentationRepository(db)
+            doc_items = await repo.get_documentation_items_by_session(session_id)
             return doc_items or []
 
     def _build_chunks(

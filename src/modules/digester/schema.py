@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import (
     AliasChoices,
@@ -22,6 +22,69 @@ from src.modules.digester.enums import (
     EndpointType,
     RelevantLevel,
 )
+
+
+class DocSequenceItem(BaseModel):
+    """
+    Represents a sequence from a chunk relevant to the extracted information.
+    """
+
+    model_config = {"populate_by_name": True}
+
+    chunk_id: str = Field(
+        ...,
+        validation_alias=AliasChoices("chunk_id", "chunkId"),
+        serialization_alias="chunkId",
+        description="Unique identifier for the document chunk.",
+    )
+    start_sequence: str = Field(
+        ...,
+        description="Unique token / word sequence that identifies the start of the relevant chunk.",
+        validation_alias=AliasChoices("start_sequence", "startSequence"),
+        serialization_alias="startSequence",
+    )
+    end_sequence: str = Field(
+        ...,
+        description="Unique token / word sequence that identifies the end of the relevant chunk.",
+        validation_alias=AliasChoices("end_sequence", "endSequence"),
+        serialization_alias="endSequence",
+    )
+
+
+class DocProcessingSequenceItem(DocSequenceItem):
+    """
+    DocSequenceItem with full text field for easier processing.
+    """
+
+    text: str = Field(
+        ..., description="Full text of the document chunk from start_sequence to end_sequence for processing."
+    )
+
+
+class DocMarkerMatch(BaseModel):
+    """
+    Represents the actual matched marker in the document text after fuzzy matching.
+    """
+
+    start_position: int = Field(
+        ..., description="Character index of the start of the matched sequence in the original document text."
+    )
+    start_position_collapsed: int = Field(
+        ...,
+        description="Character index of the start of the matched sequence in the collapsed text used for fuzzy matching.",
+    )
+    end_position: int = Field(
+        ..., description="Character index of the end of the matched sequence in the original document text."
+    )
+    end_position_collapsed: int = Field(
+        ...,
+        description="Character index of the end of the matched sequence in the collapsed text used for fuzzy matching.",
+    )
+    distance: int = Field(
+        ...,
+        description="Levenshtein distance between the matched sequence and the original marker, used for confidence scoring.",
+    )
+
 
 # --- Object Classes ---
 
@@ -270,12 +333,12 @@ class ObjectClassesRankedResponse(BaseModel):
 
 # --- Object Classes ---
 
+# --- Auth ---
 
-class AuthInfo(BaseModel):
+
+class BaseAuth(BaseModel):
     """
-    Authentication mechanism discovered in the API documentations/security schemes.
-    Guide the LLM to extract concrete auth methods (e.g., Basic, Bearer/JWT, Session/Cookie,
-    OAuth2 variants, API Key, mTLS) and capture notable non-standard behavior in quirks.
+    Basic authentification method class
     """
 
     name: str = Field(
@@ -290,13 +353,6 @@ class AuthInfo(BaseModel):
         description=(
             "Normalized auth type. Allowed values: 'basic', 'bearer', 'oauth2', 'apiKey', "
             "'session', 'digest', 'mtls', 'openidConnect', 'other'."
-        ),
-    )
-    quirks: Optional[str] = Field(
-        default="",
-        description=(
-            "Short, verbatim notes about special behavior or non-standard aspects (e.g., header/cookie/name, "
-            "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
         ),
     )
 
@@ -360,6 +416,114 @@ class AuthInfo(BaseModel):
         }
 
         return aliases.get(normalized, AuthType.OTHER)
+
+
+class DiscoveryAuth(BaseAuth):
+    """
+    Authentication mechanism discovered in the API documentations/security schemes.
+    Guide the LLM to extract concrete auth methods (e.g., Basic, Bearer/JWT, Session/Cookie,
+    OAuth2 variants, API Key, mTLS)
+    """
+
+    # quirks: Optional[str] = Field(
+    #     default="",
+    #     description=(
+    #         "Short, verbatim notes about special behavior or non-standard aspects (e.g., header/cookie/name, "
+    #         "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
+    #     ),
+    # )
+
+    relevant_sequences: List[DocSequenceItem] = Field(
+        description=("List of relevant document sequences that support the presence of this auth method. "),
+        validation_alias=AliasChoices("relevant_sequences", "relevantSequences"),
+        serialization_alias="relevantSequences",
+    )
+
+
+class AuthInfo(DiscoveryAuth):
+    """
+    Authentication mechanism with its metadata and supporting evidence sequences.
+    This is the main model used in the system for representing extracted auth methods.
+    """
+
+    quirks: Optional[str] = Field(
+        default="",
+        description=(
+            "Short, verbatim notes about special behavior or non-standard aspects (e.g., header/cookie/name, "
+            "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
+        ),
+    )
+
+
+class AuthProcessingInfo(AuthInfo):
+    """
+    Authentication mechanism with full text of relevant sequences for processing in deduplication/sorting.
+    This model is used internally during processing to have all necessary information in one place.
+    """
+
+    relevant_sequences: List[DocProcessingSequenceItem] = Field(  # type: ignore[assignment]
+        description=("List of document sequences that support the presence of this auth method, includes full text")
+    )
+
+
+class AuthDedupResponse(BaseModel):
+    """
+    Container for deduplication LLM output.
+    """
+
+    duplicates: List[Tuple[Tuple[str, str], Tuple[str, str]]] = Field(
+        ...,
+        description=(
+            "List of pairs of duplicate auth methods. Each pair contains two tuples: (name, type) of the auth method."
+        ),
+    )
+
+    to_be_deleted: List[Tuple[str, str]] = Field(
+        ...,
+        description=(
+            "List of auth methods (Tuples of name and type) to be deleted because of having weak documentation"
+        ),
+    )
+
+
+class AuthDiscoveryResponse(BaseModel):
+    """
+    Container for extracted authentication mechanisms in discovery. Return an empty list when none are present.
+    """
+
+    auth: Optional[List[DiscoveryAuth]] = Field(
+        default_factory=list,
+        description="List of authentication methods supported or referenced by the API.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    # Ensure robustness: coerce null to [] and never serialize null
+    @field_validator("auth", mode="before")
+    @classmethod
+    def _normalize_auth(cls, v):
+        if v is None:
+            return []
+        return v
+
+    @model_serializer
+    def _serialize(self):
+        # Always emit [] instead of null to keep contract stable
+        return {"auth": self.auth or []}
+
+
+class AuthBuildResponse(BaseAuth):
+    """
+    Container for extracted authentication mechanisms after building the auth info
+    """
+
+    quirks: Optional[str] = Field(
+        default="",
+        description=(
+            "Short, verbatim notes about special behavior or non-standard aspects (e.g., header/cookie/name, "
+            "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
+        ),
+    )
 
 
 class AuthResponse(BaseModel):
@@ -557,10 +721,11 @@ class InfoResponse(BaseModel):
 
 
 # --- Attributes ---
-class ExtractedAttributeInfo(BaseModel):
+
+
+class AttributeBase(BaseModel):
     """
-    LLM extraction model for object class property metadata.
-    Contains only fields the LLM should produce.
+    Base class for attributes, can be extended with additional fields if needed.
     """
 
     type: Optional[str] = Field(
@@ -587,6 +752,13 @@ class ExtractedAttributeInfo(BaseModel):
         default=None,
         description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
     )
+
+
+class AttributeEnhancedInfo(AttributeBase):
+    """
+    Base attribute info class for both SCIM and REST
+    """
+
     mandatory: Optional[bool] = Field(
         default=None,
         description="Is attribute required? True if the attribute is required; otherwise false. Use null if unknown.",
@@ -615,6 +787,14 @@ class ExtractedAttributeInfo(BaseModel):
             "requires extra expansion or separate endpoint fetches. Use null if unknown."
         ),
     )
+
+
+class ExtractedAttributeInfoSCIM(AttributeEnhancedInfo):
+    """
+    LLM extraction model for object class property metadata.
+    Contains only fields the LLM should produce.
+    """
+
     scimAttribute: Optional[str] = Field(
         default=None,
         description=(
@@ -624,11 +804,33 @@ class ExtractedAttributeInfo(BaseModel):
     )
 
 
-class AttributeInfo(ExtractedAttributeInfo):
+class DiscoveryAttribute(AttributeBase):
+    name: str = Field(
+        ...,
+        description=(
+            "The attribute name as it appears in the documentation. For OpenAPI/JSON Schema, use the property name. Preserve original casing and formatting (e.g., 'userName', 'startDate', 'is_active')."
+        ),
+    )
+
+    relevant_sequences: List[DocSequenceItem] = Field(
+        description=("List of relevant document sequences that support the presence of this attribute. ")
+    )
+
+
+class AttributeDiscoveryResponse(BaseModel):
     """
-    Final API/session attribute metadata.
-    Adds system-populated fields not used in LLM extraction prompts.
+    Container for extracted attributes of an object class in discovery phase.
+    Return an empty list when none are present in the chunk.
     """
+
+    attributes: List[DiscoveryAttribute] = Field(
+        default_factory=list,
+        description="List of extracted attributes for the object class.",
+    )
+
+
+class AttributeInfoBase(AttributeEnhancedInfo):
+    model_config = {"validate_by_name": True}
 
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
@@ -674,24 +876,111 @@ class AttributeInfo(ExtractedAttributeInfo):
         return serialized
 
 
+class AttributeInfoRest(AttributeInfoBase):
+    relevant_sequences: List[DocSequenceItem] = Field(
+        description=("List of relevant document sequences that support the presence of this attribute. ")
+    )
+
+
+class AttributeBuildResponse(AttributeInfoBase):
+    """
+    Container for extracted attributes of an object class after building the attribute info.
+    Return an empty list when none are present in the chunk.
+    """
+
+    mandatory: Optional[bool] = Field(
+        default=None,
+        description="Is attribute required? True if the attribute is required; otherwise false. Use null if unknown.",
+    )
+    updatable: Optional[bool] = Field(
+        default=None,
+        description="Can be attribute modified? False if readOnly=true; otherwise true. Use null if unknown.",
+    )
+    creatable: Optional[bool] = Field(
+        default=None,
+        description="Can attribute be used during create operation? False if readOnly=true; otherwise true (do not infer from endpoints). Use null if unknown.",
+    )
+    readable: Optional[bool] = Field(
+        default=None,
+        description="Is attribute readable? False if writeOnly=true; otherwise true. Use null if unknown.",
+    )
+    multivalue: Optional[bool] = Field(
+        default=None,
+        description="Is attribute multivalue? True if the property's type is 'array'; otherwise false. Use null if unknown.",
+    )
+    returnedByDefault: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should."
+            "True if the attribute is returned by default without additional calls; set false when it "
+            "requires extra expansion or separate endpoint fetches. Use null if unknown."
+        ),
+    )
+
+
+class AttributeInfoScim(AttributeInfoBase):
+    """
+    Attribute metadata for an object class property as described in OpenAPI/JSON Schema.
+    """
+
+    scimAttribute: Optional[str] = Field(
+        default=None,
+        description=(
+            "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
+            "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
+        ),
+    )
+
+
+class AttributeProcessingInfo(AttributeInfoBase):
+    name: str = Field(
+        ...,
+        description=(
+            "The attribute name as it appears in the documentation. For OpenAPI/JSON Schema, use the property name. Preserve original casing and formatting (e.g., 'userName', 'startDate', 'is_active')."
+        ),
+    )
+
+    relevant_sequences: List[DocProcessingSequenceItem] = Field(
+        description=("List of document sequences that support the presence of this attribute, includes full text")
+    )
+
+
+class AttributeDedupResponse(BaseModel):
+    """
+    Container for deduplication LLM output for attributes.
+    """
+
+    duplicates: List[Tuple[str, str]] = Field(
+        ...,
+        description=(
+            "List of pairs of duplicate attributes. The pair consists of two attribute names that are considered duplicates. One with more complete documentation should be first"
+        ),
+    )
+
+    to_be_deleted: List[str] = Field(
+        ...,
+        description=("List of attribute names to be deleted because of having weak documentation or being irrelevant"),
+    )
+
+
 class AttributeResponse(BaseModel):
     """
     Attribute map for a specific object class where each key is the property name.
     Return an empty map when the object class has no properties in the fragment.
     """
 
-    attributes: Dict[str, AttributeInfo] = Field(
+    attributes: Dict[str, AttributeInfoScim | AttributeInfoRest] = Field(
         default_factory=dict,
         description="Map of attribute name to its normalized metadata (AttributeInfo).",
     )
 
 
-class ExtractedAttributeResponse(BaseModel):
+class ExtractedAttributeResponseSCIM(BaseModel):
     """
     LLM extraction response for attributes.
     """
 
-    attributes: Dict[str, ExtractedAttributeInfo] = Field(
+    attributes: Dict[str, ExtractedAttributeInfoSCIM] = Field(
         default_factory=dict,
         description="Map of attribute name to extracted metadata.",
     )
@@ -871,6 +1160,160 @@ class ExtractedEndpointResponse(BaseModel):
 
 
 # --- Endpoints ---
+
+
+# --- Connectivity Endpoint ---
+
+
+class ExtractedConnectivityEndpointInfo(BaseModel):
+    """
+    LLM extraction model for an endpoint suitable for testing connector connectivity.
+    Contains only fields the LLM should produce.
+    """
+
+    model_config = {"populate_by_name": True}
+
+    path: str = Field(
+        ...,
+        description="Concrete URL path template as documented, normalized to start with '/' and without scheme/host.",
+    )
+    method: EndpointMethod = Field(
+        ...,
+        description="HTTP method for the connectivity check endpoint. Prefer GET when supported by documentation.",
+    )
+    description: str = Field(
+        ...,
+        description="Short summary of why this endpoint can be used to test connectivity.",
+    )
+    response_content_type: Optional[str] = Field(
+        default=None,
+        validation_alias="responseContentType",
+        serialization_alias="responseContentType",
+        description="Primary response media type if specified.",
+    )
+    request_content_type: Optional[str] = Field(
+        default=None,
+        validation_alias="requestContentType",
+        serialization_alias="requestContentType",
+        description="Primary request media type if specified. Usually empty for GET connectivity checks.",
+    )
+    requires_auth: Optional[bool] = Field(
+        default=None,
+        validation_alias="requiresAuth",
+        serialization_alias="requiresAuth",
+        description="Whether the endpoint requires configured authentication according to documentation.",
+    )
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def _normalize_method(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
+
+
+class ConnectivityEndpointInfo(ExtractedConnectivityEndpointInfo):
+    """
+    Final API/session metadata for the endpoint selected for connectivity testing.
+    Adds system-populated evidence chunk references.
+    """
+
+    relevant_documentations: List[Dict[str, str]] = Field(
+        default_factory=list,
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
+        description=(
+            "List of chunks that contain evidence for this connectivity endpoint. "
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings."
+        ),
+    )
+
+    @field_validator("relevant_documentations", mode="before")
+    @classmethod
+    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
+        if not isinstance(v, list):
+            return []
+
+        validated_chunks: List[Dict[str, str]] = []
+        for chunk in v:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            if chunk_id and doc_id:
+                validated_chunks.append(
+                    {
+                        "chunk_id": str(chunk_id),
+                        "doc_id": str(doc_id),
+                    }
+                )
+        return validated_chunks
+
+    @field_serializer("relevant_documentations", when_used="always")
+    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        serialized: List[Dict[str, str]] = []
+        for chunk in value or []:
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            if not doc_id or not chunk_id:
+                continue
+            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+        return serialized
+
+
+class RankedEndpointKey(BaseModel):
+    """LLM output model for a single ranked endpoint key (method + path)."""
+
+    model_config = {"populate_by_name": True}
+
+    method: EndpointMethod = Field(..., description="HTTP method of the endpoint.")
+    path: str = Field(..., description="Normalized path of the endpoint, starting with '/'.")
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def _normalize_method(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
+
+
+class ConnectivityEndpointRankingResponse(BaseModel):
+    """LLM output model for ranked connectivity endpoint candidates."""
+
+    ranked_endpoints: List[RankedEndpointKey] = Field(
+        default_factory=list,
+        validation_alias="rankedEndpoints",
+        serialization_alias="rankedEndpoints",
+        description="Endpoints ranked by suitability for connectivity testing, most suitable first.",
+    )
+
+
+class ConnectivityEndpointResponse(BaseModel):
+    """
+    Ranked list of endpoints for testing connectivity between midPoint connector generator and the target application.
+    Empty list when no suitable endpoint is documented. First endpoint is the most suitable.
+    """
+
+    endpoints: List[ConnectivityEndpointInfo] = Field(
+        default_factory=list,
+        description="Ranked list of documented endpoints for connectivity checks, most suitable first.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class ExtractedConnectivityEndpointResponse(BaseModel):
+    """
+    LLM extraction response for connectivity endpoint candidates.
+    """
+
+    endpoints: List[ExtractedConnectivityEndpointInfo] = Field(
+        default_factory=list,
+        description="Candidate HTTP endpoints that may be suitable for connectivity testing.",
+    )
+
+
+# --- Connectivity Endpoint ---
 
 
 # --- Relation ---

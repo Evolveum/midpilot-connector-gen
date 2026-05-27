@@ -3,15 +3,28 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, Set, Tuple, cast
 from uuid import UUID
 
 from src.common.chunk_filter.filter import filter_documentation_items
+from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
+from src.common.utils.normalize import normalize_endpoint_key
 from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 
 # Shared extractors
-from src.modules.digester.extractors.auth import deduplicate_and_sort_auth, extract_auth_raw
+from src.modules.digester.extractors.auth import (
+    build_auth_items,
+    deduplicate_auth,
+    extract_auth_raw,
+    sort_auth_by_importance,
+)
+from src.modules.digester.extractors.connectivity_endpoint import (
+    extract_connectivity_endpoint_raw as _extract_connectivity_endpoint_raw,
+)
+from src.modules.digester.extractors.connectivity_endpoint import (
+    merge_and_rank_connectivity_endpoint_candidates,
+)
 from src.modules.digester.extractors.info import extract_info_metadata as _extract_info_metadata
 
 # REST extractors
@@ -33,9 +46,9 @@ from src.modules.digester.extractors.rest.relations import (
 from src.modules.digester.extractors.scim.attributes import extract_scim_attributes
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
-from src.modules.digester.schema import InfoMetadata, InfoResponse
+from src.modules.digester.schema import ExtractedConnectivityEndpointInfo, InfoMetadata, InfoResponse
 from src.modules.digester.utils.chunk_extraction import process_over_chunks, run_doc_extractors_concurrently
-from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
+from src.modules.digester.utils.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, DEFAULT_CRITERIA
 from src.modules.digester.utils.doc_chunk import (
     build_chunk_id_to_doc_id,
     build_relevant_chunks_from_doc_items,
@@ -192,7 +205,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
         return await extract_auth_raw(content, job_id, chunk_id, chunk_metadata)
 
     # Process all chunks in parallel using the generic function
-    results = await run_doc_extractors_concurrently(
+    discovery_results = await run_doc_extractors_concurrently(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
@@ -200,7 +213,7 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     )
 
     # Collect results from all chunks
-    for raw_auth, has_relevant_data, chunk_id in results:
+    for raw_auth, has_relevant_data, chunk_id in discovery_results:
         logger.info(
             "[Digester:Auth] Chunk %s: extracted %s auth items",
             chunk_id,
@@ -219,166 +232,64 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
                 )
 
     logger.info(
-        "[Digester:Auth] Processing complete. Total: %s auth items from %s chunks. "
-        "Starting deduplication and sorting...",
+        "[Digester:Auth] Auth discovery complete. Total: %s auth items from %s documents. Starting deduplication",
         len(all_auth_info),
         len(doc_items),
     )
-    final_result = await deduplicate_and_sort_auth(all_auth_info, job_id)
+    await update_job_progress(job_id, stage=JobStage.discovery_finished, message="Auth discovery finished")
+    deduplicated_results = await deduplicate_auth(all_auth_info, job_id)
+
+    # TODO: delete
+    logger.info(
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Result is: %s",
+        len(deduplicated_results),
+        deduplicated_results,
+    )
+
+    built_auth_items = await build_auth_items(deduplicated_results, job_id)
+
+    logger.info(
+        "[Digester:Auth] Build complete. Total: %s built auth items. Built result is: %s",
+        len(built_auth_items),
+        built_auth_items,
+    )
+
+    final_deduplicated_results = await deduplicate_auth(built_auth_items, job_id)
+
+    # TODO: delete
+    logger.info(
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Result is: %s",
+        len(final_deduplicated_results),
+        final_deduplicated_results,
+    )
+
+    sorted_auth_items = await sort_auth_by_importance(final_deduplicated_results, job_id)
+
+    # TODO: delete
+    logger.info(
+        "[Digester:Auth] Sorting complete. Total: %s sorted auth items. Final result is: %s",
+        len(sorted_auth_items.auth) if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth else 0,
+        [
+            {
+                "name": item.name,
+                "type": item.type,
+            }
+            for item in sorted_auth_items.auth
+        ]
+        if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth
+        else sorted_auth_items,
+    )
 
     return {
-        "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
+        "result": sorted_auth_items.model_dump(by_alias=True)
+        if hasattr(sorted_auth_items, "model_dump")
+        else sorted_auth_items,
         "relevantDocumentations": all_relevant_chunks,
     }
 
 
-def _auth_result_has_items(extraction_result: Dict[str, Any]) -> bool:
-    result = extraction_result.get("result")
-    if not isinstance(result, dict):
-        return False
-    auth = result.get("auth")
-    return isinstance(auth, list) and len(auth) > 0
-
-
 def _endpoint_result_has_items(extraction_result: Dict[str, Any]) -> bool:
     return len(extract_endpoints_from_result(extraction_result)) > 0
-
-
-def _attribute_result_has_items(extraction_result: Dict[str, Any]) -> bool:
-    return len(extract_attributes_from_result(extraction_result)) > 0
-
-
-async def extract_auth_with_fallback(
-    doc_items: List[dict],
-    used_auth_criteria: bool,
-    session_id: UUID,
-    job_id: UUID,
-):
-    """
-    Run auth extraction on AUTH_CRITERIA results first.
-    If empty and AUTH_CRITERIA was used, retry once using DEFAULT_CRITERIA docs.
-    """
-    primary_result = await extract_auth(doc_items, job_id)
-    if not used_auth_criteria or _auth_result_has_items(primary_result):
-        return primary_result
-
-    logger.info(
-        "[Digester:Auth] AUTH_CRITERIA produced empty final auth result for session %s; retrying with DEFAULT_CRITERIA",
-        session_id,
-    )
-    await update_job_progress(
-        job_id,
-        stage="chunking",
-        message="No auth found in auth-focused chunks; retrying with broader documentation filter",
-    )
-
-    fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
-    if not fallback_doc_items:
-        logger.info(
-            "[Digester:Auth] DEFAULT_CRITERIA matched no documentation for session %s; keeping empty auth result",
-            session_id,
-        )
-        return primary_result
-
-    primary_chunk_ids = {str(item.get("chunkId")) for item in doc_items if item.get("chunkId")}
-    fallback_chunk_ids = {str(item.get("chunkId")) for item in fallback_doc_items if item.get("chunkId")}
-    if primary_chunk_ids and primary_chunk_ids == fallback_chunk_ids:
-        logger.info(
-            "[Digester:Auth] DEFAULT_CRITERIA matched same chunks as AUTH_CRITERIA for session %s; skipping retry",
-            session_id,
-        )
-        return primary_result
-
-    return await extract_auth(fallback_doc_items, job_id)
-
-
-async def _extract_rest_attributes_from_relevant_chunks(
-    doc_items: List[dict],
-    object_class: str,
-    relevant_chunks: List[Dict[str, Any]],
-    job_id: UUID,
-) -> Dict[str, Any] | None:
-    selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
-
-    if not selected_content:
-        return None
-
-    chunk_metadata_map = build_doc_metadata_map(doc_items)
-    chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
-
-    total_chunks = len(selected_content)
-    logger.info(
-        "[Digester:Attributes] Processing %d pre-selected chunks for %s (chunk IDs: %s)",
-        total_chunks,
-        object_class,
-        chunk_ids,
-    )
-
-    return await _extract_rest_attributes(
-        selected_content,
-        object_class,
-        job_id,
-        chunk_ids,
-        chunk_metadata_map,
-        chunk_id_to_doc_id,
-    )
-
-
-async def _retry_rest_attributes_with_default_criteria(
-    primary_result: Dict[str, Any],
-    object_class: str,
-    session_id: UUID,
-    relevant_chunks: List[Dict[str, Any]],
-    job_id: UUID,
-) -> Dict[str, Any]:
-    if _attribute_result_has_items(primary_result):
-        return primary_result
-
-    logger.info(
-        "[Digester:Attributes] Object-class chunks produced empty final attributes for session %s, object class %s; "
-        "retrying with DEFAULT_CRITERIA",
-        session_id,
-        object_class,
-    )
-    await update_job_progress(
-        job_id,
-        stage="chunking",
-        message=f"No attributes found in object-class chunks for {object_class}; retrying with broader filter",
-    )
-
-    fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
-    if not fallback_doc_items:
-        logger.info(
-            "[Digester:Attributes] DEFAULT_CRITERIA matched no documentation for session %s; "
-            "keeping empty attribute result",
-            session_id,
-        )
-        return primary_result
-
-    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
-    if not fallback_relevant_chunks:
-        logger.info(
-            "[Digester:Attributes] DEFAULT_CRITERIA produced no new chunks for session %s; "
-            "keeping empty attribute result",
-            session_id,
-        )
-        return primary_result
-
-    fallback_result = await _extract_rest_attributes_from_relevant_chunks(
-        fallback_doc_items,
-        object_class,
-        fallback_relevant_chunks,
-        job_id,
-    )
-    if fallback_result is None:
-        logger.info(
-            "[Digester:Attributes] DEFAULT_CRITERIA chunks could not be selected for session %s; "
-            "keeping empty attribute result",
-            session_id,
-        )
-        return primary_result
-
-    return fallback_result
 
 
 async def _extract_rest_endpoints_from_relevant_chunks(
@@ -413,6 +324,76 @@ async def _extract_rest_endpoints_from_relevant_chunks(
         chunk_metadata_map,
         chunk_id_to_doc_id,
     )
+
+
+async def _retry_attributes_with_default_criteria(
+    doc_items: List[dict],
+    object_class: str,
+    session_id: UUID,
+    job_id: UUID,
+    old_relevant_chunks: List[Dict[str, Any]],
+    chunk_metadata_map: Dict[str, Any],
+    chunk_id_to_doc_id: Dict[str, str],
+    is_scim: bool = False,
+) -> Dict[str, Any] | None:
+    fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
+    if not fallback_doc_items:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA matched no documentation for session %s; keeping empty attribute result",
+            session_id,
+        )
+        return None
+
+    primary_chunk_ids = chunk_ids_from_relevant_chunks(old_relevant_chunks)
+    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
+    fallback_chunk_ids_set = chunk_ids_from_relevant_chunks(fallback_relevant_chunks)
+    if primary_chunk_ids and primary_chunk_ids == fallback_chunk_ids_set:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA matched same chunks for session %s, object class %s; skipping retry",
+            session_id,
+            object_class,
+        )
+        return None
+
+    fallback_doc_items_filtered = exclude_doc_items_by_chunk_id(fallback_doc_items, primary_chunk_ids)
+    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items_filtered)
+    if not fallback_relevant_chunks:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA produced no new chunks for session %s; keeping empty attribute result",
+            session_id,
+        )
+        return None
+
+    fallback_selected_content, fallback_chunk_ids = select_doc_chunks(
+        fallback_doc_items_filtered, fallback_relevant_chunks, "Digester:Attributes"
+    )
+
+    if is_scim:
+        fallback_result = await extract_scim_attributes(
+            fallback_selected_content,
+            object_class,
+            job_id,
+            fallback_chunk_ids,
+            chunk_metadata_map,
+            chunk_id_to_doc_id,
+        )
+    else:
+        fallback_result = await _extract_rest_attributes(
+            fallback_selected_content,
+            object_class,
+            job_id,
+            fallback_chunk_ids,
+            chunk_metadata_map,
+            chunk_id_to_doc_id,
+        )
+
+    if not fallback_result:
+        logger.info(
+            "[Digester:Attributes] DEFAULT_CRITERIA chunks could not be selected for session %s; keeping empty attribute result",
+            session_id,
+        )
+
+    return fallback_result
 
 
 async def _retry_rest_endpoints_with_default_criteria(
@@ -578,13 +559,140 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     }
 
 
+def _connectivity_endpoint_result_has_item(extraction_result: Dict[str, Any]) -> bool:
+    result_data = extraction_result.get("result", extraction_result)
+    return isinstance(result_data, dict) and bool(result_data.get("endpoints"))
+
+
+async def _extract_connectivity_endpoint_from_doc_items(
+    doc_items: List[dict],
+    job_id: UUID,
+    base_api_url: str,
+) -> Dict[str, Any]:
+    if not doc_items:
+        return {"result": {"endpoints": []}, "relevantDocumentations": []}
+
+    all_candidates: List[ExtractedConnectivityEndpointInfo] = []
+    all_relevant_chunks: List[Dict[str, Any]] = []
+    endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]] = {}
+    chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
+
+    async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
+        return await _extract_connectivity_endpoint_raw(
+            content,
+            job_id,
+            chunk_id,
+            chunk_metadata,
+            base_api_url=base_api_url,
+        )
+
+    results = await run_doc_extractors_concurrently(
+        chunk_items=doc_items,
+        job_id=job_id,
+        extractor=extractor_with_metadata,
+        logger_scope="Digester:ConnectivityEndpoint",
+    )
+
+    for candidates, has_relevant_data, chunk_id in results:
+        chunk_id_str = str(chunk_id)
+        doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+
+        candidates_for_chunk = candidates if isinstance(candidates, list) else []
+        all_candidates.extend(candidates_for_chunk)
+
+        if not has_relevant_data:
+            continue
+
+        if not doc_id:
+            logger.warning(
+                "[Digester:ConnectivityEndpoint] Missing docId for chunk %s, skipping relevant chunk mapping",
+                chunk_id_str,
+            )
+            continue
+
+        chunk_ref = {"doc_id": doc_id, "chunk_id": chunk_id_str}
+        all_relevant_chunks.append(chunk_ref)
+        for candidate in candidates_for_chunk:
+            key = normalize_endpoint_key(candidate.path, candidate.method)
+            if key:
+                endpoint_chunk_pairs.setdefault(key, set()).add((doc_id, chunk_id_str))
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.deduplication,
+        message="Ranking connectivity endpoint candidates",
+    )
+    response = await merge_and_rank_connectivity_endpoint_candidates(all_candidates, endpoint_chunk_pairs, job_id)
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.schema_ready,
+        message="Connectivity endpoint extraction complete",
+    )
+    return {
+        "result": response.model_dump(by_alias=True, mode="json"),
+        "relevantDocumentations": all_relevant_chunks,
+    }
+
+
+async def extract_connectivity_endpoint(
+    doc_items: List[dict],
+    session_id: UUID,
+    job_id: UUID,
+    base_api_url: str = "",
+) -> Dict[str, Any]:
+    """
+    Extract and rank endpoints suitable for testing connectivity between midPoint connector generator and the target app.
+    Retries with broader documentation criteria when endpoint-focused chunks produce no candidates.
+    """
+    result = await _extract_connectivity_endpoint_from_doc_items(doc_items, job_id, base_api_url)
+    if _connectivity_endpoint_result_has_item(result):
+        return result
+
+    logger.info(
+        "[Digester:ConnectivityEndpoint] Primary documentation produced no connectivity endpoint for session %s; "
+        "retrying with fallback criteria",
+        session_id,
+    )
+    await update_job_progress(
+        job_id,
+        stage="chunking",
+        message="No connectivity endpoint found in primary chunks; retrying with broader filter",
+    )
+
+    fallback_doc_items = await filter_documentation_items(CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, session_id)
+    if not fallback_doc_items:
+        logger.info(
+            "[Digester:ConnectivityEndpoint] Fallback criteria matched no documentation for session %s",
+            session_id,
+        )
+        return result
+
+    primary_chunk_ids = {str(item.get("chunkId") or "").strip() for item in doc_items if item.get("chunkId")}
+    fallback_doc_items = exclude_doc_items_by_chunk_id(fallback_doc_items, primary_chunk_ids)
+    if not fallback_doc_items:
+        logger.info(
+            "[Digester:ConnectivityEndpoint] Fallback criteria produced no new chunks for session %s",
+            session_id,
+        )
+        return result
+
+    fallback_result = await _extract_connectivity_endpoint_from_doc_items(fallback_doc_items, job_id, base_api_url)
+    if _connectivity_endpoint_result_has_item(fallback_result):
+        return fallback_result
+
+    return result
+
+
 async def extract_attributes(
     doc_items: List[dict],
     object_class: str,
     session_id: UUID,
     relevant_chunks: List[Dict[str, Any]],
     job_id: UUID,
-):
+) -> Dict[str, Any]:
     """
     Extract attributes from only the relevant chunks of documentation and update the specific object class
     in objectClassesOutput with the extracted attributes.
@@ -599,21 +707,23 @@ async def extract_attributes(
         relevant_chunks: List of {doc_id, chunk_id} dicts indicating which chunks to process
         job_id: Job ID for progress tracking
     """
-    if not relevant_chunks:
+    if not doc_items or not relevant_chunks:
+        logger.warning(f"[Digester:Attributes] No documentation or relevant chunks provided for {object_class}")
+        return {"result": {"attributes": {}}, "relevantDocumentations": []}
+
+    selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
+
+    if not selected_content:
         logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
         return {"result": {"attributes": {}}, "relevantDocumentations": []}
+
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
+    chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
 
     api_type = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_type)
 
     if is_scim:
-        selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
-        if not selected_content:
-            logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
-            return {"result": {"attributes": {}}, "relevantDocumentations": []}
-
-        chunk_metadata_map = build_doc_metadata_map(doc_items)
-        chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
         result = await extract_scim_attributes(
             selected_content,
             object_class,
@@ -623,29 +733,44 @@ async def extract_attributes(
             chunk_id_to_doc_id,
         )
     else:
-        rest_result = await _extract_rest_attributes_from_relevant_chunks(
-            doc_items,
+        result = await _extract_rest_attributes(
+            selected_content,
             object_class,
-            relevant_chunks,
             job_id,
-        )
-        if rest_result is None:
-            if not relevant_chunks:
-                logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
-                return {"result": {"attributes": {}}, "relevantDocumentations": []}
-            rest_result = {"result": {"attributes": {}}, "relevantDocumentations": []}
-
-        result = await _retry_rest_attributes_with_default_criteria(
-            rest_result,
-            object_class,
-            session_id,
-            relevant_chunks,
-            job_id,
+            chunk_ids,
+            chunk_metadata_map,
+            chunk_id_to_doc_id,
         )
 
     try:
         attributes_dict = extract_attributes_from_result(result)
         logger.info("[Digester:Attributes] Extracted %d attributes for %s", len(attributes_dict), object_class)
+
+        if len(attributes_dict) == 0:
+            logger.warning(
+                f"[Digester:Attributes] No attributes extracted for {object_class} from relevant chunks, retrying with default criteria"
+            )
+            # Retry with default criteria
+            result_retry = await _retry_attributes_with_default_criteria(
+                doc_items,
+                object_class,
+                session_id,
+                job_id,
+                relevant_chunks,
+                chunk_metadata_map,
+                chunk_id_to_doc_id,
+                is_scim=is_scim,
+            )
+            attributes_dict_retry = extract_attributes_from_result(result_retry)
+
+            if attributes_dict_retry and result_retry is not None:
+                logger.info(
+                    "[Digester:Attributes] Extracted %d attributes for %s on retry with default criteria",
+                    len(attributes_dict_retry),
+                    object_class,
+                )
+                attributes_dict = attributes_dict_retry
+                result = result_retry
 
         updated = await update_object_class_field_in_session(
             session_id=session_id,

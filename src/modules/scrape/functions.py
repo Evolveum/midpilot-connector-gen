@@ -378,6 +378,28 @@ def deduplicate_links(documentation_references: DocumentationReferences):
             ]
 
 
+def is_forbidden_url(url: str, forbidden_url_parts: list[str]) -> bool:
+    parsed = urlparse(url)
+    path = parsed.path.lower()
+    filename = path.rsplit("/", 1)[-1]
+    path_segments = [segment for segment in path.split("/") if segment]
+
+    for forbidden_part in forbidden_url_parts:
+        normalized_part = forbidden_part.strip().lower().strip("/")
+        if not normalized_part:
+            continue
+        if (
+            normalized_part in path_segments
+            or normalized_part == filename
+            or f"/{normalized_part}/" in path
+            or path.endswith(f"/{normalized_part}")
+            or f".{normalized_part}." in path
+            or path.endswith(f".{normalized_part}")
+        ):
+            return True
+    return False
+
+
 async def scraper_loop(
     links_to_scrape: list[str],
     app: str,
@@ -387,7 +409,7 @@ async def scraper_loop(
     irrelevant_links: list[str] | None = None,
     saved_documentations: dict[str, SavedDocumentation] | None = None,
     trusted_domains: list[str] | None = None,
-    forbidden_url_parts: list | None = None,
+    forbidden_url_parts: list[str] | None = None,
     last_iteration: bool = False,
     on_documentation_scraped: Callable[[SavedDocumentation], Awaitable[None]] | None = None,
 ):
@@ -431,6 +453,18 @@ async def scraper_loop(
         ]
 
     logger.info("[Scrape:Loop] Iteration %s: Starting with %s candidate links", curr_iteration, len(links_to_scrape))
+    links_before_forbidden_filter = len(links_to_scrape)
+    links_to_scrape = [link for link in links_to_scrape if not is_forbidden_url(link, forbidden_url_parts)]
+    if len(links_to_scrape) != links_before_forbidden_filter:
+        logger.info(
+            "[Scrape:Loop] Iteration %s: Skipped %s candidate links matching forbidden URL parts",
+            curr_iteration,
+            links_before_forbidden_filter - len(links_to_scrape),
+        )
+    if not links_to_scrape:
+        logger.info("[Scrape:Loop] Iteration %s: No candidate links left after forbidden URL filtering", curr_iteration)
+        return []
+
     content_types = await get_all_content_types(links_to_scrape)
 
     data_links = [
@@ -515,6 +549,24 @@ async def scraper_loop(
             logger.info(
                 f"[Scrape:Loop] Extracted {len(link_arr)} raw links from documentation %s", str(scraped_link.url)
             )
+            max_links = config.scrape_and_process.max_links_per_documentation
+            if max_links > 0 and len(link_arr) > max_links:
+                logger.warning(
+                    "[Scrape:Loop] Documentation %s has %s raw links, exceeding limit %s. "
+                    "Saving content without processing outgoing links.",
+                    str(scraped_link.url),
+                    len(link_arr),
+                    max_links,
+                )
+                documentation.documentationReferences = DocumentationReferences(
+                    documentation_url=str(scraped_link.url),
+                    references=[],
+                    references_markdown="",
+                    text_with_citations=content,
+                )
+                saved_documentations[str(scraped_link.url)] = documentation
+                continue
+
             link_arr_clean = clean_reference_list(link_arr)
             deleted_links = list(set(link_arr) - set(link_arr_clean))
             if deleted_links:
@@ -781,25 +833,14 @@ async def filterOutIrrelevantLinks(
     )
     past_irrelevant_links.extend(list(set(current_links_past_filtered) - set(current_links_trusted_valid)))
 
-    links_to_remove = []
-    for link in current_links_trusted_valid:
-        for forbidden_part in forbidden_url_parts:
-            if (
-                f"/{forbidden_part}/" in link
-                or f".{forbidden_part}." in link
-                or link.endswith(f"/{forbidden_part}")
-                or link.endswith(f".{forbidden_part}")
-            ):
-                past_irrelevant_links.append(link)
-                links_to_remove.append(link)
-                break
-
+    links_to_remove = [link for link in current_links_trusted_valid if is_forbidden_url(link, forbidden_url_parts)]
+    past_irrelevant_links.extend(links_to_remove)
     current_links_not_forbidden = [link for link in current_links_trusted_valid if link not in links_to_remove]
     logger.debug(
         "[Scrape:Filter] Remove forbidden URL parts: %s -> %s (removed %s)",
         len(current_links_trusted_valid),
         len(current_links_not_forbidden),
-        len(links_to_remove),
+        len(current_links_trusted_valid) - len(current_links_not_forbidden),
     )
 
     if not call_llm:

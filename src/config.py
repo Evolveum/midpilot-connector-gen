@@ -58,7 +58,7 @@ class LLMSettings(BaseModel):
     openai_api_key: str = ""
     openai_api_base: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-oss-120b"
-    request_timeout: int = 120
+    request_timeout: int = 600
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
         description="List of LLM providers in order of preference",
@@ -125,6 +125,10 @@ class ScrapeAndProcessSettings(BaseModel):
         5,
         description="Max LLM filtering passes per iteration",
     )
+    max_links_per_documentation: int = Field(
+        3000,
+        description="Maximum number of raw links to process from a single scraped documentation page",
+    )
     irrelevant_links_parts: int = Field(
         5,
         description="Number of parts to split links into for LLM filtering",
@@ -167,6 +171,11 @@ class ScrapeAndProcessSettings(BaseModel):
             "internal",
             "stg",
             "staging",
+            "index-all.html",
+            "allclasses-index.html",
+            "allpackages-index.html",
+            "deprecated-list.html",
+            "help-doc.html",
         ],
         description="URL substrings to consider irrelevant while scraping",
     )
@@ -250,12 +259,62 @@ class DigesterSettings(BaseModel):
             "Values below this evidence ratio across processed documents are ignored as uncertain."
         ),
     )
+    fuzzy_start_marker_error_ratio: float = Field(
+        0.05,
+        description="Allowed fuzzy-match error ratio when validating extracted sequence markers.",
+    )
+    fuzzy_end_marker_error_ratio: float = Field(
+        0.15,
+        description="Allowed fuzzy-match error ratio for end sequence markers, where required precision is lower.",
+    )
+    sequence_max_length: int = Field(
+        10000,
+        description="Maximum character distance allowed between matched start and end sequence markers.",
+    )
     auth_min_documentation_items: int = Field(
         15,
-        description=(
-            "Minimum number of documentation items required to use the default auth criteria; "
-            "otherwise extended auth criteria are used."
-        ),
+        description="Minimum number of documentation items required to use the default auth criteria; otherwise extended criteria are used.",
+    )
+    build_from_sequences_step_size: int = Field(
+        2,
+        description="Number of sequences to process concurrently in the build_from_sequences function.",
+    )
+    min_start_sequence_len_attributes: int = Field(
+        5,
+        description="Minimum length in chars for start sequences when extracting attributes.",
+    )
+    max_start_sequence_len_attributes: int = Field(
+        2000,
+        description="Maximum length in chars for start sequences when extracting attributes.",
+    )
+    min_end_sequence_len_attributes: int = Field(
+        5,
+        description="Minimum length in chars for end sequences when extracting attributes.",
+    )
+    max_end_sequence_len_attributes: int = Field(
+        2000,
+        description="Maximum length in chars for end sequences when extracting attributes.",
+    )
+    min_start_sequence_len_auth: int = Field(
+        10,
+        description="Minimum length in chars for start sequences when extracting authentication information.",
+    )
+    max_start_sequence_len_auth: int = Field(
+        2000,
+        description="Maximum length in chars for start sequences when extracting authentication information.",
+    )
+    min_end_sequence_len_auth: int = Field(
+        10,
+        description="Minimum length in chars for end sequences when extracting authentication information.",
+    )
+    max_end_sequence_len_auth: int = Field(
+        2000,
+        description="Maximum length in chars for end sequences when extracting authentication information.",
+    )
+    marker_word_cutoff_length: int = Field(
+        50,
+        description="Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance."
+        "This is only applied after fuzzy matching because in regex search, there is a significant drop in performance with a lot of \\s patterns  ",
     )
     relation_generic_attribute_tokens: list[str] = Field(
         default_factory=lambda: [
@@ -280,6 +339,10 @@ class DigesterSettings(BaseModel):
             "with",
         ],
         description="Generic relation attribute tokens ignored when collapsing wording-only relation duplicates.",
+    )
+    attributes_debug_table_log: bool = Field(
+        False,
+        description="Enable detailed logging of extracted attributes as formatted tables for debugging purposes.",
     )
 
 

@@ -216,3 +216,40 @@ class RelationGenerator(BaseGroovyGenerator):
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return ""
+
+
+class AuthorizationGenerator(BaseGroovyGenerator):
+    def __init__(
+        self,
+        *,
+        preferred_authorizations: Optional[list[Dict[str, Any]]] = None,
+        docs_text: str,
+        system_prompt: str,
+        user_prompt: str,
+        protocol_label: str,
+        base_api_url: str = "",
+        extra_prompt_vars: Optional[Dict[str, Any]] = None,
+    ):
+        authentication_container = "scim" if protocol_label.lower() == "scim" else "rest"
+        config = OperationConfig(
+            operation_name="Authorization",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            default_scaffold=f"authentication {{\n    {authentication_container} {{\n    }}\n}}\n",
+            logger_prefix=f"[Codegen:Authorization:{protocol_label}]",
+            extra_prompt_vars=extra_prompt_vars or {},
+        )
+        config.extra_prompt_vars["authorization_docs"] = docs_text
+        config.extra_prompt_vars["authentication_container"] = authentication_container
+        config.extra_prompt_vars["base_api_url"] = base_api_url
+        config.extra_prompt_vars["preferred_authorizations_json"] = json.dumps(
+            preferred_authorizations or [], ensure_ascii=False
+        )
+        super().__init__(config)
+        self.authentication_container = authentication_container
+
+    def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
+        return {}
+
+    def get_initial_result(self, **kwargs: Any) -> str:
+        return f"authentication {{\n    {self.authentication_container} {{\n    }}\n}}\n"

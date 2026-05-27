@@ -29,6 +29,15 @@ class JobStage(StrEnum):
     generating = "generating"
 
     # Domain-specific phases used by digester modules
+    discovery = "discovery"
+    discovery_finished = "discovery_finished"
+    discovery_failed = "discovery_failed"
+    deduplication = "deduplication"
+    deduplication_finished = "deduplication_finished"
+    deduplication_failed = "deduplication_failed"
+    building = "building"
+    building_finished = "building_finished"
+    building_failed = "building_failed"
     sorting = "sorting"
     sorting_finished = "sorting_finished"
     sorting_failed = "sorting_failed"

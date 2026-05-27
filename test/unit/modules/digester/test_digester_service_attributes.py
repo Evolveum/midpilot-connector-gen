@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester import service
-from src.modules.digester.schema import AttributeInfo
+from src.modules.digester.schema import AttributeInfoRest
 
 
 # ==================== EXTRACT ATTRIBUTES ====================
@@ -53,7 +53,7 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
         mock_extract_attrs.return_value = {
             "result": {
                 "attributes": {
-                    "id": AttributeInfo(
+                    "id": AttributeInfoRest(
                         type="string",
                         description="Unique identifier",
                         mandatory=True,
@@ -62,8 +62,9 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
                         creatable=True,
                         multivalue=False,
                         returnedByDefault=True,
+                        relevant_sequences=[],
                     ).model_dump(),
-                    "username": AttributeInfo(
+                    "username": AttributeInfoRest(
                         type="string",
                         description="User login name",
                         mandatory=True,
@@ -72,6 +73,7 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
                         creatable=True,
                         multivalue=False,
                         returnedByDefault=True,
+                        relevant_sequences=[],
                     ).model_dump(),
                 }
             },
