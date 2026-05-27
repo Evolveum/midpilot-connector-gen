@@ -18,6 +18,9 @@ from src.common.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
 from src.common.utils.normalize import normalize_object_class_name
 from src.common.utils.relevance import (
+    build_chunk_to_doc_map as _build_chunk_to_doc_map,
+)
+from src.common.utils.relevance import (
     extract_attribute_relevance_rows as _extract_attribute_relevance_rows,
 )
 from src.common.utils.relevance import (
@@ -485,7 +488,8 @@ async def override_class_attributes(
     object_class = normalize_object_class_name(object_class)
     result_key = f"{object_class}AttributesOutput"
     stripped_attributes = _strip_attributes_relevance(attributes)
-    relevance_rows = _extract_attribute_relevance_rows(attributes, result_key)
+    chunk_to_doc = _build_chunk_to_doc_map(await get_session_documentation(session_id, db=db))
+    relevance_rows = _extract_attribute_relevance_rows(attributes, result_key, chunk_to_doc=chunk_to_doc)
     await _store_result_with_relevance(db, repo, session_id, result_key, stripped_attributes, relevance_rows)
 
     return {

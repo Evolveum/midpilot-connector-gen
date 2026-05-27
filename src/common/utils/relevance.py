@@ -484,7 +484,11 @@ def strip_attributes_relevance(payload: Dict[str, Any]) -> Dict[str, Any]:
     return cleaned_map
 
 
-def extract_attribute_relevance_rows(payload: Dict[str, Any], result_key: str) -> list[Dict[str, Any]]:
+def extract_attribute_relevance_rows(
+    payload: Dict[str, Any],
+    result_key: str,
+    chunk_to_doc: Optional[Dict[str, str]] = None,
+) -> list[Dict[str, Any]]:
     attributes_map, _ = extract_attributes_map(payload)
     if not isinstance(attributes_map, dict):
         return []
@@ -502,6 +506,7 @@ def extract_attribute_relevance_rows(payload: Dict[str, Any], result_key: str) -
             sequence_value,
             result_key=result_key,
             entity_key=entity_key,
+            chunk_to_doc=chunk_to_doc,
         )
         if has_sequence_field:
             # Sequence-aware payload: persist only rows with valid sequence boundaries.
