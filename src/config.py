@@ -4,10 +4,12 @@
 
 from datetime import timedelta
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ReasoningEffort = Literal["low", "medium", "high"]
 
 
 class LogLevel(str, Enum):
@@ -62,6 +64,10 @@ class LLMSettings(BaseModel):
     provider_order: List[str] = Field(
         ["groq", "wandb/fp4", "clarifai/fp4"],
         description="List of LLM providers in order of preference",
+    )
+    reasoning_effort: ReasoningEffort | None = Field(
+        None,
+        description="Optional reasoning effort for models that support it.",
     )
     ca_cert_file: Optional[str] = None
 
@@ -237,10 +243,10 @@ class DigesterSettings(BaseModel):
         timedelta(weeks=4),
         description="Time interval for checking if the same digester input has been processed before.",
     )
-    max_concurrent_chunk_llm_calls: int = Field(
-        100,
+    max_concurrent_llm_calls: int = Field(
+        10,
         ge=1,
-        description="Maximum number of concurrent digester chunk LLM calls.",
+        description="Maximum number of concurrent digester LLM calls in app process.",
     )
     chunk_llm_retry_attempts: int = Field(
         2,

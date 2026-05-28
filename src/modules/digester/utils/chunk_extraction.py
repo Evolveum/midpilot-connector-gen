@@ -24,9 +24,9 @@ from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
 from src.config import config
 from src.modules.digester.schema import DocMarkerMatch
-from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
 from src.modules.digester.utils.doc_chunk import build_chunk_id_to_doc_id
 from src.modules.digester.utils.fuzzysearch_worker import fuzzy_search_worker
+from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,8 @@ async def _invoke_extraction_chain_with_retry(
 
     for attempt in range(1, max_attempts + 1):
         try:
-            return await extraction_chain.ainvoke(
+            return await invoke_llm(
+                extraction_chain,
                 payload,
                 config=RunnableConfig(callbacks=[langfuse_handler]),
             )
@@ -742,7 +743,8 @@ async def run_item_build_parallel(
 
         result = cast(
             T,
-            await chain.ainvoke(
+            await invoke_llm(
+                chain,
                 {"item": item},
                 config=RunnableConfig(callbacks=[langfuse_handler]),
             ),

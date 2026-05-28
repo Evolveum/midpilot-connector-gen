@@ -45,7 +45,7 @@ from src.modules.digester.utils.attribute_filters import (
     normalize_readability_flags,
 )
 from src.modules.digester.utils.chunk_extraction import extract_single_chunk
-from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
+from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
 from src.modules.digester.utils.merges import merge_attribute_candidates
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,8 @@ async def _build_attr_from_sequences(
         attr_temp.relevant_sequences = attr_temp.relevant_sequences[begin:end]
         attr_json = json.dumps(attr_temp.model_dump(exclude={"relevant_documentations"}), ensure_ascii=False, indent=2)
         try:
-            result = await chain.ainvoke(
+            result = await invoke_llm(
+                chain,
                 {
                     "object_class": object_class,
                     "attribute_json": attr_json,

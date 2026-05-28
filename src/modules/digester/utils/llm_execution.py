@@ -13,6 +13,44 @@ from src.config import config
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+_digester_llm_semaphore: asyncio.Semaphore | None = None
+_digester_llm_semaphore_limit: int | None = None
+
+
+def _get_digester_llm_limit() -> int:
+    return max(1, config.digester.max_concurrent_llm_calls)
+
+
+def _get_digester_llm_semaphore() -> asyncio.Semaphore:
+    global _digester_llm_semaphore, _digester_llm_semaphore_limit
+
+    limit = _get_digester_llm_limit()
+    semaphore = _digester_llm_semaphore
+    if semaphore is None or _digester_llm_semaphore_limit != limit:
+        semaphore = asyncio.Semaphore(limit)
+        _digester_llm_semaphore = semaphore
+        _digester_llm_semaphore_limit = limit
+
+    return semaphore
+
+
+async def run_with_digester_llm_limit(callback: Callable[[], Awaitable[T]]) -> T:
+    """
+    Run digester LLM work behind the process-wide concurrency limit.
+    """
+    async with _get_digester_llm_semaphore():
+        return await callback()
+
+
+async def invoke_llm(chain: Any, input: Any, **kwargs: Any) -> Any:
+    """
+    Run one digester LLM chain invocation behind the process-wide digester LLM limit.
+    """
+
+    async def _invoke() -> Any:
+        return await chain.ainvoke(input, **kwargs)
+
+    return await run_with_digester_llm_limit(_invoke)
 
 
 async def run_chunks_concurrently(
@@ -40,8 +78,7 @@ async def run_chunks_concurrently(
     """
     total_chunks = len(chunk_items)
     await update_job_progress(job_id, total_processing=total_chunks, message="Processing chunks")
-    max_concurrent = max(1, config.digester.max_concurrent_chunk_llm_calls)
-    semaphore = asyncio.Semaphore(max_concurrent)
+    semaphore = asyncio.Semaphore(_get_digester_llm_limit())
 
     async def _process_single_chunk_item(chunk_item: dict) -> Tuple[T, bool, UUID]:
         """Process a single chunk and return its results."""
@@ -88,8 +125,7 @@ async def run_chunk_groups_concurrently(
         processing_completed=0,
         message="Processing selected chunks",
     )
-    max_concurrent = max(1, config.digester.max_concurrent_chunk_llm_calls)
-    semaphore = asyncio.Semaphore(max_concurrent)
+    semaphore = asyncio.Semaphore(_get_digester_llm_limit())
 
     async def _process_single_chunk(chunk_id: UUID, chunks: List[str]) -> Tuple[T, List[Dict[str, Any]]]:
         async with semaphore:
