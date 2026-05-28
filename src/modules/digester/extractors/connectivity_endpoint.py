@@ -30,6 +30,7 @@ from src.modules.digester.schema import (
     ExtractedConnectivityEndpointResponse,
 )
 from src.modules.digester.utils.chunk_extraction import extract_single_chunk
+from src.modules.digester.utils.llm_execution import invoke_digester_llm
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,8 @@ async def rank_connectivity_candidates(
     chain = make_basic_chain(prompt, llm, parser)
 
     try:
-        result = await chain.ainvoke(
+        result = await invoke_digester_llm(
+            chain,
             {"candidates": candidates_json, "count": len(candidates)},
             config=RunnableConfig(callbacks=[langfuse_handler]),
         )

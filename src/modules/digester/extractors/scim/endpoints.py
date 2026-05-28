@@ -33,6 +33,7 @@ from src.modules.digester.scim.loader import (
     get_base_scim_endpoints,
     is_scim_standard_class,
 )
+from src.modules.digester.utils.llm_execution import invoke_digester_llm
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 from src.modules.digester.utils.scim_resource import extract_scim_resource_path, infer_scim_resource_path
 
@@ -320,7 +321,8 @@ async def extract_custom_scim_endpoints(
     try:
         summary, tags = extract_summary_and_tags(chunk_metadata)
 
-        result = await chain.ainvoke(
+        result = await invoke_digester_llm(
+            chain,
             {
                 "chunk": chunk,
                 "summary": summary,

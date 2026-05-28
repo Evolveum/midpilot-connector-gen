@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 import ssl
+from typing import Any, Final, cast
 
 import httpx
 from langchain_classic.output_parsers import RetryWithErrorOutputParser
@@ -10,7 +11,7 @@ from langchain_core.prompts import BasePromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel
 from langchain_openai import ChatOpenAI
 
-from src.config import config
+from src.config import ReasoningEffort, config
 
 
 def _build_llm_verify_config(ca_cert_file: str | None) -> bool | ssl.SSLContext:
@@ -22,27 +23,42 @@ def _build_llm_verify_config(ca_cert_file: str | None) -> bool | ssl.SSLContext:
     return ssl_context
 
 
-def get_default_llm(temperature: float = 1, reasoning_effort: str = "high") -> ChatOpenAI:
+_DEFAULT_REASONING_EFFORT: Final = object()
+
+
+def get_default_llm(
+    temperature: float = 1,
+    reasoning_effort: ReasoningEffort | None | object = _DEFAULT_REASONING_EFFORT,
+) -> ChatOpenAI:
     """
     Create and return a ChatOpenAI LLM instance with default parameters.
 
     :param temperature: Sampling temperature for the LLM (controls randomness).
-    :param reasoning_effort: Reasoning effort level for the LLM.
+    :param reasoning_effort: Optional reasoning effort override for models that support it.
+        Omit to use config.llm.reasoning_effort. Pass None to disable reasoning effort for this call.
     :return: Configured ChatOpenAI instance.
     """
 
     http_client = httpx.AsyncClient(verify=_build_llm_verify_config(config.llm.ca_cert_file))
-    return ChatOpenAI(
-        api_key=config.llm.openai_api_key,
-        base_url=config.llm.openai_api_base,
-        model=config.llm.model_name,
-        timeout=config.llm.request_timeout,
-        temperature=temperature,
-        extra_body={"provider": {"order": config.llm.provider_order}},
-        reasoning_effort=reasoning_effort,
-        http_async_client=http_client,
-        max_retries=0,
+    selected_reasoning_effort = (
+        config.llm.reasoning_effort
+        if reasoning_effort is _DEFAULT_REASONING_EFFORT
+        else cast(ReasoningEffort | None, reasoning_effort)
     )
+    llm_kwargs: dict[str, Any] = {
+        "api_key": config.llm.openai_api_key,
+        "base_url": config.llm.openai_api_base,
+        "model": config.llm.model_name,
+        "timeout": config.llm.request_timeout,
+        "temperature": temperature,
+        "extra_body": {"provider": {"order": config.llm.provider_order}},
+        "http_async_client": http_client,
+        "max_retries": 0,
+    }
+    if selected_reasoning_effort is not None:
+        llm_kwargs["reasoning_effort"] = selected_reasoning_effort
+
+    return ChatOpenAI(**llm_kwargs)
 
 
 def make_basic_chain(prompt: BasePromptTemplate, llm: ChatOpenAI, parser: BaseOutputParser) -> Runnable:

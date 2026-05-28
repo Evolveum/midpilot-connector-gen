@@ -27,7 +27,7 @@ from src.modules.digester.schema import (
 )
 from src.modules.digester.scim.loader import get_base_scim_object_classes, load_scim_base_schemas
 from src.modules.digester.utils.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
-from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
+from src.modules.digester.utils.llm_execution import run_chunks_concurrently
 from src.modules.digester.utils.metadata_helper import build_doc_metadata_map
 from src.modules.digester.utils.object_classes import confidence_order_key
 

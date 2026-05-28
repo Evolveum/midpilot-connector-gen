@@ -21,6 +21,7 @@ from src.modules.digester.prompts.rest.relations_prompts import (
     get_relations_user_prompt,
 )
 from src.modules.digester.schema import FinalObjectClass, ObjectClassesResponse, RelationRecord, RelationsResponse
+from src.modules.digester.utils.llm_execution import invoke_digester_llm
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 from src.modules.digester.utils.relations import deduplicate_semantic_relations
 
@@ -233,8 +234,8 @@ async def _extract_from_chunk(
     try:
         summary, tags = extract_summary_and_tags(chunk_metadata)
 
-        result = await chain.ainvoke(
-            {"chunk": chunk, "summary": summary, "tags": tags}, config={"callbacks": [langfuse_handler]}
+        result = await invoke_digester_llm(
+            chain, {"chunk": chunk, "summary": summary, "tags": tags}, config={"callbacks": [langfuse_handler]}
         )
         return _parse_relations_result(
             result,
