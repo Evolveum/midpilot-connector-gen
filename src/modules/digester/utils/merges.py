@@ -25,7 +25,7 @@ from src.modules.digester.schema import (
     InfoMetadata,
     InfoResponse,
 )
-from src.modules.digester.utils.llm_execution import invoke_digester_llm
+from src.modules.digester.utils.llm_execution import invoke_llm
 from src.modules.digester.utils.sequences import extract_sequence
 
 logger = logging.getLogger(__name__)
@@ -279,7 +279,7 @@ async def merge_attribute_candidates(
         dedup_chain = build_dedup_chain()
         result = cast(
             AttributeDedupResponse,
-            await invoke_digester_llm(
+            await invoke_llm(
                 dedup_chain,
                 {
                     "object_class": object_class,

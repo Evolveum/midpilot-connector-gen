@@ -28,7 +28,7 @@ from src.modules.digester.prompts.scim.attributes_prompts import (
 from src.modules.digester.schema import ExtractedAttributeResponseSCIM
 from src.modules.digester.scim.loader import get_base_scim_attributes, is_scim_standard_class
 from src.modules.digester.utils.attribute_filters import normalize_readability_flags
-from src.modules.digester.utils.llm_execution import invoke_digester_llm
+from src.modules.digester.utils.llm_execution import invoke_llm
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
@@ -307,7 +307,7 @@ async def extract_custom_scim_attributes(
     try:
         summary, tags = extract_summary_and_tags(chunk_metadata)
 
-        result = await invoke_digester_llm(
+        result = await invoke_llm(
             chain,
             {
                 "chunk": chunk,

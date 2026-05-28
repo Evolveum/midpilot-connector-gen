@@ -10,7 +10,7 @@ import pytest
 
 from src.config import config
 from src.modules.digester.utils import llm_execution
-from src.modules.digester.utils.llm_execution import invoke_digester_llm, run_chunks_concurrently
+from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
 
 
 class _TrackedChain:
@@ -60,14 +60,14 @@ async def test_run_chunks_concurrently_respects_configured_limit(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_invoke_digester_llm_respects_configured_limit(monkeypatch):
+async def test_invoke_llm_respects_configured_limit(monkeypatch):
     monkeypatch.setattr(config.digester, "max_concurrent_llm_calls", 3)
     monkeypatch.setattr(llm_execution, "_digester_llm_semaphore", None)
     monkeypatch.setattr(llm_execution, "_digester_llm_semaphore_limit", None)
 
     chain = _TrackedChain()
 
-    results = await asyncio.gather(*(invoke_digester_llm(chain, idx) for idx in range(10)))
+    results = await asyncio.gather(*(invoke_llm(chain, idx) for idx in range(10)))
 
     assert results == list(range(10))
     assert chain.max_active == 3
@@ -81,7 +81,7 @@ async def test_nested_digester_llm_limit_does_not_deadlock(monkeypatch):
     chain = _TrackedChain()
 
     async def extractor(content, job_id, chunk_id):
-        return [await invoke_digester_llm(chain, content)], True
+        return [await invoke_llm(chain, content)], True
 
     chunk_items = [{"chunkId": str(uuid4()), "content": f"chunk-{idx}"} for idx in range(3)]
 

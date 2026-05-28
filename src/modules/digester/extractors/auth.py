@@ -38,7 +38,7 @@ from src.modules.digester.schema import (
     DocSequenceItem,
 )
 from src.modules.digester.utils.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
-from src.modules.digester.utils.llm_execution import invoke_digester_llm
+from src.modules.digester.utils.llm_execution import invoke_llm
 from src.modules.digester.utils.sequences import extract_sequence
 
 logger = logging.getLogger(__name__)
@@ -315,7 +315,7 @@ async def deduplicate_auth(
     try:
         result = cast(
             AuthDedupResponse,
-            await invoke_digester_llm(
+            await invoke_llm(
                 chain,
                 {"auth_list": json.dumps([auth.model_dump() for auth in auth_list])},
                 config=RunnableConfig(callbacks=[langfuse_handler]),
@@ -424,7 +424,7 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
         items_json = json.dumps([auth.model_dump(exclude={"relevant_sequences"}) for auth in dedup_list])
         sort_result = cast(
             AuthResponse,
-            await invoke_digester_llm(
+            await invoke_llm(
                 chain,
                 {"items_json": items_json},
                 config=RunnableConfig(callbacks=[langfuse_handler]),

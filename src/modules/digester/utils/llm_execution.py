@@ -42,7 +42,7 @@ async def run_with_digester_llm_limit(callback: Callable[[], Awaitable[T]]) -> T
         return await callback()
 
 
-async def invoke_digester_llm(chain: Any, input: Any, **kwargs: Any) -> Any:
+async def invoke_llm(chain: Any, input: Any, **kwargs: Any) -> Any:
     """
     Run one digester LLM chain invocation behind the process-wide digester LLM limit.
     """

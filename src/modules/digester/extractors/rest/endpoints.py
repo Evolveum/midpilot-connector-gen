@@ -28,7 +28,7 @@ from src.modules.digester.prompts.rest.endpoints_prompts import (
     get_endpoints_user_prompt,
 )
 from src.modules.digester.schema import EndpointParamInfo, ExtractedEndpointInfo, ExtractedEndpointResponse
-from src.modules.digester.utils.llm_execution import invoke_digester_llm, run_chunk_groups_concurrently
+from src.modules.digester.utils.llm_execution import invoke_llm, run_chunk_groups_concurrently
 from src.modules.digester.utils.merges import merge_endpoint_candidates
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
@@ -171,7 +171,7 @@ async def extract_endpoints(
 
                 result = cast(
                     ExtractedEndpointResponse,
-                    await invoke_digester_llm(
+                    await invoke_llm(
                         chain,
                         {"chunk": chunk, "summary": summary, "tags": tags},
                         config=RunnableConfig(callbacks=[langfuse_handler]),
@@ -226,7 +226,7 @@ async def extract_endpoints(
                     )
                     checked_result = cast(
                         EndpointParamInfo,
-                        await invoke_digester_llm(
+                        await invoke_llm(
                             param_chain,
                             {
                                 "endpoint": endpoint.model_dump(by_alias=True, exclude={"relevant_documentations"}),
