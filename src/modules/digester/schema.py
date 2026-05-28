@@ -723,9 +723,20 @@ class InfoResponse(BaseModel):
 # --- Attributes ---
 
 
-class AttributeBase(BaseModel):
+class AttributeDescriptionBase(BaseModel):
     """
-    Base class for attributes, can be extended with additional fields if needed.
+    Base class for attribute identity/meaning.
+    """
+
+    description: Optional[str] = Field(
+        default=None,
+        description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
+    )
+
+
+class AttributeTypeFormatBase(BaseModel):
+    """
+    Base class for attribute type and format enrichment.
     """
 
     type: Optional[str] = Field(
@@ -748,15 +759,17 @@ class AttributeBase(BaseModel):
             "the payload. Use null if unknown."
         ),
     )
-    description: Optional[str] = Field(
-        default=None,
-        description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
-    )
 
 
-class AttributeEnhancedInfo(AttributeBase):
+class AttributeBase(AttributeTypeFormatBase, AttributeDescriptionBase):
     """
-    Base attribute info class for both SCIM and REST
+    Full base class for attributes, can be extended with additional fields if needed.
+    """
+
+
+class AttributeBooleanFlagsBase(BaseModel):
+    """
+    Base class for boolean attribute flags.
     """
 
     mandatory: Optional[bool] = Field(
@@ -789,6 +802,12 @@ class AttributeEnhancedInfo(AttributeBase):
     )
 
 
+class AttributeEnhancedInfo(AttributeBase, AttributeBooleanFlagsBase):
+    """
+    Base attribute info class for both SCIM and REST
+    """
+
+
 class ExtractedAttributeInfoSCIM(AttributeEnhancedInfo):
     """
     LLM extraction model for object class property metadata.
@@ -804,7 +823,9 @@ class ExtractedAttributeInfoSCIM(AttributeEnhancedInfo):
     )
 
 
-class DiscoveryAttribute(AttributeBase):
+class DiscoveryAttribute(AttributeDescriptionBase):
+    model_config = {"extra": "forbid"}
+
     name: str = Field(
         ...,
         description=(
@@ -827,6 +848,8 @@ class AttributeDiscoveryResponse(BaseModel):
         default_factory=list,
         description="List of extracted attributes for the object class.",
     )
+
+    model_config = {"extra": "forbid"}
 
 
 class AttributeInfoBase(AttributeEnhancedInfo):
@@ -916,6 +939,22 @@ class AttributeBuildResponse(AttributeInfoBase):
             "requires extra expansion or separate endpoint fetches. Use null if unknown."
         ),
     )
+
+
+class AttributeTypeFormatBuildResponse(AttributeTypeFormatBase):
+    """
+    LLM response for the type/format enrichment phase.
+    """
+
+    model_config = {"extra": "forbid"}
+
+
+class AttributeBooleanFlagsBuildResponse(AttributeBooleanFlagsBase):
+    """
+    LLM response for the boolean flag enrichment phase.
+    """
+
+    model_config = {"extra": "forbid"}
 
 
 class AttributeInfoScim(AttributeInfoBase):

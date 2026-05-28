@@ -12,6 +12,7 @@ from uuid import UUID
 
 from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel
 
 from src.common.enums import JobStage
 from src.common.jobs import (
@@ -25,18 +26,22 @@ from src.modules.digester.prompts.rest.attributes_prompts import (
     attribute_deduplication_user_prompt,
     get_attribute_discovery_system_prompt,
     get_attribute_discovery_user_prompt,
-    get_build_from_sequences_system_prompt,
-    get_build_from_sequences_user_prompt,
+    get_build_boolean_flags_from_sequences_system_prompt,
+    get_build_boolean_flags_from_sequences_user_prompt,
+    get_build_type_format_from_sequences_system_prompt,
+    get_build_type_format_from_sequences_user_prompt,
     get_consolidate_attributes_system_prompt,
     get_consolidate_attributes_user_prompt,
 )
 from src.modules.digester.schema import (
+    AttributeBooleanFlagsBuildResponse,
     AttributeBuildResponse,
     AttributeDedupResponse,
     AttributeDiscoveryResponse,
     AttributeInfoRest,
     AttributeProcessingInfo,
     AttributeResponse,
+    AttributeTypeFormatBuildResponse,
     DiscoveryAttribute,
     DocSequenceItem,
 )
@@ -130,16 +135,35 @@ def _build_dedupe_chain() -> Any:
     return make_basic_chain(prompt, llm, parser)
 
 
-def _build_build_attr_chain() -> Any:
+def _build_type_format_chain() -> Any:
     """
-    Build the LLM chain used to build complete attribute information from sequences.
+    Build the LLM chain used to enrich attribute type and format from sequences.
     """
-    parser: PydanticOutputParser[AttributeBuildResponse] = PydanticOutputParser(pydantic_object=AttributeBuildResponse)
+    parser: PydanticOutputParser[AttributeTypeFormatBuildResponse] = PydanticOutputParser(
+        pydantic_object=AttributeTypeFormatBuildResponse
+    )
     llm = get_default_llm()
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", get_build_from_sequences_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_build_from_sequences_user_prompt),
+            ("system", get_build_type_format_from_sequences_system_prompt + "\n\n{format_instructions}"),
+            ("user", get_build_type_format_from_sequences_user_prompt),
+        ]
+    ).partial(format_instructions=parser.get_format_instructions())
+    return make_basic_chain(prompt, llm, parser)
+
+
+def _build_boolean_flags_chain() -> Any:
+    """
+    Build the LLM chain used to enrich boolean attribute flags from sequences.
+    """
+    parser: PydanticOutputParser[AttributeBooleanFlagsBuildResponse] = PydanticOutputParser(
+        pydantic_object=AttributeBooleanFlagsBuildResponse
+    )
+    llm = get_default_llm()
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", get_build_boolean_flags_from_sequences_system_prompt + "\n\n{format_instructions}"),
+            ("user", get_build_boolean_flags_from_sequences_user_prompt),
         ]
     ).partial(format_instructions=parser.get_format_instructions())
     return make_basic_chain(prompt, llm, parser)
@@ -161,7 +185,13 @@ def _build_consolidation_chain() -> Any:
 
 
 async def _build_attr_from_sequences(
-    chain: Any, object_class: str, attr: AttributeProcessingInfo, use_steps: bool
+    chain: Any,
+    object_class: str,
+    attr: AttributeProcessingInfo,
+    use_steps: bool,
+    fields_to_update: List[str],
+    log_stage: str,
+    response_model: type[BaseModel],
 ) -> AttributeProcessingInfo | None:
     """
     Calls llm on existing AttributeProcessingInfo object with sequences, optionally in steps.
@@ -173,6 +203,9 @@ async def _build_attr_from_sequences(
         object_class: Name of the object class
         attr: AttributeProcessingInfo object containing existing attribute information and sequences
         use_steps: Whether to use steps when processing sequences or process all at once (if false, the whole sequence list will be used in one call)
+        fields_to_update: Attribute fields this chain is allowed to update
+        log_stage: Human-readable stage name for logs
+        response_model: Pydantic model expected from this extraction stage
     Returns:
         AttributeProcessingInfo object with filled and potentially corrected attribute information
     """
@@ -184,6 +217,14 @@ async def _build_attr_from_sequences(
         attr_temp = copy.deepcopy(attr)
         attr_temp.relevant_sequences = attr_temp.relevant_sequences[begin:end]
         attr_json = json.dumps(attr_temp.model_dump(exclude={"relevant_documentations"}), ensure_ascii=False, indent=2)
+        logger.debug(
+            "[Digester:Attributes] Phase=%s attribute=%s sequences=%s-%s/%s",
+            log_stage,
+            attr.name,
+            begin,
+            end,
+            len(attr.relevant_sequences),
+        )
         try:
             result = await invoke_llm(
                 chain,
@@ -194,35 +235,26 @@ async def _build_attr_from_sequences(
                 config={"callbacks": [langfuse_handler]},
             )
 
-            if isinstance(result, AttributeBuildResponse):
+            if isinstance(result, response_model):
                 parsed = result
             elif isinstance(result, dict):
-                parsed = AttributeBuildResponse.model_validate(result)
+                parsed = response_model.model_validate(result)
             else:
                 content = getattr(result, "content", None)
                 if isinstance(content, str) and content.strip():
-                    parsed = AttributeBuildResponse.model_validate(json.loads(content))
+                    parsed = response_model.model_validate(json.loads(content))
                 else:
                     return None
 
-            for param in [
-                "type",
-                "format",
-                "description",
-                "mandatory",
-                "updatable",
-                "creatable",
-                "readable",
-                "multivalue",
-                "returnedByDefault",
-            ]:
+            for param in fields_to_update:
                 value = getattr(parsed, param, None)
                 if value is not None:
                     setattr(attr, param, value)
 
         except Exception as exc:
             logger.warning(
-                "[Digester:Attributes] Build from sequences failed for attribute %s: %s, sequences number: %s - %s",
+                "[Digester:Attributes] %s from sequences failed for attribute %s: %s, sequences number: %s - %s",
+                log_stage,
                 attr.name,
                 exc,
                 begin,
@@ -244,18 +276,58 @@ async def build_attributes_from_sequences(
         object_class: Name of the object class for context
     """
 
-    build_chain = _build_build_attr_chain()
+    type_format_chain = _build_type_format_chain()
+    boolean_flags_chain = _build_boolean_flags_chain()
 
+    logger.info(
+        "[Digester:Attributes] Phase=type_format_enrichment object_class=%s attributes=%d",
+        object_class,
+        len(attrs),
+    )
     tasks = [
-        _build_attr_from_sequences(build_chain, object_class, attr, use_steps=True)
+        _build_attr_from_sequences(
+            type_format_chain,
+            object_class,
+            attr,
+            use_steps=True,
+            fields_to_update=["type", "format"],
+            log_stage="Type/format enrichment",
+            response_model=AttributeTypeFormatBuildResponse,
+        )
         for attr in attrs
         if attr.relevant_sequences
     ]
 
-    all_builded_attrs = await asyncio.gather(*tasks)
-    filtered_builded_attrs: List[AttributeProcessingInfo] = [attr for attr in all_builded_attrs if attr is not None]
+    type_format_attrs = await asyncio.gather(*tasks)
+    filtered_type_format_attrs: List[AttributeProcessingInfo] = [attr for attr in type_format_attrs if attr is not None]
 
-    return filtered_builded_attrs
+    logger.info(
+        "[Digester:Attributes] Phase=boolean_flags_enrichment object_class=%s attributes=%d",
+        object_class,
+        len(filtered_type_format_attrs),
+    )
+    flag_tasks = [
+        _build_attr_from_sequences(
+            boolean_flags_chain,
+            object_class,
+            attr,
+            use_steps=True,
+            fields_to_update=["mandatory", "updatable", "creatable", "readable", "multivalue", "returnedByDefault"],
+            log_stage="Boolean flag enrichment",
+            response_model=AttributeBooleanFlagsBuildResponse,
+        )
+        for attr in filtered_type_format_attrs
+        if attr.relevant_sequences
+    ]
+
+    all_builded_attrs = await asyncio.gather(*flag_tasks)
+    enriched_attrs = [attr for attr in all_builded_attrs if attr is not None]
+    logger.info(
+        "[Digester:Attributes] Phase=attribute_enrichment_finished object_class=%s attributes=%d",
+        object_class,
+        len(enriched_attrs),
+    )
+    return enriched_attrs
 
 
 async def consolidate_attributes(attrs: List[AttributeProcessingInfo], object_class: str) -> AttributeResponse:
@@ -271,10 +343,35 @@ async def consolidate_attributes(attrs: List[AttributeProcessingInfo], object_cl
 
     build_chain = _build_consolidation_chain()
 
+    logger.info(
+        "[Digester:Attributes] Phase=final_consolidation object_class=%s attributes=%d",
+        object_class,
+        len(attrs),
+    )
     tasks = []
     for attr in attrs:
         if attr.relevant_sequences:
-            tasks.append(_build_attr_from_sequences(build_chain, object_class, attr, use_steps=False))
+            tasks.append(
+                _build_attr_from_sequences(
+                    build_chain,
+                    object_class,
+                    attr,
+                    use_steps=False,
+                    fields_to_update=[
+                        "type",
+                        "format",
+                        "description",
+                        "mandatory",
+                        "updatable",
+                        "creatable",
+                        "readable",
+                        "multivalue",
+                        "returnedByDefault",
+                    ],
+                    log_stage="Final consolidation",
+                    response_model=AttributeBuildResponse,
+                )
+            )
         else:
             logger.warning(
                 "[Digester:Attributes] Attribute %s has no relevant sequences; skipping final consolidation", attr.name
@@ -300,6 +397,11 @@ async def consolidate_attributes(attrs: List[AttributeProcessingInfo], object_cl
             relevant_sequences=[DocSequenceItem(**seq.__dict__) for seq in attr_prc.relevant_sequences],
         )
 
+    logger.info(
+        "[Digester:Attributes] Phase=final_consolidation_finished object_class=%s attributes=%d",
+        object_class,
+        len(consolidated_attrs.attributes),
+    )
     return consolidated_attrs
 
 
@@ -413,6 +515,11 @@ async def extract_attributes(
 
         return per_chunk_results, relevant_data
 
+    logger.info(
+        "[Digester:Attributes] Phase=attribute_discovery object_class=%s chunks=%d",
+        object_class,
+        total_chunk_ids,
+    )
     results = await run_chunks_concurrently(
         chunk_items=chunks_by_id,
         job_id=job_id,
@@ -432,6 +539,16 @@ async def extract_attributes(
             if res:
                 all_discovery_results.append(res)
 
+    logger.info(
+        "[Digester:Attributes] Phase=attribute_discovery_finished object_class=%s candidates=%d",
+        object_class,
+        len(all_discovery_results),
+    )
+    logger.info(
+        "[Digester:Attributes] Phase=attribute_deduplication object_class=%s candidates=%d",
+        object_class,
+        len(all_discovery_results),
+    )
     merged_attributes = await merge_attribute_candidates(
         object_class=object_class,
         attribute_objects=all_discovery_results,
@@ -440,7 +557,11 @@ async def extract_attributes(
         chunk_id_doc_id_map=chunk_id_to_doc_id,
     )
 
-    logger.info("[Digester:Attributes] Total unique attributes after merging: %d", len(merged_attributes))
+    logger.info(
+        "[Digester:Attributes] Phase=attribute_deduplication_finished object_class=%s attributes=%d",
+        object_class,
+        len(merged_attributes),
+    )
 
     logger.debug(
         "[Digester:Attributes] Final merged attributes for %s: %s",
@@ -448,6 +569,11 @@ async def extract_attributes(
         [attr.name for attr in merged_attributes],
     )
 
+    logger.info(
+        "[Digester:Attributes] Phase=attribute_filtering object_class=%s attributes=%d",
+        object_class,
+        len(merged_attributes),
+    )
     attributes_filtered_names = filter_ignored_attributes(merged_attributes)
     filtered_attributes = [attr for attr in merged_attributes if attr.name in attributes_filtered_names]
     removed_attributes = [attr.name for attr in merged_attributes if attr.name not in attributes_filtered_names]
@@ -459,8 +585,9 @@ async def extract_attributes(
         )
 
     logger.info(
-        "[Digester:Attributes] Filtered attributes for %s: %s",
+        "[Digester:Attributes] Phase=attribute_filtering_finished object_class=%s attributes=%d names=%s",
         object_class,
+        len(filtered_attributes),
         [attr.name for attr in filtered_attributes],
     )
 
@@ -476,12 +603,12 @@ async def extract_attributes(
         ),
     )
 
-    builded_attributes = await build_attributes_from_sequences(filtered_attributes, object_class)
-
     logger.info(
-        "[Digester:Attributes] Attribute building complete for %s",
+        "[Digester:Attributes] Phase=attribute_enrichment object_class=%s attributes=%d",
         object_class,
+        len(filtered_attributes),
     )
+    builded_attributes = await build_attributes_from_sequences(filtered_attributes, object_class)
 
     logger.debug(
         "[Digester:Attributes] Attributes after building from sequences: %s",

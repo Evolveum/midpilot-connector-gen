@@ -207,8 +207,8 @@ async def merge_attribute_candidates(
 
             return AttributeProcessingInfo(
                 name=attr.name,
-                type=attr.type,
-                format=attr.format,
+                type=getattr(attr, "type", None),
+                format=getattr(attr, "format", None),
                 description=attr.description,
                 mandatory=None,
                 updatable=None,
