@@ -6,14 +6,26 @@
 
 from typing import Any, Dict, List, Mapping, Optional, TypeAlias
 
+from src.modules.digester.enums import auth_type_match_key, normalize_auth_type_value
+
 AuthPayload: TypeAlias = Mapping[str, Any]
 PreferredAuthorizations: TypeAlias = Optional[List[Dict[str, Any]]]
 
 
 def _auth_key(auth_item: Mapping[str, Any]) -> tuple[str, str]:
     name = str(auth_item.get("name") or "").strip().lower()
-    auth_type = str(auth_item.get("type") or "").strip().lower()
+    auth_type = auth_type_match_key(auth_item.get("type"))
     return name, auth_type
+
+
+def _normalize_preferred_authorization(preferred: Mapping[str, Any]) -> Dict[str, Any]:
+    item = {key: value for key, value in preferred.items() if value is not None}
+    normalized_type = normalize_auth_type_value(item.get("type"), preserve_unknown=True)
+    if normalized_type:
+        item["type"] = normalized_type
+    else:
+        item.pop("type", None)
+    return item
 
 
 def _auth_items_from_payload(auth_payload: AuthPayload) -> List[Mapping[str, Any]]:
@@ -32,13 +44,13 @@ def enrich_preferred_authorizations(
 
     auth_items = _auth_items_from_payload(auth_payload)
     if not auth_items:
-        return preferred_authorizations
+        return [_normalize_preferred_authorization(preferred) for preferred in preferred_authorizations]
 
     enriched: List[Dict[str, Any]] = []
     for preferred in preferred_authorizations:
-        item = {key: value for key, value in preferred.items() if value is not None}
+        item = _normalize_preferred_authorization(preferred)
         preferred_name = str(item.get("name") or "").strip().lower()
-        preferred_type = str(item.get("type") or "").strip().lower()
+        preferred_type = auth_type_match_key(item.get("type"))
 
         match = next(
             (
@@ -59,6 +71,15 @@ def enrich_preferred_authorizations(
         enriched.append(item)
 
     return enriched
+
+
+def is_single_other_authorization(preferred_authorizations: PreferredAuthorizations) -> bool:
+    if not preferred_authorizations or len(preferred_authorizations) != 1:
+        return False
+
+    authorization = _normalize_preferred_authorization(preferred_authorizations[0])
+    name = str(authorization.get("name") or "").strip().lower()
+    return name == "other" and auth_type_match_key(authorization.get("type")) == "other"
 
 
 def _selected_auth_chunk_ids(auth_payload: AuthPayload, preferred_authorizations: PreferredAuthorizations) -> set[str]:

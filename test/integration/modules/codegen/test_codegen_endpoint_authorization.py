@@ -35,7 +35,10 @@ async def test_generate_authorization_includes_preferred_authorizations_in_job_a
             },
         ]
     }
-    preferred_authorizations = [{"name": "Bearer token"}, {"name": "Basic authentication"}]
+    preferred_authorizations = [
+        {"name": "Bearer token", "type": "bearer"},
+        {"name": "Basic authentication", "type": "basic"},
+    ]
     enriched_preferred_authorizations = [
         {
             "name": "Bearer token",
@@ -61,6 +64,7 @@ async def test_generate_authorization_includes_preferred_authorizations_in_job_a
 
         response = await generate_authorization(
             session_id=session_id,
+            skip_cache=False,
             db=MagicMock(),
             codegen_input=AuthorizationCodegenInput.model_validate(
                 {"preferred_authorizations": preferred_authorizations}

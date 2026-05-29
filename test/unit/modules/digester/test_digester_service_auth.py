@@ -63,8 +63,8 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
             (
                 [
                     DiscoveryAuth(
-                        name="OAuth2",
-                        type=AuthType.OAUTH2,
+                        name="OAuth2 client credentials",
+                        type=AuthType.OAUTH2_CLIENT_CREDENTIALS,
                         relevant_sequences=[oauth_doc_seq],
                     )
                 ],
@@ -86,8 +86,8 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
 
         first_dedup_result = [
             AuthProcessingInfo(
-                name="OAuth2",
-                type=AuthType.OAUTH2,
+                name="OAuth2 client credentials",
+                type=AuthType.OAUTH2_CLIENT_CREDENTIALS,
                 quirks="",
                 relevant_sequences=[
                     DocProcessingSequenceItem(
@@ -115,8 +115,8 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
 
         built_result = [
             AuthProcessingInfo(
-                name="OAuth2",
-                type=AuthType.OAUTH2,
+                name="OAuth2 client credentials",
+                type=AuthType.OAUTH2_CLIENT_CREDENTIALS,
                 quirks="Supports authorization_code and client_credentials",
                 relevant_sequences=[
                     DocProcessingSequenceItem(
@@ -145,8 +145,8 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
         sorted_result = AuthResponse(
             auth=[
                 AuthInfo(
-                    name="OAuth2",
-                    type=AuthType.OAUTH2,
+                    name="OAuth2 client credentials",
+                    type=AuthType.OAUTH2_CLIENT_CREDENTIALS,
                     quirks="Supports authorization_code and client_credentials",
                     relevant_sequences=[oauth_doc_seq],
                 ),
@@ -170,7 +170,7 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
         assert "relevantDocumentations" in result
         assert "auth" in result["result"]
         assert len(result["result"]["auth"]) == 2
-        assert result["result"]["auth"][0]["name"] == "OAuth2"
+        assert result["result"]["auth"][0]["name"] == "OAuth2 client credentials"
         assert result["result"]["auth"][1]["name"] == "API Key"
 
         mock_parallel.assert_awaited_once()
@@ -214,7 +214,7 @@ def test_auth_response_serializes_relevant_sequences_in_camel_case():
         auth=[
             AuthInfo(
                 name="OAuth2",
-                type=AuthType.OAUTH2,
+                type=AuthType.OAUTH2_CLIENT_CREDENTIALS,
                 quirks="",
                 relevant_sequences=[
                     DocSequenceItem(

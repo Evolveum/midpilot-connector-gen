@@ -30,7 +30,7 @@ async def test_create_authorization_uses_preferred_authorizations_and_auth_relev
             },
         ]
     }
-    preferred_authorizations = [{"name": "Bearer token"}]
+    preferred_authorizations = [{"name": "Bearer token", "type": "bearer"}]
     enriched_preferred_authorizations = [
         {
             "name": "Bearer token",
@@ -78,3 +78,47 @@ async def test_create_authorization_uses_preferred_authorizations_and_auth_relev
     _, generate_kwargs = mock_generator_instance.generate.call_args
     assert generate_kwargs["auth_payload"] == auth_payload
     assert generate_kwargs["relevant_chunk_pairs"] == [{"chunk_id": "chunk-bearer", "doc_id": "doc-1"}]
+
+
+@pytest.mark.asyncio
+async def test_create_authorization_returns_static_scaffold_for_other_authorization():
+    session_id = uuid4()
+    job_id = uuid4()
+    auth_payload = {
+        "auth": [
+            {
+                "name": "other",
+                "type": "other",
+                "quirks": "",
+                "relevant_sequences": [{"chunk_id": "chunk-other"}],
+            }
+        ]
+    }
+
+    with (
+        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.codegen.service.AuthorizationGenerator") as mock_generator_class,
+        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
+    ):
+        result = await service.create_authorization(
+            auth_payload=auth_payload,
+            preferred_authorizations=[{"name": "other", "type": "other"}],
+            session_id=session_id,
+            job_id=job_id,
+        )
+
+    assert result == {
+        "code": (
+            "authentication {\n"
+            "    rest {\n"
+            "        other {\n"
+            "            implementation {\n"
+            "                // write your custom implementation of authorization here\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+    }
+    mock_generator_class.assert_not_called()
+    mock_relevant_chunk_repository.assert_not_called()
