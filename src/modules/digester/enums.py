@@ -58,6 +58,8 @@ _AUTH_TYPE_ALIASES: dict[str, AuthType] = {
     "httpbearertoken": AuthType.BEARER,
     "token": AuthType.BEARER,
     "accesstoken": AuthType.BEARER,
+    "personalaccesstoken": AuthType.BEARER,
+    "pat": AuthType.BEARER,
     # JWT bearer outside OAuth2 grant handling
     "jwt": AuthType.JWT_BEARER,
     "jsonwebtoken": AuthType.JWT_BEARER,
