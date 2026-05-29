@@ -13,16 +13,24 @@ Your task is to analyze the provided documentation and extract all authenticatio
 
 Extract ONLY these standard authentication types when found:
 - **basic** - HTTP Basic Authentication (username:password encoded in Base64)
-- **bearer** — Bearer token in Authorization header (JWT, api key or other token formats), everything that goes to Authorization header and is not basic auth, is bearer auth, except oauth flows and similar.
-- **oauth2** - OAuth 2.0 flows (authorization code, client credentials, PKCE, device code, implicit, password grant)
+- **bearer** - Non-JWT bearer token in Authorization header, except OAuth flows and similar token-exchange flows
+- **jwtBearer** - HTTP JWT Bearer token sent directly as `Authorization: Bearer <jwt>`, not obtained through OAuth2 in the documented flow
+- **oauth2ClientCredentials** - OAuth 2.0 client credentials grant
+- **oauth2Password** - OAuth 2.0 resource owner password credentials grant
+- **oauth2Jwt** - OAuth 2.0 JWT bearer grant
+- **oauth2Saml** - OAuth 2.0 SAML bearer grant
 - **apiKey** - API key authentication - only if it is not a bearer token or is not used as basic authentification (e.g., API key in query parameter or custom header)
 - **session** - Cookie-based session authentication
 - **digest** - HTTP Digest Authentication
+- **hawk** - Hawk authentication
+- **awsSignature** - AWS Signature / Signature Version 4 authentication
 - **mtls** - Mutual TLS (client certificate authentication)
+- **ntlm** - NTLM / Windows authentication
 - **openidConnect** - OpenID Connect authentication
 - **other** - Explicit auth mechanisms that don't fit the standard types above
 
-If the method includes any part of complex flow, e.g. oauth, categorize it as the main type (e.g. oauth2) rather than basic or bearer, even if it uses those under the hood.
+If the method includes any part of a complex flow, e.g. OAuth2, categorize it as the concrete flow type (e.g. oauth2ClientCredentials, oauth2Password, oauth2Jwt, oauth2Saml) rather than basic, bearer, or jwtBearer, even if it uses those under the hood.
+If OAuth2 is mentioned without enough detail to identify one of the four supported OAuth2 grant types, return `other` rather than a generic OAuth2 type.
 With api keys and bearer tokens, be careful how they are created. If they are part of a flow the type is that flow.
 
 **EXTRACTION CRITERIA**
@@ -154,16 +162,24 @@ The authentication method name as it should be understood conceptually—concise
 Classify the authentication method as exactly one of the following:
 
 - `basic` — HTTP Basic Authentication (username:password Base64-encoded)
-- `bearer` — Bearer token in Authorization header (JWT, api key or other token formats), everything that goes to Authorization header and is not basic auth, is bearer auth, except oauth flows and similar.
-- `oauth2` — OAuth 2.0 flows (authorization code, client credentials, PKCE, device code, implicit, password grant)
+- `bearer` — Non-JWT bearer token in Authorization header, except OAuth flows and similar token-exchange flows
+- `jwtBearer` — HTTP JWT Bearer token sent directly as `Authorization: Bearer <jwt>`, not obtained through OAuth2 in the documented flow
+- `oauth2ClientCredentials` — OAuth 2.0 client credentials grant
+- `oauth2Password` — OAuth 2.0 resource owner password credentials grant
+- `oauth2Jwt` — OAuth 2.0 JWT bearer grant
+- `oauth2Saml` — OAuth 2.0 SAML bearer grant
 - `apiKey` — API key authentication via query parameter or custom header, only when it is not functioning as a bearer or basic auth mechanism
 - `session` — Cookie-based session authentication
 - `digest` — HTTP Digest Authentication
+- `hawk` — Hawk authentication
+- `awsSignature` — AWS Signature / Signature Version 4 authentication
 - `mtls` — Mutual TLS / client certificate authentication
+- `ntlm` — NTLM / Windows authentication
 - `openidConnect` — OpenID Connect authentication
 - `other` — Explicit auth mechanisms that don't fit any type above
                                            
-If the method includes any part of complex flow, e.g. oauth, categorize it as the main type (e.g. oauth2) rather than basic or bearer, even if it uses those under the hood.
+If the method includes any part of a complex flow, e.g. OAuth2, categorize it as the concrete flow type (e.g. oauth2ClientCredentials, oauth2Password, oauth2Jwt, oauth2Saml) rather than basic, bearer, or jwtBearer, even if it uses those under the hood.
+If OAuth2 is mentioned without enough detail to identify one of the four supported OAuth2 grant types, return `other` rather than a generic OAuth2 type.
 With api keys and bearer tokens, be careful how they are created. If they are part of a flow the type is that flow.
 
 **3. `quirks`**

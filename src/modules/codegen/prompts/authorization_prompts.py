@@ -39,7 +39,10 @@ OUTPUT RULES:
 - Use `request.formParam(...)` for token request form parameters and `request.header(...)` for request headers.
 - Do not generate Java classes, imports, standalone helper methods, ad-hoc HTTP clients, XML resource configuration, or
   midPoint security-policy authorization XML.
-- Preserve the semantic distinction between methods: bearer token, API key, Basic auth, OAuth 2.0, session cookie, digest, mTLS, OpenID Connect, and other custom mechanisms can need different configuration properties and request customization.
+- Preserve the semantic distinction between methods: bearer token, JWT bearer token, API key, Basic auth,
+  OAuth2 client credentials, OAuth2 password, OAuth2 JWT bearer grant, OAuth2 SAML bearer grant, session cookie,
+  digest, Hawk, AWS Signature, mTLS, NTLM, OpenID Connect, and other custom mechanisms can need different
+  configuration properties and request customization.
 - Generate connector-level code, not objectClass CRUD/search code.
 - Prefer existing `configuration.*` properties when examples or extracted notes imply built-in connector configuration such as `configuration.clientId`, `configuration.clientSecret`, token endpoint, username, password, API key, tenant, certificate alias, or cookie name.
 - Implement request decoration for the selected method: `request.header(...)`, `request.formParam(...)`, documented query parameters, cookies, OAuth token exchange hooks, or mTLS setup as supported by the documentation.

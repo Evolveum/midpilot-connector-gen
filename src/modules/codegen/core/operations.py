@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
+from src.common.enums import ApiType
 from src.modules.codegen.core.base import (
     AttributesPayload,
     BaseGroovyGenerator,
@@ -218,6 +219,20 @@ class RelationGenerator(BaseGroovyGenerator):
         return ""
 
 
+def build_other_authorization_scaffold(protocol: ApiType) -> str:
+    return (
+        "authentication {\n"
+        f"    {protocol.value.lower()} {{\n"
+        "        other {\n"
+        "            implementation {\n"
+        "                // write your custom implementation of authorization here\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )
+
+
 class AuthorizationGenerator(BaseGroovyGenerator):
     def __init__(
         self,
@@ -226,17 +241,17 @@ class AuthorizationGenerator(BaseGroovyGenerator):
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
-        protocol_label: str,
+        protocol: ApiType,
         base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
-        authentication_container = "scim" if protocol_label.lower() == "scim" else "rest"
+        authentication_container = protocol.value.lower()
         config = OperationConfig(
             operation_name="Authorization",
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold=f"authentication {{\n    {authentication_container} {{\n    }}\n}}\n",
-            logger_prefix=f"[Codegen:Authorization:{protocol_label}]",
+            logger_prefix=f"[Codegen:Authorization:{protocol.name}]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["authorization_docs"] = docs_text

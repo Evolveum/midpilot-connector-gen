@@ -19,6 +19,7 @@ from src.modules.codegen.core.operations import (
     RelationGenerator,
     SearchGenerator,
     UpdateGenerator,
+    build_other_authorization_scaffold,
 )
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
@@ -30,6 +31,7 @@ from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.selection.authorization import (
     AuthPayload,
     enrich_preferred_authorizations,
+    is_single_other_authorization,
     select_authorization_chunk_refs,
 )
 from src.modules.codegen.selection.docs_loader import read_adoc_text
@@ -288,6 +290,14 @@ async def create_authorization(
 
     api_types = await get_session_api_types(session_id)
     protocol = ApiType.SCIM if is_scim_api(api_types) else ApiType.REST
+
+    if is_single_other_authorization(preferred_authorizations):
+        logger.info(
+            "[Codegen:Authorization:%s] Returning static scaffold for custom 'other' authorization",
+            protocol.name,
+        )
+        return {"code": build_other_authorization_scaffold(protocol)}
+
     assets = get_operation_assets("authorization", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
     base_api_url = await get_session_base_api_url(session_id)
@@ -297,7 +307,7 @@ async def create_authorization(
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
-        protocol_label=protocol.name,
+        protocol=protocol,
         base_api_url=base_api_url,
     )
 
