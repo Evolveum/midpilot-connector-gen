@@ -20,6 +20,7 @@ from src.modules.digester.schema import (
     BaseAPIEndpoint,
     DiscoveryAttribute,
     DocProcessingSequenceItem,
+    DocSequenceItem,
     ExtendedObjectClass,
     ExtractedEndpointInfo,
     InfoMetadata,
@@ -185,7 +186,8 @@ async def merge_attribute_candidates(
             return attr
 
         relevant_sequences: List[DocProcessingSequenceItem] = []
-        for seq in attr.relevant_sequences:
+        for raw_seq in attr.relevant_sequences:
+            seq = cast(DocSequenceItem, raw_seq)
             relevant_sequences.append(
                 DocProcessingSequenceItem(
                     chunk_id=seq.chunk_id,

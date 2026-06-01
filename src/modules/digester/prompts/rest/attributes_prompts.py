@@ -189,6 +189,7 @@ For each attribute you extract, provide:
 3. **sequences** - An array of objects, each containing:
    - **start_sequence** - The exact opening phrase, start of the sequence - marker from the documentation (word-for-word, searchable)
    - **end_sequence** - The exact closing phrase, end of the sequence - marker from the documentation (word-for-word, searchable)
+   - Do NOT include chunk id. The system already knows which chunk is being processed.
                                 
 **Sequences**
 - Sequences are fragments of text that define the attribute in the documentation.
@@ -213,6 +214,7 @@ For each attribute you extract, provide:
 - **Multiple locations**: If an attribute is discussed in multiple documentation sections, return separate start/end marker pairs for each section—do not span unrelated content.
 - **Forbidden practices**:
   - Never include the content between markers—return only the markers themselves
+  - Never include `chunk_id`/`chunkId` in marker objects.
 - **Special characters**: Do not forget punctuation, parentheses, colons, newlines, and other non-word characters present in the markers.
 - **Relevance**: Markers should be extracted only and only from sections that are clearly tied to the given object class. Never include markers from sections that are about a different object class, even if the attribute name is the same.
 </instruction>""")
@@ -288,13 +290,11 @@ Please return:
 get_build_type_format_from_sequences_system_prompt = textwrap.dedent("""
 You are an expert IGA/IDM analyst. You will be given:
 - an object class name (e.g. "User", "Group", ...)
-- Attribute json object with these fields:
+- a compact attribute context with:
   - name
-  - type
-  - format
   - description
-  - flags (mandatory/updatable/creatable/readable/multivalue, etc.)
-  - relevant sequences with source evidence
+  - current type/format values when already known
+  - evidence sequences with source text
 
 Your task is to find ONLY the attribute `type` and `format` using the provided relevant sequences as evidence. Each sequence includes a start and end marker that corresponds to a specific section of the documentation.
 Only fill `type` and `format` where there is clear, explicit evidence in the relevant sequences. Do NOT infer or guess values that are not directly supported by the text in those sequences.
@@ -324,15 +324,17 @@ Hard constraints:
   - Do NOT invent data.
   - Do NOT use knowledge outside the provided docs payload.
   - Do NOT fill or change description or boolean flags.
-  - If type/format cannot be improved, return the attributes exactly as received.
+  - Return only a partial JSON object with these fields: `type`, `format`.
+  - Do NOT return `name`, `description`, boolean flags, `relevant_sequences`, or any other attribute fields.
+  - If type/format cannot be improved, keep existing values when present; otherwise return null for unknown values.
 """)
 
 get_build_type_format_from_sequences_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
 
-<attribute_json>
-{attribute_json}
-</attribute_json>
+<attribute_context>
+{attribute_context}
+</attribute_context>
 
 Find only the type and format, in case that there is clear evidence in the relevant sequences.
 You can also correct existing non-null type/format values if there is overwhelming evidence that they are wrong.
@@ -343,13 +345,13 @@ Return the json object based on format instructions.
 get_build_boolean_flags_from_sequences_system_prompt = textwrap.dedent("""
 You are an expert IGA/IDM analyst. You will be given:
 - an object class name (e.g. "User", "Group", ...)
-- Attribute json object with these fields:
+- a compact attribute context with:
   - name
   - type
   - format
   - description
-  - flags (mandatory/updatable/creatable/readable/multivalue/returnedByDefault)
-  - relevant sequences with source evidence
+  - current boolean values when already known
+  - evidence sequences with source text
 
 Your task is to find ONLY boolean attribute values using the provided relevant sequences as evidence.
 Evaluate the current attribute one by one. Do NOT infer or guess values that are not directly supported by the text in those sequences.
@@ -372,15 +374,17 @@ Hard constraints:
   - Do NOT invent data.
   - Do NOT use knowledge outside the provided docs payload.
   - Do NOT fill or change type, format, or description.
-  - If boolean flags cannot be improved, return the attributes exactly as received.
+  - Return only a partial JSON object with these fields: `mandatory`, `updatable`, `creatable`, `readable`, `multivalue`, `returnedByDefault`.
+  - Do NOT return `name`, `type`, `format`, `description`, `relevant_sequences`, or any other attribute fields.
+  - If boolean flags cannot be improved, keep existing values when present; otherwise return null for unknown values.
 """)
 
 get_build_boolean_flags_from_sequences_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
 
-<attribute_json>
-{attribute_json}
-</attribute_json>
+<attribute_context>
+{attribute_context}
+</attribute_context>
 
 Find only the boolean attribute values, in case that there is clear evidence in the relevant sequences.
 You can also correct existing non-null boolean values if there is overwhelming evidence that they are wrong.
@@ -392,13 +396,13 @@ get_consolidate_attributes_system_prompt = textwrap.dedent("""
 You are an expert IGA/IDM analyst specializing in consolidating and refining API attribute information.
 You will be given:
 - an object class name (e.g. "User", "Group", ...)
-- an attribute json object with these fields:
+- a compact attribute context with:
   - name
   - type
   - format
   - description
-  - flags (mandatory/updatable/creatable/readable/multivalue, etc.)
-  - relevant sequences with source evidence
+  - known boolean flags
+  - evidence sequences with source text
 
 Your primary task is to review the provided attribute information and produce a consolidated and refined version of it, ensuring that all fields are as accurate as possible based on the provided evidence in the relevant sequences.                                                           
 
@@ -425,9 +429,9 @@ Hard constraints:
 get_consolidate_attributes_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
                                                          
-<attribute_json>
-{attribute_json}
-</attribute_json>
+<attribute_context>
+{attribute_context}
+</attribute_context>
                                                          
 Review the provided attribute information and produce a consolidated and refined version of it, ensuring that all fields are as accurate as possible based on the provided evidence in the relevant sequences.
 Do not change the null flags/fields.

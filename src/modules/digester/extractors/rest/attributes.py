@@ -3,11 +3,10 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
-import copy
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
@@ -54,6 +53,10 @@ from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_conc
 from src.modules.digester.utils.merges import merge_attribute_candidates
 
 logger = logging.getLogger(__name__)
+
+TYPE_FORMAT_FIELDS = ("type", "format")
+BOOLEAN_FLAG_FIELDS = ("mandatory", "updatable", "creatable", "readable", "multivalue", "returnedByDefault")
+FINAL_ATTRIBUTE_FIELDS = (*TYPE_FORMAT_FIELDS, "description", *BOOLEAN_FLAG_FIELDS)
 
 
 def _format_attributes_as_table(attributes: Dict[str, AttributeInfoRest]) -> str:
@@ -184,6 +187,53 @@ def _build_consolidation_chain() -> Any:
     return make_basic_chain(prompt, llm, parser)
 
 
+def _non_null_fields(attr: AttributeProcessingInfo, fields: Tuple[str, ...]) -> Dict[str, Any]:
+    return {field: getattr(attr, field) for field in fields if getattr(attr, field, None) is not None}
+
+
+def _attribute_identity_payload(attr: AttributeProcessingInfo) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"name": attr.name}
+    if attr.description is not None:
+        payload["description"] = attr.description
+    return payload
+
+
+def _sequence_evidence_payload(sequences: Sequence[DocSequenceItem]) -> List[Dict[str, str]]:
+    return [
+        {
+            "start_sequence": seq.start_sequence,
+            "end_sequence": seq.end_sequence,
+            "text": getattr(seq, "text", ""),
+        }
+        for seq in sequences
+    ]
+
+
+def _type_format_context(attr: AttributeProcessingInfo, sequences: Sequence[DocSequenceItem]) -> Dict[str, Any]:
+    return {
+        **_attribute_identity_payload(attr),
+        "current_type_format": _non_null_fields(attr, TYPE_FORMAT_FIELDS),
+        "evidence": _sequence_evidence_payload(sequences),
+    }
+
+
+def _boolean_flags_context(attr: AttributeProcessingInfo, sequences: Sequence[DocSequenceItem]) -> Dict[str, Any]:
+    return {
+        **_attribute_identity_payload(attr),
+        "type_format": _non_null_fields(attr, TYPE_FORMAT_FIELDS),
+        "current_boolean_flags": _non_null_fields(attr, BOOLEAN_FLAG_FIELDS),
+        "evidence": _sequence_evidence_payload(sequences),
+    }
+
+
+def _final_consolidation_context(attr: AttributeProcessingInfo, sequences: Sequence[DocSequenceItem]) -> Dict[str, Any]:
+    return {
+        **_attribute_identity_payload(attr),
+        "known_values": _non_null_fields(attr, FINAL_ATTRIBUTE_FIELDS),
+        "evidence": _sequence_evidence_payload(sequences),
+    }
+
+
 async def _build_attr_from_sequences(
     chain: Any,
     object_class: str,
@@ -192,6 +242,7 @@ async def _build_attr_from_sequences(
     fields_to_update: List[str],
     log_stage: str,
     response_model: type[BaseModel],
+    context_builder: Callable[[AttributeProcessingInfo, Sequence[DocSequenceItem]], Dict[str, Any]],
 ) -> AttributeProcessingInfo | None:
     """
     Calls llm on existing AttributeProcessingInfo object with sequences, optionally in steps.
@@ -214,9 +265,8 @@ async def _build_attr_from_sequences(
 
     for begin in range(0, len(attr.relevant_sequences), seq_step):
         end = min(begin + seq_step, len(attr.relevant_sequences))
-        attr_temp = copy.deepcopy(attr)
-        attr_temp.relevant_sequences = attr_temp.relevant_sequences[begin:end]
-        attr_json = json.dumps(attr_temp.model_dump(exclude={"relevant_documentations"}), ensure_ascii=False, indent=2)
+        sequence_batch = attr.relevant_sequences[begin:end]
+        attribute_context = json.dumps(context_builder(attr, sequence_batch), ensure_ascii=False, indent=2)
         logger.debug(
             "[Digester:Attributes] Phase=%s attribute=%s sequences=%s-%s/%s",
             log_stage,
@@ -230,7 +280,7 @@ async def _build_attr_from_sequences(
                 chain,
                 {
                     "object_class": object_class,
-                    "attribute_json": attr_json,
+                    "attribute_context": attribute_context,
                 },
                 config={"callbacks": [langfuse_handler]},
             )
@@ -293,6 +343,7 @@ async def build_attributes_from_sequences(
             fields_to_update=["type", "format"],
             log_stage="Type/format enrichment",
             response_model=AttributeTypeFormatBuildResponse,
+            context_builder=_type_format_context,
         )
         for attr in attrs
         if attr.relevant_sequences
@@ -315,6 +366,7 @@ async def build_attributes_from_sequences(
             fields_to_update=["mandatory", "updatable", "creatable", "readable", "multivalue", "returnedByDefault"],
             log_stage="Boolean flag enrichment",
             response_model=AttributeBooleanFlagsBuildResponse,
+            context_builder=_boolean_flags_context,
         )
         for attr in filtered_type_format_attrs
         if attr.relevant_sequences
@@ -370,6 +422,7 @@ async def consolidate_attributes(attrs: List[AttributeProcessingInfo], object_cl
                     ],
                     log_stage="Final consolidation",
                     response_model=AttributeBuildResponse,
+                    context_builder=_final_consolidation_context,
                 )
             )
         else:
