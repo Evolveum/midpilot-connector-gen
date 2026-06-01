@@ -34,7 +34,7 @@ from src.modules.codegen.schema import (
     CodegenRepairContext,
     GroovyCodePayload,
 )
-from src.modules.codegen.selection.authorization import enrich_preferred_authorizations, is_single_other_authorization
+from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
 from src.modules.digester.schema import RelationsResponse
 
 router = APIRouter()
@@ -94,11 +94,6 @@ async def generate_authorization(
 
     auth_output_raw = await repo.get_session_data(session_id, "authOutput")
     if not isinstance(auth_output_raw, Mapping) or not auth_output_raw:
-        if not is_single_other_authorization(input_preferred_authorizations):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No auth output found in session {session_id}. Please run /digester/{session_id}/auth endpoint first.",
-            )
         auth_output: Mapping[str, Any] = {"auth": []}
     else:
         auth_output = cast(Mapping[str, Any], auth_output_raw)

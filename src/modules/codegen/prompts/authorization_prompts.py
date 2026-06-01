@@ -30,6 +30,9 @@ Prepare valid Groovy code based on the following guidance and documentation note
 OUTPUT RULES:
 - Treat <selected_authorizations> as the exact set requested by the user. Generate only for those methods.
 - Do not infer or generate unselected authentication/authorization alternatives from the documentation chunk.
+- If a selected authorization has `analysisSupport: "unsupported"`, it was selected in midPoint but was not
+  identified in the analyzed application documentation. Do not invent implementation details for that method; preserve
+  only the existing explanatory Groovy comment for it.
 - Match the style of the SCIMREST Groovy Builder API used by schema/search/create/update/delete scripts: compact
   top-level builder blocks, nested DSL statements, and minimal imperative code.
 - Use the exact authorization root shape `authentication {{ {authentication_container} {{ ... }} }}`.

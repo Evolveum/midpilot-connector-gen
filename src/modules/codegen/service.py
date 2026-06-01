@@ -31,7 +31,9 @@ from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.selection.authorization import (
     AuthPayload,
     enrich_preferred_authorizations,
+    has_matching_preferred_authorization,
     is_single_other_authorization,
+    prepare_preferred_authorizations_for_generation,
     select_authorization_chunk_refs,
 )
 from src.modules.codegen.selection.docs_loader import read_adoc_text
@@ -230,6 +232,11 @@ async def _collect_authorization_relevant_chunks(
 
     auth_pairs = select_authorization_chunk_refs(relevant_map, auth_payload, preferred_authorizations)
     if not auth_pairs:
+        if preferred_authorizations and not has_matching_preferred_authorization(
+            auth_payload, preferred_authorizations
+        ):
+            logger.info("[Codegen:Authorization] No selected authorization was identified in analyzed auth output")
+            return [], []
         return None, None
 
     relevant_indices = list(range(len(auth_pairs)))
@@ -302,8 +309,13 @@ async def create_authorization(
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
     base_api_url = await get_session_base_api_url(session_id)
 
+    generator_preferred_authorizations = prepare_preferred_authorizations_for_generation(
+        auth_payload,
+        preferred_authorizations,
+    )
+
     generator = AuthorizationGenerator(
-        preferred_authorizations=preferred_authorizations,
+        preferred_authorizations=generator_preferred_authorizations,
         docs_text=docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
