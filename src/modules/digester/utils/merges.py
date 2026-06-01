@@ -20,6 +20,7 @@ from src.modules.digester.schema import (
     BaseAPIEndpoint,
     DiscoveryAttribute,
     DocProcessingSequenceItem,
+    DocSequenceItem,
     ExtendedObjectClass,
     ExtractedEndpointInfo,
     InfoMetadata,
@@ -185,7 +186,9 @@ async def merge_attribute_candidates(
             return attr
 
         relevant_sequences: List[DocProcessingSequenceItem] = []
-        for seq in attr.relevant_sequences:
+        for raw_seq in attr.relevant_sequences:
+            seq = DocSequenceItem.model_validate(raw_seq.model_dump(by_alias=True))
+
             relevant_sequences.append(
                 DocProcessingSequenceItem(
                     chunk_id=seq.chunk_id,
@@ -201,14 +204,14 @@ async def merge_attribute_candidates(
                 )
             )
 
-        if attr.relevant_sequences:
+        if relevant_sequences:
             first_chunk_id = relevant_sequences[0].chunk_id
             first_doc_id = (chunk_id_doc_id_map.get(first_chunk_id) or "unknown") if chunk_id_doc_id_map else "unknown"
 
             return AttributeProcessingInfo(
                 name=attr.name,
-                type=attr.type,
-                format=attr.format,
+                type=getattr(attr, "type", None),
+                format=getattr(attr, "format", None),
                 description=attr.description,
                 mandatory=None,
                 updatable=None,

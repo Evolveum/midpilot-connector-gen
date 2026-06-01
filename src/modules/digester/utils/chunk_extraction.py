@@ -23,7 +23,7 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
 from src.config import config
-from src.modules.digester.schema import DocMarkerMatch
+from src.modules.digester.schema import DocMarkerMatch, DocSequenceItem
 from src.modules.digester.utils.doc_chunk import build_chunk_id_to_doc_id
 from src.modules.digester.utils.fuzzysearch_worker import fuzzy_search_worker
 from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
@@ -433,13 +433,20 @@ async def _validate_relevant_sequence(
         logger.warning("%sNo doc_id provided, skipping sequence: %s", logger_prefix, item)
         return None
 
-    seq.chunk_id = str(doc_id)
-    seq.start_sequence = text[start_match.start_position : start_match.end_position]
-    seq.end_sequence = text[end_match.start_position : end_match.end_position]
+    validated_seq = DocSequenceItem(
+        chunk_id=str(doc_id),
+        start_sequence=text[start_match.start_position : start_match.end_position],
+        end_sequence=text[end_match.start_position : end_match.end_position],
+    )
 
-    logger.debug("%sNew validated start: %s, end: %s", logger_prefix, seq.start_sequence, seq.end_sequence)
+    logger.debug(
+        "%sNew validated start: %s, end: %s",
+        logger_prefix,
+        validated_seq.start_sequence,
+        validated_seq.end_sequence,
+    )
 
-    return seq
+    return validated_seq
 
 
 async def _validate_item_relevant_sequences(
