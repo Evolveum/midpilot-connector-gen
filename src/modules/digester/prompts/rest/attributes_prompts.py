@@ -162,23 +162,14 @@ You are an expert IGA/IDM analyst. You will be given:
 - a fragment, focused excerpt of the application’s OpenAPI schema or API documentation containing definition and description
   (its `properties`, and possibly `required`, `readOnly`/`writeOnly`, `deprecated`, or $refs).
 
-Your task: extract ONLY attributes that are explicitly defined as that object's `properties` in the documentation.
+Your task: discover ONLY attribute names and descriptions that are explicitly defined as that object's `properties` in the documentation.
 Use the structured output schema to respond.
 Do NOT infer or invent attributes. If the object is not present or has no `properties`, return an empty map.
 
 Rules:
 - The attribute should be clearly described as a property of the given object class.
-- type:
-  - Use the JSON Schema type if present.
-  - If `$ref: '#/components/schemas/NAME'`, set: "type": "reference NAME", "format": "reference".
-  - If inline object (has nested `properties`) → "type": "object", "format": "embedded".
-  - If not explicitly stated in this chunk, set type to null.
-- format:
-  - For primitives, use OpenAPI format registry values if present (e.g., "email", "uri", "int64", "date-time"); otherwise null.
-  - For arrays, set format to the **item** format (null if none).
-  - For object/reference, "embedded" or "reference" as above (no custom values).
-  - If not explicitly stated in this chunk, set format to null.
 - description: use the property’s description if present, else null.
+- Do not extract type, format, or boolean flags in this discovery step.
 
 Hard constrains:
 - Do NOT add attributes from examples, other objects, or unrelated sections.
@@ -194,12 +185,11 @@ Hard constrains:
 For each attribute you extract, provide:
 
 1. **name** - The attribute name as presented in the documentation
-2. **type** - The attribute type as defined above.
-3. **format** - The attribute format as defined above.
-4. **description** - The attribute description as defined above.
-5. **sequences** - An array of objects, each containing:
+2. **description** - The attribute description as defined above.
+3. **sequences** - An array of objects, each containing:
    - **start_sequence** - The exact opening phrase, start of the sequence - marker from the documentation (word-for-word, searchable)
    - **end_sequence** - The exact closing phrase, end of the sequence - marker from the documentation (word-for-word, searchable)
+   - Do NOT include chunk id. The system already knows which chunk is being processed.
                                 
 **Sequences**
 - Sequences are fragments of text that define the attribute in the documentation.
@@ -224,6 +214,7 @@ For each attribute you extract, provide:
 - **Multiple locations**: If an attribute is discussed in multiple documentation sections, return separate start/end marker pairs for each section—do not span unrelated content.
 - **Forbidden practices**:
   - Never include the content between markers—return only the markers themselves
+  - Never include `chunk_id`/`chunkId` in marker objects.
 - **Special characters**: Do not forget punctuation, parentheses, colons, newlines, and other non-word characters present in the markers.
 - **Relevance**: Markers should be extracted only and only from sections that are clearly tied to the given object class. Never include markers from sections that are about a different object class, even if the attribute name is the same.
 </instruction>""")
@@ -296,31 +287,28 @@ Please return:
 2. `to_be_deleted`: list of attribute names to remove.
 """)
 
-get_build_from_sequences_system_prompt = textwrap.dedent("""
+get_build_type_format_from_sequences_system_prompt = textwrap.dedent("""
 You are an expert IGA/IDM analyst. You will be given:
 - an object class name (e.g. "User", "Group", ...)
-- Attribute json object with these fields:
+- a compact attribute context with:
   - name
-  - type
-  - format
   - description
-  - flags (mandatory/updatable/creatable/readable/multivalue, etc.)
-  - relevant sequences with source evidence
+  - current type/format values when already known
+  - evidence sequences with source text
 
-Your primary task is to fill in any missing or null fields in the AttributeInfo using ONLY the provided relevant sequences as evidence. Each sequence includes a start and end marker that corresponds to a specific section of the documentation.
-Only fill those where there is clear, explicit evidence in the relevant sequences. Do NOT infer or guess values that are not directly supported by the text in those sequences.
+Your task is to find ONLY the attribute `type` and `format` using the provided relevant sequences as evidence. Each sequence includes a start and end marker that corresponds to a specific section of the documentation.
+Only fill `type` and `format` where there is clear, explicit evidence in the relevant sequences. Do NOT infer or guess values that are not directly supported by the text in those sequences.
                                                          
-Your secondary task is to verify the existing non-null fields and correct them if there is clear and irrefutable evidence in the relevant sequences that they are wrong.
+Your secondary task is to verify the existing non-null `type` and `format` and correct them if there is clear and irrefutable evidence in the relevant sequences that they are wrong.
 However, with this second task be very conservative in making corrections. Only change existing non-null values if the evidence is overwhelmingly clear and unambiguous.
                                                          
 Rules:
-- For each field currently null or missing, fill it only if there is explicit, unambiguous evidence in the relevant sequences.
-- For each field currently non-null, only change it if the relevant sequences provide overwhelmingly clear and irrefutable evidence that it is incorrect.
-- Be careful to not set a field if the evidence is missing, unclear, or contradictory. In such cases, keep the field null or unchanged.
+- Fill only `type` and `format`.
+- Keep `description` and all boolean flags unchanged.
+- For `type` and `format` currently null or missing, fill only if there is explicit, unambiguous evidence in the relevant sequences.
+- For `type` and `format` currently non-null, only change it if the relevant sequences provide overwhelmingly clear and irrefutable evidence that it is incorrect.
+- Be careful to not set `type` or `format` if the evidence is missing, unclear, or contradictory. In such cases, keep the field null or unchanged.
 - Implied evidence is not sufficient; there must be direct, explicit statements in the relevant sequences to support any changes or fillings.               
-- Be careful with time related attributes (e.g., "created", "modified" times) and their mandatory flag - there can be differences between "mandatory" flag in IDM integration sense and the application's point of view.
-- Only set the mandatory flag to true if the documentation explicitly states that the attribute is required in IDM integration point of view.                                    
-- When a field can be filled as a list, set the multivalue flag to true.
 - type:
   - Use the JSON Schema type if present.
   - If `$ref: '#/components/schemas/NAME'`, set: "type": "reference NAME", "format": "reference".
@@ -335,18 +323,71 @@ Rules:
 Hard constraints:
   - Do NOT invent data.
   - Do NOT use knowledge outside the provided docs payload.
-  - If nothing can be improved, return the attributes exactly as received.
+  - Do NOT fill or change description or boolean flags.
+  - Return only a partial JSON object with these fields: `type`, `format`.
+  - Do NOT return `name`, `description`, boolean flags, `relevant_sequences`, or any other attribute fields.
+  - If type/format cannot be improved, keep existing values when present; otherwise return null for unknown values.
 """)
 
-get_build_from_sequences_user_prompt = textwrap.dedent("""
+get_build_type_format_from_sequences_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
 
-<attribute_json>
-{attribute_json}
-</attribute_json>
+<attribute_context>
+{attribute_context}
+</attribute_context>
 
-Fill primarily the missing fields, in case that there is clear evidence in the relevant sequences.
-You can also correct existing non-null values if there is overwhelming evidence that they are wrong.
+Find only the type and format, in case that there is clear evidence in the relevant sequences.
+You can also correct existing non-null type/format values if there is overwhelming evidence that they are wrong.
+
+Return the json object based on format instructions.
+""")
+
+get_build_boolean_flags_from_sequences_system_prompt = textwrap.dedent("""
+You are an expert IGA/IDM analyst. You will be given:
+- an object class name (e.g. "User", "Group", ...)
+- a compact attribute context with:
+  - name
+  - type
+  - format
+  - description
+  - current boolean values when already known
+  - evidence sequences with source text
+
+Your task is to find ONLY boolean attribute values using the provided relevant sequences as evidence.
+Evaluate the current attribute one by one. Do NOT infer or guess values that are not directly supported by the text in those sequences.
+
+Rules:
+- Fill only these boolean fields: `mandatory`, `updatable`, `creatable`, `readable`, `multivalue`, `returnedByDefault`.
+- Keep `type`, `format`, and `description` unchanged.
+- For each boolean field currently null or missing, fill it only if there is explicit, unambiguous evidence in the relevant sequences.
+- For each boolean field currently non-null, only change it if the relevant sequences provide overwhelmingly clear and irrefutable evidence that it is incorrect.
+- Be careful with time related attributes (e.g., "created", "modified" times) and their mandatory flag - there can be differences between "mandatory" flag in IDM integration sense and the application's point of view.
+- Only set the mandatory flag to true if the documentation explicitly states that the attribute is required in IDM integration point of view.
+- mandatory: true if the attribute is required; false only if explicitly optional/not required; null if unknown.
+- updatable: false if readOnly=true or explicitly not updateable; true only when explicitly supported; null if unknown.
+- creatable: false if readOnly=true or explicitly not allowed on create; true only when explicitly supported; null if unknown.
+- readable: false if writeOnly=true or explicitly not readable; true only when explicitly supported; null if unknown.
+- multivalue: true if the attribute is an array/list or explicitly multi-valued; false for explicit scalar/single-valued attributes; null if unknown.
+- returnedByDefault: true if explicitly returned by default; false if explicitly excluded, expandable, or loaded through a separate endpoint; null if unknown.
+
+Hard constraints:
+  - Do NOT invent data.
+  - Do NOT use knowledge outside the provided docs payload.
+  - Do NOT fill or change type, format, or description.
+  - Return only a partial JSON object with these fields: `mandatory`, `updatable`, `creatable`, `readable`, `multivalue`, `returnedByDefault`.
+  - Do NOT return `name`, `type`, `format`, `description`, `relevant_sequences`, or any other attribute fields.
+  - If boolean flags cannot be improved, keep existing values when present; otherwise return null for unknown values.
+""")
+
+get_build_boolean_flags_from_sequences_user_prompt = textwrap.dedent("""
+Object Class: {object_class}
+
+<attribute_context>
+{attribute_context}
+</attribute_context>
+
+Find only the boolean attribute values, in case that there is clear evidence in the relevant sequences.
+You can also correct existing non-null boolean values if there is overwhelming evidence that they are wrong.
 
 Return the json object based on format instructions.
 """)
@@ -355,13 +396,13 @@ get_consolidate_attributes_system_prompt = textwrap.dedent("""
 You are an expert IGA/IDM analyst specializing in consolidating and refining API attribute information.
 You will be given:
 - an object class name (e.g. "User", "Group", ...)
-- an attribute json object with these fields:
+- a compact attribute context with:
   - name
   - type
   - format
   - description
-  - flags (mandatory/updatable/creatable/readable/multivalue, etc.)
-  - relevant sequences with source evidence
+  - known boolean flags
+  - evidence sequences with source text
 
 Your primary task is to review the provided attribute information and produce a consolidated and refined version of it, ensuring that all fields are as accurate as possible based on the provided evidence in the relevant sequences.                                                           
 
@@ -388,9 +429,9 @@ Hard constraints:
 get_consolidate_attributes_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
                                                          
-<attribute_json>
-{attribute_json}
-</attribute_json>
+<attribute_context>
+{attribute_context}
+</attribute_context>
                                                          
 Review the provided attribute information and produce a consolidated and refined version of it, ensuring that all fields are as accurate as possible based on the provided evidence in the relevant sequences.
 Do not change the null flags/fields.

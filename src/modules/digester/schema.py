@@ -51,6 +51,27 @@ class DocSequenceItem(BaseModel):
     )
 
 
+class DocSequenceMarker(BaseModel):
+    """
+    Marker pair returned by the LLM before the system attaches the known chunk id.
+    """
+
+    model_config = {"extra": "forbid", "populate_by_name": True}
+
+    start_sequence: str = Field(
+        ...,
+        description="Unique token / word sequence that identifies the start of the relevant chunk.",
+        validation_alias=AliasChoices("start_sequence", "startSequence"),
+        serialization_alias="startSequence",
+    )
+    end_sequence: str = Field(
+        ...,
+        description="Unique token / word sequence that identifies the end of the relevant chunk.",
+        validation_alias=AliasChoices("end_sequence", "endSequence"),
+        serialization_alias="endSequence",
+    )
+
+
 class DocProcessingSequenceItem(DocSequenceItem):
     """
     DocSequenceItem with full text field for easier processing.
@@ -725,7 +746,24 @@ class InfoResponse(BaseModel):
 
 class AttributeBase(BaseModel):
     """
-    Base class for attributes, can be extended with additional fields if needed.
+    Base named attribute schema.
+    """
+
+    name: str = Field(
+        ...,
+        description=(
+            "The attribute name as it appears in the documentation. For OpenAPI/JSON Schema, use the property name. Preserve original casing and formatting (e.g., 'userName', 'startDate', 'is_active')."
+        ),
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
+    )
+
+
+class AttributeTypeFormatBase(AttributeBase):
+    """
+    Named attribute schema enriched with type and format.
     """
 
     type: Optional[str] = Field(
@@ -748,15 +786,11 @@ class AttributeBase(BaseModel):
             "the payload. Use null if unknown."
         ),
     )
-    description: Optional[str] = Field(
-        default=None,
-        description="Short description of attribute copied from documentation. Property description from the schema; null if not provided.",
-    )
 
 
-class AttributeEnhancedInfo(AttributeBase):
+class AttributeBooleanFlagsBase(AttributeTypeFormatBase):
     """
-    Base attribute info class for both SCIM and REST
+    Complete named attribute schema enriched with boolean flags.
     """
 
     mandatory: Optional[bool] = Field(
@@ -789,48 +823,10 @@ class AttributeEnhancedInfo(AttributeBase):
     )
 
 
-class ExtractedAttributeInfoSCIM(AttributeEnhancedInfo):
+class AttributeRelevantDocumentationsMixin(BaseModel):
     """
-    LLM extraction model for object class property metadata.
-    Contains only fields the LLM should produce.
+    Shared relevant-documentation field for persisted/API attribute metadata.
     """
-
-    scimAttribute: Optional[str] = Field(
-        default=None,
-        description=(
-            "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
-            "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
-        ),
-    )
-
-
-class DiscoveryAttribute(AttributeBase):
-    name: str = Field(
-        ...,
-        description=(
-            "The attribute name as it appears in the documentation. For OpenAPI/JSON Schema, use the property name. Preserve original casing and formatting (e.g., 'userName', 'startDate', 'is_active')."
-        ),
-    )
-
-    relevant_sequences: List[DocSequenceItem] = Field(
-        description=("List of relevant document sequences that support the presence of this attribute. ")
-    )
-
-
-class AttributeDiscoveryResponse(BaseModel):
-    """
-    Container for extracted attributes of an object class in discovery phase.
-    Return an empty list when none are present in the chunk.
-    """
-
-    attributes: List[DiscoveryAttribute] = Field(
-        default_factory=list,
-        description="List of extracted attributes for the object class.",
-    )
-
-
-class AttributeInfoBase(AttributeEnhancedInfo):
-    model_config = {"validate_by_name": True}
 
     relevant_documentations: List[Dict[str, str]] = Field(
         default_factory=list,
@@ -842,6 +838,8 @@ class AttributeInfoBase(AttributeEnhancedInfo):
             "This field is populated automatically by the system and should NOT be filled by the LLM."
         ),
     )
+
+    model_config = {"validate_by_name": True}
 
     @field_validator("relevant_documentations", mode="before")
     @classmethod
@@ -876,6 +874,64 @@ class AttributeInfoBase(AttributeEnhancedInfo):
         return serialized
 
 
+class AttributeInfoBase(AttributeBooleanFlagsBase, AttributeRelevantDocumentationsMixin):
+    """
+    Attribute metadata stored under an attribute-name map key.
+
+    This model intentionally does not include `name`; the surrounding map key is
+    the stable attribute identifier in persisted/API payloads.
+    """
+
+    name: str = Field(
+        default="",
+        description=(
+            "Optional copy of the attribute name for validation compatibility. API and persisted payloads use the "
+            "surrounding attributes map key as the canonical name, so this field is not serialized."
+        ),
+        exclude=True,
+    )
+
+
+class ExtractedAttributeInfoSCIM(AttributeInfoBase):
+    """
+    LLM extraction model for object class property metadata.
+    Contains only fields the LLM should produce.
+    """
+
+    scimAttribute: Optional[str] = Field(
+        default=None,
+        description=(
+            "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute "
+            "(e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
+        ),
+    )
+
+
+class DiscoveryAttribute(AttributeBase):
+    model_config = {"extra": "forbid"}
+
+    relevant_sequences: List[DocSequenceMarker] = Field(
+        description=(
+            "List of relevant document marker pairs that support the presence of this attribute. "
+            "The system attaches the chunk id after validating the markers."
+        )
+    )
+
+
+class AttributeDiscoveryResponse(BaseModel):
+    """
+    Container for extracted attributes of an object class in discovery phase.
+    Return an empty list when none are present in the chunk.
+    """
+
+    attributes: List[DiscoveryAttribute] = Field(
+        default_factory=list,
+        description="List of extracted attributes for the object class.",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
 class AttributeInfoRest(AttributeInfoBase):
     relevant_sequences: List[DocSequenceItem] = Field(
         description=("List of relevant document sequences that support the presence of this attribute. ")
@@ -886,6 +942,29 @@ class AttributeBuildResponse(AttributeInfoBase):
     """
     Container for extracted attributes of an object class after building the attribute info.
     Return an empty list when none are present in the chunk.
+    """
+
+
+class AttributeTypeFormatBuildResponse(BaseModel):
+    """
+    LLM response for the type/format enrichment phase.
+    """
+
+    type: Optional[str] = Field(
+        default=None,
+        description="Attribute type found or corrected during type/format enrichment. Use null if unknown.",
+    )
+    format: Optional[str] = Field(
+        default=None,
+        description="Attribute format found or corrected during type/format enrichment. Use null if unknown.",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class AttributeBooleanFlagsBuildResponse(BaseModel):
+    """
+    LLM response for the boolean flag enrichment phase.
     """
 
     mandatory: Optional[bool] = Field(
@@ -917,6 +996,8 @@ class AttributeBuildResponse(AttributeInfoBase):
         ),
     )
 
+    model_config = {"extra": "forbid"}
+
 
 class AttributeInfoScim(AttributeInfoBase):
     """
@@ -932,14 +1013,7 @@ class AttributeInfoScim(AttributeInfoBase):
     )
 
 
-class AttributeProcessingInfo(AttributeInfoBase):
-    name: str = Field(
-        ...,
-        description=(
-            "The attribute name as it appears in the documentation. For OpenAPI/JSON Schema, use the property name. Preserve original casing and formatting (e.g., 'userName', 'startDate', 'is_active')."
-        ),
-    )
-
+class AttributeProcessingInfo(AttributeBooleanFlagsBase, AttributeRelevantDocumentationsMixin):
     relevant_sequences: List[DocProcessingSequenceItem] = Field(
         description=("List of document sequences that support the presence of this attribute, includes full text")
     )
