@@ -90,25 +90,25 @@ async def generate_authorization(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
+    input_preferred_authorizations = _preferred_authorizations_from_input(codegen_input)
+
     auth_output_raw = await repo.get_session_data(session_id, "authOutput")
     if not isinstance(auth_output_raw, Mapping) or not auth_output_raw:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No auth output found in session {session_id}. Please run /digester/{session_id}/auth endpoint first.",
-        )
-    auth_output = cast(Mapping[str, Any], auth_output_raw)
-    try:
-        auth_output = cast(
-            Mapping[str, Any],
-            await _hydrate_auth_sequences_from_relevance(db, session_id, auth_output),
-        )
-    except Exception:
-        # Keep existing payload when relevance rows are unavailable (e.g., tests/mocks or partial sessions).
-        pass
+        auth_output: Mapping[str, Any] = {"auth": []}
+    else:
+        auth_output = cast(Mapping[str, Any], auth_output_raw)
+        try:
+            auth_output = cast(
+                Mapping[str, Any],
+                await _hydrate_auth_sequences_from_relevance(db, session_id, auth_output),
+            )
+        except Exception:
+            # Keep existing payload when relevance rows are unavailable (e.g., tests/mocks or partial sessions).
+            pass
 
     preferred_authorizations = enrich_preferred_authorizations(
         auth_output,
-        _preferred_authorizations_from_input(codegen_input),
+        input_preferred_authorizations,
     )
     repair_context = codegen_input.repair_context() if codegen_input else None
     context_payload = codegen_input.context_payload() if codegen_input else {}

@@ -6,14 +6,34 @@
 
 from typing import Any, Dict, List, Mapping, Optional, TypeAlias
 
+from src.modules.digester.enums import auth_type_match_key, normalize_auth_type_value
+
 AuthPayload: TypeAlias = Mapping[str, Any]
 PreferredAuthorizations: TypeAlias = Optional[List[Dict[str, Any]]]
+
+ANALYSIS_SUPPORT_FIELD = "analysisSupport"
+ANALYSIS_SUPPORT_SUPPORTED = "supported"
+ANALYSIS_SUPPORT_UNSUPPORTED = "unsupported"
+UNSUPPORTED_AUTH_QUIRKS = (
+    "Selected in midPoint, but this authentication method was not identified in the analyzed application "
+    "documentation. No application-specific authorization customization can be generated."
+)
 
 
 def _auth_key(auth_item: Mapping[str, Any]) -> tuple[str, str]:
     name = str(auth_item.get("name") or "").strip().lower()
-    auth_type = str(auth_item.get("type") or "").strip().lower()
+    auth_type = auth_type_match_key(auth_item.get("type"))
     return name, auth_type
+
+
+def _normalize_preferred_authorization(preferred: Mapping[str, Any]) -> Dict[str, Any]:
+    item = {key: value for key, value in preferred.items() if value is not None}
+    normalized_type = normalize_auth_type_value(item.get("type"), preserve_unknown=True)
+    if normalized_type:
+        item["type"] = normalized_type
+    else:
+        item.pop("type", None)
+    return item
 
 
 def _auth_items_from_payload(auth_payload: AuthPayload) -> List[Mapping[str, Any]]:
@@ -21,6 +41,26 @@ def _auth_items_from_payload(auth_payload: AuthPayload) -> List[Mapping[str, Any
     if not isinstance(raw_auth, list):
         return []
     return [item for item in raw_auth if isinstance(item, Mapping)]
+
+
+def _find_matching_auth_item(
+    auth_items: List[Mapping[str, Any]],
+    preferred: Mapping[str, Any],
+) -> Optional[Mapping[str, Any]]:
+    preferred_name = str(preferred.get("name") or "").strip().lower()
+    preferred_type = auth_type_match_key(preferred.get("type"))
+    if not preferred_name:
+        return None
+
+    return next(
+        (
+            auth_item
+            for auth_item in auth_items
+            if _auth_key(auth_item) == (preferred_name, preferred_type)
+            or (not preferred_type and _auth_key(auth_item)[0] == preferred_name)
+        ),
+        None,
+    )
 
 
 def enrich_preferred_authorizations(
@@ -32,23 +72,12 @@ def enrich_preferred_authorizations(
 
     auth_items = _auth_items_from_payload(auth_payload)
     if not auth_items:
-        return preferred_authorizations
+        return [_normalize_preferred_authorization(preferred) for preferred in preferred_authorizations]
 
     enriched: List[Dict[str, Any]] = []
     for preferred in preferred_authorizations:
-        item = {key: value for key, value in preferred.items() if value is not None}
-        preferred_name = str(item.get("name") or "").strip().lower()
-        preferred_type = str(item.get("type") or "").strip().lower()
-
-        match = next(
-            (
-                auth_item
-                for auth_item in auth_items
-                if _auth_key(auth_item) == (preferred_name, preferred_type)
-                or (not preferred_type and _auth_key(auth_item)[0] == preferred_name)
-            ),
-            None,
-        )
+        item = _normalize_preferred_authorization(preferred)
+        match = _find_matching_auth_item(auth_items, item)
 
         if match is not None:
             if not item.get("type") and match.get("type"):
@@ -59,6 +88,43 @@ def enrich_preferred_authorizations(
         enriched.append(item)
 
     return enriched
+
+
+def prepare_preferred_authorizations_for_generation(
+    auth_payload: AuthPayload,
+    preferred_authorizations: PreferredAuthorizations,
+) -> PreferredAuthorizations:
+    enriched = enrich_preferred_authorizations(auth_payload, preferred_authorizations)
+    if not enriched:
+        return enriched
+
+    auth_items = _auth_items_from_payload(auth_payload)
+    prepared: List[Dict[str, Any]] = []
+    for preferred in enriched:
+        item = _normalize_preferred_authorization(preferred)
+        if item.get("quirks"):
+            item["quirks"] = str(item["quirks"]).strip()
+
+        match = _find_matching_auth_item(auth_items, item)
+        if match is None:
+            item[ANALYSIS_SUPPORT_FIELD] = ANALYSIS_SUPPORT_UNSUPPORTED
+            if not item.get("quirks"):
+                item["quirks"] = UNSUPPORTED_AUTH_QUIRKS
+        else:
+            item[ANALYSIS_SUPPORT_FIELD] = ANALYSIS_SUPPORT_SUPPORTED
+
+        prepared.append(item)
+
+    return prepared
+
+
+def is_single_other_authorization(preferred_authorizations: PreferredAuthorizations) -> bool:
+    if not preferred_authorizations or len(preferred_authorizations) != 1:
+        return False
+
+    authorization = _normalize_preferred_authorization(preferred_authorizations[0])
+    name = str(authorization.get("name") or "").strip().lower()
+    return name == "other" and auth_type_match_key(authorization.get("type")) == "other"
 
 
 def _selected_auth_chunk_ids(auth_payload: AuthPayload, preferred_authorizations: PreferredAuthorizations) -> set[str]:
@@ -86,6 +152,17 @@ def _selected_auth_chunk_ids(auth_payload: AuthPayload, preferred_authorizations
                 chunk_ids.add(str(chunk_id))
 
     return chunk_ids
+
+
+def has_matching_preferred_authorization(
+    auth_payload: AuthPayload,
+    preferred_authorizations: PreferredAuthorizations,
+) -> bool:
+    if not preferred_authorizations:
+        return False
+
+    auth_items = _auth_items_from_payload(auth_payload)
+    return any(_find_matching_auth_item(auth_items, preferred) is not None for preferred in preferred_authorizations)
 
 
 def _normalize_chunk_refs(value: Any) -> List[Dict[str, Any]]:
@@ -128,7 +205,7 @@ def select_authorization_chunk_refs(
 
     selected_chunk_ids = _selected_auth_chunk_ids(auth_payload, preferred_authorizations)
     if not selected_chunk_ids:
-        return auth_pairs
+        return auth_pairs if has_matching_preferred_authorization(auth_payload, preferred_authorizations) else []
 
     selected_pairs = [
         pair for pair in auth_pairs if str(pair.get("chunk_id") or pair.get("chunkId") or "") in selected_chunk_ids

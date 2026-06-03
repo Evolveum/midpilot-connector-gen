@@ -2,7 +2,6 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-import re
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import (
@@ -21,6 +20,7 @@ from src.modules.digester.enums import (
     EndpointMethod,
     EndpointType,
     RelevantLevel,
+    normalize_auth_type,
 )
 
 
@@ -372,8 +372,10 @@ class BaseAuth(BaseModel):
     type: AuthType = Field(
         ...,
         description=(
-            "Normalized auth type. Allowed values: 'basic', 'bearer', 'oauth2', 'apiKey', "
-            "'session', 'digest', 'mtls', 'openidConnect', 'other'."
+            "Normalized auth type. Allowed values: 'basic', 'bearer', 'jwtBearer', "
+            "'oauth2ClientCredentials', 'oauth2Password', 'oauth2Jwt', 'oauth2Saml', "
+            "'apiKey', 'session', 'digest', 'hawk', 'awsSignature', 'mtls', 'ntlm', "
+            "'openidConnect', 'other'."
         ),
     )
 
@@ -383,60 +385,7 @@ class BaseAuth(BaseModel):
         """
         Normalize auth type variations to a stable, closed vocabulary.
         """
-        if not isinstance(value, str):
-            return AuthType.OTHER
-
-        normalized = re.sub(r"[^a-z0-9]+", "", value.strip().lower())
-
-        aliases = {
-            # basic
-            "basic": AuthType.BASIC,
-            "basicauth": AuthType.BASIC,
-            "httpbasic": AuthType.BASIC,
-            # bearer
-            "bearer": AuthType.BEARER,
-            "jwt": AuthType.BEARER,
-            "token": AuthType.BEARER,
-            "accesstoken": AuthType.BEARER,
-            "personalaccesstoken": AuthType.BEARER,
-            "pat": AuthType.BEARER,
-            # oauth2
-            "oauth": AuthType.OAUTH2,
-            "oauth2": AuthType.OAUTH2,
-            "oauth2.0": AuthType.OAUTH2,
-            "oauth 2.0": AuthType.OAUTH2,
-            "oauth20": AuthType.OAUTH2,
-            "authorizationcode": AuthType.OAUTH2,
-            "clientcredentials": AuthType.OAUTH2,
-            "devicecode": AuthType.OAUTH2,
-            "pkce": AuthType.OAUTH2,
-            # api key
-            "apikey": AuthType.API_KEY,
-            "api_key": AuthType.API_KEY,
-            "apikeyauth": AuthType.API_KEY,
-            "xapikey": AuthType.API_KEY,
-            # session
-            "session": AuthType.SESSION,
-            "cookie": AuthType.SESSION,
-            "cookiesession": AuthType.SESSION,
-            "sessioncookie": AuthType.SESSION,
-            # digest
-            "digest": AuthType.DIGEST,
-            "httpdigest": AuthType.DIGEST,
-            # mtls
-            "mtls": AuthType.MTLS,
-            "mutualtls": AuthType.MTLS,
-            "clientcertificate": AuthType.MTLS,
-            # openid connect
-            "openidconnect": AuthType.OPENID_CONNECT,
-            "oidc": AuthType.OPENID_CONNECT,
-            "openid": AuthType.OPENID_CONNECT,
-            # fallback bucket
-            "other": AuthType.OTHER,
-            "custom": AuthType.OTHER,
-        }
-
-        return aliases.get(normalized, AuthType.OTHER)
+        return normalize_auth_type(value)
 
 
 class DiscoveryAuth(BaseAuth):

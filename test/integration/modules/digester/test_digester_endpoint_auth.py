@@ -70,7 +70,13 @@ async def test_get_auth_status_found():
     fake_status = MagicMock(
         jobId=job_id,
         status=JobStatus.finished,
-        result=AuthResponse(auth=[AuthInfo(name="OAuth2", type=AuthType.OAUTH2, relevant_sequences=[])]),
+        result=AuthResponse(
+            auth=[
+                AuthInfo(
+                    name="OAuth2 client credentials", type=AuthType.OAUTH2_CLIENT_CREDENTIALS, relevant_sequences=[]
+                )
+            ]
+        ),
     )
 
     with (
@@ -87,7 +93,7 @@ async def test_get_auth_status_found():
     assert response.jobId == job_id
     assert response.status == JobStatus.finished
     assert len(response.result.auth) == 1
-    assert response.result.auth[0].name == "OAuth2"
+    assert response.result.auth[0].name == "OAuth2 client credentials"
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_repo.get_session_data.assert_awaited_once_with(session_id, "authJobId")
     mock_status_builder.assert_awaited_once()

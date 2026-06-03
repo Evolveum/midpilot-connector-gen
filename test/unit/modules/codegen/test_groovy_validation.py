@@ -69,6 +69,54 @@ def test_authorization_input_requires_preferred_authorizations() -> None:
         AuthorizationCodegenInput.model_validate({"preferredAuthorizations": []})
 
 
+def test_authorization_input_requires_name_and_type() -> None:
+    with pytest.raises(ValidationError):
+        AuthorizationCodegenInput.model_validate({"preferredAuthorizations": [{"name": "Bearer token"}]})
+
+    with pytest.raises(ValidationError):
+        AuthorizationCodegenInput.model_validate({"preferredAuthorizations": [{"type": "bearer"}]})
+
+    with pytest.raises(ValidationError):
+        AuthorizationCodegenInput.model_validate({"preferredAuthorizations": [{"name": "Bearer token", "type": ""}]})
+
+
+def test_authorization_input_normalizes_known_auth_type_aliases() -> None:
+    wrapped_preferred = AuthorizationCodegenInput.model_validate(
+        {
+            "preferredAuthorizations": [
+                {"name": "HTTP JWT Bearer Token Authorization", "type": "jwt-bearer"},
+                {"name": "OAuth2 JWT Bearer", "type": "oauth2-jwt"},
+                {"name": "Custom auth", "type": "custom-experimental"},
+            ]
+        }
+    )
+
+    assert [authorization.type for authorization in wrapped_preferred.preferred_authorizations] == [
+        "jwtBearer",
+        "oauth2Jwt",
+        "custom-experimental",
+    ]
+
+
+def test_authorization_input_accepts_empty_repair_context_for_other_authorization() -> None:
+    operation_input = AuthorizationCodegenInput.model_validate(
+        {
+            "currentScript": "",
+            "midpointErrors": [""],
+            "preferredAuthorizations": [
+                {
+                    "name": "other",
+                    "type": "other",
+                    "quirks": "",
+                }
+            ],
+        }
+    )
+
+    assert not operation_input.is_repair
+    assert operation_input.context_payload() == {"preferredAuthorizations": [{"name": "other", "type": "other"}]}
+
+
 def test_codegen_operation_input_derives_repair_mode_without_validating_current_script() -> None:
     operation_input = CodegenOperationInput.model_validate(
         {

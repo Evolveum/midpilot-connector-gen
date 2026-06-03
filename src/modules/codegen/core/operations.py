@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
+from src.common.enums import ApiType
 from src.modules.codegen.core.base import (
     AttributesPayload,
     BaseGroovyGenerator,
@@ -16,6 +17,7 @@ from src.modules.codegen.core.base import (
 )
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
+from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
 from src.modules.digester.schema import RelationsResponse
 
 logger = logging.getLogger(__name__)
@@ -218,6 +220,64 @@ class RelationGenerator(BaseGroovyGenerator):
         return ""
 
 
+def build_other_authorization_scaffold(protocol: ApiType) -> str:
+    return (
+        "authentication {\n"
+        f"    {protocol.value.lower()} {{\n"
+        "        other {\n"
+        "            implementation {\n"
+        "                // write your custom implementation of authorization here\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )
+
+
+def _groovy_comment_text(value: Any) -> str:
+    return " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split())
+
+
+def _unsupported_authorization_comments(preferred_authorizations: Optional[list[Dict[str, Any]]]) -> list[str]:
+    if not preferred_authorizations:
+        return []
+
+    comments: list[str] = []
+    for authorization in preferred_authorizations:
+        if authorization.get(ANALYSIS_SUPPORT_FIELD) != ANALYSIS_SUPPORT_UNSUPPORTED:
+            continue
+
+        name = _groovy_comment_text(authorization.get("name")) or "Selected authorization"
+        auth_type = _groovy_comment_text(authorization.get("type"))
+        label = f"{name} ({auth_type})" if auth_type else name
+        comments.extend(
+            [
+                f"{label} was selected in midPoint, but it was not identified in the analyzed application documentation.",
+                "No application-specific authorization customization can be generated for this method.",
+            ]
+        )
+
+    return comments
+
+
+def build_authorization_scaffold(
+    protocol: ApiType,
+    preferred_authorizations: Optional[list[Dict[str, Any]]] = None,
+) -> str:
+    lines = [
+        "authentication {",
+        f"    {protocol.value.lower()} {{",
+    ]
+    lines.extend(f"        // {comment}" for comment in _unsupported_authorization_comments(preferred_authorizations))
+    lines.extend(
+        [
+            "    }",
+            "}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 class AuthorizationGenerator(BaseGroovyGenerator):
     def __init__(
         self,
@@ -226,17 +286,18 @@ class AuthorizationGenerator(BaseGroovyGenerator):
         docs_text: str,
         system_prompt: str,
         user_prompt: str,
-        protocol_label: str,
+        protocol: ApiType,
         base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
-        authentication_container = "scim" if protocol_label.lower() == "scim" else "rest"
+        authentication_container = protocol.value.lower()
+        default_scaffold = build_authorization_scaffold(protocol, preferred_authorizations)
         config = OperationConfig(
             operation_name="Authorization",
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            default_scaffold=f"authentication {{\n    {authentication_container} {{\n    }}\n}}\n",
-            logger_prefix=f"[Codegen:Authorization:{protocol_label}]",
+            default_scaffold=default_scaffold,
+            logger_prefix=f"[Codegen:Authorization:{protocol.name}]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["authorization_docs"] = docs_text
@@ -247,9 +308,11 @@ class AuthorizationGenerator(BaseGroovyGenerator):
         )
         super().__init__(config)
         self.authentication_container = authentication_container
+        self.protocol = protocol
+        self.preferred_authorizations = preferred_authorizations
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         return {}
 
     def get_initial_result(self, **kwargs: Any) -> str:
-        return f"authentication {{\n    {self.authentication_container} {{\n    }}\n}}\n"
+        return build_authorization_scaffold(self.protocol, self.preferred_authorizations)

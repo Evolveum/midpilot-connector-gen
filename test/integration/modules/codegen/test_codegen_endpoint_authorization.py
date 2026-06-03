@@ -35,7 +35,10 @@ async def test_generate_authorization_includes_preferred_authorizations_in_job_a
             },
         ]
     }
-    preferred_authorizations = [{"name": "Bearer token"}, {"name": "Basic authentication"}]
+    preferred_authorizations = [
+        {"name": "Bearer token", "type": "bearer"},
+        {"name": "Basic authentication", "type": "basic"},
+    ]
     enriched_preferred_authorizations = [
         {
             "name": "Bearer token",
@@ -61,6 +64,7 @@ async def test_generate_authorization_includes_preferred_authorizations_in_job_a
 
         response = await generate_authorization(
             session_id=session_id,
+            skip_cache=False,
             db=MagicMock(),
             codegen_input=AuthorizationCodegenInput.model_validate(
                 {"preferred_authorizations": preferred_authorizations}
@@ -81,6 +85,51 @@ async def test_generate_authorization_includes_preferred_authorizations_in_job_a
     inputs = update_args[1]
     assert inputs["authorizationJobId"] == str(job_id)
     assert inputs["authorizationInput"]["preferredAuthorizations"] == enriched_preferred_authorizations
+
+
+@pytest.mark.asyncio
+async def test_generate_authorization_allows_midpoint_authorization_when_auth_output_is_missing():
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.get_session_data = AsyncMock(return_value=None)
+    mock_repo.update_session = AsyncMock()
+
+    preferred_authorizations = [
+        {
+            "name": "HTTP JWT Bearer Token Authorization",
+            "type": "jwtBearer",
+            "quirks": "",
+        }
+    ]
+    expected_preferred_authorizations = [
+        {
+            "name": "HTTP JWT Bearer Token Authorization",
+            "type": "jwtBearer",
+        }
+    ]
+
+    with (
+        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+    ):
+        job_id = uuid4()
+        session_id = uuid4()
+        mock_schedule.return_value = job_id
+
+        response = await generate_authorization(
+            session_id=session_id,
+            skip_cache=False,
+            db=MagicMock(),
+            codegen_input=AuthorizationCodegenInput.model_validate(
+                {"preferred_authorizations": preferred_authorizations}
+            ),
+        )
+
+    assert response.jobId == job_id
+    _, schedule_kwargs = mock_schedule.call_args
+    assert schedule_kwargs["input_payload"]["auth"] == {"auth": []}
+    assert schedule_kwargs["input_payload"]["preferredAuthorizations"] == expected_preferred_authorizations
+    assert schedule_kwargs["worker_kwargs"]["preferred_authorizations"] == expected_preferred_authorizations
 
 
 @pytest.mark.asyncio

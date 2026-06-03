@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
+from src.modules.digester.enums import normalize_auth_type_value
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,12 @@ class PreferredAuthorizationPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(..., description="Authentication/authorization method name selected by the user.")
-    type: str | None = Field(default=None, description="Authentication/authorization type, e.g. bearer or oauth2.")
+    type: str = Field(
+        ...,
+        description=(
+            "Authentication/authorization type, e.g. bearer, jwtBearer, oauth2ClientCredentials, or oauth2Jwt."
+        ),
+    )
     quirks: str | None = Field(default=None, description="Optional extracted implementation notes.")
 
     @field_validator("name")
@@ -79,7 +85,15 @@ class PreferredAuthorizationPayload(BaseModel):
             raise ValueError("name cannot be empty")
         return normalized
 
-    @field_validator("type", "quirks")
+    @field_validator("type")
+    @classmethod
+    def normalize_type(cls, value: str) -> str:
+        normalized = normalize_auth_type_value(value, preserve_unknown=True)
+        if normalized is None:
+            raise ValueError("type cannot be empty")
+        return normalized
+
+    @field_validator("quirks")
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
