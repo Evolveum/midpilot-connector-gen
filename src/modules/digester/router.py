@@ -367,19 +367,45 @@ async def extract_class_attributes(
             detail=f"Object class '{object_class}' not found in session {session_id}.",
         )
 
+    api_type = await get_session_api_types(session_id)
+    is_scim = is_scim_api(api_type)
+
     criteria = DEFAULT_CRITERIA.model_copy()
     criteria.allowed_tags = [
         [normalize_object_class_name(object_class), normalize_object_class_name(object_class) + "s"]
     ]
     relevant_chunks_full = await filter_documentation_items(criteria, session_id, db=db)
 
-    # relevant_chunks = get_relevant_chunks(target_object_class)
     relevant_chunks = [
         {"doc_id": str(chunk["docId"]), "chunk_id": str(chunk["chunkId"])}
         for chunk in relevant_chunks_full
         if chunk.get("docId") and chunk.get("chunkId")
     ]
-    if not relevant_chunks:
+    if not relevant_chunks and is_scim:
+        relevance_repo = RelevantChunkRepository(db)
+        by_entity = await relevance_repo.get_relevant_chunks_grouped_by_entity(
+            session_id=session_id,
+            result_key="objectClassesOutput",
+        )
+        relevance_candidates = [normalize_object_class_name(object_class)]
+        superclass = target_object_class.get("superclass")
+        if isinstance(superclass, str) and superclass.strip():
+            relevance_candidates.append(normalize_object_class_name(superclass))
+
+        seen_pairs: set[tuple[str, str]] = set()
+        for entity_key in relevance_candidates:
+            for chunk in by_entity.get(entity_key, []):
+                doc_id = chunk.get("docId")
+                chunk_id = chunk.get("chunkId")
+                if not doc_id or not chunk_id:
+                    continue
+                pair = (str(doc_id), str(chunk_id))
+                if pair in seen_pairs:
+                    continue
+                relevant_chunks.append({"doc_id": pair[0], "chunk_id": pair[1]})
+                seen_pairs.add(pair)
+
+    if not relevant_chunks and not is_scim:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"No relevant chunks found for object class '{object_class}'. Cannot extract attributes.",

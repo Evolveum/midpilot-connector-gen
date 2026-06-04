@@ -65,6 +65,7 @@ async def test_extract_class_attributes_success():
             "src.modules.digester.router.get_session_documentation",
             new=AsyncMock(return_value=fake_docs),
         ),
+        patch("src.modules.digester.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
@@ -79,6 +80,66 @@ async def test_extract_class_attributes_success():
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "objectClassesOutput")
         mock_schedule.assert_awaited_once()
         mock_repo.update_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
+    session_id = uuid4()
+    job_id = uuid4()
+    chunk_id = str(uuid4())
+    doc_id = str(uuid4())
+
+    mock_object_classes_output = {
+        "objectClasses": [
+            {
+                "name": "UserPhoneNumbers",
+                "relevant": "true",
+                "superclass": "User",
+                "abstract": False,
+                "embedded": True,
+                "description": "Phone numbers for the User.",
+            }
+        ]
+    }
+
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.get_session_data = AsyncMock(return_value=mock_object_classes_output)
+    mock_repo.update_session = AsyncMock()
+    mock_relevance_repo = MagicMock()
+    mock_relevance_repo.get_relevant_chunks_grouped_by_entity = AsyncMock(
+        return_value={"user": [{"docId": doc_id, "chunkId": chunk_id}]}
+    )
+
+    with (
+        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevance_repo),
+        patch("src.modules.digester.router.get_session_api_types", new_callable=AsyncMock, return_value=["SCIM"]),
+        patch("src.modules.digester.router.filter_documentation_items", new=AsyncMock(return_value=[])),
+        patch(
+            "src.modules.digester.router.get_session_documentation",
+            new=AsyncMock(return_value=[{"docId": doc_id, "chunkId": chunk_id, "content": "User mapping docs"}]),
+        ),
+        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+    ):
+        mock_schedule.return_value = job_id
+
+        response = await extract_class_attributes(
+            session_id=session_id,
+            object_class="UserPhoneNumbers",
+            db=MagicMock(),
+        )
+
+    assert response.jobId == job_id
+    mock_schedule.assert_awaited_once()
+    schedule_kwargs = mock_schedule.call_args.kwargs
+    assert schedule_kwargs["worker_args"][1] == "UserPhoneNumbers"
+    assert schedule_kwargs["worker_args"][3] == [{"doc_id": doc_id, "chunk_id": chunk_id}]
+    mock_relevance_repo.get_relevant_chunks_grouped_by_entity.assert_awaited_once_with(
+        session_id=session_id,
+        result_key="objectClassesOutput",
+    )
+    mock_repo.update_session.assert_awaited_once()
 
 
 @pytest.mark.asyncio

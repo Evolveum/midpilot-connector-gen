@@ -707,21 +707,53 @@ async def extract_attributes(
         relevant_chunks: List of {doc_id, chunk_id} dicts indicating which chunks to process
         job_id: Job ID for progress tracking
     """
-    if not doc_items or not relevant_chunks:
-        logger.warning(f"[Digester:Attributes] No documentation or relevant chunks provided for {object_class}")
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
-
-    selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
-
-    if not selected_content:
-        logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
-
-    chunk_metadata_map = build_doc_metadata_map(doc_items)
-    chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
-
+    # TODO: Refactor this function
     api_type = await get_session_api_types(session_id)
     is_scim = is_scim_api(api_type)
+
+    if not doc_items:
+        if is_scim:
+            logger.info(
+                "[Digester:Attributes] No documentation provided for SCIM %s; using schema heuristics",
+                object_class,
+            )
+            selected_content: List[str] = []
+            chunk_ids: List[str] = []
+            chunk_metadata_map: Dict[str, Any] = {}
+            chunk_id_to_doc_id: Dict[str, str] = {}
+        else:
+            logger.warning(f"[Digester:Attributes] No documentation provided for {object_class}")
+            return {"result": {"attributes": {}}, "relevantDocumentations": []}
+    elif not relevant_chunks:
+        if is_scim:
+            logger.info(
+                "[Digester:Attributes] No relevant chunks provided for SCIM %s; using schema heuristics",
+                object_class,
+            )
+            selected_content = []
+            chunk_ids = []
+            chunk_metadata_map = build_doc_metadata_map(doc_items)
+            chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
+        else:
+            logger.warning(f"[Digester:Attributes] No relevant chunks provided for {object_class}")
+            return {"result": {"attributes": {}}, "relevantDocumentations": []}
+    else:
+        selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
+
+        if not selected_content:
+            if is_scim:
+                logger.info(
+                    "[Digester:Attributes] No selected documentation chunks for SCIM %s; using schema heuristics",
+                    object_class,
+                )
+                selected_content = []
+                chunk_ids = []
+            else:
+                logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
+                return {"result": {"attributes": {}}, "relevantDocumentations": []}
+
+        chunk_metadata_map = build_doc_metadata_map(doc_items)
+        chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
 
     if is_scim:
         result = await extract_scim_attributes(
