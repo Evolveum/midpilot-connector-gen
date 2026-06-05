@@ -30,7 +30,7 @@ from src.modules.digester.prompts.rest.sorting_output_prompts import (
     sort_object_classes_system_prompt,
     sort_object_classes_user_prompt,
 )
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     BaseObjectClass,
     ExtendedObjectClass,
     FinalObjectClass,

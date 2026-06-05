@@ -23,7 +23,7 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
 from src.config import config
-from src.modules.digester.schema import DocMarkerMatch, DocSequenceItem
+from src.modules.digester.schemas import DocMarkerMatch, DocSequenceItem
 from src.modules.digester.utils.doc_chunk import build_chunk_id_to_doc_id
 from src.modules.digester.utils.fuzzysearch_worker import fuzzy_search_worker
 from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
@@ -203,15 +203,15 @@ async def _find_best_fuzzy_literal(
         marker_word_cutoff_length,
     )
 
-    # print(f"[fuzzy] pool.process_pool = {pool.process_pool}")
     matches = await asyncio.get_event_loop().run_in_executor(
         pool.process_pool, fuzzy_search_worker, collapsed_text, collapsed_marker, start_pos, max_errors
     )
-    if started - time.time() > 2:
+    duration = time.time() - started
+    if duration > 2:
         logger.warning(
             "Fuzzy search for marker '%s' took a long time: %.2f seconds. Collapsed marker: '%s', start_pos: %d, error budget: %d, marker word cutoff length: %d",
             marker,
-            time.time() - started,
+            duration,
             collapsed_marker,
             start_pos,
             max_errors,
@@ -290,11 +290,12 @@ async def _find_closest_best_fuzzy_literal(
         if enable_marker_blending
         else start_marker.end_position_collapsed + max_length,
     )
-    if started - time.time() > 2:
+    duration = time.time() - started
+    if duration > 2:
         logger.warning(
             "Finished fuzzy search for end marker '%s' in time: %.2f seconds. Matches found: %d. Start marker collapsed positions: %d-%d. Enable marker blending: %s",
             marker,
-            time.time() - started,
+            duration,
             len(matches),
             start_marker.start_position_collapsed,
             start_marker.end_position_collapsed,

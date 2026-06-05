@@ -27,7 +27,7 @@ from src.modules.digester.prompts.scim.endpoints_prompts import (
     scim_endpoints_system_prompt,
     scim_endpoints_user_prompt,
 )
-from src.modules.digester.schema import ExtractedEndpointInfo, ExtractedEndpointResponse
+from src.modules.digester.schemas import ExtractedEndpointInfo, ExtractedEndpointResponse
 from src.modules.digester.scim.loader import (
     generate_scim_crud_endpoints,
     get_base_scim_endpoints,

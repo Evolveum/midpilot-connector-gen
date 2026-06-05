@@ -12,7 +12,7 @@ from fastapi import HTTPException
 
 from src.common.enums import JobStatus
 from src.modules.digester.router import extract_relations, get_relations_status, override_relations
-from src.modules.digester.schema import RelationsResponse
+from src.modules.digester.schemas import RelationsResponse
 
 
 # RELATIONS

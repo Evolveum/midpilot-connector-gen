@@ -13,7 +13,7 @@ from src.common.enums import JobStatus
 from src.modules.digester import service
 from src.modules.digester.enums import AuthType
 from src.modules.digester.router import extract_auth, get_auth_status
-from src.modules.digester.schema import AuthInfo, AuthResponse
+from src.modules.digester.schemas import AuthInfo, AuthResponse
 
 
 # AUTH

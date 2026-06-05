@@ -16,6 +16,7 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
 from src.config import config
+from src.modules.digester.enums import AuthType
 from src.modules.digester.prompts.auth_prompts import (
     auth_build_system_prompt,
     auth_build_user_prompt,
@@ -25,14 +26,13 @@ from src.modules.digester.prompts.auth_prompts import (
     get_auth_discovery_user_prompt,
 )
 from src.modules.digester.prompts.rest.sorting_output_prompts import sort_auth_system_prompt, sort_auth_user_prompt
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     AuthBuildResponse,
     AuthDedupResponse,
     AuthDiscoveryResponse,
     AuthInfo,
     AuthProcessingInfo,
     AuthResponse,
-    AuthType,
     DiscoveryAuth,
     DocProcessingSequenceItem,
     DocSequenceItem,

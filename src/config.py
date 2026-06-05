@@ -283,6 +283,7 @@ class DigesterSettings(BaseModel):
     )
     build_from_sequences_step_size: int = Field(
         2,
+        ge=1,
         description="Number of sequences to process concurrently in the build_from_sequences function.",
     )
     min_start_sequence_len_attributes: int = Field(

@@ -9,7 +9,7 @@ import pytest
 
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extractors.rest.object_class import deduplicate_and_sort_object_classes
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     ExtendedObjectClass,
     ObjectClassesConfidenceResponse,
     ObjectClassesRankedResponse,

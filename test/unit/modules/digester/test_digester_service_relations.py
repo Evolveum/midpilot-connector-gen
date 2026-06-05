@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester import service
-from src.modules.digester.schema import RelationRecord
+from src.modules.digester.schemas import RelationRecord
 
 
 # ==================== EXTRACT RELATIONS ====================

@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen import service
-from src.modules.digester.schema import RelationsResponse
+from src.modules.digester.schemas import RelationsResponse
 
 
 def test_collect_pairs_new_format():

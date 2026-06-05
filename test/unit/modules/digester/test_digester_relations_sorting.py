@@ -6,7 +6,7 @@ from src.modules.digester.extractors.rest.relations import (
     _extract_relevant_names,
     _sort_relations_by_iga_priority,
 )
-from src.modules.digester.schema import RelationRecord
+from src.modules.digester.schemas import RelationRecord
 
 
 def _relation(

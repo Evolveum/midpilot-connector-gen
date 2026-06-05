@@ -25,7 +25,7 @@ from src.modules.digester.prompts.scim.attributes_prompts import (
     get_scim_attributes_system_prompt,
     get_scim_attributes_user_prompt,
 )
-from src.modules.digester.schema import ExtractedAttributeResponseSCIM
+from src.modules.digester.schemas import ExtractedAttributeResponseSCIM
 from src.modules.digester.scim.attributes import (
     get_scim_complex_attribute_reference_type,
     get_scim_schema_attribute_context,

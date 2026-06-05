@@ -39,7 +39,7 @@ from src.modules.codegen.selection.authorization import (
 from src.modules.codegen.selection.docs_loader import read_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.codegen.utils.map_to_record import attributes_to_records_for_codegen
-from src.modules.digester.schema import AttributeResponse, EndpointResponse, RelationsResponse
+from src.modules.digester.schemas import AttributeResponse, EndpointResponse, RelationsResponse
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ import pytest
 
 from src.modules.digester import service
 from src.modules.digester.enums import AuthType
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     AuthInfo,
     AuthProcessingInfo,
     AuthResponse,

@@ -27,7 +27,7 @@ from src.modules.digester.prompts.rest.endpoints_prompts import (
     get_endpoints_system_prompt,
     get_endpoints_user_prompt,
 )
-from src.modules.digester.schema import EndpointParamInfo, ExtractedEndpointInfo, ExtractedEndpointResponse
+from src.modules.digester.schemas import EndpointParamInfo, ExtractedEndpointInfo, ExtractedEndpointResponse
 from src.modules.digester.utils.llm_execution import invoke_llm, run_chunk_groups_concurrently
 from src.modules.digester.utils.merges import merge_endpoint_candidates
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags

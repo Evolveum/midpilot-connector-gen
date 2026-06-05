@@ -18,7 +18,7 @@ from src.modules.codegen.core.base import (
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
-from src.modules.digester.schema import RelationsResponse
+from src.modules.digester.schemas import RelationsResponse
 
 logger = logging.getLogger(__name__)
 

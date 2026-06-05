@@ -32,7 +32,7 @@ from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.map_to_record import _without_relevant_documentations
 from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
-from src.modules.digester.schema import AttributeResponse, EndpointResponse
+from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 
 logger = logging.getLogger(__name__)
 

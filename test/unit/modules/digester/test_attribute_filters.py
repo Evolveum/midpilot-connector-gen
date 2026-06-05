@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.modules.digester.schema import AttributeProcessingInfo
+from src.modules.digester.schemas import AttributeProcessingInfo
 from src.modules.digester.utils.attribute_filters import (
     filter_ignored_attributes,
     ignore_attribute_name,

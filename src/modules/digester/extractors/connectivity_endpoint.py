@@ -22,7 +22,7 @@ from src.modules.digester.prompts.connectivity_endpoint_prompts import (
     get_connectivity_endpoint_system_prompt,
     get_connectivity_endpoint_user_prompt,
 )
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     ConnectivityEndpointInfo,
     ConnectivityEndpointRankingResponse,
     ConnectivityEndpointResponse,

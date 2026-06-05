@@ -32,7 +32,7 @@ from src.modules.digester.prompts.rest.attributes_prompts import (
     get_consolidate_attributes_system_prompt,
     get_consolidate_attributes_user_prompt,
 )
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     AttributeBooleanFlagsBuildResponse,
     AttributeBuildResponse,
     AttributeDedupResponse,
@@ -310,7 +310,6 @@ async def _build_attr_from_sequences(
                 begin,
                 end,
             )
-            pass
 
     return attr
 
@@ -372,8 +371,8 @@ async def build_attributes_from_sequences(
         if attr.relevant_sequences
     ]
 
-    all_builded_attrs = await asyncio.gather(*flag_tasks)
-    enriched_attrs = [attr for attr in all_builded_attrs if attr is not None]
+    enriched_results = await asyncio.gather(*flag_tasks)
+    enriched_attrs = [attr for attr in enriched_results if attr is not None]
     logger.info(
         "[Digester:Attributes] Phase=attribute_enrichment_finished object_class=%s attributes=%d",
         object_class,
@@ -661,25 +660,28 @@ async def extract_attributes(
         object_class,
         len(filtered_attributes),
     )
-    builded_attributes = await build_attributes_from_sequences(filtered_attributes, object_class)
+    enriched_attributes = await build_attributes_from_sequences(filtered_attributes, object_class)
 
     logger.debug(
         "[Digester:Attributes] Attributes after building from sequences: %s",
         json.dumps(
-            [attr.model_dump(exclude={"relevant_sequences", "relevant_documentations"}) for attr in builded_attributes],
+            [
+                attr.model_dump(exclude={"relevant_sequences", "relevant_documentations"})
+                for attr in enriched_attributes
+            ],
             indent=2,
             ensure_ascii=False,
         ),
     )
 
-    if not builded_attributes:
+    if not enriched_attributes:
         logger.error("[Digester:Attributes] No attributes left after building from sequences, returning empty result")
         await update_job_progress(
             job_id, stage=JobStage.failed, message="Attribute extraction complete with no attributes found"
         )
         return {"result": {"attributes": {}}, "relevantDocumentations": []}
 
-    consolidated_attributes = await consolidate_attributes(builded_attributes, object_class)
+    consolidated_attributes = await consolidate_attributes(enriched_attributes, object_class)
 
     logger.debug(
         "[Digester:Attributes] Attributes after final consolidation: %s",

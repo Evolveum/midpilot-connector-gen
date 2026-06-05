@@ -35,7 +35,7 @@ from src.modules.codegen.schema import (
     GroovyCodePayload,
 )
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
-from src.modules.digester.schema import RelationsResponse
+from src.modules.digester.schemas import RelationsResponse
 
 router = APIRouter()
 

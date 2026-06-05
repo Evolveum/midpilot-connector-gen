@@ -15,7 +15,7 @@ from src.modules.digester.router import (
     get_class_attributes_status,
     override_class_attributes,
 )
-from src.modules.digester.schema import AttributeInfoScim, AttributeResponse
+from src.modules.digester.schemas import AttributeInfoScim, AttributeResponse
 
 
 # CLASS ATTRIBUTES

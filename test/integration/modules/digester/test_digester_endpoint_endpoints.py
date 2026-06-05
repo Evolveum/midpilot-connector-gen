@@ -16,7 +16,7 @@ from src.modules.digester.router import (
     get_class_endpoints_status,
     override_class_endpoints,
 )
-from src.modules.digester.schema import EndpointInfo, EndpointResponse
+from src.modules.digester.schemas import EndpointInfo, EndpointResponse
 
 
 # CLASS ENDPOINTS

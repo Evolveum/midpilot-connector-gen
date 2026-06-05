@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import logging
 from typing import Any, Dict, Optional
 from uuid import UUID
 
@@ -53,7 +54,7 @@ from src.common.utils.relevance import (
 from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
 from src.common.utils.status_response import build_typed_job_status_response
 from src.modules.digester import service
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     AttributeResponse,
     AuthResponse,
     ConnectivityEndpointResponse,
@@ -75,6 +76,32 @@ from src.modules.digester.utils.object_classes import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _safe_exception_summary(exc: Exception) -> str:
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            return repr(errors(include_input=False))
+        except TypeError:
+            return type(exc).__name__
+    return type(exc).__name__
+
+
+def _log_status_result_fallback(
+    session_id: UUID,
+    result_key: str,
+    response_model: type[Any],
+    exc: Exception,
+) -> None:
+    logger.warning(
+        "[Digester:Router] Failed to hydrate session result; keeping original job result. session_id=%s result_key=%s response_model=%s error=%s",
+        session_id,
+        result_key,
+        response_model.__name__,
+        _safe_exception_summary(exc),
+    )
 
 
 async def _store_result_with_relevance(
@@ -183,9 +210,9 @@ async def get_object_classes_status(
                 )
                 # Validate and parse the session data
                 response.result = ObjectClassesResponse.model_validate(object_classes_output)
-            except Exception:
+            except Exception as exc:
                 # If validation fails, keep the original job result
-                pass
+                _log_status_result_fallback(session_id, "objectClassesOutput", ObjectClassesResponse, exc)
 
     return response
 
@@ -230,7 +257,13 @@ async def get_specific_object_class(
         try:
             relevance_map = await _load_object_class_relevance_map(db, session_id)
             result["relevantDocumentations"] = relevance_map.get(normalized_name, [])
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "[Digester:Router] Failed to load object class relevance map; using stored relevance. session_id=%s object_class=%s error=%s",
+                session_id,
+                object_class,
+                _safe_exception_summary(exc),
+            )
             result["relevantDocumentations"] = result.get("relevantDocumentations", [])
 
         # Get attributes from session
@@ -488,9 +521,9 @@ async def get_class_attributes_status(
                 )
                 # Validate and parse the session data
                 response.result = AttributeResponse.model_validate(attributes_output)
-            except Exception:
+            except Exception as exc:
                 # If validation fails, keep the original job result
-                pass
+                _log_status_result_fallback(session_id, f"{object_class}AttributesOutput", AttributeResponse, exc)
 
     return response
 
@@ -675,8 +708,8 @@ async def get_class_endpoints_status(
                     endpoints_output,
                 )
                 response.result = EndpointResponse.model_validate(endpoints_output)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log_status_result_fallback(session_id, f"{object_class}EndpointsOutput", EndpointResponse, exc)
 
     return response
 
@@ -909,8 +942,13 @@ async def get_connectivity_endpoint_status(
                     connectivity_endpoint_output,
                 )
                 response.result = ConnectivityEndpointResponse.model_validate(connectivity_endpoint_output)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log_status_result_fallback(
+                    session_id,
+                    "connectivityEndpointOutput",
+                    ConnectivityEndpointResponse,
+                    exc,
+                )
 
     return response
 
