@@ -172,7 +172,7 @@ def _merge_schema_attributes_with_documented_mappings(
                 )
                 if embedded_type:
                     info["type"] = embedded_type
-                    info["format"] = "reference"
+                    info["format"] = "embedded"
                     merged[documented_name] = info
                     continue
 
@@ -240,7 +240,7 @@ def _merge_schema_attributes_with_documented_mappings(
         baseline_info["scimAttribute"] = baseline_scim_attribute
         if embedded_type:
             baseline_info["type"] = embedded_type
-            baseline_info["format"] = "reference"
+            baseline_info["format"] = "embedded"
         merged[target_name] = baseline_info
         scim_path_to_name[scim_path] = target_name
         scim_path_to_name[normalize_scim_path_for_lookup(target_name)] = target_name

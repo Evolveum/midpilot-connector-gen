@@ -11,7 +11,7 @@ from src.modules.digester.extractors.scim.attributes import extract_scim_attribu
 from src.modules.digester.scim.attributes import get_scim_schema_attributes_for_object_class
 
 
-def test_scim_user_attributes_are_derived_from_schema_with_complex_references():
+def test_scim_user_attributes_are_derived_from_schema_with_embedded_complex_attributes():
     attributes = get_scim_schema_attributes_for_object_class("User")
 
     assert attributes is not None
@@ -40,7 +40,7 @@ def test_scim_user_attributes_are_derived_from_schema_with_complex_references():
 
     phone_numbers = attributes["phoneNumbers"]
     assert phone_numbers["type"] == "UserPhoneNumbers"
-    assert phone_numbers["format"] == "reference"
+    assert phone_numbers["format"] == "embedded"
     assert phone_numbers["multivalue"] is True
     assert phone_numbers["scimAttribute"] == "phoneNumbers"
 
@@ -153,10 +153,10 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
         attributes["Slack Profile Id"]["scimAttribute"] == "urn:scim:schemas:extension:slack:profile:2.0:User:profileId"
     )
     assert attributes["Emails"]["type"] == "UserEmails"
-    assert attributes["Emails"]["format"] == "reference"
+    assert attributes["Emails"]["format"] == "embedded"
     assert attributes["Emails"]["scimAttribute"] == "emails"
     assert attributes["City"]["type"] == "UserAddresses"
-    assert attributes["City"]["format"] == "reference"
+    assert attributes["City"]["format"] == "embedded"
     assert attributes["City"]["scimAttribute"] == "addresses[primary].locality"
     assert "Members" not in attributes
     mock_invoke.assert_awaited_once()

@@ -247,7 +247,7 @@ def get_scim_schema_attributes_for_object_class(object_class: str) -> Optional[D
                     attr,
                     attr_name,
                     attribute_type=build_embedded_object_class_name(object_class, attr_name),
-                    attribute_format="reference",
+                    attribute_format="embedded",
                 )
                 continue
             result[attr_name] = map_scim_attribute_to_digester_attribute(attr, attr_name)
