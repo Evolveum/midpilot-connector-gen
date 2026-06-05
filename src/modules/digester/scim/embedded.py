@@ -68,7 +68,7 @@ def get_embedded_object_classes_from_scim_schema(
         embedded_classes.append(
             {
                 "name": object_class_name,
-                "superclass": class_name,
+                "superclass": None,
                 "abstract": False,
                 "embedded": True,
                 "description": description.strip(),

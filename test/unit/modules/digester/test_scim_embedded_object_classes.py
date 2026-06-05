@@ -45,7 +45,7 @@ def test_get_embedded_object_classes_from_scim_schema_uses_complex_attributes_on
     assert embedded_classes == [
         {
             "name": "UserPhoneNumbers",
-            "superclass": "User",
+            "superclass": None,
             "abstract": False,
             "embedded": True,
             "description": "Phone numbers for the User.",
@@ -70,9 +70,10 @@ async def test_extract_scim_object_classes_includes_standard_embedded_classes():
     by_name = {item["name"]: item for item in object_classes}
 
     assert by_name["User"]["embedded"] is False
+    assert by_name["EnterpriseUser"]["superclass"] == "User"
     assert by_name["UserName"]["embedded"] is True
-    assert by_name["UserName"]["superclass"] == "User"
+    assert by_name["UserName"]["superclass"] is None
     assert by_name["UserPhoneNumbers"]["embedded"] is True
-    assert by_name["UserPhoneNumbers"]["superclass"] == "User"
+    assert by_name["UserPhoneNumbers"]["superclass"] is None
     assert by_name["GroupMembers"]["embedded"] is True
-    assert by_name["GroupMembers"]["superclass"] == "Group"
+    assert by_name["GroupMembers"]["superclass"] is None
