@@ -134,6 +134,13 @@ async def set_failed(job_id: UUID, error: str) -> Dict[str, Any]:
         raise
 
 
+async def _append_job_error_now(job_id: UUID, message: str) -> None:
+    async with async_session_maker() as db:
+        repo = JobRepository(db)
+        await repo.append_job_error(job_id, message)
+        await db.commit()
+
+
 async def get_job_status(job_id: UUID | None) -> Dict[str, Any]:
     """Return a public job status dict."""
     if job_id is None:
@@ -418,9 +425,12 @@ async def schedule_coroutine_job(
 
                         await db.commit()
                 except Exception as e:
-                    logger.error(f"Failed to update session {session_id} after job {job_id}: {e}")
-                    # Don't fail the job if session update fails
-                    pass
+                    error_msg = f"Session persistence failed for job {job_id} in session {session_id}: {e}"
+                    logger.error(error_msg, exc_info=e)
+                    try:
+                        await _append_job_error_now(job_id, error_msg)
+                    except Exception:
+                        logger.error("Failed to record session persistence error for job %s", job_id, exc_info=True)
 
             # Prepare job result (exclude large chunks array, keep only metadata)
             job_result_dict = result_dict.copy() if isinstance(result_dict, dict) else result_dict
@@ -451,10 +461,7 @@ def append_job_error(job_id: UUID, message: str) -> None:
 
     async def _append() -> None:
         try:
-            async with async_session_maker() as db:
-                repo = JobRepository(db)
-                await repo.append_job_error(job_id, message)
-                await db.commit()
+            await _append_job_error_now(job_id, message)
         except Exception as e:
             logger.debug(f"Append job error failed for {job_id}", exc_info=e)
 

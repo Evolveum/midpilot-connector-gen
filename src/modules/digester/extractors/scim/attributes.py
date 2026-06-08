@@ -14,12 +14,9 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain
 from src.common.utils.normalize import normalize_chunk_pair
 from src.modules.digester.prompts.scim.attributes_prompts import (
     get_scim_attributes_system_prompt,
@@ -82,11 +79,6 @@ def _build_scim_attribute_chain(object_class: str, base_attributes: Dict[str, Di
     Returns:
         Configured LangChain runnable
     """
-    parser: PydanticOutputParser[ExtractedAttributeResponseSCIM] = PydanticOutputParser(
-        pydantic_object=ExtractedAttributeResponseSCIM
-    )
-    llm = get_default_llm()
-
     # Format base attributes for prompt context
     formatted_base = _format_attributes_for_prompt(base_attributes)
     scim_base_summary = (
@@ -95,19 +87,16 @@ def _build_scim_attribute_chain(object_class: str, base_attributes: Dict[str, Di
         else "None (custom resource)"
     )
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_scim_attributes_system_prompt() + "\n\n{format_instructions}"),
-            ("user", get_scim_attributes_user_prompt()),
-        ]
-    ).partial(
-        object_class=object_class,
-        scim_base_attributes=scim_base_summary,
-        formatted_base_attributes=formatted_base,
-        format_instructions=parser.get_format_instructions(),
+    return build_structured_chain(
+        get_scim_attributes_system_prompt(),
+        get_scim_attributes_user_prompt(),
+        ExtractedAttributeResponseSCIM,
+        partial_variables={
+            "object_class": object_class,
+            "scim_base_attributes": scim_base_summary,
+            "formatted_base_attributes": formatted_base,
+        },
     )
-
-    return make_basic_chain(prompt, llm, parser)
 
 
 def _merge_custom_attributes(results: List[Dict[str, Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:

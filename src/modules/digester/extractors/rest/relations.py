@@ -7,13 +7,10 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-
 from src.common.chunks import normalize_to_text
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain
 from src.common.utils.normalize import normalize_object_class_name
 from src.modules.digester.enums import ConfidenceLevel
 from src.modules.digester.prompts.rest.relations_prompts import (
@@ -312,20 +309,17 @@ async def extract_relations(
         message="Processing chunk and extracting relations",
     )
 
-    parser: PydanticOutputParser[RelationsResponse] = PydanticOutputParser(pydantic_object=RelationsResponse)
-
-    llm = get_default_llm()
-
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", get_relations_system_prompt + "\n\n{format_instructions}"), ("human", get_relations_user_prompt)]
-    ).partial(
-        relevant_list=relevant_names,
-        relevant_descriptions=relevant_descriptions,
-        relevant_list_with_descriptions=relevant_list_with_descriptions,
-        format_instructions=parser.get_format_instructions(),
+    chain = build_structured_chain(
+        get_relations_system_prompt,
+        get_relations_user_prompt,
+        RelationsResponse,
+        partial_variables={
+            "relevant_list": relevant_names,
+            "relevant_descriptions": relevant_descriptions,
+            "relevant_list_with_descriptions": relevant_list_with_descriptions,
+        },
+        user_role="human",
     )
-
-    chain = make_basic_chain(prompt, llm, parser)
 
     # Process the single pre-chunked input (no need for asyncio.gather with just one item)
     chunk_results = [

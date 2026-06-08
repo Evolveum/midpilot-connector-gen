@@ -7,13 +7,11 @@ import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
 from src.common.jobs import append_job_error
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain
 from src.common.utils.normalize import normalize_endpoint_key
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.prompts.connectivity_endpoint_prompts import (
@@ -145,15 +143,12 @@ async def rank_connectivity_candidates(
         indent=2,
     )
 
-    parser: PydanticOutputParser = PydanticOutputParser(pydantic_object=ConnectivityEndpointRankingResponse)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_connectivity_endpoint_ranking_system_prompt + "\n\n{format_instructions}"),
-            ("human", get_connectivity_endpoint_ranking_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    chain = make_basic_chain(prompt, llm, parser)
+    chain = build_structured_chain(
+        get_connectivity_endpoint_ranking_system_prompt,
+        get_connectivity_endpoint_ranking_user_prompt,
+        ConnectivityEndpointRankingResponse,
+        user_role="human",
+    )
 
     try:
         result = await invoke_llm(

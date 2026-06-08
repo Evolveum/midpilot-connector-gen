@@ -419,6 +419,7 @@ async def extract_class_attributes(
 
     NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -479,6 +480,7 @@ async def get_class_attributes_status(
     Get the status of attributes extraction job for the specified object class.
     Returns the current session data (which may have been updated after job completion).
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -559,6 +561,7 @@ async def extract_class_endpoints(
 
     NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -621,6 +624,7 @@ async def get_class_endpoints_status(
     """
     Get the status of endpoints extraction job for the specified object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 

@@ -7,14 +7,12 @@ import logging
 from typing import Dict, List, Optional, Set, Tuple, cast
 from uuid import UUID
 
-from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
 from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain
 from src.config import config
 from src.modules.digester.enums import AuthType
 from src.modules.digester.prompts.auth_prompts import (
@@ -158,9 +156,14 @@ async def build_auth_items(auth_info: List[AuthProcessingInfo], job_id: UUID) ->
             job_id=job_id,
         )
 
-        logger.info("[Digester:Auth] Building complete. Built items count: %d", len(built_items))
+        built_auth_items = [item for item in built_items if isinstance(item, AuthProcessingInfo)]
+        skipped_items = len(built_items) - len(built_auth_items)
+        if skipped_items:
+            logger.warning("[Digester:Auth] Dropped %d failed auth build result(s).", skipped_items)
+
+        logger.info("[Digester:Auth] Building complete. Built items count: %d", len(built_auth_items))
         await update_job_progress(job_id, stage=JobStage.building_finished, message="Auth item building finished")
-        return built_items
+        return built_auth_items
     except Exception as e:
         await update_job_progress(job_id, stage=JobStage.building_failed, message=f"Auth item building failed: {e}")
         append_job_error(job_id, f"[Digester:Auth] Building failed: {e}")
@@ -271,15 +274,12 @@ async def deduplicate_auth(
     dedup_list: List[DiscoveryAuth | AuthProcessingInfo] = [auth for auth in seen.values()]
     logger.info("[Digester:Auth] Heurestic deduplication complete. Unique count: %d", len(dedup_list))
 
-    parser: BaseOutputParser = PydanticOutputParser(pydantic_object=AuthDedupResponse)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", auth_deduplication_system_prompt + "\n\n{format_instructions}"),
-            ("human", auth_deduplication_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    chain = make_basic_chain(prompt, llm, parser)
+    chain = build_structured_chain(
+        auth_deduplication_system_prompt,
+        auth_deduplication_user_prompt,
+        AuthDedupResponse,
+        user_role="human",
+    )
 
     auth_list: List[AuthProcessingInfo] = []
 
@@ -414,12 +414,12 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
     dedup_list = [await processInfoToAuthInfo(info) for info in raw_dedup_list]
     try:
         logger.info("[Digester:Auth] Sorting via LLM. Items count: %d", len(dedup_list))
-        parser: PydanticOutputParser[AuthResponse] = PydanticOutputParser(pydantic_object=AuthResponse)
-        llm = get_default_llm()
-        prompt = ChatPromptTemplate.from_messages(
-            [("system", sort_auth_system_prompt + "\n\n{format_instructions}"), ("human", sort_auth_user_prompt)]
-        ).partial(format_instructions=parser.get_format_instructions())
-        chain = make_basic_chain(prompt, llm, parser)
+        chain = build_structured_chain(
+            sort_auth_system_prompt,
+            sort_auth_user_prompt,
+            AuthResponse,
+            user_role="human",
+        )
 
         items_json = json.dumps([auth.model_dump(exclude={"relevant_sequences"}) for auth in dedup_list])
         sort_result = cast(

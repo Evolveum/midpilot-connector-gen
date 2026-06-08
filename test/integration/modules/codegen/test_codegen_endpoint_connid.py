@@ -35,7 +35,7 @@ async def test_generate_connid_success():
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
-        mock_repo.get_session_data.assert_awaited_once_with(session_id, "UserAttributesOutput")
+        mock_repo.get_session_data.assert_awaited_once_with(session_id, "userAttributesOutput")
         mock_schedule.assert_awaited_once()
         mock_repo.update_session.assert_awaited_once()
 
@@ -77,6 +77,6 @@ async def test_generate_connid_uses_repair_context_only():
     ]
 
     update_args = mock_repo.update_session.call_args[0]
-    inputs = update_args[1]["UserConnidInput"]
+    inputs = update_args[1]["userConnidInput"]
     assert "preferredEndpoints" not in inputs
     assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]

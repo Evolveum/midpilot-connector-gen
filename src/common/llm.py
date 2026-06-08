@@ -88,14 +88,19 @@ def build_structured_chain(
     user_prompt: str,
     response_model: type[BaseModel],
     *,
+    llm: ChatOpenAI | None = None,
+    partial_variables: dict[str, Any] | None = None,
     user_role: Literal["human", "user"] = "user",
 ) -> Runnable:
     """Build a default LLM chain with a Pydantic structured-output parser."""
     parser: PydanticOutputParser[Any] = PydanticOutputParser(pydantic_object=response_model)
+    prompt_variables = {"format_instructions": parser.get_format_instructions()}
+    if partial_variables:
+        prompt_variables.update(partial_variables)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", f"{system_prompt}\n\n{{format_instructions}}"),
             (user_role, user_prompt),
         ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, get_default_llm(), parser)
+    ).partial(**prompt_variables)
+    return make_basic_chain(prompt, llm or get_default_llm(), parser)

@@ -132,10 +132,8 @@ async def test_deduplicate_and_sort_object_classes_sorts_with_llm_inside_same_co
     with (
         patch("src.modules.digester.extractors.rest.object_class.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.rest.object_class.get_default_llm", return_value=MagicMock()),
-        patch(
-            "src.modules.digester.extractors.rest.object_class.make_basic_chain",
-            side_effect=[classification_chain, sorting_chain],
-        ),
+        patch("src.modules.digester.extractors.rest.object_class.make_basic_chain", return_value=classification_chain),
+        patch("src.modules.digester.extractors.rest.object_class.build_structured_chain", return_value=sorting_chain),
     ):
         result = await deduplicate_and_sort_object_classes(
             all_object_classes=all_object_classes,

@@ -20,7 +20,7 @@ from src.modules.codegen.schema import CodegenOperationInput
         (
             generate_create,
             "codegen.getCreate",
-            "UserCreateInput",
+            "userCreateInput",
             [
                 {"method": "POST", "path": "/users"},
                 {"method": "POST", "path": "/users/create"},
@@ -29,7 +29,7 @@ from src.modules.codegen.schema import CodegenOperationInput
         (
             generate_update,
             "codegen.getUpdate",
-            "UserUpdateInput",
+            "userUpdateInput",
             [
                 {"method": "PATCH", "path": "/users/{id}"},
                 {"method": "PUT", "path": "/users/{id}"},
@@ -38,7 +38,7 @@ from src.modules.codegen.schema import CodegenOperationInput
         (
             generate_delete,
             "codegen.getDelete",
-            "UserDeleteInput",
+            "userDeleteInput",
             [
                 {"method": "DELETE", "path": "/users/{id}"},
             ],
@@ -88,6 +88,8 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
 
     _, schedule_kwargs = mock_schedule.call_args
     assert schedule_kwargs["job_type"] == job_type
+    assert mock_repo.get_session_data.await_args_list[0].args[1] == "userAttributesOutput"
+    assert mock_repo.get_session_data.await_args_list[1].args[1] == "userEndpointsOutput"
     assert schedule_kwargs["input_payload"]["preferredEndpoints"] == preferred_endpoints
     assert schedule_kwargs["worker_kwargs"]["preferred_endpoints"] == preferred_endpoints
 
@@ -144,6 +146,6 @@ async def test_generate_update_includes_repair_context_in_job_and_session_input(
     assert schedule_kwargs["worker_kwargs"]["repair_context"].current_script.startswith('objectClass("User")')
 
     update_args = mock_repo.update_session.call_args[0]
-    inputs = update_args[1]["UserUpdateInput"]
+    inputs = update_args[1]["userUpdateInput"]
     assert "mode" not in inputs
     assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]

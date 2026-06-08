@@ -23,6 +23,7 @@ from src.common.schema import (
     JobStatusStageResponse,
 )
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
+from src.common.utils.normalize import normalize_object_class_name
 from src.common.utils.relevance import hydrate_auth_sequences_from_relevance as _hydrate_auth_sequences_from_relevance
 from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
@@ -225,6 +226,7 @@ async def generate_native_schema(
     Generate native Groovy schema from attributes.
     Loads attributes from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -289,6 +291,7 @@ async def get_native_schema_status(
     """
     Get the status of native schema generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -317,6 +320,7 @@ async def override_native_schema(
     """
     Manually override the native schema for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -346,6 +350,7 @@ async def generate_connid(
     Generate ConnID Groovy code from attributes.
     Loads attributes from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -410,6 +415,7 @@ async def get_connid_status(
     """
     Get the status of ConnID generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -438,6 +444,7 @@ async def override_connid(
     """
     Manually override the ConnID for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -468,6 +475,7 @@ async def generate_search(
     Generate Groovy search code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -560,6 +568,7 @@ async def get_search_status(
     """
     Get the status of search code generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -592,6 +601,7 @@ async def override_search(
     """
     Manually override the search code for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -622,6 +632,7 @@ async def generate_create(
     Generate Groovy create code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -709,6 +720,7 @@ async def get_create_status(
     """
     Get the status of create code generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -737,6 +749,7 @@ async def override_create(
     """
     Manually override the create code for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -766,6 +779,7 @@ async def generate_update(
     Generate Groovy update code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -853,6 +867,7 @@ async def get_update_status(
     """
     Get the status of update code generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -881,6 +896,7 @@ async def override_update(
     """
     Manually override the update code for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -910,6 +926,7 @@ async def generate_delete(
     Generate Groovy delete code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -997,6 +1014,7 @@ async def get_delete_status(
     """
     Get the status of delete code generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -1025,6 +1043,7 @@ async def override_delete(
     """
     Manually override the delete code for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 

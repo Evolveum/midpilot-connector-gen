@@ -72,13 +72,17 @@ async def test_extract_class_attributes_success():
 
         response = await extract_class_attributes(
             session_id=session_id,
-            object_class="user",
+            object_class="User",
             db=MagicMock(),
         )
 
         assert response.jobId == job_id
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "objectClassesOutput")
         mock_schedule.assert_awaited_once()
+        schedule_kwargs = mock_schedule.call_args.kwargs
+        assert schedule_kwargs["input_payload"]["objectClass"] == "user"
+        assert schedule_kwargs["worker_args"][1] == "user"
+        assert schedule_kwargs["session_result_key"] == "userAttributesOutput"
         mock_repo.update_session.assert_awaited_once()
 
 
@@ -133,7 +137,7 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
     assert response.jobId == job_id
     mock_schedule.assert_awaited_once()
     schedule_kwargs = mock_schedule.call_args.kwargs
-    assert schedule_kwargs["worker_args"][1] == "UserPhoneNumbers"
+    assert schedule_kwargs["worker_args"][1] == "userphonenumbers"
     assert schedule_kwargs["worker_args"][3] == [{"doc_id": doc_id, "chunk_id": chunk_id}]
     mock_relevance_repo.get_relevant_chunks_grouped_by_entity.assert_awaited_once_with(
         session_id=session_id,
