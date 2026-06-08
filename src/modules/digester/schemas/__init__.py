@@ -32,6 +32,7 @@ from src.modules.digester.schemas.auth import (
     DiscoveryAuth,
 )
 from src.modules.digester.schemas.common import (
+    ChunkReference,
     DocMarkerMatch,
     DocProcessingSequenceItem,
     DocSequenceItem,
@@ -96,6 +97,7 @@ __all__ = [
     "BaseAPIEndpoint",
     "BaseAuth",
     "BaseObjectClass",
+    "ChunkReference",
     "ConnectivityEndpointInfo",
     "ConnectivityEndpointRankingResponse",
     "ConnectivityEndpointResponse",

@@ -2,7 +2,37 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+
+
+class ChunkReference(BaseModel):
+    """
+    Internal reference to one documentation chunk.
+
+    The model accepts both API camelCase and internal snake_case keys, but
+    normalizes all runtime use to snake_case.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    doc_id: str = Field(
+        ...,
+        validation_alias=AliasChoices("doc_id", "docId"),
+        serialization_alias="docId",
+        description="Unique identifier for the source documentation item.",
+    )
+    chunk_id: str = Field(
+        ...,
+        validation_alias=AliasChoices("chunk_id", "chunkId"),
+        serialization_alias="chunkId",
+        description="Unique identifier for the documentation chunk.",
+    )
+
+    def to_internal_dict(self) -> dict[str, str]:
+        return {"doc_id": self.doc_id, "chunk_id": self.chunk_id}
+
+    def to_api_dict(self) -> dict[str, str]:
+        return self.model_dump(by_alias=True)
 
 
 class DocSequenceItem(BaseModel):

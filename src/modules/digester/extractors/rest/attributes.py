@@ -9,8 +9,6 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from src.common.enums import JobStage
@@ -18,7 +16,7 @@ from src.common.jobs import (
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain
 from src.config import config
 from src.modules.digester.prompts.rest.attributes_prompts import (
     attribute_deduplication_system_prompt,
@@ -127,64 +125,45 @@ def _build_dedupe_chain() -> Any:
     """
     Build the LLM chain used to resolve attribute duplicates across chunks.
     """
-    parser: BaseOutputParser = PydanticOutputParser(pydantic_object=AttributeDedupResponse)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", attribute_deduplication_system_prompt + "\n\n{format_instructions}"),
-            ("human", attribute_deduplication_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
+    return build_structured_chain(
+        attribute_deduplication_system_prompt,
+        attribute_deduplication_user_prompt,
+        AttributeDedupResponse,
+        user_role="human",
+    )
 
 
 def _build_type_format_chain() -> Any:
     """
     Build the LLM chain used to enrich attribute type and format from sequences.
     """
-    parser: PydanticOutputParser[AttributeTypeFormatBuildResponse] = PydanticOutputParser(
-        pydantic_object=AttributeTypeFormatBuildResponse
+    return build_structured_chain(
+        get_build_type_format_from_sequences_system_prompt,
+        get_build_type_format_from_sequences_user_prompt,
+        AttributeTypeFormatBuildResponse,
     )
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_build_type_format_from_sequences_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_build_type_format_from_sequences_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
 
 
 def _build_boolean_flags_chain() -> Any:
     """
     Build the LLM chain used to enrich boolean attribute flags from sequences.
     """
-    parser: PydanticOutputParser[AttributeBooleanFlagsBuildResponse] = PydanticOutputParser(
-        pydantic_object=AttributeBooleanFlagsBuildResponse
+    return build_structured_chain(
+        get_build_boolean_flags_from_sequences_system_prompt,
+        get_build_boolean_flags_from_sequences_user_prompt,
+        AttributeBooleanFlagsBuildResponse,
     )
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_build_boolean_flags_from_sequences_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_build_boolean_flags_from_sequences_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
 
 
 def _build_consolidation_chain() -> Any:
     """
     Build the LLM chain used for final consolidation of attributes.
     """
-    parser: PydanticOutputParser[AttributeBuildResponse] = PydanticOutputParser(pydantic_object=AttributeBuildResponse)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_consolidate_attributes_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_consolidate_attributes_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
+    return build_structured_chain(
+        get_consolidate_attributes_system_prompt,
+        get_consolidate_attributes_user_prompt,
+        AttributeBuildResponse,
+    )
 
 
 def _non_null_fields(attr: AttributeProcessingInfo, fields: Tuple[str, ...]) -> Dict[str, Any]:
