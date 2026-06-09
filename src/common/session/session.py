@@ -18,6 +18,7 @@ from src.common.database.repositories.documentation_repository import Documentat
 from src.common.database.repositories.job_repository import JobRepository
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage
+from src.common.session.documentation_upload import read_uploaded_documentation
 from src.config import config
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ async def process_documentation_worker(
     app: str,
     app_version: str,
     job_id: UUID,
+    upload_metadata: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     async with _UPLOAD_WORKER_SEMAPHORE:
         semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
@@ -75,6 +77,8 @@ async def process_documentation_worker(
                 "llm_tags": data.tags,
                 "llm_category": data.category,
             }
+            if upload_metadata:
+                metadata.update(upload_metadata)
 
             return {
                 "idx": idx,
@@ -142,17 +146,17 @@ async def _get_session_documentation_impl(
     doc_repo = DocumentationRepository(db)
 
     if documentation is not None:
-        doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
+        uploaded = await read_uploaded_documentation(documentation)
 
         doc_id = uuid.uuid4()
         chunk_id = await doc_repo.create_documentation_item(
             session_id=session_id,
             source="upload",
-            content=doc_text,
+            content=uploaded.text,
             doc_id=doc_id,
             url=None,
             summary=None,
-            metadata={"filename": documentation.filename or "unknown", "length": len(doc_text)},
+            metadata=uploaded.metadata,
         )
 
         await db.commit()
@@ -164,8 +168,8 @@ async def _get_session_documentation_impl(
                 "scrapeJobIds": [],
                 "url": None,
                 "summary": None,
-                "content": doc_text,
-                "@metadata": {"filename": documentation.filename or "unknown", "length": len(doc_text)},
+                "content": uploaded.text,
+                "@metadata": uploaded.metadata,
             }
         ]
 
