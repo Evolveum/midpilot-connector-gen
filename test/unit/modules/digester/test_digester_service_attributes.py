@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester import service
-from src.modules.digester.schema import AttributeInfoRest
+from src.modules.digester.schemas import AttributeInfoRest
 
 
 # ==================== EXTRACT ATTRIBUTES ====================

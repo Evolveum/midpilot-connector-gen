@@ -46,21 +46,21 @@ async def test_generate_native_schema_success():
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
-        mock_repo.get_session_data.assert_awaited_once_with(session_id, "UserAttributesOutput")
+        mock_repo.get_session_data.assert_awaited_once_with(session_id, "userAttributesOutput")
         mock_schedule.assert_awaited_once_with(
             job_type="codegen.getNativeSchema",
             input_payload={
                 "attributes": {"username": {"type": "string"}},
-                "objectClass": "User",
+                "objectClass": "user",
                 "skipCache": True,
             },
             worker=ANY,
-            worker_args=({"username": {"type": "string"}}, "User"),
+            worker_args=({"username": {"type": "string"}}, "user"),
             worker_kwargs={"session_id": session_id},
             initial_stage="queue",
             initial_message="Queued code generation",
             session_id=session_id,
-            session_result_key="UserNativeSchemaOutput",
+            session_result_key="userNativeSchemaOutput",
         )
         mock_repo.update_session.assert_awaited_once()
 
@@ -102,7 +102,7 @@ async def test_generate_native_schema_uses_repair_context_only():
     ]
 
     update_args = mock_repo.update_session.call_args[0]
-    inputs = update_args[1]["UserNativeSchemaInput"]
+    inputs = update_args[1]["userNativeSchemaInput"]
     assert "preferredEndpoints" not in inputs
     assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]
 
@@ -154,12 +154,12 @@ async def test_override_native_schema_success():
             db=MagicMock(),
         )
 
-        assert response["message"] == "Native schema for User overridden successfully"
+        assert response["message"] == "Native schema for user overridden successfully"
         assert response["sessionId"] == session_id
-        assert response["objectClass"] == "User"
+        assert response["objectClass"] == "user"
         mock_repo.update_session.assert_awaited_once_with(
             session_id,
-            {"UserNativeSchemaOutput": {"code": 'objectClass("User") {}'}},
+            {"userNativeSchemaOutput": {"code": 'objectClass("User") {}'}},
         )
 
 
@@ -176,4 +176,4 @@ async def test_generate_native_schema_missing_class():
             await generate_native_schema(uuid4(), "NonExistentClass", db=MagicMock())
 
     assert exc_info.value.status_code == 404
-    assert "No attributes found for NonExistentClass" in exc_info.value.detail
+    assert "No attributes found for nonexistentclass" in exc_info.value.detail

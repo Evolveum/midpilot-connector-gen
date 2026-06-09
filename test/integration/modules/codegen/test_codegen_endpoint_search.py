@@ -47,6 +47,8 @@ async def test_generate_search_success():
     assert response.jobId == job_id
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     assert mock_repo.get_session_data.await_count == 2
+    assert mock_repo.get_session_data.await_args_list[0].args[1] == "userAttributesOutput"
+    assert mock_repo.get_session_data.await_args_list[1].args[1] == "userEndpointsOutput"
     mock_schedule.assert_awaited_once()
     mock_repo.update_session.assert_awaited_once()
 
@@ -87,4 +89,4 @@ async def test_generate_search_scim_allows_missing_endpoints():
         update_args = mock_repo.update_session.call_args[0]
         assert update_args[0] == session_id
         inputs = update_args[1]
-        assert inputs["UserSearchAllInput"] == {"objectClass": "User", "attributes": attrs_payload, "intent": "all"}
+        assert inputs["userSearchAllInput"] == {"objectClass": "user", "attributes": attrs_payload, "intent": "all"}

@@ -2,14 +2,15 @@
 #
 # Licensed under the EUPL-1.2 or later.
 import ssl
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 import httpx
 from langchain_classic.output_parsers import RetryWithErrorOutputParser
-from langchain_core.output_parsers import BaseOutputParser
-from langchain_core.prompts import BasePromptTemplate
+from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
+from langchain_core.prompts import BasePromptTemplate, ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 
 from src.config import ReasoningEffort, config
 
@@ -80,3 +81,26 @@ def make_basic_chain(prompt: BasePromptTemplate, llm: ChatOpenAI, parser: BaseOu
     chain = RunnableParallel(completion=completion_chain, prompt_value=prompt) | RunnableLambda(parse_with_retry)
 
     return chain
+
+
+def build_structured_chain(
+    system_prompt: str,
+    user_prompt: str,
+    response_model: type[BaseModel],
+    *,
+    llm: ChatOpenAI | None = None,
+    partial_variables: dict[str, Any] | None = None,
+    user_role: Literal["human", "user"] = "user",
+) -> Runnable:
+    """Build a default LLM chain with a Pydantic structured-output parser."""
+    parser: PydanticOutputParser[Any] = PydanticOutputParser(pydantic_object=response_model)
+    prompt_variables = {"format_instructions": parser.get_format_instructions()}
+    if partial_variables:
+        prompt_variables.update(partial_variables)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", f"{system_prompt}\n\n{{format_instructions}}"),
+            (user_role, user_prompt),
+        ]
+    ).partial(**prompt_variables)
+    return make_basic_chain(prompt, llm or get_default_llm(), parser)

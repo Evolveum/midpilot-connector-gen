@@ -2,9 +2,11 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from src.common.llm import get_default_llm
+from pydantic import BaseModel
+
+from src.common.llm import build_structured_chain, get_default_llm
 from src.config import config
 from src.modules.scrape.llms import _get_irrelevant_links_reasoning_effort
 
@@ -33,3 +35,29 @@ def test_irrelevant_links_reasoning_effort_uses_medium_only_when_global_reasonin
 
     monkeypatch.setattr(config.llm, "reasoning_effort", "high")
     assert _get_irrelevant_links_reasoning_effort() == "medium"
+
+
+def test_build_structured_chain_uses_provided_llm_and_partial_variables() -> None:
+    class _Response(BaseModel):
+        value: str
+
+    llm = Mock()
+
+    with (
+        patch("src.common.llm.get_default_llm") as get_default,
+        patch("src.common.llm.make_basic_chain", return_value=Mock()) as make_chain,
+    ):
+        build_structured_chain(
+            "system {extra}",
+            "user",
+            _Response,
+            llm=llm,
+            partial_variables={"extra": "context"},
+            user_role="human",
+        )
+
+    get_default.assert_not_called()
+    prompt = make_chain.call_args.args[0]
+    assert make_chain.call_args.args[1] is llm
+    assert prompt.partial_variables["extra"] == "context"
+    assert "format_instructions" in prompt.partial_variables

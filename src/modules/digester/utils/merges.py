@@ -14,7 +14,7 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.config import config
 from src.modules.digester.enums import EndpointMethod, EndpointType
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     AttributeDedupResponse,
     AttributeProcessingInfo,
     BaseAPIEndpoint,

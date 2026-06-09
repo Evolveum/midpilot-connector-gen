@@ -9,7 +9,7 @@ SCIM schema-to-digester attribute heuristics.
 import re
 from typing import Any, Dict, Optional, Tuple
 
-from src.modules.digester.schema import AttributeInfoScim
+from src.modules.digester.schemas import AttributeInfoScim
 from src.modules.digester.scim.embedded import build_embedded_object_class_name
 from src.modules.digester.scim.loader import load_scim_base_schemas
 

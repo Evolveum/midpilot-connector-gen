@@ -17,7 +17,7 @@ from src.modules.digester.router import (
     get_connectivity_endpoint_status,
     override_connectivity_endpoint,
 )
-from src.modules.digester.schema import ConnectivityEndpointResponse
+from src.modules.digester.schemas import ConnectivityEndpointResponse
 
 
 @pytest.mark.asyncio

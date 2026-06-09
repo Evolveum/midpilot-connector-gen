@@ -16,7 +16,7 @@ from src.modules.digester.router import (
     get_class_endpoints_status,
     override_class_endpoints,
 )
-from src.modules.digester.schema import EndpointInfo, EndpointResponse
+from src.modules.digester.schemas import EndpointInfo, EndpointResponse
 
 
 # CLASS ENDPOINTS
@@ -82,6 +82,10 @@ async def test_extract_class_endpoints_success():
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_schedule.assert_awaited_once()
+        schedule_kwargs = mock_schedule.call_args.kwargs
+        assert schedule_kwargs["input_payload"]["objectClass"] == "user"
+        assert schedule_kwargs["worker_args"][1] == "user"
+        assert schedule_kwargs["session_result_key"] == "userEndpointsOutput"
         mock_repo.update_session.assert_awaited_once()
 
 
@@ -135,8 +139,8 @@ async def test_get_class_endpoints_status_found():
     assert response.result.endpoints[0].path == "/users"
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     assert mock_repo.get_session_data.await_args_list == [
-        call(session_id, "UserEndpointsJobId"),
-        call(session_id, "UserEndpointsOutput"),
+        call(session_id, "userEndpointsJobId"),
+        call(session_id, "userEndpointsOutput"),
     ]
     mock_status_builder.assert_awaited_once()
 

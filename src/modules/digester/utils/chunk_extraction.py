@@ -11,8 +11,6 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 from uuid import UUID
 
-from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, ValidationError
 
@@ -21,9 +19,9 @@ from src.common.chunks import normalize_to_text
 from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain
 from src.config import config
-from src.modules.digester.schema import DocMarkerMatch, DocSequenceItem
+from src.modules.digester.schemas import DocMarkerMatch, DocSequenceItem
 from src.modules.digester.utils.doc_chunk import build_chunk_id_to_doc_id
 from src.modules.digester.utils.fuzzysearch_worker import fuzzy_search_worker
 from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
@@ -203,15 +201,15 @@ async def _find_best_fuzzy_literal(
         marker_word_cutoff_length,
     )
 
-    # print(f"[fuzzy] pool.process_pool = {pool.process_pool}")
     matches = await asyncio.get_event_loop().run_in_executor(
         pool.process_pool, fuzzy_search_worker, collapsed_text, collapsed_marker, start_pos, max_errors
     )
-    if started - time.time() > 2:
+    duration = time.time() - started
+    if duration > 2:
         logger.warning(
             "Fuzzy search for marker '%s' took a long time: %.2f seconds. Collapsed marker: '%s', start_pos: %d, error budget: %d, marker word cutoff length: %d",
             marker,
-            time.time() - started,
+            duration,
             collapsed_marker,
             start_pos,
             max_errors,
@@ -290,11 +288,12 @@ async def _find_closest_best_fuzzy_literal(
         if enable_marker_blending
         else start_marker.end_position_collapsed + max_length,
     )
-    if started - time.time() > 2:
+    duration = time.time() - started
+    if duration > 2:
         logger.warning(
             "Finished fuzzy search for end marker '%s' in time: %.2f seconds. Matches found: %d. Start marker collapsed positions: %d-%d. Enable marker blending: %s",
             marker,
-            time.time() - started,
+            duration,
             len(matches),
             start_marker.start_position_collapsed,
             start_marker.end_position_collapsed,
@@ -535,12 +534,7 @@ def build_chunk_extraction_chain(
     user_prompt: str,
 ) -> Any:
     """Build a reusable structured extraction chain for repeated chunk invocations."""
-    parser: BaseOutputParser = PydanticOutputParser(pydantic_object=pydantic_model)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", system_prompt + "\n\n{format_instructions}"), ("human", user_prompt)]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
+    return build_structured_chain(system_prompt, user_prompt, pydantic_model, user_role="human")
 
 
 async def extract_single_chunk(
@@ -718,32 +712,22 @@ async def extract_single_chunk(
 
 async def run_item_build_parallel(
     item: Any,
-    pydantic_model: type[T],
-    system_prompt: str,
-    user_prompt: str,
+    chain: Any,
     job_id: UUID,
     parse_fn: Callable[[T, Any], Any],
     logger_prefix: str = "",
-) -> Any:
+) -> Any | None:
     """
     Run LLM item building.
 
     Args:
         item: The item to process (e.g., extracted auth method without full details)
-        system_prompt: The system prompt to use for the LLM
-        user_prompt: The user prompt template to use for the LLM (should include {item} placeholder)
+        chain: Reusable LLM chain configured for this item build batch
         job_id: ID of the job for progress tracking
         logger_prefix: Optional prefix for log messages
     Returns:
-        Built item
+        Built item, or None when the item could not be built
     """
-
-    parser: BaseOutputParser = PydanticOutputParser(pydantic_object=pydantic_model)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", system_prompt + "\n\n{format_instructions}"), ("human", user_prompt)]
-    ).partial(format_instructions=parser.get_format_instructions())
-    chain = make_basic_chain(prompt, llm, parser)
 
     try:
         logger.info("%sCalling LLM for document extraction.", logger_prefix)
@@ -762,7 +746,7 @@ async def run_item_build_parallel(
             logger.warning("%sEmpty LLM response.", logger_prefix)
             error_msg = f"{logger_prefix}Empty LLM response."
             append_job_error(job_id, error_msg)
-            return [], False
+            return None
 
         # Parse structured output
         try:
@@ -772,7 +756,7 @@ async def run_item_build_parallel(
             snippet = _result_snippet(result)
             error_msg = f"{logger_prefix}Parse failed: {e}. LLM output: {snippet}"
             append_job_error(job_id, error_msg)
-            return [], False
+            return None
 
         return new_item
     except Exception as e:
@@ -803,14 +787,14 @@ async def run_all_items_build_parallel(
     Returns:
         List of built items
     """
+    chain = build_structured_chain(system_prompt, user_prompt, pydantic_model, user_role="human")
+
     return list(
         await asyncio.gather(
             *(
                 run_item_build_parallel(
                     item,
-                    pydantic_model,
-                    system_prompt,
-                    user_prompt,
+                    chain,
                     job_id,
                     parse_fn,
                     f"{logger_prefix}Item {idx + 1}/{len(items)} - ",

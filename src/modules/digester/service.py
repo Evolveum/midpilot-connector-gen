@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
+from collections import Counter
 from typing import Any, Dict, List, Set, Tuple, cast
 from uuid import UUID
 
@@ -46,7 +47,7 @@ from src.modules.digester.extractors.rest.relations import (
 from src.modules.digester.extractors.scim.attributes import extract_scim_attributes
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
-from src.modules.digester.schema import ExtractedConnectivityEndpointInfo, InfoMetadata, InfoResponse
+from src.modules.digester.schemas import ExtractedConnectivityEndpointInfo, InfoMetadata, InfoResponse
 from src.modules.digester.utils.chunk_extraction import process_over_chunks, run_doc_extractors_concurrently
 from src.modules.digester.utils.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, DEFAULT_CRITERIA
 from src.modules.digester.utils.doc_chunk import (
@@ -68,6 +69,19 @@ from src.modules.digester.utils.object_classes import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _auth_type_counts(auth_items: Any) -> Dict[str, int]:
+    items = getattr(auth_items, "auth", auth_items)
+    if not items:
+        return {}
+
+    type_counts: Counter[str] = Counter()
+    for item in items:
+        raw_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+        type_value = getattr(raw_type, "value", raw_type)
+        type_counts[str(type_value or "unknown")] += 1
+    return dict(sorted(type_counts.items()))
 
 
 async def extract_object_classes(
@@ -239,45 +253,34 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     await update_job_progress(job_id, stage=JobStage.discovery_finished, message="Auth discovery finished")
     deduplicated_results = await deduplicate_auth(all_auth_info, job_id)
 
-    # TODO: delete
     logger.info(
-        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Result is: %s",
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Type counts: %s",
         len(deduplicated_results),
-        deduplicated_results,
+        _auth_type_counts(deduplicated_results),
     )
 
     built_auth_items = await build_auth_items(deduplicated_results, job_id)
 
     logger.info(
-        "[Digester:Auth] Build complete. Total: %s built auth items. Built result is: %s",
+        "[Digester:Auth] Build complete. Total: %s built auth items. Type counts: %s",
         len(built_auth_items),
-        built_auth_items,
+        _auth_type_counts(built_auth_items),
     )
 
     final_deduplicated_results = await deduplicate_auth(built_auth_items, job_id)
 
-    # TODO: delete
     logger.info(
-        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Result is: %s",
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Type counts: %s",
         len(final_deduplicated_results),
-        final_deduplicated_results,
+        _auth_type_counts(final_deduplicated_results),
     )
 
     sorted_auth_items = await sort_auth_by_importance(final_deduplicated_results, job_id)
 
-    # TODO: delete
     logger.info(
-        "[Digester:Auth] Sorting complete. Total: %s sorted auth items. Final result is: %s",
+        "[Digester:Auth] Sorting complete. Total: %s sorted auth items. Type counts: %s",
         len(sorted_auth_items.auth) if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth else 0,
-        [
-            {
-                "name": item.name,
-                "type": item.type,
-            }
-            for item in sorted_auth_items.auth
-        ]
-        if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth
-        else sorted_auth_items,
+        _auth_type_counts(sorted_auth_items),
     )
 
     return {
@@ -505,10 +508,16 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
                         if parsed_info is not None:
                             normalized_infos.append(parsed_info)
                         continue
-                    except Exception:
+                    except Exception as response_exc:
                         try:
                             normalized_infos.append(InfoMetadata.model_validate(item))
-                        except Exception:
+                        except Exception as metadata_exc:
+                            logger.warning(
+                                "[Digester:InfoMetadata] Dropping invalid metadata item from chunk %s after InfoResponse and InfoMetadata validation failed. errors=%s/%s",
+                                chunk_id,
+                                type(response_exc).__name__,
+                                type(metadata_exc).__name__,
+                            )
                             continue
         elif isinstance(raw_infos, InfoMetadata):
             normalized_infos.append(raw_infos)
@@ -520,11 +529,16 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
                 parsed_info = InfoResponse.model_validate(raw_infos).info_metadata
                 if parsed_info is not None:
                     normalized_infos.append(parsed_info)
-            except Exception:
+            except Exception as response_exc:
                 try:
                     normalized_infos.append(InfoMetadata.model_validate(raw_infos))
-                except Exception:
-                    pass
+                except Exception as metadata_exc:
+                    logger.warning(
+                        "[Digester:InfoMetadata] Dropping invalid metadata payload from chunk %s after InfoResponse and InfoMetadata validation failed. errors=%s/%s",
+                        chunk_id,
+                        type(response_exc).__name__,
+                        type(metadata_exc).__name__,
+                    )
 
         logger.info(
             "[Digester:InfoMetadata] Chunk %s: extracted %s metadata candidates",
@@ -813,8 +827,10 @@ async def extract_attributes(
         if not updated:
             logger.warning("[Digester:Attributes] Failed to update objectClassesOutput for %s", object_class)
 
-    except Exception as e:
-        logger.exception(f"[Digester:Attributes] Exception while updating object class with attributes: {e}")
+    except Exception:
+        logger.exception(
+            "[Digester:Attributes] Exception while updating object class with attributes for %s", object_class
+        )
 
     return result
 
@@ -889,8 +905,8 @@ async def extract_endpoints(
         )
         if not updated:
             logger.warning("[Digester:Endpoints] Failed to update objectClassesOutput for %s", object_class)
-    except Exception as e:
-        logger.warning(f"[Digester:Endpoints] Failed to update object class with endpoints: {e}")
+    except Exception:
+        logger.exception("[Digester:Endpoints] Failed to update object class with endpoints for %s", object_class)
 
     return result
 

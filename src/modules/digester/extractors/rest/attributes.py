@@ -9,8 +9,6 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from src.common.enums import JobStage
@@ -18,7 +16,7 @@ from src.common.jobs import (
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain
 from src.config import config
 from src.modules.digester.prompts.rest.attributes_prompts import (
     attribute_deduplication_system_prompt,
@@ -32,7 +30,7 @@ from src.modules.digester.prompts.rest.attributes_prompts import (
     get_consolidate_attributes_system_prompt,
     get_consolidate_attributes_user_prompt,
 )
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     AttributeBooleanFlagsBuildResponse,
     AttributeBuildResponse,
     AttributeDedupResponse,
@@ -127,64 +125,45 @@ def _build_dedupe_chain() -> Any:
     """
     Build the LLM chain used to resolve attribute duplicates across chunks.
     """
-    parser: BaseOutputParser = PydanticOutputParser(pydantic_object=AttributeDedupResponse)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", attribute_deduplication_system_prompt + "\n\n{format_instructions}"),
-            ("human", attribute_deduplication_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
+    return build_structured_chain(
+        attribute_deduplication_system_prompt,
+        attribute_deduplication_user_prompt,
+        AttributeDedupResponse,
+        user_role="human",
+    )
 
 
 def _build_type_format_chain() -> Any:
     """
     Build the LLM chain used to enrich attribute type and format from sequences.
     """
-    parser: PydanticOutputParser[AttributeTypeFormatBuildResponse] = PydanticOutputParser(
-        pydantic_object=AttributeTypeFormatBuildResponse
+    return build_structured_chain(
+        get_build_type_format_from_sequences_system_prompt,
+        get_build_type_format_from_sequences_user_prompt,
+        AttributeTypeFormatBuildResponse,
     )
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_build_type_format_from_sequences_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_build_type_format_from_sequences_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
 
 
 def _build_boolean_flags_chain() -> Any:
     """
     Build the LLM chain used to enrich boolean attribute flags from sequences.
     """
-    parser: PydanticOutputParser[AttributeBooleanFlagsBuildResponse] = PydanticOutputParser(
-        pydantic_object=AttributeBooleanFlagsBuildResponse
+    return build_structured_chain(
+        get_build_boolean_flags_from_sequences_system_prompt,
+        get_build_boolean_flags_from_sequences_user_prompt,
+        AttributeBooleanFlagsBuildResponse,
     )
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_build_boolean_flags_from_sequences_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_build_boolean_flags_from_sequences_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
 
 
 def _build_consolidation_chain() -> Any:
     """
     Build the LLM chain used for final consolidation of attributes.
     """
-    parser: PydanticOutputParser[AttributeBuildResponse] = PydanticOutputParser(pydantic_object=AttributeBuildResponse)
-    llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_consolidate_attributes_system_prompt + "\n\n{format_instructions}"),
-            ("user", get_consolidate_attributes_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return make_basic_chain(prompt, llm, parser)
+    return build_structured_chain(
+        get_consolidate_attributes_system_prompt,
+        get_consolidate_attributes_user_prompt,
+        AttributeBuildResponse,
+    )
 
 
 def _non_null_fields(attr: AttributeProcessingInfo, fields: Tuple[str, ...]) -> Dict[str, Any]:
@@ -310,7 +289,6 @@ async def _build_attr_from_sequences(
                 begin,
                 end,
             )
-            pass
 
     return attr
 
@@ -372,8 +350,8 @@ async def build_attributes_from_sequences(
         if attr.relevant_sequences
     ]
 
-    all_builded_attrs = await asyncio.gather(*flag_tasks)
-    enriched_attrs = [attr for attr in all_builded_attrs if attr is not None]
+    enriched_results = await asyncio.gather(*flag_tasks)
+    enriched_attrs = [attr for attr in enriched_results if attr is not None]
     logger.info(
         "[Digester:Attributes] Phase=attribute_enrichment_finished object_class=%s attributes=%d",
         object_class,
@@ -661,25 +639,28 @@ async def extract_attributes(
         object_class,
         len(filtered_attributes),
     )
-    builded_attributes = await build_attributes_from_sequences(filtered_attributes, object_class)
+    enriched_attributes = await build_attributes_from_sequences(filtered_attributes, object_class)
 
     logger.debug(
         "[Digester:Attributes] Attributes after building from sequences: %s",
         json.dumps(
-            [attr.model_dump(exclude={"relevant_sequences", "relevant_documentations"}) for attr in builded_attributes],
+            [
+                attr.model_dump(exclude={"relevant_sequences", "relevant_documentations"})
+                for attr in enriched_attributes
+            ],
             indent=2,
             ensure_ascii=False,
         ),
     )
 
-    if not builded_attributes:
+    if not enriched_attributes:
         logger.error("[Digester:Attributes] No attributes left after building from sequences, returning empty result")
         await update_job_progress(
             job_id, stage=JobStage.failed, message="Attribute extraction complete with no attributes found"
         )
         return {"result": {"attributes": {}}, "relevantDocumentations": []}
 
-    consolidated_attributes = await consolidate_attributes(builded_attributes, object_class)
+    consolidated_attributes = await consolidate_attributes(enriched_attributes, object_class)
 
     logger.debug(
         "[Digester:Attributes] Attributes after final consolidation: %s",

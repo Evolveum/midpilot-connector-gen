@@ -9,7 +9,8 @@ import pytest
 
 from src.modules.digester import service
 from src.modules.digester.enums import AuthType
-from src.modules.digester.schema import (
+from src.modules.digester.extractors.auth import build_auth_items
+from src.modules.digester.schemas import (
     AuthInfo,
     AuthProcessingInfo,
     AuthResponse,
@@ -207,6 +208,28 @@ async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_prog
         assert mock_deduplicate.await_count == 2
         mock_build.assert_awaited_once_with([], job_id)
         mock_sort.assert_awaited_once_with([], job_id)
+
+
+@pytest.mark.asyncio
+async def test_build_auth_items_filters_failed_build_results():
+    valid_item = AuthProcessingInfo(
+        name="API Key",
+        type=AuthType.API_KEY,
+        quirks="Header token",
+        relevant_sequences=[],
+    )
+
+    with (
+        patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.modules.digester.extractors.auth.run_all_items_build_parallel",
+            new_callable=AsyncMock,
+            return_value=[valid_item, None, [], object()],
+        ),
+    ):
+        result = await build_auth_items([valid_item], uuid4())
+
+    assert result == [valid_item]
 
 
 def test_auth_response_serializes_relevant_sequences_in_camel_case():

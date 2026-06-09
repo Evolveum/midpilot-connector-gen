@@ -518,6 +518,7 @@ def extract_attribute_relevance_rows(
                 info.get("relevantDocumentations") or info.get("relevant_documentations"),
                 result_key=result_key,
                 entity_key=entity_key,
+                chunk_to_doc=chunk_to_doc,
             )
         )
     return rows

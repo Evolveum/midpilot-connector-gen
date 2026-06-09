@@ -19,7 +19,7 @@ from src.modules.digester.prompts.scim.object_class_prompts import (
     scim_object_class_system_prompt,
     scim_object_class_user_prompt,
 )
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     ExtendedObjectClass,
     FinalObjectClass,
     ObjectClassesExtendedResponse,
