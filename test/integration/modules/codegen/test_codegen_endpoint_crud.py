@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from src.modules.codegen.router import generate_create, generate_delete, generate_update
 from src.modules.codegen.schema import CodegenOperationInput
@@ -149,3 +150,31 @@ async def test_generate_update_includes_repair_context_in_job_and_session_input(
     inputs = update_args[1]["userUpdateInput"]
     assert "mode" not in inputs
     assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]
+
+
+@pytest.mark.asyncio
+async def test_generate_create_sql_missing_table_metadata_uses_sql_error_detail():
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.update_session = AsyncMock()
+
+    async def fake_get_session_data(session_id, key):
+        if key.endswith("AttributesOutput"):
+            return {"username": {"type": "varchar"}}
+        if key.endswith("EndpointsOutput"):
+            return None
+        return None
+
+    mock_repo.get_session_data = AsyncMock(side_effect=fake_get_session_data)
+
+    with (
+        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=["SQL"]),
+    ):
+        session_id = uuid4()
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_create(session_id, "User", db=MagicMock())
+
+    assert exc_info.value.status_code == 404
+    assert "No SQL table metadata found" in exc_info.value.detail
+    assert "endpoint first" not in exc_info.value.detail

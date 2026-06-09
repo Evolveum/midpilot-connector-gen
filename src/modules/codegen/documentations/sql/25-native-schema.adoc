@@ -1,0 +1,13 @@
+= SQL native schema mapping
+
+Generate object-class schema from SQL attributes derived from uploaded tables.
+
+== Mapping
+
+* SQL string-like types map to ConnId string attributes.
+* SQL numeric/integer types map to numeric or integer attributes.
+* SQL boolean types map to boolean attributes.
+* SQL date/time/timestamp types should preserve date/date-time semantics.
+* JSON, XML, and array columns are embedded structured values unless midPoint heuristics map them to standalone object classes.
+* Foreign key columns are references when the referenced table is a managed object class.
+

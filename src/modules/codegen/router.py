@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.config import get_db
 from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import ApiType
 from src.common.jobs import schedule_coroutine_job
 from src.common.schema import (
     JobCreateResponse,
@@ -25,7 +26,7 @@ from src.common.schema import (
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
 from src.common.utils.normalize import normalize_object_class_name
 from src.common.utils.relevance import hydrate_auth_sequences_from_relevance as _hydrate_auth_sequences_from_relevance
-from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
+from src.common.utils.session_info_metadata import get_session_api_types, resolve_session_api_type
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
 from src.modules.codegen import service
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
@@ -71,6 +72,18 @@ def _preferred_authorizations_from_input(
     if codegen_input is None or not codegen_input.preferred_authorizations:
         return None
     return [authorization.model_dump(exclude_none=True) for authorization in codegen_input.preferred_authorizations]
+
+
+def _missing_operation_surface_detail(protocol: ApiType, object_class: str, session_id: UUID) -> str:
+    if protocol == ApiType.SQL:
+        return (
+            f"No SQL table metadata found for {object_class} in session {session_id}. "
+            "Please run the table/schema extraction step for this object class first."
+        )
+    return (
+        f"No endpoints found for {object_class} in session {session_id}. "
+        f"Please run /classes/{object_class}/endpoints endpoint first."
+    )
 
 
 # Codegen Operations - Authorization
@@ -488,15 +501,15 @@ async def generate_search(
         )
 
     api_types = await get_session_api_types(session_id)
-    is_scim = is_scim_api(api_types)
+    protocol = resolve_session_api_type(api_types)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and not is_scim:
+    if eps is None and protocol != ApiType.SCIM:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
+            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
         )
 
     job_input = {
@@ -645,15 +658,15 @@ async def generate_create(
         )
 
     api_types = await get_session_api_types(session_id)
-    is_scim = is_scim_api(api_types)
+    protocol = resolve_session_api_type(api_types)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and not is_scim:
+    if eps is None and protocol != ApiType.SCIM:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
+            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
         )
 
     job_input = {
@@ -792,15 +805,15 @@ async def generate_update(
         )
 
     api_types = await get_session_api_types(session_id)
-    is_scim = is_scim_api(api_types)
+    protocol = resolve_session_api_type(api_types)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and not is_scim:
+    if eps is None and protocol != ApiType.SCIM:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
+            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
         )
 
     job_input = {
@@ -939,15 +952,15 @@ async def generate_delete(
         )
 
     api_types = await get_session_api_types(session_id)
-    is_scim = is_scim_api(api_types)
+    protocol = resolve_session_api_type(api_types)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and not is_scim:
+    if eps is None and protocol != ApiType.SCIM:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
+            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
         )
 
     job_input = {

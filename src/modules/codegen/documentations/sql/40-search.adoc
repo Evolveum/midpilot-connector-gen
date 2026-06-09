@@ -1,0 +1,12 @@
+= SQL search operation
+
+SQL search generation should use the selected table records for the object class.
+
+== Search rules
+
+* Prefer primary key predicates for get-by-id.
+* For list/search operations, select from the main table mapped to the object class.
+* Add joins only for tables listed in the object class mapping or required by foreign keys in the uploaded schema.
+* Respect nullable columns and use explicit column names.
+* Keep pagination/filter behavior conservative when the schema lacks index or ordering details.
+

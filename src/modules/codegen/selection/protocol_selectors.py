@@ -36,6 +36,15 @@ from src.modules.codegen.prompts.scim.search_prompts import (
     get_scim_search_user_prompt,
 )
 from src.modules.codegen.prompts.scim.update_prompts import get_scim_update_system_prompt, get_scim_update_user_prompt
+from src.modules.codegen.prompts.sql.create_prompts import get_sql_create_system_prompt, get_sql_create_user_prompt
+from src.modules.codegen.prompts.sql.delete_prompts import get_sql_delete_system_prompt, get_sql_delete_user_prompt
+from src.modules.codegen.prompts.sql.search_prompts import (
+    get_sql_search_all_system_prompt,
+    get_sql_search_filter_system_prompt,
+    get_sql_search_id_system_prompt,
+    get_sql_search_user_prompt,
+)
+from src.modules.codegen.prompts.sql.update_prompts import get_sql_update_system_prompt, get_sql_update_user_prompt
 from src.modules.codegen.schema import OperationAssets
 
 PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
@@ -44,18 +53,21 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
         ApiType.SCIM: OperationAssets(
             get_scim_create_system_prompt, get_scim_create_user_prompt, "scim/50-create.adoc"
         ),
+        ApiType.SQL: OperationAssets(get_sql_create_system_prompt, get_sql_create_user_prompt, "sql/50-create.adoc"),
     },
     "update": {
         ApiType.REST: OperationAssets(get_update_system_prompt, get_update_user_prompt, "rest/60-update.adoc"),
         ApiType.SCIM: OperationAssets(
             get_scim_update_system_prompt, get_scim_update_user_prompt, "scim/60-update.adoc"
         ),
+        ApiType.SQL: OperationAssets(get_sql_update_system_prompt, get_sql_update_user_prompt, "sql/60-update.adoc"),
     },
     "delete": {
         ApiType.REST: OperationAssets(get_delete_system_prompt, get_delete_user_prompt, "rest/70-delete.adoc"),
         ApiType.SCIM: OperationAssets(
             get_scim_delete_system_prompt, get_scim_delete_user_prompt, ""
         ),  # TODO add new documentation for SCIM delete operation
+        ApiType.SQL: OperationAssets(get_sql_delete_system_prompt, get_sql_delete_user_prompt, "sql/70-delete.adoc"),
     },
     "native_schema": {
         ApiType.REST: OperationAssets(
@@ -63,6 +75,9 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
         ),
         ApiType.SCIM: OperationAssets(
             get_native_schema_system_prompt, get_native_schema_user_prompt, "scim/25-schema-customization.adoc"
+        ),
+        ApiType.SQL: OperationAssets(
+            get_native_schema_system_prompt, get_native_schema_user_prompt, "sql/25-native-schema.adoc"
         ),
     },
     # TODO add new documentation for authorization
@@ -113,6 +128,23 @@ SEARCH_PROMPT_MAP: Mapping[ApiType, Mapping[SearchIntent, OperationAssets]] = {
             get_scim_search_id_system_prompt,
             get_scim_search_user_prompt,
             "scim/40-search.adoc",
+        ),
+    },
+    ApiType.SQL: {
+        SearchIntent.ALL: OperationAssets(
+            get_sql_search_all_system_prompt,
+            get_sql_search_user_prompt,
+            "sql/40-search.adoc",
+        ),
+        SearchIntent.FILTER: OperationAssets(
+            get_sql_search_filter_system_prompt,
+            get_sql_search_user_prompt,
+            "sql/40-search.adoc",
+        ),
+        SearchIntent.ID: OperationAssets(
+            get_sql_search_id_system_prompt,
+            get_sql_search_user_prompt,
+            "sql/40-search.adoc",
         ),
     },
 }
