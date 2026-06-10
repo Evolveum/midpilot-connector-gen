@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Dict
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Response, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -330,11 +330,6 @@ async def create_session_with_id(
 async def upload_documentation(
     session_id: UUID = Path(..., description="Session ID"),
     documentation: UploadFile = File(..., description="Documentation file"),
-    content_type: str | None = Form(
-        None,
-        alias="contentType",
-        description="Documentation content type",
-    ),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -349,7 +344,7 @@ async def upload_documentation(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
         app, app_version = await _get_session_upload_context(repo, session_id)
-        uploaded = await read_uploaded_documentation(documentation, content_type=content_type)
+        uploaded = await read_uploaded_documentation(documentation)
         chunks = _chunk_uploaded_documentation(session_id, uploaded)
 
     doc_id = uuid.uuid4()  # Single doc_id for the entire uploaded file
@@ -399,11 +394,6 @@ async def upload_documentation_by_id(
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation ID"),
     documentation: UploadFile = File(..., description="Documentation file"),
-    content_type: str | None = Form(
-        None,
-        alias="contentType",
-        description="Documentation content type",
-    ),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -419,7 +409,7 @@ async def upload_documentation_by_id(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
         app, app_version = await _get_session_upload_context(repo, session_id)
-        uploaded = await read_uploaded_documentation(documentation, content_type=content_type)
+        uploaded = await read_uploaded_documentation(documentation)
         chunks = _chunk_uploaded_documentation(session_id, uploaded)
 
     doc_id = documentation_id  # Use the provided documentation_id as doc_id
