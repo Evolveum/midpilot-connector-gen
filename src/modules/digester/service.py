@@ -11,7 +11,7 @@ from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
 from src.common.utils.normalize import normalize_endpoint_key
-from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
+from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api, is_sql_api
 
 # Shared extractors
 from src.modules.digester.extractors.auth import (
@@ -47,6 +47,9 @@ from src.modules.digester.extractors.rest.relations import (
 from src.modules.digester.extractors.scim.attributes import extract_scim_attributes
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
+from src.modules.digester.extractors.sql.attributes import extract_sql_attributes
+from src.modules.digester.extractors.sql.object_class import extract_sql_object_classes
+from src.modules.digester.extractors.sql.tables import extract_sql_tables
 from src.modules.digester.schemas import ExtractedConnectivityEndpointInfo, InfoMetadata, InfoResponse
 from src.modules.digester.utils.chunk_extraction import process_over_chunks, run_doc_extractors_concurrently
 from src.modules.digester.utils.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, DEFAULT_CRITERIA
@@ -104,6 +107,9 @@ async def extract_object_classes(
         Dictionary with result and relevantDocumentations
     """
     api_type = await get_session_api_types(session_id)
+    if is_sql_api(api_type):
+        return await extract_sql_object_classes(doc_items, job_id)
+
     is_scim = is_scim_api(api_type)
 
     if is_scim:
@@ -723,6 +729,26 @@ async def extract_attributes(
     """
     # TODO: Refactor this function
     api_type = await get_session_api_types(session_id)
+    if is_sql_api(api_type):
+        result = await extract_sql_attributes(doc_items, object_class, job_id)
+        try:
+            attributes_dict = extract_attributes_from_result(result)
+            logger.info("[Digester:Attributes] Extracted %d SQL attributes for %s", len(attributes_dict), object_class)
+            updated = await update_object_class_field_in_session(
+                session_id=session_id,
+                object_class=object_class,
+                field_name="attributes",
+                field_value=attributes_dict,
+            )
+            if not updated:
+                logger.warning("[Digester:Attributes] Failed to update objectClassesOutput for %s", object_class)
+        except Exception:
+            logger.exception(
+                "[Digester:Attributes] Exception while updating object class with SQL attributes for %s",
+                object_class,
+            )
+        return result
+
     is_scim = is_scim_api(api_type)
 
     if not doc_items:
@@ -860,6 +886,23 @@ async def extract_endpoints(
     """
 
     api_type = await get_session_api_types(session_id)
+    if is_sql_api(api_type):
+        result = await extract_sql_tables(doc_items, object_class, job_id)
+        try:
+            tables_list = extract_endpoints_from_result(result)
+            logger.info("[Digester:Endpoints] Selected %d SQL tables for %s", len(tables_list), object_class)
+            updated = await update_object_class_field_in_session(
+                session_id=session_id,
+                object_class=object_class,
+                field_name="endpoints",
+                field_value=tables_list,
+            )
+            if not updated:
+                logger.warning("[Digester:Endpoints] Failed to update objectClassesOutput for %s", object_class)
+        except Exception:
+            logger.exception("[Digester:Endpoints] Failed to update object class with SQL tables for %s", object_class)
+        return result
+
     is_scim = is_scim_api(api_type)
 
     if is_scim:
