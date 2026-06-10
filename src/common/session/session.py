@@ -27,6 +27,29 @@ _UPLOAD_WORKER_LIMIT = max(1, min(config.database.pool_size, 8))
 _UPLOAD_WORKER_SEMAPHORE = asyncio.Semaphore(_UPLOAD_WORKER_LIMIT)
 
 
+def build_processed_chunk_metadata(
+    *,
+    filename: str,
+    chunk_number: int,
+    length: int,
+    num_endpoints: int,
+    tags: list[str],
+    category: str,
+    upload_metadata: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {
+        "filename": filename,
+        "chunk_number": chunk_number,
+        "length": length,
+        "num_endpoints": num_endpoints,
+        "tags": tags,
+        "category": category,
+    }
+    if upload_metadata:
+        metadata.update(upload_metadata)
+    return metadata
+
+
 # Helper Functions
 async def process_documentation_worker(
     session_id: UUID,
@@ -67,18 +90,15 @@ async def process_documentation_worker(
                 prompts = get_llm_chunk_process_prompt(chunk_text, filename, app, app_version)
                 data = await get_llm_processed_chunk(prompts)
 
-            metadata = {
-                "filename": filename,
-                "chunk_number": idx,
-                "length": chunk_length,
-                "num_endpoints": data.num_endpoints,
-                "tags": data.tags,
-                "category": data.category,
-                "llm_tags": data.tags,
-                "llm_category": data.category,
-            }
-            if upload_metadata:
-                metadata.update(upload_metadata)
+            metadata = build_processed_chunk_metadata(
+                filename=filename,
+                chunk_number=idx,
+                length=chunk_length,
+                num_endpoints=data.num_endpoints,
+                tags=data.tags,
+                category=data.category,
+                upload_metadata=upload_metadata,
+            )
 
             return {
                 "idx": idx,

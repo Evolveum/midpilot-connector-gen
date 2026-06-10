@@ -321,8 +321,6 @@ async def schedule_coroutine_job(
                                                 "num_endpoints": item["metadata"].get("num_endpoints"),
                                                 "tags": item["metadata"].get("tags"),
                                                 "category": item["metadata"].get("category"),
-                                                "llm_tags": item["metadata"].get("llm_tags"),
-                                                "llm_category": item["metadata"].get("llm_category"),
                                             },
                                         )
                                     await db.commit()
