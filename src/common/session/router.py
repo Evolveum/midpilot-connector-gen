@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Respon
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.chunks import split_text_with_token_overlap
+from src.common.chunks import count_tokens, split_text_with_token_overlap
 from src.common.database.config import get_db
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.job_repository import JobRepository
@@ -38,6 +38,18 @@ _DOC_UPLOAD_API_SEMAPHORE = asyncio.Semaphore(_DOC_UPLOAD_API_LIMIT)
 
 
 def _chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentation) -> list[tuple[str, int]]:
+    if uploaded.preserve_as_single_item:
+        token_count = count_tokens(uploaded.text)
+        logger.info(
+            "[Upload] Preserving uploaded schema as a single documentation item for session %s "
+            "filename=%s content_type=%s tokens=%s",
+            session_id,
+            uploaded.filename,
+            uploaded.content_type,
+            token_count,
+        )
+        return [(uploaded.text, token_count)]
+
     logger.info(
         "[Upload] Chunking documentation for session %s filename=%s content_type=%s parser=%s",
         session_id,

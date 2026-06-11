@@ -17,38 +17,72 @@ from pypdf import PdfReader
 
 logger = logging.getLogger(__name__)
 
-_TEXT_CONTENT_TYPES = {
-    "application/json",
-    "application/openapi+json",
-    "application/schema+json",
+_CONTENT_TYPES_BY_PARSER = {
+    "json": {
+        "application/json",
+        "application/openapi+json",
+        "application/schema+json",
+        "application/scim+json",
+        "application/conndev+json",
+    },
+    "yaml": {
+        "application/x-yaml",
+        "application/yaml",
+        "application/vnd.yaml",
+        "application/conndev+yaml",
+    },
+    "html": {"text/html", "application/xhtml+xml"},
+    "text": {
+        "application/xml",
+        "application/csv",
+        "application/sql",
+        "application/x-sql",
+        "text/sql",
+    },
+    "pdf": {"application/pdf"},
+    "docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+}
+_SUFFIXES_BY_PARSER = {
+    "json": {".json"},
+    "yaml": {".yaml", ".yml"},
+    "html": {".html", ".htm"},
+    "text": {
+        ".adoc",
+        ".asc",
+        ".csv",
+        ".graphql",
+        ".gql",
+        ".log",
+        ".md",
+        ".openapi",
+        ".sql",
+        ".txt",
+        ".xml",
+    },
+    "pdf": {".pdf"},
+    "docx": {".docx"},
+}
+_TEXT_SUFFIXES = (
+    _SUFFIXES_BY_PARSER["json"]
+    | _SUFFIXES_BY_PARSER["yaml"]
+    | _SUFFIXES_BY_PARSER["html"]
+    | _SUFFIXES_BY_PARSER["text"]
+)
+_TEXT_CONTENT_TYPES = (
+    _CONTENT_TYPES_BY_PARSER["json"]
+    | _CONTENT_TYPES_BY_PARSER["yaml"]
+    | _CONTENT_TYPES_BY_PARSER["html"]
+    | _CONTENT_TYPES_BY_PARSER["text"]
+)
+_SINGLE_ITEM_SCHEMA_CONTENT_TYPES = {
     "application/scim+json",
-    "application/x-yaml",
-    "application/yaml",
-    "application/vnd.yaml",
-    "application/xml",
-    "application/xhtml+xml",
-    "application/csv",
+    "application/sql+json",
+    "application/conndev+json",
+    "application/conndev+yaml",
     "application/sql",
     "application/x-sql",
+    "text/sql",
 }
-_YAML_SUFFIXES = {".yaml", ".yml"}
-_JSON_SUFFIXES = {".json"}
-_HTML_SUFFIXES = {".html", ".htm"}
-_TEXT_SUFFIXES = {
-    ".adoc",
-    ".asc",
-    ".csv",
-    ".graphql",
-    ".gql",
-    ".log",
-    ".md",
-    ".openapi",
-    ".sql",
-    ".txt",
-    ".xml",
-}
-_PDF_SUFFIXES = {".pdf"}
-_DOCX_SUFFIXES = {".docx"}
 _GENERIC_CONTENT_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
 _CONTENT_TYPE_BY_SUFFIX = {
     ".json": "application/json",
@@ -68,6 +102,7 @@ class UploadedDocumentation:
     filename: str
     content_type: str
     metadata: dict[str, Any]
+    preserve_as_single_item: bool = False
 
 
 def _normalize_content_type(content_type: str | None) -> str:
@@ -85,6 +120,10 @@ def _resolve_content_type(content_type: str | None, upload_content_type: str | N
         return normalized_upload_type
 
     return _CONTENT_TYPE_BY_SUFFIX.get(suffix, normalized_upload_type)
+
+
+def should_preserve_as_single_item(content_type: str | None) -> bool:
+    return _normalize_content_type(content_type) in _SINGLE_ITEM_SCHEMA_CONTENT_TYPES
 
 
 def _decode_text(data: bytes, filename: str) -> str:
@@ -200,6 +239,7 @@ async def read_uploaded_documentation(
     filename = documentation.filename or "unknown"
     suffix = Path(filename).suffix.lower()
     content_type = _resolve_content_type(content_type, documentation.content_type, suffix)
+    preserve_as_single_item = should_preserve_as_single_item(content_type)
     data = await documentation.read()
 
     if not data:
@@ -211,31 +251,19 @@ async def read_uploaded_documentation(
     parser = "text"
     extra_metadata: dict[str, Any] = {}
 
-    if content_type == "application/pdf" or suffix in _PDF_SUFFIXES:
+    if content_type in _CONTENT_TYPES_BY_PARSER["pdf"] or suffix in _SUFFIXES_BY_PARSER["pdf"]:
         text, extra_metadata = _pdf_to_text(data, filename)
         parser = "pdf"
-    elif (
-        content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        or suffix in _DOCX_SUFFIXES
-    ):
+    elif content_type in _CONTENT_TYPES_BY_PARSER["docx"] or suffix in _SUFFIXES_BY_PARSER["docx"]:
         text, extra_metadata = _docx_to_text(data, filename)
         parser = "docx"
-    elif (
-        content_type
-        in {
-            "application/json",
-            "application/openapi+json",
-            "application/schema+json",
-            "application/scim+json",
-        }
-        or suffix in _JSON_SUFFIXES
-    ):
+    elif content_type in _CONTENT_TYPES_BY_PARSER["json"] or suffix in _SUFFIXES_BY_PARSER["json"]:
         text = _pretty_json_or_original(_decode_text(data, filename))
         parser = "json"
-    elif content_type in {"application/x-yaml", "application/yaml", "application/vnd.yaml"} or suffix in _YAML_SUFFIXES:
+    elif content_type in _CONTENT_TYPES_BY_PARSER["yaml"] or suffix in _SUFFIXES_BY_PARSER["yaml"]:
         text = _pretty_yaml_or_original(_decode_text(data, filename))
         parser = "yaml"
-    elif content_type in {"text/html", "application/xhtml+xml"} or suffix in _HTML_SUFFIXES:
+    elif content_type in _CONTENT_TYPES_BY_PARSER["html"] or suffix in _SUFFIXES_BY_PARSER["html"]:
         text = _html_to_text(_decode_text(data, filename))
         parser = "html"
     elif _is_text_upload(content_type, suffix):
@@ -266,6 +294,17 @@ async def read_uploaded_documentation(
             original_size=len(data),
             extracted_text=text,
             parser=parser,
-            extra=extra_metadata,
+            extra={
+                **extra_metadata,
+                **(
+                    {
+                        "preserveAsSingleDocumentationItem": True,
+                        "chunkingStrategy": "single_item_schema",
+                    }
+                    if preserve_as_single_item
+                    else {}
+                ),
+            },
         ),
+        preserve_as_single_item=preserve_as_single_item,
     )

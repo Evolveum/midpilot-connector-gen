@@ -64,7 +64,36 @@ async def test_read_uploaded_documentation_uses_explicit_content_type_over_uploa
     assert uploaded.content_type == "application/scim+json"
     assert uploaded.metadata["contentType"] == "application/scim+json"
     assert uploaded.metadata["parser"] == "json"
+    assert uploaded.metadata["preserveAsSingleDocumentationItem"] is True
+    assert uploaded.metadata["chunkingStrategy"] == "single_item_schema"
+    assert uploaded.preserve_as_single_item is True
     assert "urn:ietf:params:scim:schemas:core:2.0:User" in uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_marks_raw_sql_schema_as_single_item():
+    uploaded = await read_uploaded_documentation(
+        _upload("schema.sql", "text/sql", b"CREATE TABLE users (id bigint primary key);\n")
+    )
+
+    assert uploaded.content_type == "text/sql"
+    assert uploaded.metadata["parser"] == "text"
+    assert uploaded.metadata["preserveAsSingleDocumentationItem"] is True
+    assert uploaded.metadata["chunkingStrategy"] == "single_item_schema"
+    assert uploaded.preserve_as_single_item is True
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_marks_conndev_yaml_schema_as_single_item():
+    uploaded = await read_uploaded_documentation(
+        _upload("schema.yaml", "application/conndev+yaml", b"objects:\n  - name: User\n")
+    )
+
+    assert uploaded.content_type == "application/conndev+yaml"
+    assert uploaded.metadata["parser"] == "yaml"
+    assert uploaded.metadata["preserveAsSingleDocumentationItem"] is True
+    assert uploaded.metadata["chunkingStrategy"] == "single_item_schema"
+    assert uploaded.preserve_as_single_item is True
 
 
 @pytest.mark.asyncio
