@@ -8,12 +8,19 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import yaml
 from bs4 import BeautifulSoup
 from docx import Document
 from fastapi import HTTPException, UploadFile, status
 from pypdf import PdfReader
+
+from src.common.chunks import count_tokens, split_text_with_token_overlap
+from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import JobStage
+from src.common.jobs import schedule_coroutine_job
+from src.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +110,19 @@ class UploadedDocumentation:
     content_type: str
     metadata: dict[str, Any]
     preserve_as_single_item: bool = False
+
+
+@dataclass(frozen=True)
+class SessionUploadContext:
+    app: str
+    app_version: str
+
+
+@dataclass(frozen=True)
+class PreparedDocumentationUpload:
+    uploaded: UploadedDocumentation
+    chunks: list[tuple[str, int]]
+    context: SessionUploadContext
 
 
 def _normalize_content_type(content_type: str | None) -> str:
@@ -214,16 +234,12 @@ def _build_metadata(
     *,
     filename: str,
     content_type: str,
-    original_size: int,
-    extracted_text: str,
     parser: str,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metadata = {
         "filename": filename,
-        "contentType": content_type,
-        "original_size": original_size,
-        "extracted_length": len(extracted_text),
+        "content_type": content_type,
         "parser": parser,
     }
     if extra:
@@ -291,15 +307,13 @@ async def read_uploaded_documentation(
         metadata=_build_metadata(
             filename=filename,
             content_type=content_type,
-            original_size=len(data),
-            extracted_text=text,
             parser=parser,
             extra={
                 **extra_metadata,
                 **(
                     {
-                        "preserveAsSingleDocumentationItem": True,
-                        "chunkingStrategy": "single_item_schema",
+                        "preserve_as_single_documentation_item": True,
+                        "chunking_strategy": "single_item_schema",
                     }
                     if preserve_as_single_item
                     else {}
@@ -308,3 +322,110 @@ async def read_uploaded_documentation(
         ),
         preserve_as_single_item=preserve_as_single_item,
     )
+
+
+def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentation) -> list[tuple[str, int]]:
+    if uploaded.preserve_as_single_item:
+        token_count = count_tokens(uploaded.text)
+        logger.info(
+            "[Upload] Preserving uploaded schema as a single documentation item for session %s "
+            "filename=%s content_type=%s tokens=%s",
+            session_id,
+            uploaded.filename,
+            uploaded.content_type,
+            token_count,
+        )
+        return [(uploaded.text, token_count)]
+
+    logger.info(
+        "[Upload] Chunking documentation for session %s filename=%s content_type=%s parser=%s",
+        session_id,
+        uploaded.filename,
+        uploaded.content_type,
+        uploaded.metadata.get("parser"),
+    )
+    chunks = split_text_with_token_overlap(
+        uploaded.text,
+        max_tokens=config.scrape_and_process.chunk_length,
+        overlap_ratio=0.05,
+    )
+    logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
+    return chunks
+
+
+async def get_session_upload_context(repo: SessionRepository, session_id: UUID) -> SessionUploadContext:
+    session_data = await repo.get_session_data(session_id) or {}
+    discovery_input = session_data.get("discoveryInput", {})
+    scrape_input = session_data.get("scrapeInput", {})
+
+    return SessionUploadContext(
+        app=discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown",
+        app_version=discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown",
+    )
+
+
+async def prepare_documentation_upload(
+    repo: SessionRepository,
+    session_id: UUID,
+    documentation: UploadFile,
+) -> PreparedDocumentationUpload:
+    context = await get_session_upload_context(repo, session_id)
+    uploaded = await read_uploaded_documentation(documentation)
+    chunks = chunk_uploaded_documentation(session_id, uploaded)
+    return PreparedDocumentationUpload(uploaded=uploaded, chunks=chunks, context=context)
+
+
+async def queue_documentation_upload_job(
+    *,
+    repo: SessionRepository,
+    session_id: UUID,
+    doc_id: UUID,
+    prepared: PreparedDocumentationUpload,
+    include_processing_payload: bool = False,
+    skip_cache: bool | None = None,
+) -> UUID:
+    from src.common.session.session import process_documentation_worker
+
+    uploaded = prepared.uploaded
+    chunks = prepared.chunks
+    context = prepared.context
+
+    input_payload = {
+        "session_id": str(session_id),
+        "filename": uploaded.filename,
+        "doc_id": str(doc_id),
+        "chunks_count": len(chunks),
+        "content_type": uploaded.content_type,
+    }
+    if include_processing_payload:
+        input_payload.update(
+            {
+                "chunks": chunks,
+                "app": context.app,
+                "app_version": context.app_version,
+            }
+        )
+    if skip_cache is not None:
+        input_payload["skipCache"] = skip_cache
+
+    job_id = await schedule_coroutine_job(
+        job_type="documentation.processUpload",
+        input_payload=input_payload,
+        worker=process_documentation_worker,
+        worker_kwargs={
+            "session_id": session_id,
+            "chunks": chunks,
+            "filename": uploaded.filename,
+            "doc_id": doc_id,
+            "app": context.app,
+            "app_version": context.app_version,
+            "upload_metadata": uploaded.metadata,
+        },
+        initial_stage=JobStage.processing,
+        initial_message=f"Processing {len(chunks)} chunks",
+        session_id=session_id,
+    )
+
+    job_key = f"documentation.processUpload_{doc_id}_job_id"
+    await repo.update_session(session_id, {job_key: str(job_id)})
+    return job_id

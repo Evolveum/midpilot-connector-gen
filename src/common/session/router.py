@@ -12,19 +12,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Respon
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.chunks import count_tokens, split_text_with_token_overlap
 from src.common.database.config import get_db
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.job_repository import JobRepository
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import JobStage, JobStatus
-from src.common.jobs import schedule_coroutine_job
-from src.common.session.documentation_upload import UploadedDocumentation, read_uploaded_documentation
+from src.common.enums import JobStatus
 from src.common.session.schema import (
     Documentation,
     SessionCreateResponse,
 )
-from src.common.session.session import process_documentation_worker
+from src.common.session.utils.documentation_upload import prepare_documentation_upload, queue_documentation_upload_job
 from src.common.utils.status_response import build_group_documentation_response
 from src.config import config
 
@@ -35,45 +32,6 @@ router = APIRouter()
 # Guard high-burst documentation HEAD/PUT traffic against DB pool exhaustion.
 _DOC_UPLOAD_API_LIMIT = max(1, min(config.database.pool_size, 8))
 _DOC_UPLOAD_API_SEMAPHORE = asyncio.Semaphore(_DOC_UPLOAD_API_LIMIT)
-
-
-def _chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentation) -> list[tuple[str, int]]:
-    if uploaded.preserve_as_single_item:
-        token_count = count_tokens(uploaded.text)
-        logger.info(
-            "[Upload] Preserving uploaded schema as a single documentation item for session %s "
-            "filename=%s content_type=%s tokens=%s",
-            session_id,
-            uploaded.filename,
-            uploaded.content_type,
-            token_count,
-        )
-        return [(uploaded.text, token_count)]
-
-    logger.info(
-        "[Upload] Chunking documentation for session %s filename=%s content_type=%s parser=%s",
-        session_id,
-        uploaded.filename,
-        uploaded.content_type,
-        uploaded.metadata.get("parser"),
-    )
-    chunks = split_text_with_token_overlap(
-        uploaded.text,
-        max_tokens=config.scrape_and_process.chunk_length,
-        overlap_ratio=0.05,
-    )
-    logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
-    return chunks
-
-
-async def _get_session_upload_context(repo: SessionRepository, session_id: UUID) -> tuple[str, str]:
-    session_data = await repo.get_session_data(session_id) or {}
-    discovery_input = session_data.get("discoveryInput", {})
-    scrape_input = session_data.get("scrapeInput", {})
-
-    app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
-    app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
-    return app, app_version
 
 
 # GET Endpoints
@@ -355,40 +313,16 @@ async def upload_documentation(
         if not await repo.session_exists(session_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-        app, app_version = await _get_session_upload_context(repo, session_id)
-        uploaded = await read_uploaded_documentation(documentation)
-        chunks = _chunk_uploaded_documentation(session_id, uploaded)
+        prepared = await prepare_documentation_upload(repo, session_id, documentation)
 
     doc_id = uuid.uuid4()  # Single doc_id for the entire uploaded file
 
-    # Create job with the processing logic
-    job_id = await schedule_coroutine_job(
-        job_type="documentation.processUpload",
-        input_payload={
-            "session_id": str(session_id),
-            "filename": uploaded.filename,
-            "doc_id": str(doc_id),
-            "chunks_count": len(chunks),
-            "contentType": uploaded.content_type,
-        },
-        worker=process_documentation_worker,
-        worker_kwargs={
-            "session_id": session_id,
-            "chunks": chunks,
-            "filename": uploaded.filename,
-            "doc_id": doc_id,
-            "app": app,
-            "app_version": app_version,
-            "upload_metadata": uploaded.metadata,
-        },
-        initial_stage=JobStage.processing,
-        initial_message=f"Processing {len(chunks)} chunks",
+    job_id = await queue_documentation_upload_job(
+        repo=repo,
         session_id=session_id,
+        doc_id=doc_id,
+        prepared=prepared,
     )
-
-    # Store job_id in session
-    job_key = f"documentation.processUpload_{doc_id}_job_id"
-    await repo.update_session(session_id, {job_key: str(job_id)})
 
     # Return immediately with job info
     return {
@@ -396,7 +330,7 @@ async def upload_documentation(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": len(chunks),
+        "chunksToProcess": len(prepared.chunks),
         "status": "queued",
     }
 
@@ -420,44 +354,18 @@ async def upload_documentation_by_id(
         if not await repo.session_exists(session_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-        app, app_version = await _get_session_upload_context(repo, session_id)
-        uploaded = await read_uploaded_documentation(documentation)
-        chunks = _chunk_uploaded_documentation(session_id, uploaded)
+        prepared = await prepare_documentation_upload(repo, session_id, documentation)
 
     doc_id = documentation_id  # Use the provided documentation_id as doc_id
 
-    # Create job with the processing logic
-    job_id = await schedule_coroutine_job(
-        job_type="documentation.processUpload",
-        input_payload={
-            "session_id": str(session_id),
-            "filename": uploaded.filename,
-            "doc_id": str(doc_id),
-            "chunks_count": len(chunks),
-            "chunks": chunks,
-            "app": app,
-            "app_version": app_version,
-            "contentType": uploaded.content_type,
-            "skipCache": skip_cache,
-        },
-        worker=process_documentation_worker,
-        worker_kwargs={
-            "session_id": session_id,
-            "chunks": chunks,
-            "filename": uploaded.filename,
-            "doc_id": doc_id,
-            "app": app,
-            "app_version": app_version,
-            "upload_metadata": uploaded.metadata,
-        },
-        initial_stage=JobStage.processing,
-        initial_message=f"Processing {len(chunks)} chunks",
+    job_id = await queue_documentation_upload_job(
+        repo=repo,
         session_id=session_id,
+        doc_id=doc_id,
+        prepared=prepared,
+        include_processing_payload=True,
+        skip_cache=skip_cache,
     )
-
-    # Store job_id in session
-    job_key = f"documentation.processUpload_{doc_id}_job_id"
-    await repo.update_session(session_id, {job_key: str(job_id)})
 
     # Return immediately with job info
     return {
@@ -465,7 +373,7 @@ async def upload_documentation_by_id(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": len(chunks),
+        "chunksToProcess": len(prepared.chunks),
         "status": "queued",
     }
 
@@ -489,48 +397,21 @@ async def replace_documentation(
         if not await repo.session_exists(session_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-        app, app_version = await _get_session_upload_context(repo, session_id)
-        uploaded = await read_uploaded_documentation(documentation)
+        prepared = await prepare_documentation_upload(repo, session_id, documentation)
 
         # Clear existing documentation first
         await doc_repo.delete_documentation_items_by_session(session_id)
 
-        chunks = _chunk_uploaded_documentation(session_id, uploaded)
-
     doc_id = uuid.uuid4()  # Single doc_id for the entire uploaded file
 
-    # Create job with the processing logic
-    job_id = await schedule_coroutine_job(
-        job_type="documentation.processUpload",
-        input_payload={
-            "session_id": str(session_id),
-            "filename": uploaded.filename,
-            "doc_id": str(doc_id),
-            "chunks_count": len(chunks),
-            "chunks": chunks,
-            "app": app,
-            "app_version": app_version,
-            "contentType": uploaded.content_type,
-            "skipCache": skip_cache,
-        },
-        worker=process_documentation_worker,
-        worker_kwargs={
-            "session_id": session_id,
-            "chunks": chunks,
-            "filename": uploaded.filename,
-            "doc_id": doc_id,
-            "app": app,
-            "app_version": app_version,
-            "upload_metadata": uploaded.metadata,
-        },
-        initial_stage=JobStage.processing,
-        initial_message=f"Processing {len(chunks)} chunks",
+    job_id = await queue_documentation_upload_job(
+        repo=repo,
         session_id=session_id,
+        doc_id=doc_id,
+        prepared=prepared,
+        include_processing_payload=True,
+        skip_cache=skip_cache,
     )
-
-    # Store job_id in session
-    job_key = f"documentation.processUpload_{doc_id}_job_id"
-    await repo.update_session(session_id, {job_key: str(job_id)})
 
     # Return immediately with job info
     return {
@@ -538,7 +419,7 @@ async def replace_documentation(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": len(chunks),
+        "chunksToProcess": len(prepared.chunks),
         "status": "queued",
     }
 

@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 
-from src.common.session.documentation_upload import read_uploaded_documentation
+from src.common.session.utils.documentation_upload import read_uploaded_documentation
 
 
 def _upload(filename: str, content_type: str, data: bytes) -> UploadFile:
@@ -25,8 +25,11 @@ async def test_read_uploaded_documentation_keeps_content_type_metadata_for_json(
 
     assert uploaded.filename == "openapi.json"
     assert uploaded.content_type == "application/json"
-    assert uploaded.metadata["contentType"] == "application/json"
+    assert uploaded.metadata["content_type"] == "application/json"
     assert uploaded.metadata["parser"] == "json"
+    assert "character_count" not in uploaded.metadata
+    assert "original_size" not in uploaded.metadata
+    assert "contentType" not in uploaded.metadata
     assert '"openapi": "3.0.0"' in uploaded.text
 
 
@@ -37,7 +40,7 @@ async def test_read_uploaded_documentation_inferrs_content_type_when_upload_type
     )
 
     assert uploaded.content_type == "application/yaml"
-    assert uploaded.metadata["contentType"] == "application/yaml"
+    assert uploaded.metadata["content_type"] == "application/yaml"
     assert uploaded.metadata["parser"] == "yaml"
     assert "openapi: 3.0.0" in uploaded.text
 
@@ -49,7 +52,7 @@ async def test_read_uploaded_documentation_inferrs_json_content_type_for_generic
     )
 
     assert uploaded.content_type == "application/json"
-    assert uploaded.metadata["contentType"] == "application/json"
+    assert uploaded.metadata["content_type"] == "application/json"
     assert uploaded.metadata["parser"] == "json"
     assert "urn:ietf:params:scim:schemas:core:2.0:User" in uploaded.text
 
@@ -62,10 +65,12 @@ async def test_read_uploaded_documentation_uses_explicit_content_type_over_uploa
     )
 
     assert uploaded.content_type == "application/scim+json"
-    assert uploaded.metadata["contentType"] == "application/scim+json"
+    assert uploaded.metadata["content_type"] == "application/scim+json"
     assert uploaded.metadata["parser"] == "json"
-    assert uploaded.metadata["preserveAsSingleDocumentationItem"] is True
-    assert uploaded.metadata["chunkingStrategy"] == "single_item_schema"
+    assert uploaded.metadata["preserve_as_single_documentation_item"] is True
+    assert uploaded.metadata["chunking_strategy"] == "single_item_schema"
+    assert "preserveAsSingleDocumentationItem" not in uploaded.metadata
+    assert "chunkingStrategy" not in uploaded.metadata
     assert uploaded.preserve_as_single_item is True
     assert "urn:ietf:params:scim:schemas:core:2.0:User" in uploaded.text
 
@@ -78,8 +83,8 @@ async def test_read_uploaded_documentation_marks_raw_sql_schema_as_single_item()
 
     assert uploaded.content_type == "text/sql"
     assert uploaded.metadata["parser"] == "text"
-    assert uploaded.metadata["preserveAsSingleDocumentationItem"] is True
-    assert uploaded.metadata["chunkingStrategy"] == "single_item_schema"
+    assert uploaded.metadata["preserve_as_single_documentation_item"] is True
+    assert uploaded.metadata["chunking_strategy"] == "single_item_schema"
     assert uploaded.preserve_as_single_item is True
 
 
@@ -91,8 +96,8 @@ async def test_read_uploaded_documentation_marks_conndev_yaml_schema_as_single_i
 
     assert uploaded.content_type == "application/conndev+yaml"
     assert uploaded.metadata["parser"] == "yaml"
-    assert uploaded.metadata["preserveAsSingleDocumentationItem"] is True
-    assert uploaded.metadata["chunkingStrategy"] == "single_item_schema"
+    assert uploaded.metadata["preserve_as_single_documentation_item"] is True
+    assert uploaded.metadata["chunking_strategy"] == "single_item_schema"
     assert uploaded.preserve_as_single_item is True
 
 

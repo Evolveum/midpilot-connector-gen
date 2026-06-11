@@ -317,10 +317,12 @@ async def schedule_coroutine_job(
                                             metadata={
                                                 "filename": input_payload.get("filename", "unknown"),
                                                 "chunk_number": item["metadata"].get("chunk_number"),
-                                                "length": item["metadata"].get("length"),
+                                                "token_count": item["metadata"].get("token_count"),
                                                 "num_endpoints": item["metadata"].get("num_endpoints"),
                                                 "tags": item["metadata"].get("tags"),
                                                 "category": item["metadata"].get("category"),
+                                                "content_type": item["metadata"].get("content_type"),
+                                                "character_count": item["metadata"].get("character_count"),
                                             },
                                         )
                                     await db.commit()

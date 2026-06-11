@@ -18,7 +18,7 @@ from src.common.database.repositories.documentation_repository import Documentat
 from src.common.database.repositories.job_repository import JobRepository
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage
-from src.common.session.documentation_upload import read_uploaded_documentation
+from src.common.session.utils.documentation_upload import read_uploaded_documentation
 from src.config import config
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,8 @@ def build_processed_chunk_metadata(
     *,
     filename: str,
     chunk_number: int,
-    length: int,
+    token_count: int,
+    character_count: int,
     num_endpoints: int,
     tags: list[str],
     category: str,
@@ -40,7 +41,8 @@ def build_processed_chunk_metadata(
     metadata: Dict[str, Any] = {
         "filename": filename,
         "chunk_number": chunk_number,
-        "length": length,
+        "token_count": token_count,
+        "character_count": character_count,
         "num_endpoints": num_endpoints,
         "tags": tags,
         "category": category,
@@ -93,7 +95,8 @@ async def process_documentation_worker(
             metadata = build_processed_chunk_metadata(
                 filename=filename,
                 chunk_number=idx,
-                length=chunk_length,
+                token_count=chunk_length,
+                character_count=len(chunk_text),
                 num_endpoints=data.num_endpoints,
                 tags=data.tags,
                 category=data.category,
