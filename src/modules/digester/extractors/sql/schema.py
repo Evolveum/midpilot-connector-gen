@@ -20,6 +20,11 @@ _COLUMN_CONSTRAINT_RE = re.compile(
     r"\s+(PRIMARY\s+KEY|NOT\s+NULL|NULL|DEFAULT\b|REFERENCES\b|UNIQUE\b|CHECK\b|GENERATED\b|COLLATE\b).*",
     re.IGNORECASE | re.DOTALL,
 )
+_PRIMARY_KEY_COLUMNS_RE = re.compile(
+    r"\bPRIMARY\s+KEY\b\s*(?:USING\s+\w+\s*)?\((?P<columns>[^)]*)\)",
+    re.IGNORECASE | re.DOTALL,
+)
+_IDENTIFIER_PREFIX_RE = re.compile(r"^\s*(?P<identifier>\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[\w.]+)")
 _TABLE_KEYS = ("tables", "schema", "databaseSchema", "nativeSchema")
 
 
@@ -47,6 +52,22 @@ def _split_sql_columns(body: str) -> list[str]:
     if current:
         parts.append("".join(current).strip())
     return parts
+
+
+def _primary_key_columns_from_constraint(definition: str) -> list[str]:
+    match = _PRIMARY_KEY_COLUMNS_RE.search(definition)
+    if not match:
+        return []
+
+    columns = []
+    for value in _split_sql_columns(match.group("columns")):
+        identifier_match = _IDENTIFIER_PREFIX_RE.match(value)
+        if not identifier_match:
+            continue
+        name = _clean_identifier(identifier_match.group("identifier"))
+        if name:
+            columns.append(name)
+    return columns
 
 
 def _normalize_column(column: Any) -> dict[str, Any] | None:
@@ -111,9 +132,7 @@ def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str
         upper = definition.upper()
         if upper.startswith(("CONSTRAINT ", "PRIMARY KEY", "FOREIGN KEY", "UNIQUE ", "CHECK ", "KEY ", "INDEX ")):
             if "PRIMARY KEY" in upper:
-                primary_key.extend(
-                    _clean_identifier(value) for value in re.findall(r"[\(\"`,\s]([\w]+)[\"`,\s\)]", definition)
-                )
+                primary_key.extend(_primary_key_columns_from_constraint(definition))
             if "FOREIGN KEY" in upper:
                 foreign_keys.append({"definition": " ".join(definition.split())})
             continue
@@ -132,11 +151,17 @@ def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str
             primary_key.append(column_name)
         columns.append(column)
 
+    normalized_primary_key = list(OrderedDict.fromkeys(primary_key))
+    primary_key_lookup = {name.lower() for name in normalized_primary_key}
+    for column in columns:
+        if str(column.get("name") or "").lower() in primary_key_lookup:
+            column["primaryKey"] = True
+
     return _normalize_table(
         {
             "table": table_name,
             "columns": columns,
-            "primaryKey": list(OrderedDict.fromkeys(primary_key)),
+            "primaryKey": normalized_primary_key,
             "foreignKeys": foreign_keys,
         },
         source_ref,

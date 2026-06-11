@@ -60,7 +60,6 @@ from src.common.utils.relevance import (
 from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url
 from src.common.utils.status_response import build_typed_job_status_response
 from src.modules.digester import service
-from src.modules.digester.extraction import DocumentationSelector
 from src.modules.digester.schemas import (
     AttributeResponse,
     AuthResponse,
@@ -71,6 +70,7 @@ from src.modules.digester.schemas import (
     RelationsResponse,
 )
 from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
+from src.modules.digester.utils.documentation_selector import DocumentationSelector
 from src.modules.digester.utils.inputs import (
     auth_input,
     connectivity_endpoint_input,

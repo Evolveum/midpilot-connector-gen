@@ -26,6 +26,16 @@ def _sql_doc(content: str) -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def mock_sql_update_job_progress():
+    with (
+        patch("src.modules.digester.extractors.sql.attributes.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.sql.object_class.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.sql.tables.update_job_progress", new_callable=AsyncMock),
+    ):
+        yield
+
+
 def test_collect_sql_tables_from_json_schema():
     doc = _sql_doc(
         """
@@ -78,6 +88,47 @@ def test_collect_sql_tables_from_create_table_ddl():
         "nullable": False,
         "primaryKey": False,
     }
+
+
+def test_collect_sql_tables_marks_table_level_primary_key_columns():
+    doc = _sql_doc(
+        """
+        CREATE TABLE users (
+          id UUID NOT NULL,
+          username VARCHAR(255) NOT NULL,
+          CONSTRAINT users_pkey PRIMARY KEY (id)
+        );
+        """
+    )
+
+    tables = collect_sql_tables([doc])
+
+    assert tables[0]["primaryKey"] == ["id"]
+    assert tables[0]["columns"][0] == {"name": "id", "type": "UUID", "nullable": False, "primaryKey": True}
+    assert tables[0]["columns"][1] == {
+        "name": "username",
+        "type": "VARCHAR(255)",
+        "nullable": False,
+        "primaryKey": False,
+    }
+
+
+def test_collect_sql_tables_marks_composite_table_level_primary_key_columns():
+    doc = _sql_doc(
+        """
+        CREATE TABLE user_roles (
+          user_id UUID NOT NULL,
+          role_id UUID NOT NULL,
+          assigned_at TIMESTAMP,
+          PRIMARY KEY (user_id, role_id)
+        );
+        """
+    )
+
+    tables = collect_sql_tables([doc])
+
+    assert tables[0]["primaryKey"] == ["user_id", "role_id"]
+    assert [column["primaryKey"] for column in tables[0]["columns"]] == [True, True, False]
 
 
 @pytest.mark.asyncio
@@ -135,6 +186,28 @@ async def test_extract_sql_attributes_from_table_columns(mock_digester_update_jo
     assert attributes["id"]["updatable"] is False
     assert attributes["email"]["mandatory"] is True
     assert attributes["active"]["type"] == "boolean"
+
+
+@pytest.mark.asyncio
+async def test_extract_sql_attributes_treats_table_level_primary_key_as_non_updatable(
+    mock_digester_update_job_progress,
+):
+    doc = _sql_doc(
+        """
+        CREATE TABLE users (
+          id UUID NOT NULL,
+          email VARCHAR(255) NOT NULL,
+          PRIMARY KEY (id)
+        );
+        """
+    )
+
+    result = await extract_sql_attributes([doc], "User", uuid4())
+
+    attributes = result["result"]["attributes"]
+    assert attributes["id"]["primaryKey"] is True
+    assert attributes["id"]["updatable"] is False
+    assert attributes["email"]["updatable"] is True
 
 
 @pytest.mark.asyncio
