@@ -2,6 +2,8 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -104,6 +106,14 @@ _CONTENT_TYPE_BY_SUFFIX = {
 
 
 @dataclass(frozen=True)
+class RawUploadedDocumentation:
+    data: bytes
+    filename: str
+    content_type: str
+    content_hash: str
+
+
+@dataclass(frozen=True)
 class UploadedDocumentation:
     text: str
     filename: str
@@ -120,8 +130,7 @@ class SessionUploadContext:
 
 @dataclass(frozen=True)
 class PreparedDocumentationUpload:
-    uploaded: UploadedDocumentation
-    chunks: list[tuple[str, int]]
+    raw_upload: RawUploadedDocumentation
     context: SessionUploadContext
 
 
@@ -247,15 +256,14 @@ def _build_metadata(
     return metadata
 
 
-async def read_uploaded_documentation(
+async def read_raw_uploaded_documentation(
     documentation: UploadFile,
     *,
     content_type: str | None = None,
-) -> UploadedDocumentation:
+) -> RawUploadedDocumentation:
     filename = documentation.filename or "unknown"
     suffix = Path(filename).suffix.lower()
     content_type = _resolve_content_type(content_type, documentation.content_type, suffix)
-    preserve_as_single_item = should_preserve_as_single_item(content_type)
     data = await documentation.read()
 
     if not data:
@@ -264,14 +272,29 @@ async def read_uploaded_documentation(
             detail=f"Uploaded documentation {filename} is empty.",
         )
 
+    return RawUploadedDocumentation(
+        data=data,
+        filename=filename,
+        content_type=content_type,
+        content_hash=hashlib.sha256(data).hexdigest(),
+    )
+
+
+async def parse_uploaded_documentation(raw_upload: RawUploadedDocumentation) -> UploadedDocumentation:
+    filename = raw_upload.filename
+    content_type = raw_upload.content_type
+    suffix = Path(filename).suffix.lower()
+    data = raw_upload.data
+    preserve_as_single_item = should_preserve_as_single_item(content_type)
+
     parser = "text"
     extra_metadata: dict[str, Any] = {}
 
     if content_type in _CONTENT_TYPES_BY_PARSER["pdf"] or suffix in _SUFFIXES_BY_PARSER["pdf"]:
-        text, extra_metadata = _pdf_to_text(data, filename)
+        text, extra_metadata = await asyncio.to_thread(_pdf_to_text, data, filename)
         parser = "pdf"
     elif content_type in _CONTENT_TYPES_BY_PARSER["docx"] or suffix in _SUFFIXES_BY_PARSER["docx"]:
-        text, extra_metadata = _docx_to_text(data, filename)
+        text, extra_metadata = await asyncio.to_thread(_docx_to_text, data, filename)
         parser = "docx"
     elif content_type in _CONTENT_TYPES_BY_PARSER["json"] or suffix in _SUFFIXES_BY_PARSER["json"]:
         text = _pretty_json_or_original(_decode_text(data, filename))
@@ -324,6 +347,15 @@ async def read_uploaded_documentation(
     )
 
 
+async def read_uploaded_documentation(
+    documentation: UploadFile,
+    *,
+    content_type: str | None = None,
+) -> UploadedDocumentation:
+    raw_upload = await read_raw_uploaded_documentation(documentation, content_type=content_type)
+    return await parse_uploaded_documentation(raw_upload)
+
+
 def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentation) -> list[tuple[str, int]]:
     if uploaded.preserve_as_single_item:
         token_count = count_tokens(uploaded.text)
@@ -370,9 +402,8 @@ async def prepare_documentation_upload(
     documentation: UploadFile,
 ) -> PreparedDocumentationUpload:
     context = await get_session_upload_context(repo, session_id)
-    uploaded = await read_uploaded_documentation(documentation)
-    chunks = chunk_uploaded_documentation(session_id, uploaded)
-    return PreparedDocumentationUpload(uploaded=uploaded, chunks=chunks, context=context)
+    raw_upload = await read_raw_uploaded_documentation(documentation)
+    return PreparedDocumentationUpload(raw_upload=raw_upload, context=context)
 
 
 async def queue_documentation_upload_job(
@@ -381,30 +412,23 @@ async def queue_documentation_upload_job(
     session_id: UUID,
     doc_id: UUID,
     prepared: PreparedDocumentationUpload,
-    include_processing_payload: bool = False,
     skip_cache: bool | None = None,
 ) -> UUID:
     from src.common.session.session import process_documentation_worker
 
-    uploaded = prepared.uploaded
-    chunks = prepared.chunks
+    raw_upload = prepared.raw_upload
     context = prepared.context
 
     input_payload = {
         "session_id": str(session_id),
-        "filename": uploaded.filename,
+        "filename": raw_upload.filename,
         "doc_id": str(doc_id),
-        "chunks_count": len(chunks),
-        "content_type": uploaded.content_type,
+        "content_type": raw_upload.content_type,
+        "content_hash": raw_upload.content_hash,
+        "size_bytes": len(raw_upload.data),
+        "app": context.app,
+        "app_version": context.app_version,
     }
-    if include_processing_payload:
-        input_payload.update(
-            {
-                "chunks": chunks,
-                "app": context.app,
-                "app_version": context.app_version,
-            }
-        )
     if skip_cache is not None:
         input_payload["skipCache"] = skip_cache
 
@@ -414,15 +438,13 @@ async def queue_documentation_upload_job(
         worker=process_documentation_worker,
         worker_kwargs={
             "session_id": session_id,
-            "chunks": chunks,
-            "filename": uploaded.filename,
+            "raw_upload": raw_upload,
             "doc_id": doc_id,
             "app": context.app,
             "app_version": context.app_version,
-            "upload_metadata": uploaded.metadata,
         },
-        initial_stage=JobStage.processing,
-        initial_message=f"Processing {len(chunks)} chunks",
+        initial_stage=JobStage.queue,
+        initial_message="Queued uploaded documentation for processing",
         session_id=session_id,
     )
 

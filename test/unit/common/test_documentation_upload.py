@@ -2,13 +2,16 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import hashlib
 from io import BytesIO
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 
-from src.common.session.utils.documentation_upload import read_uploaded_documentation
+from src.common.session.utils import documentation_upload as upload_utils
+from src.common.session.utils.documentation_upload import RawUploadedDocumentation, read_uploaded_documentation
 
 
 def _upload(filename: str, content_type: str, data: bytes) -> UploadFile:
@@ -55,6 +58,20 @@ async def test_read_uploaded_documentation_inferrs_json_content_type_for_generic
     assert uploaded.metadata["content_type"] == "application/json"
     assert uploaded.metadata["parser"] == "json"
     assert "urn:ietf:params:scim:schemas:core:2.0:User" in uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_read_raw_uploaded_documentation_keeps_bytes_and_hash_without_parsing():
+    data = b'{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]}'
+
+    raw_upload = await upload_utils.read_raw_uploaded_documentation(
+        _upload("user.json", "application/octet-stream", data)
+    )
+
+    assert raw_upload.data == data
+    assert raw_upload.filename == "user.json"
+    assert raw_upload.content_type == "application/json"
+    assert raw_upload.content_hash == hashlib.sha256(data).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -131,6 +148,26 @@ async def test_read_uploaded_documentation_extracts_docx_text():
 
     assert uploaded.metadata["parser"] == "docx"
     assert "Connector documentation" in uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_parse_uploaded_documentation_offloads_docx_parsing_to_thread():
+    raw_upload = RawUploadedDocumentation(
+        data=b"docx-bytes",
+        filename="docs.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        content_hash="hash",
+    )
+
+    with patch.object(upload_utils.asyncio, "to_thread", new_callable=AsyncMock) as mock_to_thread:
+        mock_to_thread.return_value = ("Connector documentation", {"docx_paragraphs": 1, "docx_tables": 0})
+
+        uploaded = await upload_utils.parse_uploaded_documentation(raw_upload)
+
+    mock_to_thread.assert_awaited_once()
+    assert mock_to_thread.await_args.args[0] is upload_utils._docx_to_text
+    assert uploaded.metadata["parser"] == "docx"
+    assert uploaded.text == "Connector documentation"
 
 
 @pytest.mark.asyncio

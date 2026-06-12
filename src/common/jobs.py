@@ -303,6 +303,16 @@ async def schedule_coroutine_job(
                                     )
                                     await run_normal_worker()
                                 else:
+                                    await update_job_progress(
+                                        job_id,
+                                        stage=JobStage.processing_chunks,
+                                        message=(
+                                            f"Reusing {len(latest_job_doc_items)} processed documentation chunks "
+                                            f"from job {latest_job.job_id}"
+                                        ),
+                                        total_processing=len(latest_job_doc_items),
+                                        processing_completed=0,
+                                    )
                                     for item in latest_job_doc_items:
                                         await doc_repo.create_documentation_item(
                                             session_id=session_id,
@@ -326,6 +336,10 @@ async def schedule_coroutine_job(
                                             },
                                         )
                                     await db.commit()
+                                    await update_job_progress(
+                                        job_id,
+                                        processing_completed=len(latest_job_doc_items),
+                                    )
                                     result_dict = reused_output
                             elif job_type.startswith("digester.") or "relevantDocumentations" in reused_output:
                                 previous_doc_items = await doc_repo.get_documentation_items_by_session(

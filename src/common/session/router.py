@@ -330,7 +330,7 @@ async def upload_documentation(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": len(prepared.chunks),
+        "chunksToProcess": None,
         "status": "queued",
     }
 
@@ -363,7 +363,6 @@ async def upload_documentation_by_id(
         session_id=session_id,
         doc_id=doc_id,
         prepared=prepared,
-        include_processing_payload=True,
         skip_cache=skip_cache,
     )
 
@@ -373,7 +372,7 @@ async def upload_documentation_by_id(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": len(prepared.chunks),
+        "chunksToProcess": None,
         "status": "queued",
     }
 
@@ -409,7 +408,6 @@ async def replace_documentation(
         session_id=session_id,
         doc_id=doc_id,
         prepared=prepared,
-        include_processing_payload=True,
         skip_cache=skip_cache,
     )
 
@@ -419,7 +417,7 @@ async def replace_documentation(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": len(prepared.chunks),
+        "chunksToProcess": None,
         "status": "queued",
     }
 
