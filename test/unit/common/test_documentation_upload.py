@@ -106,6 +106,20 @@ async def test_read_uploaded_documentation_marks_raw_sql_schema_as_single_item()
 
 
 @pytest.mark.asyncio
+async def test_read_uploaded_documentation_inferrs_sql_content_type_for_generic_sql_upload():
+    uploaded = await read_uploaded_documentation(
+        _upload("schema.sql", "application/octet-stream", b"CREATE TABLE users (id bigint primary key);\n")
+    )
+
+    assert uploaded.content_type == "application/sql"
+    assert uploaded.metadata["content_type"] == "application/sql"
+    assert uploaded.metadata["parser"] == "text"
+    assert uploaded.metadata["preserve_as_single_documentation_item"] is True
+    assert uploaded.metadata["chunking_strategy"] == "single_item_schema"
+    assert uploaded.preserve_as_single_item is True
+
+
+@pytest.mark.asyncio
 async def test_read_uploaded_documentation_marks_conndev_yaml_schema_as_single_item():
     uploaded = await read_uploaded_documentation(
         _upload("schema.yaml", "application/conndev+yaml", b"objects:\n  - name: User\n")

@@ -18,7 +18,13 @@ from src.common.errors import (
 )
 from src.common.session.session import get_session_documentation
 from src.common.utils.normalize import normalize_object_class_name
-from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
+from src.common.utils.session_info_metadata import (
+    get_session_api_types,
+    get_session_base_api_url,
+    is_scim_api,
+    is_sql_api,
+)
+from src.modules.digester.extractors.sql.schema import collect_sql_tables, tables_for_object_class
 from src.modules.digester.schemas.common import ChunkReference
 from src.modules.digester.utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
 from src.modules.digester.utils.doc_chunk import (
@@ -66,7 +72,20 @@ class DocumentationSelector:
         object_class: str,
     ) -> DocumentationSelection:
         target_object_class = await self._get_target_object_class(repo, session_id, object_class)
-        is_scim = await self._is_scim_session(session_id)
+        api_types = await self._get_api_types(session_id)
+        is_scim = is_scim_api(api_types)
+        is_sql = is_sql_api(api_types)
+
+        if is_sql:
+            doc_items = await self._get_documentation(session_id, db=self._db)
+            chunk_refs = await self._load_sql_object_class_chunk_refs(
+                session_id=session_id,
+                object_class=object_class,
+                doc_items=doc_items,
+            )
+            if not chunk_refs:
+                raise RelevantChunksNotFoundError(object_class, "attributes")
+            return DocumentationSelection(doc_items=doc_items, chunk_references=chunk_refs)
 
         criteria = DEFAULT_CRITERIA.model_copy()
         normalized_name = normalize_object_class_name(object_class)
@@ -99,7 +118,20 @@ class DocumentationSelector:
     ) -> DocumentationSelection:
         target_object_class = await self._get_target_object_class(repo, session_id, object_class)
         base_api_url = await self._get_base_url(session_id)
-        is_scim = await self._is_scim_session(session_id)
+        api_types = await self._get_api_types(session_id)
+        is_scim = is_scim_api(api_types)
+        is_sql = is_sql_api(api_types)
+
+        if is_sql:
+            doc_items = await self._get_documentation(session_id, db=self._db)
+            chunk_refs = await self._load_sql_object_class_chunk_refs(
+                session_id=session_id,
+                object_class=object_class,
+                doc_items=doc_items,
+            )
+            if not chunk_refs:
+                raise RelevantChunksNotFoundError(object_class, "endpoints")
+            return DocumentationSelection(doc_items=doc_items, chunk_references=chunk_refs, base_api_url=base_api_url)
 
         criteria = ENDPOINT_CRITERIA.model_copy()
         criteria.allowed_tags = [[normalize_object_class_name(object_class)], ["endpoint", "endpoints"]]
@@ -141,8 +173,35 @@ class DocumentationSelector:
 
         return target_object_class
 
-    async def _is_scim_session(self, session_id: UUID) -> bool:
-        return is_scim_api(await self._get_api_types(session_id))
+    async def _load_sql_object_class_chunk_refs(
+        self,
+        session_id: UUID,
+        object_class: str,
+        doc_items: List[Dict[str, Any]],
+    ) -> List[ChunkReference]:
+        relevant_repo = self._relevant_repo_factory(self._db)
+        by_entity = await relevant_repo.get_relevant_chunks_grouped_by_entity(
+            session_id=session_id,
+            result_key="objectClassesOutput",
+        )
+
+        normalized_name = normalize_object_class_name(object_class)
+        chunk_refs = build_chunk_references_from_mappings(by_entity.get(normalized_name, []))
+        if chunk_refs:
+            return chunk_refs
+
+        selected_tables = tables_for_object_class(collect_sql_tables(doc_items), object_class)
+        table_refs: List[Dict[str, Any]] = []
+        for table in selected_tables:
+            relevant_documentations = table.get("relevantDocumentations")
+            if isinstance(relevant_documentations, list):
+                table_refs.extend(chunk for chunk in relevant_documentations if isinstance(chunk, dict))
+
+        chunk_refs = build_chunk_references_from_mappings(table_refs)
+        if chunk_refs:
+            return chunk_refs
+
+        return build_chunk_references_from_doc_items(_select_sql_schema_doc_items(doc_items))
 
     async def _load_scim_object_class_chunk_refs(
         self,
@@ -167,3 +226,16 @@ class DocumentationSelector:
             chunks.extend(by_entity.get(entity_key, []))
 
         return build_chunk_references_from_mappings(chunks)
+
+
+def _select_sql_schema_doc_items(doc_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    sql_items: List[Dict[str, Any]] = []
+    for item in doc_items:
+        metadata = item.get("@metadata") or {}
+        content_type = str(metadata.get("content_type") or "").lower()
+        if "sql" in content_type:
+            sql_items.append(item)
+            continue
+        if collect_sql_tables([item]):
+            sql_items.append(item)
+    return sql_items

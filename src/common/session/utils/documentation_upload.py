@@ -100,6 +100,7 @@ _CONTENT_TYPE_BY_SUFFIX = {
     ".html": "text/html",
     ".htm": "text/html",
     ".xml": "application/xml",
+    ".sql": "application/sql",
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
