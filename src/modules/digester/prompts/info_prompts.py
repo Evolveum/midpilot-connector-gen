@@ -86,7 +86,7 @@ Text from actual documentation:
 
 Return structured output for THIS fragment only:
 - Apply the FIELD RULES for name, applicationVersion, apiVersion, apiType, and baseApiEndpoint.
-- For apiType, output only REST/SCIM; treat OpenAPI/Swagger evidence as REST.
+- For apiType, output only REST/SCIM/SQL; treat OpenAPI/Swagger evidence as REST and database/schema-only integration evidence as SQL.
 - For baseApiEndpoint, return a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless docs guarantee a single global URL).
 - Summary/tags may be empty; rely primarily on <chunk>.
 - If this fragment adds nothing reliable, keep fields empty.

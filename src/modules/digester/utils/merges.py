@@ -490,7 +490,7 @@ def merge_info_metadata(
 
         for api_type in info.api_type or []:
             normalized_type = str(api_type).upper().strip()
-            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value}:
+            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value, ApiType.SQL.value}:
                 canonical_type = ApiType(normalized_type)
                 api_type_distribution[canonical_type] = api_type_distribution.get(canonical_type, 0) + 1
 

@@ -187,3 +187,14 @@ def test_merge_info_metadata_uses_unknown_endpoint_type_when_constant_and_dynami
     assert len(base_api_endpoints) == 1
     assert base_api_endpoints[0]["uri"] == uri.lower()
     assert base_api_endpoints[0]["type"] == ""
+
+
+def test_merge_info_metadata_preserves_sql_api_type():
+    info_candidates = [
+        InfoMetadata(api_type=[ApiType.SQL]),
+        InfoMetadata(api_type=[ApiType.SQL]),
+    ]
+
+    merged = merge_info_metadata(info_candidates, total_items=2)
+
+    assert merged["infoMetadata"]["apiType"] == [ApiType.SQL.value]

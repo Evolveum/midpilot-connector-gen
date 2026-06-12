@@ -69,7 +69,9 @@ class InfoMetadata(BaseModel):
         default_factory=list,
         validation_alias="apiType",
         serialization_alias="apiType",
-        description=("API technology types. Allowed values: REST, SCIM. OpenAPI/Swagger should be normalized to REST."),
+        description=(
+            "API technology types. Allowed values: REST, SCIM, SQL. OpenAPI/Swagger should be normalized to REST."
+        ),
     )
     base_api_endpoint: List[BaseAPIEndpoint] = Field(
         default_factory=list,
@@ -103,6 +105,8 @@ class InfoMetadata(BaseModel):
             "openapi": ApiType.REST,
             "swagger": ApiType.REST,
             "scim": ApiType.SCIM,
+            "sql": ApiType.SQL,
+            "db": ApiType.SQL,
         }
 
         normalized: List[ApiType] = []
