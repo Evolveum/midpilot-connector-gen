@@ -5,7 +5,6 @@
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
 from typing import Any, Dict
 from uuid import UUID
 
@@ -19,8 +18,8 @@ from src.common.database.repositories.documentation_repository import Documentat
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage
 from src.common.jobs import increment_processed_documents, update_job_progress
+from src.common.session.schema import ProcessedDocumentationChunk, RawUploadedDocumentation
 from src.common.session.utils.documentation_upload import (
-    RawUploadedDocumentation,
     chunk_uploaded_documentation,
     parse_uploaded_documentation,
     read_uploaded_documentation,
@@ -31,14 +30,6 @@ logger = logging.getLogger(__name__)
 
 _UPLOAD_WORKER_LIMIT = max(1, min(config.database.pool_size, 8))
 _UPLOAD_WORKER_SEMAPHORE = asyncio.Semaphore(_UPLOAD_WORKER_LIMIT)
-
-
-@dataclass(frozen=True)
-class ProcessedDocumentationChunk:
-    index: int
-    text: str
-    summary: str
-    metadata: Dict[str, Any]
 
 
 def build_processed_chunk_metadata(

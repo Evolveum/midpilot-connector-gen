@@ -8,15 +8,13 @@ from typing import Any, Dict, Optional
 
 from src.common.enums import ApiType
 from src.modules.codegen.core.base import (
-    AttributesPayload,
     BaseGroovyGenerator,
-    EndpointsPayload,
-    OperationConfig,
     attributes_to_records,
     endpoints_to_records,
 )
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
+from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, OperationConfig
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
 from src.modules.digester.schemas import RelationsResponse
 

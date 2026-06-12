@@ -7,7 +7,6 @@ import hashlib
 import io
 import json
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -22,6 +21,12 @@ from src.common.chunks import count_tokens, split_text_with_token_overlap
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage
 from src.common.jobs import schedule_coroutine_job
+from src.common.session.schema import (
+    PreparedDocumentationUpload,
+    RawUploadedDocumentation,
+    SessionUploadContext,
+    UploadedDocumentation,
+)
 from src.config import config
 
 logger = logging.getLogger(__name__)
@@ -105,35 +110,6 @@ _CONTENT_TYPE_BY_SUFFIX = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
-
-
-@dataclass(frozen=True)
-class RawUploadedDocumentation:
-    data: bytes
-    filename: str
-    content_type: str
-    content_hash: str
-
-
-@dataclass(frozen=True)
-class UploadedDocumentation:
-    text: str
-    filename: str
-    content_type: str
-    metadata: dict[str, Any]
-    preserve_as_single_item: bool = False
-
-
-@dataclass(frozen=True)
-class SessionUploadContext:
-    app: str
-    app_version: str
-
-
-@dataclass(frozen=True)
-class PreparedDocumentationUpload:
-    raw_upload: RawUploadedDocumentation
-    context: SessionUploadContext
 
 
 def _normalize_content_type(content_type: str | None) -> str:

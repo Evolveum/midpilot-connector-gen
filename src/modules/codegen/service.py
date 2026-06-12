@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union, cast
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, cast
 from uuid import UUID
 
 from src.common.database.config import async_session_maker
@@ -30,9 +30,8 @@ from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_system_prompt,
     get_native_schema_user_prompt,
 )
-from src.modules.codegen.schema import CodegenRepairContext
+from src.modules.codegen.schema import AttributesPayload, AuthPayload, CodegenRepairContext, EndpointsPayload
 from src.modules.codegen.selection.authorization import (
-    AuthPayload,
     enrich_preferred_authorizations,
     has_matching_preferred_authorization,
     is_single_other_authorization,
@@ -42,12 +41,9 @@ from src.modules.codegen.selection.authorization import (
 from src.modules.codegen.selection.docs_loader import read_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.codegen.utils.map_to_record import attributes_to_records_for_codegen
-from src.modules.digester.schemas import AttributeResponse, EndpointResponse, RelationsResponse
+from src.modules.digester.schemas import AttributeResponse, RelationsResponse
 
 logger = logging.getLogger(__name__)
-
-AttributesPayload = Union[AttributeResponse, Mapping[str, Any]]
-EndpointsPayload = Union[EndpointResponse, Mapping[str, Any]]
 
 
 def _attrs_map_from_payload(payload: AttributesPayload) -> Dict[str, Dict[str, Any]]:
