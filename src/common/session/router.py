@@ -330,7 +330,6 @@ async def upload_documentation(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": None,
         "status": "queued",
     }
 
@@ -372,7 +371,6 @@ async def upload_documentation_by_id(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": None,
         "status": "queued",
     }
 
@@ -417,7 +415,6 @@ async def replace_documentation(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": None,
         "status": "queued",
     }
 

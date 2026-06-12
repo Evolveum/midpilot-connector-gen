@@ -32,6 +32,7 @@ _CONTENT_TYPES_BY_PARSER = {
         "application/openapi+json",
         "application/schema+json",
         "application/scim+json",
+        "application/sql+json",
         "application/conndev+json",
     },
     "yaml": {

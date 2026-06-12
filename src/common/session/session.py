@@ -147,6 +147,26 @@ async def process_documentation_worker(
         completed_chunks: dict[int, ProcessedDocumentationChunk] = {}
         next_chunk_to_persist = 0
         tasks = [asyncio.create_task(process_chunk(i, ch)) for i, ch in enumerate(chunks)]
+        persist_errors: list[tuple[int, Exception]] = []
+
+        async def _try_persist(chunk: ProcessedDocumentationChunk) -> None:
+            try:
+                await _persist_processed_documentation_chunk(
+                    session_id=session_id,
+                    doc_id=doc_id,
+                    job_id=job_id,
+                    filename=uploaded.filename,
+                    chunk=chunk,
+                )
+            except Exception as e:
+                logger.error(
+                    "[Upload:Job] Failed to persist chunk %s for session %s (job %s): %s",
+                    chunk.index,
+                    session_id,
+                    job_id,
+                    e,
+                )
+                persist_errors.append((chunk.index, e))
 
         try:
             for completed_task in asyncio.as_completed(tasks):
@@ -156,19 +176,23 @@ async def process_documentation_worker(
 
                 while next_chunk_to_persist in completed_chunks:
                     chunk_to_persist = completed_chunks.pop(next_chunk_to_persist)
-                    await _persist_processed_documentation_chunk(
-                        session_id=session_id,
-                        doc_id=doc_id,
-                        job_id=job_id,
-                        filename=uploaded.filename,
-                        chunk=chunk_to_persist,
-                    )
+                    await _try_persist(chunk_to_persist)
                     next_chunk_to_persist += 1
+
         except Exception:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            for buffered_chunk in sorted(completed_chunks.values(), key=lambda c: c.index):
+                await _try_persist(buffered_chunk)
             raise
+
+        if persist_errors:
+            failed_indices = sorted(idx for idx, _ in persist_errors)
+            raise RuntimeError(
+                f"Documentation upload partially failed: {len(persist_errors)} chunk(s) could not be persisted "
+                f"(indices: {failed_indices})"
+            )
 
         logger.info(
             "[Upload:Job] Completed processing for session %s (job %s): generated %s chunks",

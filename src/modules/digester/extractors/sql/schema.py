@@ -146,6 +146,7 @@ def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str
             "type": " ".join(_COLUMN_CONSTRAINT_RE.sub("", column_match.group("type")).split()),
             "nullable": "NOT NULL" not in upper,
             "primaryKey": "PRIMARY KEY" in upper,
+            "generated": "GENERATED" in upper,
         }
         if column["primaryKey"]:
             primary_key.append(column_name)
