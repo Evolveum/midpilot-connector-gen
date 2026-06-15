@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import uuid
+from dataclasses import dataclass
 from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
@@ -68,6 +69,18 @@ class SavedDocumentation(BaseModel):
             "summary": self.summary.to_dict() if self.summary else None,
             "links": [str(link) for link in self.links] if self.links else None,
         }
+
+
+@dataclass(frozen=True)
+class ChunkProcessingError:
+    """Records a single chunk that failed to process, so partial failures stay observable.
+
+    A failure on one chunk must not discard the other chunks of the same documentation.
+    """
+
+    url: str
+    chunk_number: int
+    error: str
 
 
 class LlmChunkOutput(BaseModel):

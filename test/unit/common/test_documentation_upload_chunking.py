@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.session.session import build_processed_chunk_metadata
+from src.common.chunk_processor.processor import build_chunk_metadata
+from src.common.chunk_processor.schema import LlmChunkOutput
 from src.common.session.utils.documentation_upload import (
     PreparedDocumentationUpload,
     RawUploadedDocumentation,
@@ -50,18 +51,24 @@ def test_chunk_uploaded_documentation_preserves_schema_as_single_item():
 
 
 def test_processed_chunk_metadata_uses_token_count_name():
-    metadata = build_processed_chunk_metadata(
-        filename="schema.sql",
-        chunk_number=0,
-        token_count=42,
-        character_count=17,
+    data = LlmChunkOutput(
+        summary="schema summary",
         num_endpoints=0,
         tags=["SQL"],
         category="reference_other",
+        different_app_name=False,
+    )
+    metadata = build_chunk_metadata(
+        chunk_number=0,
+        token_count=42,
+        character_count=17,
+        data=data,
+        filename="schema.sql",
     )
 
     assert metadata["token_count"] == 42
     assert metadata["character_count"] == 17
+    assert metadata["chunk_number"] == 0
     assert "length" not in metadata
 
 

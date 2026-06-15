@@ -12,6 +12,7 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_processor.llms import get_llm_processed_chunk
+from src.common.chunk_processor.processor import build_chunk_metadata
 from src.common.chunk_processor.prompts import get_llm_chunk_process_prompt
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
@@ -30,31 +31,6 @@ logger = logging.getLogger(__name__)
 
 _UPLOAD_WORKER_LIMIT = max(1, min(config.database.pool_size, 8))
 _UPLOAD_WORKER_SEMAPHORE = asyncio.Semaphore(_UPLOAD_WORKER_LIMIT)
-
-
-def build_processed_chunk_metadata(
-    *,
-    filename: str,
-    chunk_number: int,
-    token_count: int,
-    character_count: int,
-    num_endpoints: int,
-    tags: list[str],
-    category: str,
-    upload_metadata: Dict[str, Any] | None = None,
-) -> Dict[str, Any]:
-    metadata: Dict[str, Any] = {
-        "filename": filename,
-        "chunk_number": chunk_number,
-        "token_count": token_count,
-        "character_count": character_count,
-        "num_endpoints": num_endpoints,
-        "tags": tags,
-        "category": category,
-    }
-    if upload_metadata:
-        metadata.update(upload_metadata)
-    return metadata
 
 
 async def _persist_processed_documentation_chunk(
@@ -122,15 +98,14 @@ async def process_documentation_worker(
                 prompts = get_llm_chunk_process_prompt(chunk_text, uploaded.filename, app, app_version)
                 data = await get_llm_processed_chunk(prompts)
 
-            metadata = build_processed_chunk_metadata(
-                filename=uploaded.filename,
+            metadata = build_chunk_metadata(
                 chunk_number=idx,
                 token_count=chunk_length,
                 character_count=len(chunk_text),
-                num_endpoints=data.num_endpoints,
-                tags=data.tags,
-                category=data.category,
-                upload_metadata=uploaded.metadata,
+                data=data,
+                content_type=uploaded.content_type,
+                filename=uploaded.filename,
+                extra=uploaded.metadata,
             )
 
             return ProcessedDocumentationChunk(index=idx, text=chunk_text, summary=data.summary, metadata=metadata)

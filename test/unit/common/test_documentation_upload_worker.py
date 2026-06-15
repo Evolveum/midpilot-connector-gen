@@ -31,7 +31,13 @@ async def test_process_documentation_worker_updates_progress_per_chunk_and_persi
     async def fake_llm_processed_chunk(prompts: tuple[str, str]) -> SimpleNamespace:
         if prompts[1] == "first":
             await asyncio.sleep(0.01)
-        return SimpleNamespace(summary=f"summary {prompts[1]}", num_endpoints=0, tags=["docs"], category="other")
+        return SimpleNamespace(
+            summary=f"summary {prompts[1]}",
+            num_endpoints=0,
+            tags=["docs"],
+            category="other",
+            different_app_name=False,
+        )
 
     with (
         patch("src.common.session.session.parse_uploaded_documentation", new_callable=AsyncMock) as mock_parse,
