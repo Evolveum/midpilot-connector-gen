@@ -3,7 +3,6 @@
 # Licensed under the EUPL-1.2 or later.
 
 import uuid
-from dataclasses import dataclass
 from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
@@ -71,16 +70,17 @@ class SavedDocumentation(BaseModel):
         }
 
 
-@dataclass(frozen=True)
-class ChunkProcessingError:
-    """Records a single chunk that failed to process, so partial failures stay observable.
+class ChunkProcessingError(BaseModel):
+    """
+    A non-fatal failure while processing a single documentation chunk.
 
-    A failure on one chunk must not discard the other chunks of the same documentation.
+    Collected so a transient per-chunk failure (e.g. an LLM connection error) can be
+    surfaced as a job error without aborting the whole scrape run.
     """
 
-    url: str
-    chunk_number: int
-    error: str
+    url: str = Field(description="URL of the documentation the failed chunk belongs to")
+    chunk_index: int = Field(description="Index of the failed chunk within the documentation")
+    error: str = Field(description="Human-readable description of the failure")
 
 
 class LlmChunkOutput(BaseModel):

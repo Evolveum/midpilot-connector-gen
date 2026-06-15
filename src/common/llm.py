@@ -1,8 +1,10 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
+import asyncio
+import logging
 import ssl
-from typing import Any, Final, Literal, cast
+from typing import Any, Awaitable, Callable, Final, Literal, Optional, TypeVar, cast
 
 import httpx
 from langchain_classic.output_parsers import RetryWithErrorOutputParser
@@ -10,9 +12,88 @@ from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
 from langchain_core.prompts import BasePromptTemplate, ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel
 from langchain_openai import ChatOpenAI
+from openai import APIConnectionError, APITimeoutError
 from pydantic import BaseModel
 
 from src.config import ReasoningEffort, config
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+# HTTP status codes that indicate a transient, retryable LLM provider failure.
+TRANSIENT_LLM_STATUS_CODES: Final[frozenset[int]] = frozenset({408, 409, 429, 500, 502, 503, 504})
+
+# Substrings (lowercased) in error messages that indicate a transient failure.
+_TRANSIENT_LLM_MESSAGE_MARKERS: Final[tuple[str, ...]] = (
+    "connection error",
+    "gateway time-out",
+    "gateway timeout",
+    "temporarily unavailable",
+    "service unavailable",
+    "rate limit",
+    "timed out",
+    "timeout",
+    "overloaded",
+)
+
+
+def is_transient_llm_error(exc: BaseException) -> bool:
+    """
+    Decide whether an LLM/provider exception is transient and worth retrying.
+
+    Covers connection/timeout errors (e.g. ``openai.APIConnectionError`` whose message is
+    only "Connection error."), retryable HTTP status codes, and known transient message markers.
+    """
+    if isinstance(exc, (APIConnectionError, APITimeoutError)):
+        return True
+
+    status_code = getattr(exc, "status_code", None)
+    if status_code in TRANSIENT_LLM_STATUS_CODES:
+        return True
+
+    message = str(exc).lower()
+    return any(marker in message for marker in _TRANSIENT_LLM_MESSAGE_MARKERS)
+
+
+async def retry_on_transient_llm_error(
+    func: Callable[[], Awaitable[T]],
+    *,
+    max_attempts: int,
+    base_delay: float,
+    logger_prefix: str = "",
+    context: Optional[str] = None,
+) -> T:
+    """
+    Invoke an async LLM call with bounded exponential backoff on transient failures.
+
+    Non-transient errors (and the final attempt) are re-raised unchanged so callers
+    keep full visibility into genuine failures.
+    """
+    attempts = max(1, max_attempts)
+    delay = max(0.0, base_delay)
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return await func()
+        except Exception as exc:
+            if attempt >= attempts or not is_transient_llm_error(exc):
+                raise
+
+            wait = delay * (2 ** (attempt - 1))
+            logger.warning(
+                "%sTransient LLM failure%s; retrying attempt %s/%s in %.1fs: %s",
+                logger_prefix,
+                f" for {context}" if context else "",
+                attempt + 1,
+                attempts,
+                wait,
+                exc,
+            )
+            if wait:
+                await asyncio.sleep(wait)
+
+    raise RuntimeError("LLM retry loop exited unexpectedly")
 
 
 def _build_llm_verify_config(ca_cert_file: str | None) -> bool | ssl.SSLContext:

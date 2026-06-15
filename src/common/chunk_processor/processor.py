@@ -4,7 +4,7 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 from src.common.chunk_processor.llms import get_llm_processed_chunk
@@ -61,16 +61,16 @@ async def process_scraped_documentation(
     chunk_length: int,
     source: str,
     scraper_job_id: Optional[UUID] = None,
-) -> Tuple[List[DocumentationItem], List[ChunkProcessingError]]:
+) -> tuple[list[DocumentationItem], list[ChunkProcessingError]]:
     """
     Process a single scraped documentation:
     * generate chunks from the content
     * for each chunk, generate summary, tags and category
     * for each chunk, create DocumentationItem object
 
-    Chunk failures are isolated: a single failing chunk does not discard the other
-    chunks of the same documentation, and the failure is returned as a
-    ChunkProcessingError so the caller can surface it.
+    Chunks are processed with per-chunk fault isolation: a failure on one chunk (e.g. a
+    transient LLM connection error that survived retries) is recorded and skipped instead of
+    aborting the whole documentation, so the remaining successful chunks are still returned.
 
     inputs:
         documentation: SavedDocumentation - the scraped documentation to process
@@ -79,7 +79,7 @@ async def process_scraped_documentation(
         app_version: str - application version
         chunk_length: int - maximum length of each chunk
     outputs:
-        tuple of (list of DocumentationItem objects, list of ChunkProcessingError)
+        (chunks, errors): the successfully built DocumentationItem objects and any per-chunk failures
     """
 
     logger.debug("[Scrape:Process] Processing documentation: %s", documentation.url)
@@ -110,27 +110,29 @@ async def process_scraped_documentation(
         )
         return idx, documentation_chunk
 
-    results = await asyncio.gather(
+    settled = await asyncio.gather(
         *[process_chunk(idx, chunk) for idx, chunk in enumerate(chunks)],
         return_exceptions=True,
     )
 
-    succeeded: list[tuple[int, DocumentationItem]] = []
-    errors: List[ChunkProcessingError] = []
-    for idx, result in enumerate(results):
-        if isinstance(result, BaseException):
+    processed_chunks: list[tuple[int, DocumentationItem]] = []
+    errors: list[ChunkProcessingError] = []
+    for idx, outcome in enumerate(settled):
+        if isinstance(outcome, BaseException):
             logger.warning(
-                "[Scrape:Process] Chunk %s of documentation %s failed: %s",
+                "[Scrape:Process] Skipping chunk %s of documentation %s after failure: %s",
                 idx,
                 documentation.url,
-                result,
+                outcome,
             )
-            errors.append(ChunkProcessingError(url=str(documentation.url), chunk_number=idx, error=str(result)))
-        else:
-            succeeded.append(result)
+            errors.append(
+                ChunkProcessingError(url=str(documentation.url), chunk_index=idx, error=str(outcome) or repr(outcome))
+            )
+            continue
+        processed_chunks.append(outcome)
 
-    succeeded.sort(key=lambda item: item[0])
-    documentation_chunks = [item[1] for item in succeeded]
+    processed_chunks.sort(key=lambda item: item[0])
+    documentation_chunks = [item[1] for item in processed_chunks]
 
     logger.info(
         "[Scrape:Process] Completed processing documentation %s: %s chunks succeeded, %s failed",
@@ -149,9 +151,12 @@ async def process_all_documentations(
     *,
     semaphore: Optional[asyncio.Semaphore] = None,
     chunk_length: Optional[int] = None,
-) -> Tuple[List[DocumentationItem], List[ChunkProcessingError]]:
+) -> tuple[list[DocumentationItem], list[ChunkProcessingError]]:
     """
     Process all scraped documentations concurrently with semaphore limiting.
+
+    Per-chunk failures are isolated and returned alongside the successful chunks rather than
+    aborting the batch, so a transient LLM error on one chunk cannot discard the whole run.
 
     inputs:
         documentations: list - list of Saveddocumentation objects to process
@@ -160,7 +165,7 @@ async def process_all_documentations(
         chunk_length: int - maximum length of each chunk
         max_concurrent: int - maximum number of concurrent tasks
     outputs:
-        tuple of (list of DocumentationItem objects, list of ChunkProcessingError)
+        (chunks, errors): all successfully built DocumentationItem objects and any per-chunk failures
     """
     effective_chunk_length = chunk_length or config.scrape_and_process.chunk_length
     local_semaphore = semaphore or asyncio.Semaphore(config.scrape_and_process.max_concurrent)
@@ -174,8 +179,8 @@ async def process_all_documentations(
         ]
     )
 
-    all_chunks: List[DocumentationItem] = []
-    all_errors: List[ChunkProcessingError] = []
+    all_chunks: list[DocumentationItem] = []
+    all_errors: list[ChunkProcessingError] = []
     for documentation_chunks, documentation_errors in results:
         all_chunks.extend(documentation_chunks)
         all_errors.extend(documentation_errors)
