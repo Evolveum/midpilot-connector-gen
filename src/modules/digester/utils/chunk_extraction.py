@@ -19,7 +19,7 @@ from src.common.chunks import normalize_to_text
 from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain
+from src.common.llm import build_structured_chain, is_transient_llm_error
 from src.config import config
 from src.modules.digester.schemas import DocMarkerMatch, DocSequenceItem
 from src.modules.digester.utils.doc_chunk import build_chunk_id_to_doc_id
@@ -29,28 +29,6 @@ from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
-TRANSIENT_LLM_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
-
-
-def _is_transient_llm_error(exc: Exception) -> bool:
-    status_code = getattr(exc, "status_code", None)
-    if status_code in TRANSIENT_LLM_STATUS_CODES:
-        return True
-
-    message = str(exc).lower()
-    return any(
-        marker in message
-        for marker in (
-            "504 gateway time-out",
-            "504 gateway timeout",
-            "gateway time-out",
-            "gateway timeout",
-            "temporarily unavailable",
-            "rate limit",
-            "timed out",
-            "timeout",
-        )
-    )
 
 
 async def _invoke_extraction_chain_with_retry(
@@ -71,7 +49,7 @@ async def _invoke_extraction_chain_with_retry(
                 config=RunnableConfig(callbacks=[langfuse_handler]),
             )
         except Exception as exc:
-            if attempt >= max_attempts or not _is_transient_llm_error(exc):
+            if attempt >= max_attempts or not is_transient_llm_error(exc):
                 raise
 
             delay = base_delay * (2 ** (attempt - 1))

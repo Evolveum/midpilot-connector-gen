@@ -195,6 +195,16 @@ class ScrapeAndProcessSettings(BaseModel):
         20,
         description="Max concurrent chunk processing tasks",
     )
+    chunk_llm_retry_attempts: int = Field(
+        3,
+        ge=1,
+        description="Maximum attempts for transient chunk-processing LLM failures (e.g. connection errors).",
+    )
+    chunk_llm_retry_base_delay_seconds: float = Field(
+        1.0,
+        ge=0,
+        description="Initial backoff delay (seconds) for transient chunk-processing LLM retries.",
+    )
 
     chunk_categories: list[str] = Field(
         [

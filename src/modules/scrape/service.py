@@ -11,12 +11,12 @@ from uuid import UUID
 from crawl4ai.utils import get_base_domain  # type: ignore
 
 from src.common.chunk_processor.processor import process_all_documentations
-from src.common.chunk_processor.schema import SavedDocumentation
+from src.common.chunk_processor.schema import ChunkProcessingError, SavedDocumentation
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.job_repository import JobRepository
 from src.common.enums import JobStage
-from src.common.jobs import update_job_progress
+from src.common.jobs import append_job_error, update_job_progress
 from src.common.session.schema import DocumentationItem
 from src.common.utils.normalize import normalize_url
 from src.common.utils.status_response import build_group_documentation_response
@@ -188,7 +188,9 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             len(existing_documentation_chunks_urls),
         )
 
-    processing_tasks: List[tuple[SavedDocumentation, asyncio.Task[List[DocumentationItem]]]] = []
+    processing_tasks: List[
+        tuple[SavedDocumentation, asyncio.Task[tuple[List[DocumentationItem], List[ChunkProcessingError]]]]
+    ] = []
     processing_semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
     scheduled_documentations: List[SavedDocumentation] = []
     scheduled_documentation_urls: set[str] = set()
@@ -328,13 +330,28 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
         for (documentation, _), batch in zip(processing_tasks, processed_batches):
             if isinstance(batch, BaseException):
                 logger.exception(
-                    "[Scrape] Job %s: Chunk processing failed for documentation %s",
+                    "[Scrape] Job %s: Documentation processing failed for %s",
                     job_id,
                     documentation.url,
                     exc_info=batch,
                 )
-                raise RuntimeError(f"Chunk processing failed for documentation {documentation.url}: {batch}") from batch
-            documentation_chunks.extend(batch)
+                append_job_error(job_id, f"Documentation processing failed for {documentation.url}: {batch}")
+                continue
+
+            chunks, chunk_errors = batch
+            documentation_chunks.extend(chunks)
+            for chunk_error in chunk_errors:
+                logger.warning(
+                    "[Scrape] Job %s: Chunk %s of %s failed: %s",
+                    job_id,
+                    chunk_error.chunk_index,
+                    chunk_error.url,
+                    chunk_error.error,
+                )
+                append_job_error(
+                    job_id,
+                    f"Chunk {chunk_error.chunk_index} of {chunk_error.url} skipped after failure: {chunk_error.error}",
+                )
     else:
         logger.info(
             "[Scrape] Job %s: No new documentations queued for chunk processing (scraped URLs were already present or no docs were scraped)",

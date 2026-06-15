@@ -12,7 +12,8 @@ from langchain_core.runnables.config import RunnableConfig
 from src.common.chunk_processor.prompts import get_summary_prompts
 from src.common.chunk_processor.schema import LlmChunkOutput
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import get_default_llm, make_basic_chain, retry_on_transient_llm_error
+from src.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,13 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
         parser=PydanticOutputParser(pydantic_object=LlmChunkOutput),
     )
 
-    result = await chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler]))
+    result = await retry_on_transient_llm_error(
+        lambda: chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler])),
+        max_attempts=config.scrape_and_process.chunk_llm_retry_attempts,
+        base_delay=config.scrape_and_process.chunk_llm_retry_base_delay_seconds,
+        logger_prefix="[Scrape:LLM] ",
+        context="chunk processing",
+    )
 
     logger.debug("[Scrape:LLM] Finished LLM call for chunk processing with result: %s", result)
 
