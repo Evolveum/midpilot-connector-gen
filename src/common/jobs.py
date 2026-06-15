@@ -39,6 +39,14 @@ from src.config import config
 logger = logging.getLogger(__name__)
 
 _job_futures: Dict[UUID, asyncio.Future] = {}
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro: Awaitable[Any]) -> asyncio.Task:
+    task = asyncio.ensure_future(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 async def update_job_progress(
@@ -463,7 +471,7 @@ async def schedule_coroutine_job(
         except Exception as exc:
             await set_failed(job_id, error=str(exc))
 
-    asyncio.create_task(_runner())
+    _spawn_background_task(_runner())
     return job_id
 
 
@@ -480,7 +488,7 @@ def append_job_error(job_id: UUID, message: str) -> None:
             logger.debug(f"Append job error failed for {job_id}", exc_info=e)
 
     try:
-        asyncio.create_task(_append())
+        _spawn_background_task(_append())
     except RuntimeError:
         # No running loop - try to get or create one
         try:

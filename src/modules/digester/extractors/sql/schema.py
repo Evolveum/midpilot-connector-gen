@@ -109,7 +109,7 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
         if not name:
             return None
         raw_columns = table.get("columns") or table.get("attributes") or table.get("fields") or []
-        columns = [_normalize_column(column) for column in raw_columns if _normalize_column(column)]
+        columns = [col for raw in raw_columns if (col := _normalize_column(raw))]
         normalized = {"table": name, "columns": columns}
         for key in ("primaryKey", "foreignKeys", "description"):
             if key in table and table[key] is not None:
