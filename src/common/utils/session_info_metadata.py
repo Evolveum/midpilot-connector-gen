@@ -47,6 +47,12 @@ def extract_base_api_url(metadata: Mapping[str, Any] | None) -> str:
     return ""
 
 
+def extract_database_name(metadata: Mapping[str, Any] | None) -> str:
+    """Return the documented databaseName, if present (SQL integrations only)."""
+    database_name = _collect_info_metadata(metadata).get("databaseName", "")
+    return database_name if isinstance(database_name, str) else ""
+
+
 def is_scim_api(api_types: Iterable[str]) -> bool:
     """Detect SCIM when it appears anywhere in the API type list (case-insensitive)."""
     return any(isinstance(api, str) and api.strip().upper() == "SCIM" for api in api_types)
@@ -89,3 +95,20 @@ async def get_session_base_api_url(session_id: UUID) -> str:
     """Return the base API URL documented in session metadata, if any."""
     metadata = await load_session_metadata(session_id)
     return extract_base_api_url(metadata)
+
+
+async def get_session_database_name(session_id: UUID) -> str:
+    """Return the database name documented in session metadata, if any (SQL integrations)."""
+    metadata = await load_session_metadata(session_id)
+    return extract_database_name(metadata)
+
+
+async def get_session_connection_target(session_id: UUID) -> tuple[str, str]:
+    """
+    Return the connector's connection target from a single session metadata load.
+
+    Yields (base_api_url, database_name). Only one is populated for a given session
+    (HTTP base URL for REST/SCIM, database name for SQL); the other is an empty string.
+    """
+    metadata = await load_session_metadata(session_id)
+    return extract_base_api_url(metadata), extract_database_name(metadata)

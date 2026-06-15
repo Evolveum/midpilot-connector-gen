@@ -12,6 +12,7 @@ from src.common.utils.normalize import normalize_object_class_name
 from src.common.utils.session_info_metadata import (
     get_session_api_types,
     get_session_base_api_url,
+    get_session_connection_target,
     resolve_session_api_type,
 )
 from src.modules.codegen.core.generate_groovy import generate_groovy
@@ -387,7 +388,7 @@ async def create_search(
     protocol = resolve_session_api_type(api_types)
     assets = get_search_operation_assets(protocol, intent)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url = await get_session_base_api_url(session_id)
+    base_api_url, database_name = await get_session_connection_target(session_id)
 
     generator = SearchGenerator(
         object_class=object_class,
@@ -398,6 +399,7 @@ async def create_search(
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
         base_api_url=base_api_url,
+        database_name=database_name,
     )
 
     # Collect relevant chunks
@@ -436,7 +438,7 @@ async def create_create(
     protocol = resolve_session_api_type(api_types)
     assets = get_operation_assets("create", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url = await get_session_base_api_url(session_id)
+    base_api_url, database_name = await get_session_connection_target(session_id)
 
     generator = CreateGenerator(
         object_class=object_class,
@@ -446,6 +448,7 @@ async def create_create(
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
         base_api_url=base_api_url,
+        database_name=database_name,
     )
 
     # Collect relevant chunks
@@ -483,7 +486,7 @@ async def create_update(
     protocol = resolve_session_api_type(api_types)
     assets = get_operation_assets("update", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url = await get_session_base_api_url(session_id)
+    base_api_url, database_name = await get_session_connection_target(session_id)
 
     generator = UpdateGenerator(
         object_class=object_class,
@@ -493,6 +496,7 @@ async def create_update(
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
         base_api_url=base_api_url,
+        database_name=database_name,
     )
 
     # Collect relevant chunks
@@ -530,7 +534,7 @@ async def create_delete(
     protocol = resolve_session_api_type(api_types)
     assets = get_operation_assets("delete", protocol)
     docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url = await get_session_base_api_url(session_id)
+    base_api_url, database_name = await get_session_connection_target(session_id)
 
     generator = DeleteGenerator(
         object_class=object_class,
@@ -540,6 +544,7 @@ async def create_delete(
         user_prompt=assets.user_prompt,
         protocol_label=protocol.name,
         base_api_url=base_api_url,
+        database_name=database_name,
     )
 
     # Collect relevant chunks

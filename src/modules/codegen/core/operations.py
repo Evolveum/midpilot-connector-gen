@@ -33,6 +33,7 @@ class SearchGenerator(BaseGroovyGenerator):
         user_prompt: str,
         protocol_label: str,
         base_api_url: str = "",
+        database_name: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -47,7 +48,7 @@ class SearchGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["intent"] = intent
         config.extra_prompt_vars["search_docs"] = docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
-        config.extra_prompt_vars["database_name"] = ""
+        config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
@@ -76,6 +77,7 @@ class CreateGenerator(BaseGroovyGenerator):
         user_prompt: str,
         protocol_label: str,
         base_api_url: str = "",
+        database_name: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -89,7 +91,7 @@ class CreateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["create_docs"] = docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
-        config.extra_prompt_vars["database_name"] = ""
+        config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
@@ -118,6 +120,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         user_prompt: str,
         protocol_label: str,
         base_api_url: str = "",
+        database_name: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -131,7 +134,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["update_docs"] = docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
-        config.extra_prompt_vars["database_name"] = ""
+        config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
@@ -160,6 +163,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         user_prompt: str,
         protocol_label: str,
         base_api_url: str = "",
+        database_name: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -173,7 +177,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["delete_docs"] = docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
-        config.extra_prompt_vars["database_name"] = ""
+        config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class

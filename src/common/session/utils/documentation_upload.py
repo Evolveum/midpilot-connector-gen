@@ -275,16 +275,16 @@ async def parse_uploaded_documentation(raw_upload: RawUploadedDocumentation) -> 
         text, extra_metadata = await asyncio.to_thread(_docx_to_text, data, filename)
         parser = "docx"
     elif content_type in _CONTENT_TYPES_BY_PARSER["json"] or suffix in _SUFFIXES_BY_PARSER["json"]:
-        text = _pretty_json_or_original(_decode_text(data, filename))
+        text = await asyncio.to_thread(lambda: _pretty_json_or_original(_decode_text(data, filename)))
         parser = "json"
     elif content_type in _CONTENT_TYPES_BY_PARSER["yaml"] or suffix in _SUFFIXES_BY_PARSER["yaml"]:
-        text = _pretty_yaml_or_original(_decode_text(data, filename))
+        text = await asyncio.to_thread(lambda: _pretty_yaml_or_original(_decode_text(data, filename)))
         parser = "yaml"
     elif content_type in _CONTENT_TYPES_BY_PARSER["html"] or suffix in _SUFFIXES_BY_PARSER["html"]:
-        text = _html_to_text(_decode_text(data, filename))
+        text = await asyncio.to_thread(lambda: _html_to_text(_decode_text(data, filename)))
         parser = "html"
     elif _is_text_upload(content_type, suffix):
-        text = _decode_text(data, filename)
+        text = await asyncio.to_thread(_decode_text, data, filename)
     else:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
