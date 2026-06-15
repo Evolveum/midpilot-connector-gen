@@ -51,6 +51,10 @@ Optional user-preferred table hints:
 {preferred_endpoints_json}
 </preferred_endpoints>
 
+<database_name>
+{database_name}
+</database_name>
+
 Original schema/documentation chunk:
 <chunk>
 {chunk}

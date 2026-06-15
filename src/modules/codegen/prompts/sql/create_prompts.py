@@ -39,6 +39,10 @@ Selected SQL tables for {object_class}:
 {endpoints_json}
 </tables_json>
 
+<database_name>
+{database_name}
+</database_name>
+
 Original schema/documentation chunk:
 <chunk>
 {chunk}
