@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
@@ -11,9 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.database.config import get_db
-from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import JobStatus
 from src.common.errors import (
     InvalidObjectClassesOutputError,
     ObjectClassesNotFoundError,
@@ -22,44 +20,17 @@ from src.common.errors import (
 )
 from src.common.jobs import schedule_coroutine_job
 from src.common.schema import JobCreateResponse, JobStatusMultiDocResponse
-from src.common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
+from src.common.session.session import ensure_session_exists, resolve_session_job_id
 from src.common.utils.normalize import normalize_object_class_name
-from src.common.utils.relevance import (
-    build_chunk_to_doc_map as _build_chunk_to_doc_map,
-)
-from src.common.utils.relevance import (
-    extract_attribute_relevance_rows as _extract_attribute_relevance_rows,
-)
-from src.common.utils.relevance import (
-    extract_endpoint_relevance_rows as _extract_endpoint_relevance_rows,
-)
-from src.common.utils.relevance import (
-    extract_object_class_relevance_rows as _extract_object_class_relevance_rows,
-)
-from src.common.utils.relevance import (
-    hydrate_attributes_with_relevance as _hydrate_attributes_with_relevance,
-)
-from src.common.utils.relevance import (
-    hydrate_endpoints_with_relevance as _hydrate_endpoints_with_relevance,
-)
-from src.common.utils.relevance import (
-    hydrate_object_classes_with_relevance as _hydrate_object_classes_with_relevance,
-)
-from src.common.utils.relevance import (
-    load_object_class_relevance_map as _load_object_class_relevance_map,
-)
-from src.common.utils.relevance import (
-    strip_attributes_relevance as _strip_attributes_relevance,
-)
-from src.common.utils.relevance import (
-    strip_endpoints_relevance as _strip_endpoints_relevance,
-)
-from src.common.utils.relevance import (
-    strip_object_class_relevance as _strip_object_class_relevance,
-)
-from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url
+from src.common.utils.session_info_metadata import get_session_base_api_url
 from src.common.utils.status_response import build_typed_job_status_response
-from src.modules.digester import service
+from src.modules.digester import results, service
+from src.modules.digester.inputs import (
+    auth_input,
+    connectivity_endpoint_input,
+    metadata_input,
+    object_classes_input,
+)
 from src.modules.digester.schemas import (
     AttributeResponse,
     AuthResponse,
@@ -69,98 +40,11 @@ from src.modules.digester.schemas import (
     ObjectClassesResponse,
     RelationsResponse,
 )
-from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
-from src.modules.digester.utils.documentation_selector import DocumentationSelector
-from src.modules.digester.utils.inputs import (
-    auth_input,
-    connectivity_endpoint_input,
-    metadata_input,
-    object_classes_input,
-)
-from src.modules.digester.utils.object_classes import (
-    find_object_class,
-    upsert_object_class,
-)
+from src.modules.digester.selection.criteria import DEFAULT_CRITERIA
+from src.modules.digester.selection.documentation_selector import DocumentationSelector
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-def _safe_exception_summary(exc: Exception) -> str:
-    errors = getattr(exc, "errors", None)
-    if callable(errors):
-        try:
-            return repr(errors(include_input=False))
-        except TypeError:
-            return type(exc).__name__
-    return type(exc).__name__
-
-
-def _log_status_result_fallback(
-    session_id: UUID,
-    result_key: str,
-    response_model: type[Any],
-    exc: Exception,
-) -> None:
-    logger.warning(
-        "[Digester:Router] Failed to hydrate session result; keeping original job result. session_id=%s result_key=%s response_model=%s error=%s",
-        session_id,
-        result_key,
-        response_model.__name__,
-        _safe_exception_summary(exc),
-    )
-
-
-async def _store_result_with_relevance(
-    db: AsyncSession,
-    repo: SessionRepository,
-    session_id: UUID,
-    result_key: str,
-    stripped_payload: Dict[str, Any],
-    relevance_rows: list[Dict[str, Any]],
-) -> None:
-    await repo.update_session(session_id, {result_key: stripped_payload})
-    relevant_repo = RelevantChunkRepository(db)
-    await relevant_repo.replace_relevant_chunks_for_result(
-        session_id=session_id,
-        result_key=result_key,
-        chunks=relevance_rows,
-    )
-
-
-def _build_documentation_selector(db: AsyncSession) -> DocumentationSelector:
-    return DocumentationSelector(
-        db,
-        filter_items=filter_documentation_items,
-        get_documentation=get_session_documentation,
-        get_api_types=get_session_api_types,
-        get_base_url=get_session_base_api_url,
-        relevant_repo_factory=RelevantChunkRepository,
-    )
-
-
-async def _refresh_finished_status_result(
-    response: JobStatusMultiDocResponse,
-    repo: SessionRepository,
-    session_id: UUID,
-    result_key: str,
-    response_model: type[Any],
-    hydrate_payload: Callable[[Any], Awaitable[Any]],
-) -> JobStatusMultiDocResponse:
-    if response.status != JobStatus.finished:
-        return response
-
-    session_output = await repo.get_session_data(session_id, result_key)
-    if not session_output:
-        return response
-
-    try:
-        hydrated_output = await hydrate_payload(session_output)
-        response.result = response_model.model_validate(hydrated_output)
-    except Exception as exc:
-        _log_status_result_fallback(session_id, result_key, response_model, exc)
-
-    return response
 
 
 # Digester Operations - Object Classes
@@ -242,18 +126,7 @@ async def get_object_classes_status(
     )
 
     response = await build_typed_job_status_response(resolved_job_id, ObjectClassesResponse)
-
-    async def hydrate_payload(payload: Any) -> Any:
-        return await _hydrate_object_classes_with_relevance(db, session_id, payload)
-
-    return await _refresh_finished_status_result(
-        response,
-        repo,
-        session_id,
-        "objectClassesOutput",
-        ObjectClassesResponse,
-        hydrate_payload,
-    )
+    return await results.refresh_object_classes_status(db, repo, response, session_id)
 
 
 @router.get(
@@ -273,73 +146,10 @@ async def get_specific_object_class(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Get object classes from session
-    object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-    if not object_classes_output or not isinstance(object_classes_output, dict):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(ObjectClassesNotFoundError(session_id)),
-        )
-
-    object_classes = object_classes_output.get("objectClasses", [])
-    if not isinstance(object_classes, list):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(InvalidObjectClassesOutputError(session_id)),
-        )
-
-    target_object_class = find_object_class(object_classes, object_class)
-    if target_object_class:
-        result = target_object_class.copy()
-        normalized_name = normalize_object_class_name(object_class)
-
-        try:
-            relevance_map = await _load_object_class_relevance_map(db, session_id)
-            result["relevantDocumentations"] = relevance_map.get(normalized_name, [])
-        except Exception as exc:
-            logger.warning(
-                "[Digester:Router] Failed to load object class relevance map; using stored relevance. session_id=%s object_class=%s error=%s",
-                session_id,
-                object_class,
-                _safe_exception_summary(exc),
-            )
-            result["relevantDocumentations"] = result.get("relevantDocumentations", [])
-
-        # Get attributes from session
-        attributes_output = await repo.get_session_data(session_id, f"{normalized_name}AttributesOutput")
-        if attributes_output and isinstance(attributes_output, dict):
-            hydrated_attributes = await _hydrate_attributes_with_relevance(
-                db,
-                session_id,
-                f"{normalized_name}AttributesOutput",
-                attributes_output,
-            )
-            if isinstance(hydrated_attributes.get("attributes"), dict):
-                result["attributes"] = hydrated_attributes.get("attributes", {})
-            else:
-                result["attributes"] = hydrated_attributes
-
-        # Get endpoints from session
-        endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
-        if endpoints_output and isinstance(endpoints_output, dict):
-            hydrated_endpoints = await _hydrate_endpoints_with_relevance(
-                db,
-                session_id,
-                f"{normalized_name}EndpointsOutput",
-                endpoints_output,
-            )
-            if isinstance(hydrated_endpoints.get("endpoints"), list):
-                result["endpoints"] = hydrated_endpoints.get("endpoints", [])
-            else:
-                result["endpoints"] = []
-
-        return result
-
-    # If not found, raise 404
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=str(ObjectClassNotFoundError(object_class, session_id)),
-    )
+    try:
+        return await results.build_object_class_detail(db, repo, session_id, object_class)
+    except (ObjectClassesNotFoundError, InvalidObjectClassesOutputError, ObjectClassNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.put(
@@ -358,10 +168,8 @@ async def upload_all_object_classes(
     """
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-    relevant_rows = _extract_object_class_relevance_rows(object_classes_data)
-    stripped_payload = _strip_object_class_relevance(object_classes_data)
 
-    await _store_result_with_relevance(db, repo, session_id, "objectClassesOutput", stripped_payload, relevant_rows)
+    await results.store_object_classes(db, repo, session_id, object_classes_data)
 
     return {
         "message": "All object classes uploaded successfully",
@@ -387,12 +195,7 @@ async def upload_one_object_class(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-    object_classes_output, updated = upsert_object_class(object_classes_output, object_class, object_class_data)
-    relevant_rows = _extract_object_class_relevance_rows(object_classes_output)
-    stripped_payload = _strip_object_class_relevance(object_classes_output)
-
-    await _store_result_with_relevance(db, repo, session_id, "objectClassesOutput", stripped_payload, relevant_rows)
+    updated = await results.upsert_object_class_in_session(db, repo, session_id, object_class, object_class_data)
 
     return {
         "message": f"Object class '{object_class}' {'updated' if updated else 'added'} successfully",
@@ -424,7 +227,7 @@ async def extract_class_attributes(
     await ensure_session_exists(repo, session_id)
 
     try:
-        selection = await _build_documentation_selector(db).build_attribute_plan(
+        selection = await DocumentationSelector(db).build_attribute_plan(
             repo=repo,
             session_id=session_id,
             object_class=object_class,
@@ -495,20 +298,7 @@ async def get_class_attributes_status(
 
     # Get job status but override result with current session data
     response = await build_typed_job_status_response(resolved_job_id, AttributeResponse)
-
-    result_key = f"{object_class}AttributesOutput"
-
-    async def hydrate_payload(payload: Any) -> Any:
-        return await _hydrate_attributes_with_relevance(db, session_id, result_key, payload)
-
-    return await _refresh_finished_status_result(
-        response,
-        repo,
-        session_id,
-        result_key,
-        AttributeResponse,
-        hydrate_payload,
-    )
+    return await results.refresh_attributes_status(db, repo, response, session_id, object_class)
 
 
 @router.put(
@@ -528,11 +318,7 @@ async def override_class_attributes(
     await ensure_session_exists(repo, session_id)
 
     object_class = normalize_object_class_name(object_class)
-    result_key = f"{object_class}AttributesOutput"
-    stripped_attributes = _strip_attributes_relevance(attributes)
-    chunk_to_doc = _build_chunk_to_doc_map(await get_session_documentation(session_id, db=db))
-    relevance_rows = _extract_attribute_relevance_rows(attributes, result_key, chunk_to_doc=chunk_to_doc)
-    await _store_result_with_relevance(db, repo, session_id, result_key, stripped_attributes, relevance_rows)
+    await results.store_attributes_override(db, repo, session_id, object_class, attributes)
 
     return {
         "message": f"Attributes for {object_class} overridden successfully",
@@ -566,7 +352,7 @@ async def extract_class_endpoints(
     await ensure_session_exists(repo, session_id)
 
     try:
-        selection = await _build_documentation_selector(db).build_endpoint_plan(
+        selection = await DocumentationSelector(db).build_endpoint_plan(
             repo=repo,
             session_id=session_id,
             object_class=object_class,
@@ -638,19 +424,7 @@ async def get_class_endpoints_status(
     )
 
     response = await build_typed_job_status_response(resolved_job_id, EndpointResponse)
-    result_key = f"{object_class}EndpointsOutput"
-
-    async def hydrate_payload(payload: Any) -> Any:
-        return await _hydrate_endpoints_with_relevance(db, session_id, result_key, payload)
-
-    return await _refresh_finished_status_result(
-        response,
-        repo,
-        session_id,
-        result_key,
-        EndpointResponse,
-        hydrate_payload,
-    )
+    return await results.refresh_endpoints_status(db, repo, response, session_id, object_class)
 
 
 @router.put(
@@ -670,10 +444,7 @@ async def override_class_endpoints(
     await ensure_session_exists(repo, session_id)
 
     object_class = normalize_object_class_name(object_class)
-    result_key = f"{object_class}EndpointsOutput"
-    stripped_endpoints = _strip_endpoints_relevance(endpoints)
-    relevance_rows = _extract_endpoint_relevance_rows(endpoints, result_key)
-    await _store_result_with_relevance(db, repo, session_id, result_key, stripped_endpoints, relevance_rows)
+    await results.store_endpoints_override(db, repo, session_id, object_class, endpoints)
 
     return {
         "message": f"Endpoints for {object_class} overridden successfully",
@@ -870,19 +641,7 @@ async def get_connectivity_endpoint_status(
     )
 
     response = await build_typed_job_status_response(resolved_job_id, ConnectivityEndpointResponse)
-    result_key = "connectivityEndpointOutput"
-
-    async def hydrate_payload(payload: Any) -> Any:
-        return await _hydrate_endpoints_with_relevance(db, session_id, result_key, payload)
-
-    return await _refresh_finished_status_result(
-        response,
-        repo,
-        session_id,
-        result_key,
-        ConnectivityEndpointResponse,
-        hydrate_payload,
-    )
+    return await results.refresh_connectivity_endpoint_status(db, repo, response, session_id)
 
 
 @router.put(
@@ -901,11 +660,7 @@ async def override_connectivity_endpoint(
     await ensure_session_exists(repo, session_id)
 
     payload = connectivity_endpoint.model_dump(by_alias=True, mode="json")
-    result_key = "connectivityEndpointOutput"
-    stripped_payload = _strip_endpoints_relevance(payload)
-    relevance_rows = _extract_endpoint_relevance_rows(payload, result_key)
-
-    await _store_result_with_relevance(db, repo, session_id, result_key, stripped_payload, relevance_rows)
+    await results.store_connectivity_endpoint_override(db, repo, session_id, payload)
 
     return {"message": "Connectivity endpoint overridden successfully", "sessionId": session_id}
 

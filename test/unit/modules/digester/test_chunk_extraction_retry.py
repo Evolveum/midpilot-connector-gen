@@ -9,7 +9,7 @@ import pytest
 from pydantic import BaseModel
 
 from src.config import config
-from src.modules.digester.utils.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
+from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
 
 
 class _RetryResponse(BaseModel):
@@ -28,8 +28,8 @@ async def test_extract_single_chunk_retries_transient_gateway_error(monkeypatch)
     ]
 
     with (
-        patch("src.modules.digester.utils.chunk_extraction.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.utils.chunk_extraction.append_job_error") as append_job_error,
+        patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extraction.chunk_extraction.append_job_error") as append_job_error,
     ):
         items, has_relevant_data = await extract_single_chunk(
             schema="User resource documentation",
@@ -55,8 +55,8 @@ async def test_extract_single_chunk_does_not_retry_non_transient_error(monkeypat
     chain.ainvoke.side_effect = ValueError("invalid prompt variable")
 
     with (
-        patch("src.modules.digester.utils.chunk_extraction.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.utils.chunk_extraction.append_job_error", Mock()) as append_job_error,
+        patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extraction.chunk_extraction.append_job_error", Mock()) as append_job_error,
     ):
         items, has_relevant_data = await extract_single_chunk(
             schema="User resource documentation",
@@ -81,11 +81,11 @@ async def test_run_all_items_build_parallel_reuses_one_chain():
 
     with (
         patch(
-            "src.modules.digester.utils.chunk_extraction.build_structured_chain",
+            "src.modules.digester.extraction.chunk_extraction.build_structured_chain",
             Mock(return_value=chain),
         ) as build_chain,
         patch(
-            "src.modules.digester.utils.chunk_extraction.run_item_build_parallel",
+            "src.modules.digester.extraction.chunk_extraction.run_item_build_parallel",
             new_callable=AsyncMock,
             side_effect=["built-a", "built-b"],
         ) as run_item,

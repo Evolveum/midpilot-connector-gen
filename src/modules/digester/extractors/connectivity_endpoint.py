@@ -14,6 +14,8 @@ from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.common.utils.normalize import normalize_endpoint_key
 from src.modules.digester.enums import EndpointMethod
+from src.modules.digester.extraction.chunk_extraction import extract_single_chunk
+from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.prompts.connectivity_endpoint_prompts import (
     get_connectivity_endpoint_ranking_system_prompt,
     get_connectivity_endpoint_ranking_user_prompt,
@@ -27,8 +29,6 @@ from src.modules.digester.schemas import (
     ExtractedConnectivityEndpointInfo,
     ExtractedConnectivityEndpointResponse,
 )
-from src.modules.digester.utils.chunk_extraction import extract_single_chunk
-from src.modules.digester.utils.llm_execution import invoke_llm
 
 logger = logging.getLogger(__name__)
 

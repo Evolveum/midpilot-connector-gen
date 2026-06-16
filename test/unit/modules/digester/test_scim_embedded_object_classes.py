@@ -7,9 +7,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
-from src.modules.digester.scim.embedded import (
+from src.modules.digester.extractors.scim.object_class import (
     build_embedded_object_class_name,
+    extract_scim_object_classes,
     get_embedded_object_classes_from_scim_schema,
 )
 

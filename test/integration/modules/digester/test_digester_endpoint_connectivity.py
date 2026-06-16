@@ -169,7 +169,7 @@ async def test_override_connectivity_endpoint_success():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevant_repo),
+        patch("src.modules.digester.results.RelevantChunkRepository", return_value=mock_relevant_repo),
     ):
         response = await override_connectivity_endpoint(
             session_id=session_id,

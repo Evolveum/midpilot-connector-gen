@@ -54,19 +54,23 @@ async def test_extract_class_endpoints_success():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch(
-            "src.modules.digester.router.get_session_base_api_url",
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_base_api_url",
             new_callable=AsyncMock,
             return_value="https://api.example.com",
         ),
         patch(
-            "src.modules.digester.router.filter_documentation_items",
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
             new_callable=AsyncMock,
             return_value=[{"docId": "page-1", "chunkId": "doc-1"}],
         ),
         patch(
-            "src.modules.digester.router.get_session_documentation",
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new=AsyncMock(return_value=fake_docs),
         ),
         patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
@@ -156,7 +160,7 @@ async def test_override_class_endpoints_success():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevant_repo),
+        patch("src.modules.digester.results.RelevantChunkRepository", return_value=mock_relevant_repo),
     ):
         session_id = uuid4()
         response = await override_class_endpoints(

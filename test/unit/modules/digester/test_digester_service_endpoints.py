@@ -10,7 +10,7 @@ import pytest
 from src.modules.digester import service
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.schemas import EndpointInfo
-from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
+from src.modules.digester.selection.criteria import DEFAULT_CRITERIA
 
 
 # ==================== EXTRACT ENDPOINTS ====================

@@ -12,15 +12,15 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.common.utils.normalize import normalize_object_class_name
+from src.modules.digester.entities.relations import deduplicate_semantic_relations
 from src.modules.digester.enums import ConfidenceLevel
+from src.modules.digester.extraction.llm_execution import invoke_llm
+from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.prompts.rest.relations_prompts import (
     get_relations_system_prompt,
     get_relations_user_prompt,
 )
 from src.modules.digester.schemas import FinalObjectClass, ObjectClassesResponse, RelationRecord, RelationsResponse
-from src.modules.digester.utils.llm_execution import invoke_llm
-from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
-from src.modules.digester.utils.relations import deduplicate_semantic_relations
 
 logger = logging.getLogger(__name__)
 

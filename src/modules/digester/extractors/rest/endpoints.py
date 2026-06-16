@@ -19,6 +19,9 @@ from src.common.jobs import (
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain, get_default_llm
 from src.common.utils.normalize import normalize_chunk_pair, normalize_endpoint_key
+from src.modules.digester.aggregation.merges import merge_endpoint_candidates
+from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunk_groups_concurrently
+from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.prompts.rest.endpoints_prompts import (
     check_endpoint_params_system_prompt,
     check_endpoint_params_user_prompt,
@@ -26,9 +29,6 @@ from src.modules.digester.prompts.rest.endpoints_prompts import (
     get_endpoints_user_prompt,
 )
 from src.modules.digester.schemas import EndpointParamInfo, ExtractedEndpointInfo, ExtractedEndpointResponse
-from src.modules.digester.utils.llm_execution import invoke_llm, run_chunk_groups_concurrently
-from src.modules.digester.utils.merges import merge_endpoint_candidates
-from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 

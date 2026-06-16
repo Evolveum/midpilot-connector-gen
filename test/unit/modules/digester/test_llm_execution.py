@@ -9,8 +9,8 @@ from uuid import uuid4
 import pytest
 
 from src.config import config
-from src.modules.digester.utils import llm_execution
-from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
+from src.modules.digester.extraction import llm_execution
+from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
 
 
 class _TrackedChain:
@@ -45,8 +45,8 @@ async def test_run_chunks_concurrently_respects_configured_limit(monkeypatch):
     chunk_items = [{"chunkId": str(uuid4()), "content": f"chunk-{idx}"} for idx in range(5)]
 
     with (
-        patch("src.modules.digester.utils.llm_execution.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.utils.llm_execution.increment_processed_documents", new_callable=AsyncMock),
+        patch("src.modules.digester.extraction.llm_execution.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extraction.llm_execution.increment_processed_documents", new_callable=AsyncMock),
     ):
         results = await run_chunks_concurrently(
             chunk_items=chunk_items,
@@ -86,8 +86,8 @@ async def test_nested_digester_llm_limit_does_not_deadlock(monkeypatch):
     chunk_items = [{"chunkId": str(uuid4()), "content": f"chunk-{idx}"} for idx in range(3)]
 
     with (
-        patch("src.modules.digester.utils.llm_execution.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.utils.llm_execution.increment_processed_documents", new_callable=AsyncMock),
+        patch("src.modules.digester.extraction.llm_execution.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extraction.llm_execution.increment_processed_documents", new_callable=AsyncMock),
     ):
         results = await asyncio.wait_for(
             run_chunks_concurrently(

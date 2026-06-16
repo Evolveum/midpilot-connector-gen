@@ -9,9 +9,9 @@ import pytest
 
 from src.common.enums import ApiType
 from src.modules.digester import service
+from src.modules.digester.aggregation.merges import merge_info_metadata
 from src.modules.digester.enums import EndpointType
 from src.modules.digester.schemas import BaseAPIEndpoint, InfoMetadata
-from src.modules.digester.utils.merges import merge_info_metadata
 
 
 # ==================== EXTRACT INFO METADATA ====================

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_filter.filter import filter_documentation_items
 from src.config import config
-from src.modules.digester.utils.criteria import (
+from src.modules.digester.selection.criteria import (
     CONNECTIVITY_ENDPOINT_CRITERIA,
     CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA,
     DEFAULT_AUTH_CRITERIA,

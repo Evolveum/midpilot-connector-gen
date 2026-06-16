@@ -58,14 +58,18 @@ async def test_extract_class_attributes_success():
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.filter_documentation_items",
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
             new=AsyncMock(return_value=[{"docId": doc_id, "chunkId": chunk_id}]),
         ),
         patch(
-            "src.modules.digester.router.get_session_documentation",
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new=AsyncMock(return_value=fake_docs),
         ),
-        patch("src.modules.digester.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
         patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
@@ -117,11 +121,21 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevance_repo),
-        patch("src.modules.digester.router.get_session_api_types", new_callable=AsyncMock, return_value=["SCIM"]),
-        patch("src.modules.digester.router.filter_documentation_items", new=AsyncMock(return_value=[])),
         patch(
-            "src.modules.digester.router.get_session_documentation",
+            "src.modules.digester.selection.documentation_selector.RelevantChunkRepository",
+            return_value=mock_relevance_repo,
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
+            new_callable=AsyncMock,
+            return_value=["SCIM"],
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new=AsyncMock(return_value=[{"docId": doc_id, "chunkId": chunk_id, "content": "User mapping docs"}]),
         ),
         patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
@@ -210,9 +224,9 @@ async def test_override_class_attributes_success():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevant_repo),
+        patch("src.modules.digester.results.RelevantChunkRepository", return_value=mock_relevant_repo),
         patch(
-            "src.modules.digester.router.get_session_documentation",
+            "src.modules.digester.results.get_session_documentation",
             AsyncMock(return_value=[{"chunkId": chunk_id, "docId": doc_id}]),
         ),
     ):

@@ -20,19 +20,19 @@ from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.common.utils.normalize import normalize_chunk_pair, normalize_endpoint_key
+from src.modules.digester.entities.scim_resource import extract_scim_resource_path, infer_scim_resource_path
+from src.modules.digester.extraction.llm_execution import invoke_llm
+from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.prompts.scim.endpoints_prompts import (
     scim_endpoints_system_prompt,
     scim_endpoints_user_prompt,
 )
 from src.modules.digester.schemas import ExtractedEndpointInfo, ExtractedEndpointResponse
-from src.modules.digester.scim.loader import (
+from src.modules.digester.scim_baseline.loader import (
     generate_scim_crud_endpoints,
     get_base_scim_endpoints,
     is_scim_standard_class,
 )
-from src.modules.digester.utils.llm_execution import invoke_llm
-from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
-from src.modules.digester.utils.scim_resource import extract_scim_resource_path, infer_scim_resource_path
 
 logger = logging.getLogger(__name__)
 

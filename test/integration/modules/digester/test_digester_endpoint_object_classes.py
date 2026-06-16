@@ -22,15 +22,12 @@ async def test_extract_object_classes_success():
     session_id = uuid4()
     job_id = uuid4()
 
-    fake_docs = [{"docId": str(uuid4()), "chunkId": str(uuid4()), "content": "fake content for testing"}]
-
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.update_session = AsyncMock()
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.get_session_documentation", new_callable=AsyncMock, return_value=fake_docs),
         patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
