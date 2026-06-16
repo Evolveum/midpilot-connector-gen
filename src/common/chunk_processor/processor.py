@@ -10,7 +10,7 @@ from uuid import UUID
 from src.common.chunk_processor.llms import get_llm_processed_chunk
 from src.common.chunk_processor.prompts import get_llm_chunk_process_prompt
 from src.common.chunk_processor.schema import ChunkProcessingError, LlmChunkOutput, SavedDocumentation
-from src.common.chunks import split_text_with_token_overlap
+from src.common.chunking import split_text_with_token_overlap
 from src.common.session.schema import DocumentationItem
 from src.config import config
 

@@ -17,7 +17,7 @@ from docx import Document
 from fastapi import HTTPException, UploadFile, status
 from pypdf import PdfReader
 
-from src.common.chunks import count_tokens, split_text_with_token_overlap
+from src.common.chunking import count_tokens, split_single_item_schema, split_text_with_token_overlap
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage
 from src.common.jobs import schedule_coroutine_job
@@ -337,15 +337,40 @@ async def read_uploaded_documentation(
 def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentation) -> list[tuple[str, int]]:
     if uploaded.preserve_as_single_item:
         token_count = count_tokens(uploaded.text)
-        logger.info(
-            "[Upload] Preserving uploaded schema as a single documentation item for session %s "
-            "filename=%s content_type=%s tokens=%s",
+        max_tokens = config.scrape_and_process.single_item_schema_max_tokens
+        if token_count <= max_tokens:
+            logger.info(
+                "[Upload] Preserving uploaded schema as a single documentation item for session %s "
+                "filename=%s content_type=%s tokens=%s",
+                session_id,
+                uploaded.filename,
+                uploaded.content_type,
+                token_count,
+            )
+            return [(uploaded.text, token_count)]
+
+        logger.warning(
+            "[Upload] Single-item schema exceeds the LLM token budget for session %s "
+            "filename=%s content_type=%s tokens=%s max_tokens=%s; splitting into structurally valid sub-schemas.",
             session_id,
             uploaded.filename,
             uploaded.content_type,
             token_count,
+            max_tokens,
         )
-        return [(uploaded.text, token_count)]
+        chunks = split_single_item_schema(
+            uploaded.text,
+            parser=uploaded.metadata.get("parser", "text"),
+            filename=uploaded.filename,
+            max_tokens=max_tokens,
+        )
+        logger.info(
+            "[Upload] Split oversized single-item schema into %s sub-schema chunks for session %s filename=%s",
+            len(chunks),
+            session_id,
+            uploaded.filename,
+        )
+        return chunks
 
     logger.info(
         "[Upload] Chunking documentation for session %s filename=%s content_type=%s parser=%s",

@@ -50,6 +50,29 @@ def test_chunk_uploaded_documentation_preserves_schema_as_single_item():
     assert chunks[0][1] > 0
 
 
+def test_chunk_uploaded_documentation_splits_oversized_single_item_schema():
+    statements = [f"CREATE TABLE t{i} (id bigint primary key, name text);" for i in range(50)]
+    text = "\n".join(statements)
+    uploaded = UploadedDocumentation(
+        text=text,
+        filename="schema.sql",
+        content_type="text/sql",
+        metadata={"parser": "text"},
+        preserve_as_single_item=True,
+    )
+
+    max_tokens = 200
+    with patch(
+        "src.common.session.utils.documentation_upload.config.scrape_and_process.single_item_schema_max_tokens",
+        max_tokens,
+    ):
+        chunks = chunk_uploaded_documentation(uuid4(), uploaded)
+
+    assert len(chunks) > 1
+    assert all(token_count <= max_tokens for _, token_count in chunks)
+    assert "".join(chunk_text for chunk_text, _ in chunks).count("CREATE TABLE") == 50
+
+
 def test_processed_chunk_metadata_uses_token_count_name():
     data = LlmChunkOutput(
         summary="schema summary",
