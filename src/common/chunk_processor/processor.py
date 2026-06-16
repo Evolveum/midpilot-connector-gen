@@ -4,17 +4,53 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 from src.common.chunk_processor.llms import get_llm_processed_chunk
 from src.common.chunk_processor.prompts import get_llm_chunk_process_prompt
-from src.common.chunk_processor.schema import ChunkProcessingError, SavedDocumentation
-from src.common.chunks import split_text_with_token_overlap
+from src.common.chunk_processor.schema import ChunkProcessingError, LlmChunkOutput, SavedDocumentation
+from src.common.chunking import split_text_with_token_overlap
 from src.common.session.schema import DocumentationItem
 from src.config import config
 
 logger = logging.getLogger(__name__)
+
+
+def build_chunk_metadata(
+    *,
+    chunk_number: int,
+    token_count: int,
+    character_count: int,
+    data: LlmChunkOutput,
+    content_type: Optional[str] = None,
+    filename: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the metadata dict persisted on a processed documentation chunk.
+
+    Shared by the scraper and upload pipelines so both produce an identical
+    metadata shape (notably ``chunk_number``, which was previously only set on
+    uploads). ``content_type`` and ``filename`` are optional because the scraper
+    carries a content type but no filename, while uploads carry both. ``extra``
+    (e.g. upload parser metadata) is merged last.
+    """
+    metadata: Dict[str, Any] = {
+        "chunk_number": chunk_number,
+        "token_count": token_count,
+        "character_count": character_count,
+        "num_endpoints": data.num_endpoints,
+        "tags": data.tags,
+        "category": data.category,
+        "different_app_name": data.different_app_name,
+    }
+    if content_type is not None:
+        metadata["content_type"] = content_type
+    if filename is not None:
+        metadata["filename"] = filename
+    if extra:
+        metadata.update(extra)
+    return metadata
 
 
 async def process_scraped_documentation(
@@ -63,14 +99,13 @@ async def process_scraped_documentation(
             source=source,
             scrape_job_ids=[scraper_job_id] if scraper_job_id else [],
             summary=data.summary,
-            metadata={
-                "category": data.category,
-                "tags": data.tags,
-                "num_endpoints": data.num_endpoints,
-                "length": chunk[1],
-                "contentType": documentation.contentType,
-                "different_app_name": data.different_app_name,
-            },
+            metadata=build_chunk_metadata(
+                chunk_number=idx,
+                token_count=chunk[1],
+                character_count=len(chunk[0]),
+                data=data,
+                content_type=documentation.contentType,
+            ),
             content=chunk[0],
         )
         return idx, documentation_chunk

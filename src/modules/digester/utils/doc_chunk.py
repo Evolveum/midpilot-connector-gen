@@ -5,7 +5,7 @@
 import logging
 from typing import Any, Dict, List, Set, Tuple
 
-from src.common.chunks import normalize_to_text
+from src.common.chunking import normalize_to_text
 from src.modules.digester.schemas.common import ChunkReference
 
 logger = logging.getLogger(__name__)

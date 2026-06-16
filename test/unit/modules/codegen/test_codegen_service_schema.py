@@ -41,6 +41,30 @@ async def test_generate_native_schema():
 
 
 @pytest.mark.asyncio
+async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
+    test_attributes = {
+        "username": {"type": "varchar", "description": "User login", "mandatory": True},
+    }
+
+    with (
+        patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy,
+        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=["SQL"]),
+    ):
+        mock_generate_groovy.return_value = "mocked sql schema code"
+
+        result = await service.create_native_schema(
+            test_attributes,
+            "User",
+            session_id=uuid4(),
+            job_id=uuid4(),
+        )
+
+    assert result == {"code": "mocked sql schema code"}
+    _, kwargs = mock_generate_groovy.call_args
+    assert "SQL native schema mapping" in kwargs["extra_prompt_vars"]["user_schema_docs"]
+
+
+@pytest.mark.asyncio
 async def test_generate_conn_id():
     """Test generating ConnID code from attributes."""
     test_attributes = {

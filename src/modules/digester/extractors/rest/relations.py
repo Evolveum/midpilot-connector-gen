@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from src.common.chunks import normalize_to_text
+from src.common.chunking import normalize_to_text
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain

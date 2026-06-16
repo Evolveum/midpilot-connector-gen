@@ -39,6 +39,14 @@ from src.config import config
 logger = logging.getLogger(__name__)
 
 _job_futures: Dict[UUID, asyncio.Future] = {}
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro: Awaitable[Any]) -> asyncio.Task:
+    task = asyncio.ensure_future(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 async def update_job_progress(
@@ -303,6 +311,16 @@ async def schedule_coroutine_job(
                                     )
                                     await run_normal_worker()
                                 else:
+                                    await update_job_progress(
+                                        job_id,
+                                        stage=JobStage.processing_chunks,
+                                        message=(
+                                            f"Reusing {len(latest_job_doc_items)} processed documentation chunks "
+                                            f"from job {latest_job.job_id}"
+                                        ),
+                                        total_processing=len(latest_job_doc_items),
+                                        processing_completed=0,
+                                    )
                                     for item in latest_job_doc_items:
                                         await doc_repo.create_documentation_item(
                                             session_id=session_id,
@@ -317,15 +335,19 @@ async def schedule_coroutine_job(
                                             metadata={
                                                 "filename": input_payload.get("filename", "unknown"),
                                                 "chunk_number": item["metadata"].get("chunk_number"),
-                                                "length": item["metadata"].get("length"),
+                                                "token_count": item["metadata"].get("token_count"),
                                                 "num_endpoints": item["metadata"].get("num_endpoints"),
                                                 "tags": item["metadata"].get("tags"),
                                                 "category": item["metadata"].get("category"),
-                                                "llm_tags": item["metadata"].get("llm_tags"),
-                                                "llm_category": item["metadata"].get("llm_category"),
+                                                "content_type": item["metadata"].get("content_type"),
+                                                "character_count": item["metadata"].get("character_count"),
                                             },
                                         )
                                     await db.commit()
+                                    await update_job_progress(
+                                        job_id,
+                                        processing_completed=len(latest_job_doc_items),
+                                    )
                                     result_dict = reused_output
                             elif job_type.startswith("digester.") or "relevantDocumentations" in reused_output:
                                 previous_doc_items = await doc_repo.get_documentation_items_by_session(
@@ -449,7 +471,7 @@ async def schedule_coroutine_job(
         except Exception as exc:
             await set_failed(job_id, error=str(exc))
 
-    asyncio.create_task(_runner())
+    _spawn_background_task(_runner())
     return job_id
 
 
@@ -466,7 +488,7 @@ def append_job_error(job_id: UUID, message: str) -> None:
             logger.debug(f"Append job error failed for {job_id}", exc_info=e)
 
     try:
-        asyncio.create_task(_append())
+        _spawn_background_task(_append())
     except RuntimeError:
         # No running loop - try to get or create one
         try:

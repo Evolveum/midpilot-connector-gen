@@ -191,6 +191,15 @@ class ScrapeAndProcessSettings(BaseModel):
         10000,
         description="Max tokens per chunk for LLM processing",
     )
+    single_item_schema_max_tokens: int = Field(
+        100000,
+        gt=0,
+        description=(
+            "Maximum tokens for a single preserved schema item (SQL/SCIM/conndev) before it is split into "
+            "structurally valid sub-schemas. Kept below the LLM context window to leave headroom for the "
+            "chunk-processing prompt and completion."
+        ),
+    )
     max_concurrent: int = Field(
         20,
         description="Max concurrent chunk processing tasks",

@@ -443,6 +443,7 @@ def is_empty_info_result_payload(payload: Dict[str, Any]) -> bool:
         or str(info.get("apiVersion") or "").strip()
         or info.get("apiType")
         or info.get("baseApiEndpoint")
+        or str(info.get("databaseName") or "").strip()
     )
 
 
@@ -474,6 +475,7 @@ def merge_info_metadata(
     api_type_distribution: Dict[ApiType, int] = {}
     base_api_endpoints_url_distribution: Dict[str, int] = {}
     base_api_endpoints_type_distribution: Dict[tuple[str, EndpointType], int] = {}
+    database_name_distribution: Dict[str, int] = {}
 
     for info in info_candidates:
         name = (info.name or "").strip()
@@ -490,7 +492,7 @@ def merge_info_metadata(
 
         for api_type in info.api_type or []:
             normalized_type = str(api_type).upper().strip()
-            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value}:
+            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value, ApiType.SQL.value}:
                 canonical_type = ApiType(normalized_type)
                 api_type_distribution[canonical_type] = api_type_distribution.get(canonical_type, 0) + 1
 
@@ -502,6 +504,10 @@ def merge_info_metadata(
             base_api_endpoints_url_distribution[uri] = base_api_endpoints_url_distribution.get(uri, 0) + 1
             key = (uri, endpoint_type)
             base_api_endpoints_type_distribution[key] = base_api_endpoints_type_distribution.get(key, 0) + 1
+
+        database_name = (info.database_name or "").strip()
+        if database_name:
+            database_name_distribution[database_name] = database_name_distribution.get(database_name, 0) + 1
 
     found_name = ""
     if name_distribution:
@@ -545,6 +551,17 @@ def merge_info_metadata(
         )
         found_base_api_endpoints.append(BaseAPIEndpoint(uri=uri, type=selected_endpoint_type))
 
+    found_database_name = ""
+    if database_name_distribution:
+        candidate_database_name = max(
+            database_name_distribution.keys(), key=lambda value: database_name_distribution[value]
+        )
+        if database_name_distribution[candidate_database_name] > threshold:
+            found_database_name = candidate_database_name
+
+    if ApiType.SQL not in found_api_types:
+        found_database_name = ""
+
     logger.info(
         "[Digester:InfoMetadata] Heuristic threshold: total_docs=%s threshold_count=%s",
         total_items,
@@ -559,14 +576,16 @@ def merge_info_metadata(
         "[Digester:InfoMetadata] Base API endpoint (URI, type) distribution: %s",
         base_api_endpoints_type_distribution,
     )
+    logger.info("[Digester:InfoMetadata] Database name distribution: %s", database_name_distribution)
     logger.info(
         "[Digester:InfoMetadata] Heuristic selected values: name=%r applicationVersion=%r apiVersion=%r "
-        "apiType=%s baseApiEndpoint=%s",
+        "apiType=%s baseApiEndpoint=%s databaseName=%r",
         found_name,
         found_application_version,
         found_api_version,
         found_api_types,
         [endpoint.model_dump() for endpoint in found_base_api_endpoints],
+        found_database_name,
     )
 
     merged_response = InfoResponse(
@@ -576,6 +595,7 @@ def merge_info_metadata(
             api_version=found_api_version,
             api_type=found_api_types,
             base_api_endpoint=found_base_api_endpoints,
+            database_name=found_database_name,
         )
     )
     merged_payload = cast(Dict[str, Any], merged_response.model_dump(by_alias=True))

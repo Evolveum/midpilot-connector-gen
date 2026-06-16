@@ -15,7 +15,7 @@ from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, ValidationError
 
 from src import pool
-from src.common.chunks import normalize_to_text
+from src.common.chunking import normalize_to_text
 from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler

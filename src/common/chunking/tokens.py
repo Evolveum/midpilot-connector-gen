@@ -2,6 +2,13 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+"""Token-level chunking utilities.
+
+Low-level helpers for counting tokens and splitting raw text by token budget.
+Structure-aware splitting (valid JSON/YAML/SQL fragments) lives in
+``src.common.chunking.schema``.
+"""
+
 import json
 import logging
 import re

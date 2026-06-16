@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen import service
+from src.modules.codegen.prompts.sql.create_prompts import get_sql_create_system_prompt
 
 
 @pytest.mark.asyncio
@@ -30,7 +31,11 @@ async def test_generate_create():
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
-        patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
+        patch(
+            "src.modules.codegen.service.get_session_connection_target",
+            new_callable=AsyncMock,
+            return_value=("", ""),
+        ),
         patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -65,6 +70,40 @@ async def test_generate_create():
 
 
 @pytest.mark.asyncio
+async def test_generate_create_uses_sql_assets_for_sql_api_type():
+    test_attributes = {"username": {"type": "varchar", "description": "User login"}}
+    test_tables = {"endpoints": [{"table": "users", "columns": [{"name": "username", "type": "varchar"}]}]}
+
+    with (
+        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=["SQL"]),
+        patch(
+            "src.modules.codegen.service.get_session_connection_target",
+            new_callable=AsyncMock,
+            return_value=("", ""),
+        ),
+        patch(
+            "src.modules.codegen.service._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
+        ),
+        patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
+    ):
+        mock_generator_instance = mock_create_generator_class.return_value
+        mock_generator_instance.generate = AsyncMock(return_value="mocked sql create code")
+
+        result = await service.create_create(
+            attributes=test_attributes,
+            endpoints=test_tables,
+            session_id=uuid4(),
+            object_class="User",
+            job_id=uuid4(),
+        )
+
+    assert result == {"code": "mocked sql create code"}
+    _, kwargs = mock_create_generator_class.call_args
+    assert kwargs["system_prompt"] == get_sql_create_system_prompt
+    assert kwargs["protocol_label"] == "SQL"
+
+
+@pytest.mark.asyncio
 async def test_generate_update():
     """Test generating update code from attributes and endpoints."""
     test_attributes = {
@@ -82,7 +121,11 @@ async def test_generate_update():
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
-        patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
+        patch(
+            "src.modules.codegen.service.get_session_connection_target",
+            new_callable=AsyncMock,
+            return_value=("", ""),
+        ),
         patch("src.modules.codegen.service.UpdateGenerator") as mock_update_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -130,7 +173,11 @@ async def test_generate_delete():
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
-        patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
+        patch(
+            "src.modules.codegen.service.get_session_connection_target",
+            new_callable=AsyncMock,
+            return_value=("", ""),
+        ),
         patch("src.modules.codegen.service.DeleteGenerator") as mock_delete_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value

@@ -2,14 +2,10 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-# TODO refactor this part
+from typing import Any, Dict, List, Mapping, Optional
 
-from typing import Any, Dict, List, Mapping, Optional, TypeAlias
-
+from src.modules.codegen.schema import AuthPayload, PreferredAuthorizations
 from src.modules.digester.enums import auth_type_match_key, normalize_auth_type_value
-
-AuthPayload: TypeAlias = Mapping[str, Any]
-PreferredAuthorizations: TypeAlias = Optional[List[Dict[str, Any]]]
 
 ANALYSIS_SUPPORT_FIELD = "analysisSupport"
 ANALYSIS_SUPPORT_SUPPORTED = "supported"

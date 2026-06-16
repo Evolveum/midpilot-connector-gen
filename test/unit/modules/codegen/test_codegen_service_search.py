@@ -29,7 +29,11 @@ async def test_generate_search():
 
     with (
         patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
-        patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
+        patch(
+            "src.modules.codegen.service.get_session_connection_target",
+            new_callable=AsyncMock,
+            return_value=("", ""),
+        ),
         patch(
             "src.modules.codegen.service._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
         ),

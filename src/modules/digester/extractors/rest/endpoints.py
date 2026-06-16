@@ -10,7 +10,7 @@ from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.chunks import get_neighboring_tokens
+from src.common.chunking import get_neighboring_tokens
 from src.common.enums import JobStage
 from src.common.jobs import (
     append_job_error,

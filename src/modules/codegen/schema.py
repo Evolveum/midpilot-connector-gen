@@ -1,13 +1,29 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Mapping, Optional, TypeAlias, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
 from src.modules.digester.enums import normalize_auth_type_value
+from src.modules.digester.schemas import AttributeResponse, EndpointResponse
+
+AttributesPayload: TypeAlias = Union[AttributeResponse, Mapping[str, Any]]
+EndpointsPayload: TypeAlias = Union[EndpointResponse, Mapping[str, Any]]
+AuthPayload: TypeAlias = Mapping[str, Any]
+PreferredAuthorizations: TypeAlias = Optional[List[Dict[str, Any]]]
+
+
+@dataclass
+class OperationConfig:
+    operation_name: str
+    system_prompt: str
+    user_prompt: str
+    default_scaffold: str
+    logger_prefix: str
+    extra_prompt_vars: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

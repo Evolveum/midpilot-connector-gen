@@ -1,0 +1,11 @@
+= SQL update operation
+
+SQL update generation should modify rows in the table or tables mapped to the object class.
+
+== Update rules
+
+* Use primary keys for row identity.
+* Do not update primary keys or generated columns unless explicitly mutable.
+* Update only attributes present in the change set.
+* If several tables are selected, update parent rows before dependent rows unless foreign keys require another order.
+

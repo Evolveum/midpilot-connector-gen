@@ -69,13 +69,24 @@ class InfoMetadata(BaseModel):
         default_factory=list,
         validation_alias="apiType",
         serialization_alias="apiType",
-        description=("API technology types. Allowed values: REST, SCIM. OpenAPI/Swagger should be normalized to REST."),
+        description=(
+            "API technology types. Allowed values: REST, SCIM, SQL. OpenAPI/Swagger should be normalized to REST."
+        ),
     )
     base_api_endpoint: List[BaseAPIEndpoint] = Field(
         default_factory=list,
         validation_alias="baseApiEndpoint",
         serialization_alias="baseApiEndpoint",
         description="One or more base endpoints/URI templates with their constant/dynamic classification.",
+    )
+    database_name: str = Field(
+        default="",
+        validation_alias="databaseName",
+        serialization_alias="databaseName",
+        description=(
+            "Database/schema name the connector must connect to. Populate ONLY for SQL/database integrations; "
+            "leave empty for REST/SCIM."
+        ),
     )
 
     model_config = {"populate_by_name": True}
@@ -103,6 +114,8 @@ class InfoMetadata(BaseModel):
             "openapi": ApiType.REST,
             "swagger": ApiType.REST,
             "scim": ApiType.SCIM,
+            "sql": ApiType.SQL,
+            "db": ApiType.SQL,
         }
 
         normalized: List[ApiType] = []
