@@ -32,7 +32,7 @@ async def test_import_documentation_items_for_session_preserves_exported_values(
             "url": "upload://connector-openapi.json",
             "summary": "Chunk summary",
             "content": "Chunk full content",
-            "metadata": {"category": "reference", "length": 123},
+            "metadata": {"category": "reference", "token_count": 123},
             "createdAt": "2026-04-02T12:34:56Z",
             "scrapeJobIds": ["job-1", "job-2"],
         }
@@ -52,6 +52,6 @@ async def test_import_documentation_items_for_session_preserves_exported_values(
     assert added_item.url == "upload://connector-openapi.json"
     assert added_item.summary == "Chunk summary"
     assert added_item.content == "Chunk full content"
-    assert added_item.doc_metadata == {"category": "reference", "length": 123}
+    assert added_item.doc_metadata == {"category": "reference", "token_count": 123}
     assert list(added_item.scrape_job_ids) == ["job-1", "job-2"]
     assert added_item.created_at.isoformat() == "2026-04-02T12:34:56+00:00"
