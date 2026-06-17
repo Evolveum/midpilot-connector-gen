@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
+from src.common.errors import OperationSurfaceNotFoundError
 from src.modules.codegen.router import generate_create, generate_delete, generate_update
 from src.modules.codegen.schema import CodegenOperationInput
 
@@ -172,9 +172,9 @@ async def test_generate_create_sql_missing_table_metadata_uses_sql_error_detail(
         patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=["SQL"]),
     ):
         session_id = uuid4()
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(OperationSurfaceNotFoundError) as exc_info:
             await generate_create(session_id, "User", db=MagicMock())
 
     assert exc_info.value.status_code == 404
-    assert "No SQL table metadata found" in exc_info.value.detail
-    assert "endpoint first" not in exc_info.value.detail
+    assert "No SQL table metadata found" in exc_info.value.message
+    assert "endpoint first" not in exc_info.value.message

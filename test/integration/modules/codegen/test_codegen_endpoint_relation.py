@@ -11,6 +11,7 @@ import pytest
 from fastapi import HTTPException
 
 from src.common.enums import JobStatus
+from src.common.errors import RelationNotFoundError
 from src.modules.codegen.router import generate_relation_code, get_relation_code_status
 
 
@@ -181,11 +182,11 @@ async def test_generate_relation_code_rejects_unknown_relation_name():
     ):
         session_id = uuid4()
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(RelationNotFoundError) as exc_info:
             await generate_relation_code(session_id, "principal_to_role", db=MagicMock())
 
     assert exc_info.value.status_code == 404
-    assert "Relation principal_to_role not found" in exc_info.value.detail
+    assert "Relation principal_to_role not found" in exc_info.value.message
     mock_schedule.assert_not_awaited()
 
 

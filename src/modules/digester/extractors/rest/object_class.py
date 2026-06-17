@@ -17,7 +17,10 @@ from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain, get_default_llm, make_basic_chain
+from src.modules.digester.aggregation.merges import merge_object_classes
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
+from src.modules.digester.extraction.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
+from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.prompts.rest.object_class_prompts import (
     get_object_class_system_prompt,
     get_object_class_user_prompt,
@@ -40,9 +43,6 @@ from src.modules.digester.schemas import (
     ObjectClassesResponse,
     RankedObjectClass,
 )
-from src.modules.digester.utils.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
-from src.modules.digester.utils.llm_execution import invoke_llm
-from src.modules.digester.utils.merges import merge_object_classes
 
 logger = logging.getLogger(__name__)
 

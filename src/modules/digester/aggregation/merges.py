@@ -14,6 +14,8 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.config import config
 from src.modules.digester.enums import EndpointMethod, EndpointType
+from src.modules.digester.extraction.llm_execution import invoke_llm
+from src.modules.digester.extraction.sequences import extract_sequence
 from src.modules.digester.schemas import (
     AttributeDedupResponse,
     AttributeProcessingInfo,
@@ -26,8 +28,6 @@ from src.modules.digester.schemas import (
     InfoMetadata,
     InfoResponse,
 )
-from src.modules.digester.utils.llm_execution import invoke_llm
-from src.modules.digester.utils.sequences import extract_sequence
 
 logger = logging.getLogger(__name__)
 

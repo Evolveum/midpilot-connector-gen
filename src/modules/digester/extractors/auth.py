@@ -15,6 +15,9 @@ from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.config import config
 from src.modules.digester.enums import AuthType
+from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
+from src.modules.digester.extraction.llm_execution import invoke_llm
+from src.modules.digester.extraction.sequences import extract_sequence
 from src.modules.digester.prompts.auth_prompts import (
     auth_build_system_prompt,
     auth_build_user_prompt,
@@ -35,9 +38,6 @@ from src.modules.digester.schemas import (
     DocProcessingSequenceItem,
     DocSequenceItem,
 )
-from src.modules.digester.utils.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
-from src.modules.digester.utils.llm_execution import invoke_llm
-from src.modules.digester.utils.sequences import extract_sequence
 
 logger = logging.getLogger(__name__)
 

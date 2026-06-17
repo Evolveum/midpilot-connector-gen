@@ -10,11 +10,16 @@ beyond the standard SCIM User, Group, and EnterpriseUser classes.
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from src.common.jobs import update_job_progress
+from src.modules.digester.entities.object_classes import confidence_order_key
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
+from src.modules.digester.extraction.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
+from src.modules.digester.extraction.llm_execution import run_chunks_concurrently
+from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.prompts.scim.object_class_prompts import (
     scim_object_class_system_prompt,
     scim_object_class_user_prompt,
@@ -25,12 +30,7 @@ from src.modules.digester.schemas import (
     ObjectClassesExtendedResponse,
     ObjectClassesResponse,
 )
-from src.modules.digester.scim.embedded import get_embedded_object_classes_from_scim_schemas
-from src.modules.digester.scim.loader import get_base_scim_object_classes, load_scim_base_schemas
-from src.modules.digester.utils.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
-from src.modules.digester.utils.llm_execution import run_chunks_concurrently
-from src.modules.digester.utils.metadata_helper import build_doc_metadata_map
-from src.modules.digester.utils.object_classes import confidence_order_key
+from src.modules.digester.scim_baseline.loader import get_base_scim_object_classes, load_scim_base_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -407,3 +407,82 @@ async def extract_custom_scim_classes(
     )
 
     return custom_only, bool(custom_only)
+
+
+def _to_pascal_case(value: str) -> str:
+    tokens = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|\d+", value)
+    if not tokens:
+        clean = re.sub(r"[^0-9A-Za-z]+", "", value)
+        return clean[:1].upper() + clean[1:]
+    return "".join(token[:1].upper() + token[1:] for token in tokens)
+
+
+def build_embedded_object_class_name(parent_class_name: str, attribute_name: str) -> str:
+    """
+    Build a stable connector object-class name for a SCIM complex attribute.
+    """
+    parent = _to_pascal_case(parent_class_name)
+    attribute = _to_pascal_case(attribute_name)
+    return f"{parent}{attribute}"
+
+
+def get_embedded_object_classes_from_scim_schema(
+    class_name: str,
+    schema: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """
+    Return embedded object-class definitions for complex SCIM attributes.
+    """
+    embedded_classes: List[Dict[str, Any]] = []
+    seen_names: set[str] = set()
+
+    attributes = schema.get("attributes", [])
+    if not isinstance(attributes, list):
+        return embedded_classes
+
+    for attr in attributes:
+        if not isinstance(attr, dict):
+            continue
+        if attr.get("type") != "complex":
+            continue
+
+        attr_name = attr.get("name")
+        if not isinstance(attr_name, str) or not attr_name.strip():
+            continue
+
+        object_class_name = build_embedded_object_class_name(class_name, attr_name)
+        normalized_name = object_class_name.strip().lower()
+        if normalized_name in seen_names:
+            continue
+        seen_names.add(normalized_name)
+
+        description = attr.get("description")
+        if not isinstance(description, str) or not description.strip():
+            description = f"Embedded SCIM complex attribute '{attr_name}' of {class_name}."
+
+        embedded_classes.append(
+            {
+                "name": object_class_name,
+                "superclass": None,
+                "abstract": False,
+                "embedded": True,
+                "description": description.strip(),
+                "sourceAttribute": attr_name,
+            }
+        )
+
+    return embedded_classes
+
+
+def get_embedded_object_classes_from_scim_schemas(schemas: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Return embedded object classes for all provided SCIM schemas.
+    """
+    embedded_classes: List[Dict[str, Any]] = []
+
+    for class_name, schema in schemas.items():
+        if not isinstance(schema, dict):
+            continue
+        embedded_classes.extend(get_embedded_object_classes_from_scim_schema(class_name, schema))
+
+    return embedded_classes

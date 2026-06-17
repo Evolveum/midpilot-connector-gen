@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
 from src.common.enums import JobStatus
+from src.common.errors import ObjectClassesNotFoundError
 from src.modules.digester.router import extract_relations, get_relations_status, override_relations
 from src.modules.digester.schemas import RelationsResponse
 
@@ -64,11 +64,11 @@ async def test_extract_relations_no_classes():
         patch("src.modules.digester.router.filter_documentation_items", new_callable=AsyncMock, return_value=[]),
     ):
         session_id = uuid4()
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ObjectClassesNotFoundError) as exc_info:
             await extract_relations(session_id=session_id, db=MagicMock())
 
     assert exc_info.value.status_code == 404
-    assert "no object classes" in exc_info.value.detail.lower()
+    assert "no object classes" in exc_info.value.message.lower()
     mock_repo.get_session_data.assert_awaited_once_with(session_id, "objectClassesOutput")
 
 

@@ -17,6 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.database.config import get_db
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import ApiType
+from src.common.errors import (
+    AttributesNotFoundError,
+    OperationSurfaceNotFoundError,
+    RelationNotFoundError,
+    RelationsNotFoundError,
+)
 from src.common.jobs import schedule_coroutine_job
 from src.common.schema import (
     JobCreateResponse,
@@ -246,10 +252,7 @@ async def generate_native_schema(
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
-        )
+        raise AttributesNotFoundError(object_class, session_id)
 
     repair_context = _repair_context_from_input(codegen_input)
     job_input = {
@@ -370,10 +373,7 @@ async def generate_connid(
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
-        )
+        raise AttributesNotFoundError(object_class, session_id)
 
     repair_context = _repair_context_from_input(codegen_input)
     job_input = {
@@ -495,10 +495,7 @@ async def generate_search(
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
-        )
+        raise AttributesNotFoundError(object_class, session_id)
 
     api_types = await get_session_api_types(session_id)
     protocol = resolve_session_api_type(api_types)
@@ -507,10 +504,7 @@ async def generate_search(
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and protocol != ApiType.SCIM:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
-        )
+        raise OperationSurfaceNotFoundError(_missing_operation_surface_detail(protocol, object_class, session_id))
 
     job_input = {
         "sessionId": session_id,
@@ -652,10 +646,7 @@ async def generate_create(
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
-        )
+        raise AttributesNotFoundError(object_class, session_id)
 
     api_types = await get_session_api_types(session_id)
     protocol = resolve_session_api_type(api_types)
@@ -664,10 +655,7 @@ async def generate_create(
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and protocol != ApiType.SCIM:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
-        )
+        raise OperationSurfaceNotFoundError(_missing_operation_surface_detail(protocol, object_class, session_id))
 
     job_input = {
         "sessionId": session_id,
@@ -799,10 +787,7 @@ async def generate_update(
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
-        )
+        raise AttributesNotFoundError(object_class, session_id)
 
     api_types = await get_session_api_types(session_id)
     protocol = resolve_session_api_type(api_types)
@@ -811,10 +796,7 @@ async def generate_update(
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and protocol != ApiType.SCIM:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
-        )
+        raise OperationSurfaceNotFoundError(_missing_operation_surface_detail(protocol, object_class, session_id))
 
     job_input = {
         "sessionId": session_id,
@@ -946,10 +928,7 @@ async def generate_delete(
     # Load attributes from session
     attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
     if not attrs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No attributes found for {object_class} in session {session_id}. Please run /classes/{object_class}/attributes endpoint first.",
-        )
+        raise AttributesNotFoundError(object_class, session_id)
 
     api_types = await get_session_api_types(session_id)
     protocol = resolve_session_api_type(api_types)
@@ -958,10 +937,7 @@ async def generate_delete(
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and protocol != ApiType.SCIM:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
-        )
+        raise OperationSurfaceNotFoundError(_missing_operation_surface_detail(protocol, object_class, session_id))
 
     job_input = {
         "sessionId": session_id,
@@ -1091,10 +1067,7 @@ async def generate_relation_code(
     # Load relations from session
     relations_json = await repo.get_session_data(session_id, "relationsOutput")
     if not relations_json:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No relations found in session {session_id}. Please run /relations endpoint first.",
-        )
+        raise RelationsNotFoundError(session_id)
 
     try:
         relations_model = RelationsResponse.model_validate(relations_json)
@@ -1111,10 +1084,7 @@ async def generate_relation_code(
         (relation for relation in relations_model.relations if relation.name == relation_name), None
     )
     if selected_relation is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Relation {relation_name} not found in session {session_id}.",
-        )
+        raise RelationNotFoundError(relation_name, session_id)
 
     selected_relations_model = RelationsResponse(relations=[selected_relation])
     relations_payload = selected_relations_model.model_dump(by_alias=True, mode="json")

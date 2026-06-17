@@ -18,6 +18,13 @@ from src.common.jobs import (
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.config import config
+from src.modules.digester.aggregation.merges import merge_attribute_candidates
+from src.modules.digester.entities.attribute_filters import (
+    filter_ignored_attributes,
+    normalize_readability_flags,
+)
+from src.modules.digester.extraction.chunk_extraction import extract_single_chunk
+from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
 from src.modules.digester.prompts.rest.attributes_prompts import (
     attribute_deduplication_system_prompt,
     attribute_deduplication_user_prompt,
@@ -42,13 +49,6 @@ from src.modules.digester.schemas import (
     DiscoveryAttribute,
     DocSequenceItem,
 )
-from src.modules.digester.utils.attribute_filters import (
-    filter_ignored_attributes,
-    normalize_readability_flags,
-)
-from src.modules.digester.utils.chunk_extraction import extract_single_chunk
-from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
-from src.modules.digester.utils.merges import merge_attribute_candidates
 
 logger = logging.getLogger(__name__)
 

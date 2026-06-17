@@ -7,8 +7,10 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
 from src.common.llm import build_structured_chain
+from src.modules.digester.entities.object_classes import confidence_order_key
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, object_class_name_from_table
 from src.modules.digester.prompts.sql.object_class_prompts import (
@@ -16,8 +18,7 @@ from src.modules.digester.prompts.sql.object_class_prompts import (
     sql_object_class_user_prompt,
 )
 from src.modules.digester.schemas import ExtendedObjectClass, FinalObjectClass, ObjectClassesExtendedResponse
-from src.modules.digester.utils.doc_chunk import build_relevant_chunks_from_doc_items
-from src.modules.digester.utils.object_classes import confidence_order_key
+from src.modules.digester.selection.doc_chunk import build_relevant_chunks_from_doc_items
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,30 @@ def _object_class_from_table(table: dict[str, Any]) -> FinalObjectClass:
     )
 
 
+def _build_schema_heuristics(tables: list[dict[str, Any]]) -> str:
+    table_summaries = []
+    for table in tables:
+        raw_columns = table.get("columns")
+        columns = raw_columns if isinstance(raw_columns, list) else []
+        table_summaries.append(
+            {
+                "table": table.get("table"),
+                "objectClassCandidate": object_class_name_from_table(str(table.get("table") or "")),
+                "columns": [
+                    {
+                        "name": column.get("name"),
+                        "type": column.get("type"),
+                        "primaryKey": column.get("primaryKey"),
+                        "nullable": column.get("nullable"),
+                    }
+                    for column in columns[:30]
+                    if isinstance(column, dict)
+                ],
+            }
+        )
+    return json.dumps(table_summaries, ensure_ascii=False, indent=2)
+
+
 def _merge_sql_object_classes(object_classes: list[FinalObjectClass]) -> list[FinalObjectClass]:
     by_name: dict[str, FinalObjectClass] = {}
     for obj_class in object_classes:
@@ -104,30 +129,6 @@ def _merge_sql_object_classes(object_classes: list[FinalObjectClass]) -> list[Fi
                 existing.relevant_documentations.append(chunk)
                 seen.add(pair)
     return sorted(by_name.values(), key=lambda item: (confidence_order_key(item.confidence), item.name.lower()))
-
-
-def _build_schema_heuristics(tables: list[dict[str, Any]]) -> str:
-    table_summaries = []
-    for table in tables:
-        raw_columns = table.get("columns")
-        columns = raw_columns if isinstance(raw_columns, list) else []
-        table_summaries.append(
-            {
-                "table": table.get("table"),
-                "objectClassCandidate": object_class_name_from_table(str(table.get("table") or "")),
-                "columns": [
-                    {
-                        "name": column.get("name"),
-                        "type": column.get("type"),
-                        "primaryKey": column.get("primaryKey"),
-                        "nullable": column.get("nullable"),
-                    }
-                    for column in columns[:30]
-                    if isinstance(column, dict)
-                ],
-            }
-        )
-    return json.dumps(table_summaries, ensure_ascii=False, indent=2)
 
 
 def _build_documentation_context(doc_items: list[dict]) -> str:
@@ -179,6 +180,7 @@ async def extract_sql_object_classes(doc_items: list[dict], job_id: UUID) -> dic
     """
     await update_job_progress(
         job_id,
+        stage=JobStage.processing,
         total_processing=len(doc_items) or 1,
         processing_completed=0,
         message="Processing SQL schema heuristics",
@@ -214,6 +216,7 @@ async def extract_sql_object_classes(doc_items: list[dict], job_id: UUID) -> dic
 
     await update_job_progress(
         job_id,
+        stage=JobStage.schema_ready,
         processing_completed=len(doc_items) or 1,
         message=f"SQL object-class extraction complete: {len(final_classes)} classes",
     )

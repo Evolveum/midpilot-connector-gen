@@ -12,6 +12,17 @@ from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
 from src.common.utils.normalize import normalize_endpoint_key
 from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api, is_sql_api
+from src.modules.digester.aggregation.merges import (
+    merge_info_metadata,
+    merge_relations_results,
+)
+from src.modules.digester.entities.object_classes import (
+    extract_attributes_from_result,
+    extract_endpoints_from_result,
+    update_object_class_field_in_session,
+)
+from src.modules.digester.extraction.chunk_extraction import process_over_chunks, run_doc_extractors_concurrently
+from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 
 # Shared extractors
 from src.modules.digester.extractors.auth import (
@@ -51,24 +62,13 @@ from src.modules.digester.extractors.sql.attributes import extract_sql_attribute
 from src.modules.digester.extractors.sql.object_class import extract_sql_object_classes
 from src.modules.digester.extractors.sql.tables import extract_sql_tables
 from src.modules.digester.schemas import ExtractedConnectivityEndpointInfo, InfoMetadata, InfoResponse
-from src.modules.digester.utils.chunk_extraction import process_over_chunks, run_doc_extractors_concurrently
-from src.modules.digester.utils.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, DEFAULT_CRITERIA
-from src.modules.digester.utils.doc_chunk import (
+from src.modules.digester.selection.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, DEFAULT_CRITERIA
+from src.modules.digester.selection.doc_chunk import (
     build_chunk_id_to_doc_id,
     build_relevant_chunks_from_doc_items,
     chunk_ids_from_relevant_chunks,
     exclude_doc_items_by_chunk_id,
     select_doc_chunks,
-)
-from src.modules.digester.utils.merges import (
-    merge_info_metadata,
-    merge_relations_results,
-)
-from src.modules.digester.utils.metadata_helper import build_doc_metadata_map
-from src.modules.digester.utils.object_classes import (
-    extract_attributes_from_result,
-    extract_endpoints_from_result,
-    update_object_class_field_in_session,
 )
 
 logger = logging.getLogger(__name__)

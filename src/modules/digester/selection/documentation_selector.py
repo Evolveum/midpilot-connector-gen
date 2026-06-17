@@ -24,14 +24,14 @@ from src.common.utils.session_info_metadata import (
     is_scim_api,
     is_sql_api,
 )
+from src.modules.digester.entities.object_classes import find_object_class
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, tables_for_object_class
 from src.modules.digester.schemas.common import ChunkReference
-from src.modules.digester.utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
-from src.modules.digester.utils.doc_chunk import (
+from src.modules.digester.selection.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
+from src.modules.digester.selection.doc_chunk import (
     build_chunk_references_from_doc_items,
     build_chunk_references_from_mappings,
 )
-from src.modules.digester.utils.object_classes import find_object_class
 
 
 @dataclass(frozen=True)

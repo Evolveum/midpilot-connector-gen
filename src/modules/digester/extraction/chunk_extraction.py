@@ -21,11 +21,11 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain, is_transient_llm_error
 from src.config import config
+from src.modules.digester.extraction.fuzzysearch_worker import fuzzy_search_worker
+from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
+from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.schemas import DocMarkerMatch, DocSequenceItem
-from src.modules.digester.utils.doc_chunk import build_chunk_id_to_doc_id
-from src.modules.digester.utils.fuzzysearch_worker import fuzzy_search_worker
-from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
-from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
+from src.modules.digester.selection.doc_chunk import build_chunk_id_to_doc_id
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)

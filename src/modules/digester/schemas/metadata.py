@@ -4,7 +4,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer
 
 from src.common.enums import ApiType
 from src.modules.digester.enums import EndpointType
@@ -160,6 +160,30 @@ class InfoMetadata(BaseModel):
             unique.values(),
             key=lambda endpoint: (endpoint.uri.lower(), 0 if endpoint.type == EndpointType.CONSTANT else 1),
         )
+
+    @model_serializer(mode="wrap")
+    def _serialize_for_api_type(self, handler: Any) -> Any:
+        """
+        Drop fields that are irrelevant for the detected apiType on output:
+        - ``databaseName`` is kept only for SQL integrations.
+        - ``baseApiEndpoint`` is dropped for SQL-only integrations (no REST/SCIM).
+        """
+        data = handler(self)
+        if not isinstance(data, dict):
+            return data
+
+        is_sql = ApiType.SQL in self.api_type
+        is_rest_or_scim = any(api_type in (ApiType.REST, ApiType.SCIM) for api_type in self.api_type)
+
+        if not is_sql:
+            data.pop("databaseName", None)
+            data.pop("database_name", None)
+
+        if is_sql and not is_rest_or_scim:
+            data.pop("baseApiEndpoint", None)
+            data.pop("base_api_endpoint", None)
+
+        return data
 
 
 class InfoResponse(BaseModel):

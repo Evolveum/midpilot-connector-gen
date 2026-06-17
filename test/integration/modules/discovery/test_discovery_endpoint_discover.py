@@ -6,8 +6,8 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
+from src.common.errors import SessionNotFoundError
 from src.modules.discovery.router import discover_candidate_links
 from src.modules.discovery.schema import CandidateLinksInput
 
@@ -59,8 +59,8 @@ async def test_discover_candidate_links_session_not_found():
 
     with patch("src.modules.discovery.router.SessionRepository", return_value=mock_repo):
         request = CandidateLinksInput(application_name="test-app")
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(SessionNotFoundError) as exc_info:
             await discover_candidate_links(request, uuid4(), db=MagicMock())
 
         assert exc_info.value.status_code == 404
-        assert "not found" in str(exc_info.value.detail).lower()
+        assert "not found" in exc_info.value.message.lower()

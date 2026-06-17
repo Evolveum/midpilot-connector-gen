@@ -17,6 +17,12 @@ from src.common.database.repositories.documentation_repository import Documentat
 from src.common.database.repositories.job_repository import JobRepository
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStatus
+from src.common.errors import (
+    DocumentationItemNotFoundError,
+    DocumentationNotFoundError,
+    SessionAlreadyExistsError,
+    SessionNotFoundError,
+)
 from src.common.session.schema import (
     Documentation,
     SessionCreateResponse,
@@ -48,7 +54,7 @@ async def get_session_summary(
     repo = SessionRepository(db)
     session = await repo.get_session(session_id)
     if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
     return {
         "sessionId": session["sessionId"],
@@ -71,7 +77,7 @@ async def list_session_jobs(
     """
     session_repo = SessionRepository(db)
     if not await session_repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
     job_repo = JobRepository(db)
     jobs = await job_repo.get_jobs_by_session(session_id)
@@ -92,7 +98,7 @@ async def get_documentation_upload_status(
     """
     session_repo = SessionRepository(db)
     if not await session_repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
     job_repo = JobRepository(db)
     jobs = await job_repo.get_jobs_by_session(session_id)
@@ -117,14 +123,12 @@ async def get_documentation(
     """
     session_repo = SessionRepository(db)
     if not await session_repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
     doc_repo = DocumentationRepository(db)
     doc_rows = await doc_repo.get_documentation_items_for_export(session_id)
     if not doc_rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"No documentation found in session {session_id}"
-        )
+        raise DocumentationNotFoundError(session_id)
 
     return build_group_documentation_response(doc_rows)
 
@@ -144,17 +148,14 @@ async def get_documentation_by_id(
     """
     session_repo = SessionRepository(db)
     if not await session_repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
     doc_repo = DocumentationRepository(db)
     doc_rows = await doc_repo.get_documentation_items_for_export(session_id)
     doc_rows_for_document = [item for item in doc_rows if str(item.get("docId")) == str(documentation_id)]
 
     if not doc_rows_for_document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Documentation {documentation_id} not found in session {session_id}",
-        )
+        raise DocumentationItemNotFoundError(documentation_id, session_id)
 
     document_payload = {
         "docId": str(documentation_id),
@@ -186,7 +187,7 @@ async def check_session_exists(
     """
     repo = SessionRepository(db)
     if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
 
 @router.head(
@@ -211,7 +212,7 @@ async def check_documentation_item(
     async with _DOC_UPLOAD_API_SEMAPHORE:
         repo = SessionRepository(db)
         if not await repo.session_exists(session_id):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+            raise SessionNotFoundError(session_id)
 
         doc_repo = DocumentationRepository(db)
         if await doc_repo.get_documentation_items_by_doc_id(session_id, documentation_id):
@@ -232,10 +233,7 @@ async def check_documentation_item(
                     },
                 )
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Documentation {documentation_id} not found in session {session_id}",
-    )
+    raise DocumentationItemNotFoundError(documentation_id, session_id)
 
 
 # POST Endpoints
@@ -278,7 +276,7 @@ async def create_session_with_id(
     repo = SessionRepository(db)
     if await repo.session_exists(session_id):
         logger.error(f"Cannot create session - session already exists: {session_id}")
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Session {session_id} already exists")
+        raise SessionAlreadyExistsError(session_id)
 
     try:
         created_id = await repo.create_session_with_id(session_id)
@@ -311,7 +309,7 @@ async def upload_documentation(
     async with _DOC_UPLOAD_API_SEMAPHORE:
         repo = SessionRepository(db)
         if not await repo.session_exists(session_id):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+            raise SessionNotFoundError(session_id)
 
         prepared = await prepare_documentation_upload(repo, session_id, documentation)
 
@@ -351,7 +349,7 @@ async def upload_documentation_by_id(
     async with _DOC_UPLOAD_API_SEMAPHORE:
         repo = SessionRepository(db)
         if not await repo.session_exists(session_id):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+            raise SessionNotFoundError(session_id)
 
         prepared = await prepare_documentation_upload(repo, session_id, documentation)
 
@@ -392,7 +390,7 @@ async def replace_documentation(
         repo = SessionRepository(db)
         doc_repo = DocumentationRepository(db)
         if not await repo.session_exists(session_id):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+            raise SessionNotFoundError(session_id)
 
         prepared = await prepare_documentation_upload(repo, session_id, documentation)
 
@@ -435,7 +433,7 @@ async def import_documentation_by_id(
     """
     session_repo = SessionRepository(db)
     if not await session_repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
     if document.doc_id is not None and str(document.doc_id) != str(documentation_id):
         raise HTTPException(
@@ -511,7 +509,7 @@ async def delete_session(
     repo = SessionRepository(db)
     success = await repo.delete_session(session_id)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
     return {"message": "Session deleted successfully", "sessionId": session_id}
 
 
@@ -525,7 +523,7 @@ async def delete_documentation(
     repo = SessionRepository(db)
     doc_repo = DocumentationRepository(db)
     if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
     await doc_repo.delete_documentation_items_by_session(session_id)
     return {"message": "All documentation deleted successfully", "sessionId": session_id}
@@ -545,7 +543,7 @@ async def delete_documentation_item(
     repo = SessionRepository(db)
     doc_repo = DocumentationRepository(db)
     if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
     doc_items_with_doc_id = await doc_repo.get_documentation_items_by_doc_id(session_id, documentation_id)
     source = doc_items_with_doc_id[0].get("source") if doc_items_with_doc_id else ""
@@ -557,10 +555,7 @@ async def delete_documentation_item(
         await doc_repo.remove_job_ids_from_documentation_items(session_id, source)
 
     if not doc_items_with_doc_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Documentation with documentation_id {documentation_id} not found in session {session_id}",
-        )
+        raise DocumentationItemNotFoundError(documentation_id, session_id)
 
     deleted_count = await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
 

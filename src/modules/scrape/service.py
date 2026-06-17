@@ -21,7 +21,7 @@ from src.common.session.schema import DocumentationItem
 from src.common.utils.normalize import normalize_url
 from src.common.utils.status_response import build_group_documentation_response
 from src.config import config
-from src.modules.scrape.functions import scraper_loop
+from src.modules.scrape.core.scraper import scraper_loop
 from src.modules.scrape.schema import ScrapeRequest, ScrapeResult
 
 logger = logging.getLogger(__name__)
@@ -270,7 +270,6 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                 links_to_scrape=links,
                 app=input.application_name,
                 app_version=input.application_version,
-                max_iterations_filter_irrelevant=config.scrape_and_process.max_iterations_filter_irrelevant,
                 curr_iteration=curr_iter,
                 irrelevant_links=irrelevant_links,
                 saved_documentations=saved_documentations,

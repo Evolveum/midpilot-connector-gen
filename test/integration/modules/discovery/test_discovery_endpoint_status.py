@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
+from src.common.errors import JobNotFoundError
 from src.modules.discovery.router import get_discovery_status
 
 
@@ -50,10 +50,10 @@ async def test_get_discovery_status_not_found():
 
     with patch("src.modules.discovery.router.SessionRepository", return_value=mock_repo):
         session_id = uuid4()
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(JobNotFoundError) as exc_info:
             await get_discovery_status(session_id, jobId=None, db=MagicMock())
 
         assert exc_info.value.status_code == 404
-        assert "no discovery job" in str(exc_info.value.detail).lower()
+        assert "no discovery job" in exc_info.value.message.lower()
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "discoveryJobId")

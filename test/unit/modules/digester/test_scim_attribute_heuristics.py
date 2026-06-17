@@ -7,8 +7,10 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester.extractors.scim.attributes import extract_scim_attributes
-from src.modules.digester.scim.attributes import get_scim_schema_attributes_for_object_class
+from src.modules.digester.extractors.scim.attributes import (
+    extract_scim_attributes,
+    get_scim_schema_attributes_for_object_class,
+)
 
 
 def test_scim_user_attributes_are_derived_from_schema_with_embedded_complex_attributes():
