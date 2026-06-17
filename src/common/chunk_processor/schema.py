@@ -70,6 +70,19 @@ class SavedDocumentation(BaseModel):
         }
 
 
+class ChunkProcessingError(BaseModel):
+    """
+    A non-fatal failure while processing a single documentation chunk.
+
+    Collected so a transient per-chunk failure (e.g. an LLM connection error) can be
+    surfaced as a job error without aborting the whole scrape run.
+    """
+
+    url: str = Field(description="URL of the documentation the failed chunk belongs to")
+    chunk_index: int = Field(description="Index of the failed chunk within the documentation")
+    error: str = Field(description="Human-readable description of the failure")
+
+
 class LlmChunkOutput(BaseModel):
     """
     Schema for LLM output containing summary, tags and category for a chunk

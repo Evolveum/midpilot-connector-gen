@@ -4,25 +4,30 @@
 
 import json
 import logging
-from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, cast
 from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
 from src.common.enums import ApiType, JobStage
-from src.common.jobs import update_job_progress
+from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.config import config
 from src.modules.digester.enums import EndpointMethod, EndpointType
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
+    AttributeDedupResponse,
+    AttributeProcessingInfo,
     BaseAPIEndpoint,
+    DiscoveryAttribute,
+    DocProcessingSequenceItem,
+    DocSequenceItem,
     ExtendedObjectClass,
-    ExtractedAttributeResponse,
     ExtractedEndpointInfo,
     InfoMetadata,
     InfoResponse,
 )
+from src.modules.digester.utils.llm_execution import invoke_llm
+from src.modules.digester.utils.sequences import extract_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -105,80 +110,248 @@ def merge_object_classes(
 
 
 async def merge_attribute_candidates(
-    *,
     object_class: str,
-    per_chunk: List[Dict[str, Dict[str, Any]]],
+    attribute_objects: List[DiscoveryAttribute] | List[AttributeProcessingInfo],
     job_id: UUID,
-    build_dedupe_chain: Callable[[], Any],
-) -> Dict[str, Dict[str, Any]]:
+    build_dedup_chain: Callable[[], Any],
+    chunk_id_doc_id_map: Optional[Dict[str, str]] = None,
+) -> List[AttributeProcessingInfo]:
     """
-    Merge attribute candidates extracted from multiple chunks and deduplicate via LLM when needed.
+    Merge attribute candidates extracted from multiple chunks and deduplicate in two passes:
+    1) heuristic exact-name deduplication
+    2) LLM deduplication/cleanup
+
+    Args:
+    - object_class: Name of the object class these attributes belong to
+    - attribute_objects: List of DiscoveryAttribute or AttributeProcessingInfo objects extracted from different chunks
+    - job_id: UUID of current job
+    - dedup_chain: Callable that takes a dict with object_class and attributes_list (JSON string) and returns an AttributeDedupResponse with duplicates and to_be_deleted lists
+
+    Returns:
+    - List of merged, deduplicated and cleaned AttributeProcessingInfo objects
+
     """
+
+    logger.info(
+        "[Digester:Attributes] Original names of candidates for %s: %s",
+        object_class,
+        [attr.name for attr in attribute_objects],
+    )
 
     await update_job_progress(
         job_id,
-        stage="merging",
-        message=f"Merging and deduplicating attributes for {object_class}",
+        stage=JobStage.deduplication,
+        message=f"Deduplicating attributes for {object_class}",
     )
 
-    candidates: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    def _sequence_key(seq: DocProcessingSequenceItem) -> tuple[str, str, str]:
+        return (seq.chunk_id, seq.start_sequence, seq.end_sequence)
 
-    for partial in per_chunk:
-        if not partial:
+    def _merge_relevant_sequences(target: AttributeProcessingInfo, source: AttributeProcessingInfo) -> None:
+        existing_keys = {_sequence_key(seq) for seq in target.relevant_sequences}
+        for seq in source.relevant_sequences:
+            key = _sequence_key(seq)
+            if key not in existing_keys:
+                target.relevant_sequences.append(seq)
+                existing_keys.add(key)
+
+    def _merge_metadata(target: AttributeProcessingInfo, source: AttributeProcessingInfo) -> None:
+        if source.type and not target.type:
+            target.type = source.type
+        if source.format and not target.format:
+            target.format = source.format
+        if source.description and len(source.description) > len(target.description or ""):
+            target.description = source.description
+
+        if target.mandatory is None and source.mandatory is not None:
+            target.mandatory = source.mandatory
+        if target.updatable is None and source.updatable is not None:
+            target.updatable = source.updatable
+        if target.creatable is None and source.creatable is not None:
+            target.creatable = source.creatable
+        if target.readable is None and source.readable is not None:
+            target.readable = source.readable
+        if target.multivalue is None and source.multivalue is not None:
+            target.multivalue = source.multivalue
+        if target.returnedByDefault is None and source.returnedByDefault is not None:
+            target.returnedByDefault = source.returnedByDefault
+
+    def _merge_relevant_documentations(target: AttributeProcessingInfo, source: AttributeProcessingInfo) -> None:
+        for doc in source.relevant_documentations:
+            if doc not in target.relevant_documentations:
+                target.relevant_documentations.append(doc)
+
+    async def _to_processing_info(attr: DiscoveryAttribute | AttributeProcessingInfo) -> AttributeProcessingInfo | None:
+        if isinstance(attr, AttributeProcessingInfo):
+            return attr
+
+        relevant_sequences: List[DocProcessingSequenceItem] = []
+        for raw_seq in attr.relevant_sequences:
+            seq = DocSequenceItem.model_validate(raw_seq.model_dump(by_alias=True))
+
+            relevant_sequences.append(
+                DocProcessingSequenceItem(
+                    chunk_id=seq.chunk_id,
+                    start_sequence=seq.start_sequence,
+                    end_sequence=seq.end_sequence,
+                    text=await extract_sequence(
+                        seq.chunk_id,
+                        seq.start_sequence,
+                        seq.end_sequence,
+                        enable_marker_blending=True,
+                        logger_prefix="[Digester:Attributes] [Merge] ",
+                    ),
+                )
+            )
+
+        if relevant_sequences:
+            first_chunk_id = relevant_sequences[0].chunk_id
+            first_doc_id = (chunk_id_doc_id_map.get(first_chunk_id) or "unknown") if chunk_id_doc_id_map else "unknown"
+
+            return AttributeProcessingInfo(
+                name=attr.name,
+                type=getattr(attr, "type", None),
+                format=getattr(attr, "format", None),
+                description=attr.description,
+                mandatory=None,
+                updatable=None,
+                creatable=None,
+                readable=None,
+                multivalue=None,
+                returnedByDefault=None,
+                relevant_sequences=relevant_sequences,
+                relevant_documentations=[
+                    {"chunk_id": first_chunk_id, "doc_id": first_doc_id},
+                ],
+            )
+        else:
+            logger.warning("[Digester:Attributes] Attribute %s has no relevant sequences; deleting", attr.name)
+            return None
+
+    if not attribute_objects:
+        return []
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.deduplication,
+        message=f"Deduplicating attributes for {object_class}",
+    )
+
+    seen: Dict[str, AttributeProcessingInfo] = {}
+    for attr in attribute_objects:
+        if not attr or not attr.name:
             continue
-        for attr_name, attr_info in partial.items():
-            info_copy = dict(attr_info)
-            info_copy.setdefault("name", attr_name)
-            candidates[attr_name].append({"info": info_copy})
 
-    if not candidates:
-        return {}
+        key = attr.name.strip().lower()
+        if not key:
+            continue
 
-    if not any(len(v) > 1 for v in candidates.values()):
-        return {name: infos[0]["info"] for name, infos in candidates.items()}
+        item = await _to_processing_info(attr)
 
-    await update_job_progress(
-        job_id,
-        stage=JobStage.resolving_duplicates,
-        message=f"Resolving duplicate attributes for {object_class}",
+        if item is None:
+            logger.warning("[Digester:Attributes] Skipping attribute with empty name after processing: %s", attr)
+            continue
+
+        if key not in seen:
+            seen[key] = item
+            continue
+
+        current = seen[key]
+        _merge_relevant_sequences(current, item)
+        _merge_metadata(current, item)
+        _merge_relevant_documentations(current, item)
+
+    merged = list(seen.values())
+    logger.info("[Digester:Attributes] Heuristic merge complete. Unique count: %d", len(merged))
+    # TODO: DELETE
+    logger.info(
+        "[Digester:Attributes] Names of candidates after heuristic merge for %s: %s",
+        object_class,
+        [attr.name for attr in merged],
     )
 
-    dedupe_chain = build_dedupe_chain()
-    payload = json.dumps(candidates, ensure_ascii=False)
+    if len(merged) <= 1:
+        await update_job_progress(
+            job_id,
+            stage=JobStage.deduplication_finished,
+            message="Attribute deduplication finished",
+        )
+        return merged
 
     try:
-        result = await dedupe_chain.ainvoke(
-            {
-                "object_class": object_class,
-                "candidates_json": payload,
-                "guaranteed_candidates_per_name": True,
-            },
-            config=RunnableConfig(callbacks=[langfuse_handler]),
+        dedup_chain = build_dedup_chain()
+        result = cast(
+            AttributeDedupResponse,
+            await invoke_llm(
+                dedup_chain,
+                {
+                    "object_class": object_class,
+                    "attributes_list": json.dumps([item.model_dump() for item in merged]),
+                },
+                config=RunnableConfig(callbacks=[langfuse_handler]),
+            ),
         )
 
-        if isinstance(result, ExtractedAttributeResponse):
-            parsed = result
-        else:
-            content = getattr(result, "content", None)
-            parsed = (
-                ExtractedAttributeResponse.model_validate(json.loads(content))
-                if isinstance(content, (str, bytes, bytearray))
-                else ExtractedAttributeResponse()
-            )
+        # TODO: DELETE
+        logger.info("[Digester:Attributes] LLM deduplication result for %s: %s", object_class, result)
 
-        return {name: info.model_dump(exclude={"scimAttribute"}) for name, info in parsed.attributes.items()}
+        if not result:
+            logger.warning("[Digester:Attributes] Deduplication LLM returned empty result; keeping heuristic output.")
+            await update_job_progress(
+                job_id,
+                stage=JobStage.deduplication_finished,
+                message="Attribute deduplication finished (LLM empty)",
+            )
+            return merged
+
+        by_name: Dict[str, AttributeProcessingInfo] = {item.name.strip().lower(): item for item in merged}
+        mark_for_deletion: set[str] = set()
+
+        for keep_name, delete_name in result.duplicates or []:
+            keep_key = keep_name.strip().lower()
+            delete_key = delete_name.strip().lower()
+
+            if keep_key == delete_key:
+                continue
+
+            keep_item = by_name.get(keep_key)
+            delete_item = by_name.get(delete_key)
+
+            if keep_item and delete_item:
+                _merge_relevant_sequences(keep_item, delete_item)
+                _merge_metadata(keep_item, delete_item)
+                mark_for_deletion.add(delete_key)
+            else:
+                logger.warning(
+                    "[Digester:Attributes] Could not resolve dedup pair keep=%s delete=%s",
+                    keep_name,
+                    delete_name,
+                )
+
+        for delete_name in result.to_be_deleted or []:
+            key = delete_name.strip().lower()
+            if key in by_name:
+                mark_for_deletion.add(key)
+
+        final_list = [item for item in merged if item.name.strip().lower() not in mark_for_deletion]
+
+        await update_job_progress(
+            job_id,
+            stage=JobStage.deduplication_finished,
+            message="Attribute deduplication finished",
+        )
+        logger.info("[Digester:Attributes] LLM dedup complete. Final count: %d", len(final_list))
+        return final_list
 
     except Exception as exc:
-        logger.error("[Digester:Attributes] Dedupe failed: %s", exc)
-        fallback: Dict[str, Dict[str, Any]] = {}
-        object_class_lower = object_class.lower()
-        for attr_name, attr_list in candidates.items():
-            best = max(
-                attr_list,
-                key=lambda c: int(object_class_lower in (c["info"].get("description", "").lower())),
-            )
-            fallback[attr_name] = cast(Dict[str, Any], best["info"])
-        return fallback
+        logger.error("[Digester:Attributes] Deduplication LLM call failed: %s", exc)
+        await update_job_progress(
+            job_id,
+            stage=JobStage.deduplication_failed,
+            message=f"Attribute deduplication failed: {exc}",
+        )
+        append_job_error(job_id, f"[Digester:Attributes] Deduplication LLM call failed: {exc}")
+        return merged
 
 
 async def merge_endpoint_candidates(
@@ -270,6 +443,7 @@ def is_empty_info_result_payload(payload: Dict[str, Any]) -> bool:
         or str(info.get("apiVersion") or "").strip()
         or info.get("apiType")
         or info.get("baseApiEndpoint")
+        or str(info.get("databaseName") or "").strip()
     )
 
 
@@ -301,6 +475,7 @@ def merge_info_metadata(
     api_type_distribution: Dict[ApiType, int] = {}
     base_api_endpoints_url_distribution: Dict[str, int] = {}
     base_api_endpoints_type_distribution: Dict[tuple[str, EndpointType], int] = {}
+    database_name_distribution: Dict[str, int] = {}
 
     for info in info_candidates:
         name = (info.name or "").strip()
@@ -317,7 +492,7 @@ def merge_info_metadata(
 
         for api_type in info.api_type or []:
             normalized_type = str(api_type).upper().strip()
-            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value}:
+            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value, ApiType.SQL.value}:
                 canonical_type = ApiType(normalized_type)
                 api_type_distribution[canonical_type] = api_type_distribution.get(canonical_type, 0) + 1
 
@@ -329,6 +504,10 @@ def merge_info_metadata(
             base_api_endpoints_url_distribution[uri] = base_api_endpoints_url_distribution.get(uri, 0) + 1
             key = (uri, endpoint_type)
             base_api_endpoints_type_distribution[key] = base_api_endpoints_type_distribution.get(key, 0) + 1
+
+        database_name = (info.database_name or "").strip()
+        if database_name:
+            database_name_distribution[database_name] = database_name_distribution.get(database_name, 0) + 1
 
     found_name = ""
     if name_distribution:
@@ -372,6 +551,17 @@ def merge_info_metadata(
         )
         found_base_api_endpoints.append(BaseAPIEndpoint(uri=uri, type=selected_endpoint_type))
 
+    found_database_name = ""
+    if database_name_distribution:
+        candidate_database_name = max(
+            database_name_distribution.keys(), key=lambda value: database_name_distribution[value]
+        )
+        if database_name_distribution[candidate_database_name] > threshold:
+            found_database_name = candidate_database_name
+
+    if ApiType.SQL not in found_api_types:
+        found_database_name = ""
+
     logger.info(
         "[Digester:InfoMetadata] Heuristic threshold: total_docs=%s threshold_count=%s",
         total_items,
@@ -386,14 +576,16 @@ def merge_info_metadata(
         "[Digester:InfoMetadata] Base API endpoint (URI, type) distribution: %s",
         base_api_endpoints_type_distribution,
     )
+    logger.info("[Digester:InfoMetadata] Database name distribution: %s", database_name_distribution)
     logger.info(
         "[Digester:InfoMetadata] Heuristic selected values: name=%r applicationVersion=%r apiVersion=%r "
-        "apiType=%s baseApiEndpoint=%s",
+        "apiType=%s baseApiEndpoint=%s databaseName=%r",
         found_name,
         found_application_version,
         found_api_version,
         found_api_types,
         [endpoint.model_dump() for endpoint in found_base_api_endpoints],
+        found_database_name,
     )
 
     merged_response = InfoResponse(
@@ -403,6 +595,7 @@ def merge_info_metadata(
             api_version=found_api_version,
             api_type=found_api_types,
             base_api_endpoint=found_base_api_endpoints,
+            database_name=found_database_name,
         )
     )
     merged_payload = cast(Dict[str, Any], merged_response.model_dump(by_alias=True))

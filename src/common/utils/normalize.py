@@ -106,9 +106,15 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
                 (str(x.get("url") or ""), str(x.get("summary") or "")) if isinstance(x, Mapping) else (str(x), "")
             ),
         )
-    if "relevantObjectClasses" in normalized_input and "objectClasses" in normalized_input["relevantObjectClasses"]:
-        for obj_class in normalized_input["relevantObjectClasses"]["objectClasses"]:
-            obj_class.pop("relevantDocumentations")
+    relevant_object_classes = normalized_input.get("relevantObjectClasses")
+    if isinstance(relevant_object_classes, Mapping):
+        object_classes = relevant_object_classes.get("objectClasses")
+        if isinstance(object_classes, list):
+            for obj_class in object_classes:
+                if not isinstance(obj_class, dict):
+                    continue
+                obj_class.pop("relevantDocumentations", None)
+                obj_class.pop("relevant_chunk_indices", None)
     if "relevantDocumentations" in normalized_input:
         normalized_input.pop("relevantDocumentations")
     return normalized_input

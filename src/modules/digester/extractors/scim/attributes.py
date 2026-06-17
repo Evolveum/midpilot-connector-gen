@@ -14,20 +14,25 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain
 from src.common.utils.normalize import normalize_chunk_pair
 from src.modules.digester.prompts.scim.attributes_prompts import (
     get_scim_attributes_system_prompt,
     get_scim_attributes_user_prompt,
 )
-from src.modules.digester.schema import ExtractedAttributeResponse
+from src.modules.digester.schemas import ExtractedAttributeResponseSCIM
+from src.modules.digester.scim.attributes import (
+    get_scim_complex_attribute_reference_type,
+    get_scim_schema_attribute_context,
+    get_scim_schema_attributes_for_object_class,
+    normalize_scim_path_for_lookup,
+    scim_path_targets_filtered_attribute,
+)
 from src.modules.digester.scim.loader import get_base_scim_attributes, is_scim_standard_class
 from src.modules.digester.utils.attribute_filters import normalize_readability_flags
+from src.modules.digester.utils.llm_execution import invoke_llm
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
@@ -74,11 +79,6 @@ def _build_scim_attribute_chain(object_class: str, base_attributes: Dict[str, Di
     Returns:
         Configured LangChain runnable
     """
-    parser: PydanticOutputParser[ExtractedAttributeResponse] = PydanticOutputParser(
-        pydantic_object=ExtractedAttributeResponse
-    )
-    llm = get_default_llm()
-
     # Format base attributes for prompt context
     formatted_base = _format_attributes_for_prompt(base_attributes)
     scim_base_summary = (
@@ -87,19 +87,16 @@ def _build_scim_attribute_chain(object_class: str, base_attributes: Dict[str, Di
         else "None (custom resource)"
     )
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", get_scim_attributes_system_prompt() + "\n\n{format_instructions}"),
-            ("user", get_scim_attributes_user_prompt()),
-        ]
-    ).partial(
-        object_class=object_class,
-        scim_base_attributes=scim_base_summary,
-        formatted_base_attributes=formatted_base,
-        format_instructions=parser.get_format_instructions(),
+    return build_structured_chain(
+        get_scim_attributes_system_prompt(),
+        get_scim_attributes_user_prompt(),
+        ExtractedAttributeResponseSCIM,
+        partial_variables={
+            "object_class": object_class,
+            "scim_base_attributes": scim_base_summary,
+            "formatted_base_attributes": formatted_base,
+        },
     )
-
-    return make_basic_chain(prompt, llm, parser)
 
 
 def _merge_custom_attributes(results: List[Dict[str, Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
@@ -122,6 +119,120 @@ def _merge_custom_attributes(results: List[Dict[str, Dict[str, Any]]]) -> Dict[s
                 merged_info[key] = value
 
             merged[attr_name] = merged_info
+
+    return merged
+
+
+def _merge_schema_attributes_with_documented_mappings(
+    schema_attributes: Dict[str, Dict[str, Any]],
+    documented_attributes: Dict[str, Dict[str, Any]],
+    *,
+    include_unmatched_mappings: bool,
+    attribute_context: Dict[str, set[str]] | None = None,
+    object_class: str | None = None,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Merge documented target-app SCIM mappings over deterministic schema attributes.
+
+    The SCIM schema remains the baseline. Documented mappings enrich matching
+    schema attributes by `scimAttribute`; custom mappings that do not match the
+    baseline are appended under the application/native attribute name produced
+    by the LLM.
+    """
+    merged = {attr_name: dict(attr_info) for attr_name, attr_info in schema_attributes.items()}
+    scim_path_to_name: Dict[str, str] = {}
+    for attr_name, attr_info in merged.items():
+        scim_path_to_name[normalize_scim_path_for_lookup(attr_name)] = attr_name
+        scim_path_to_name[normalize_scim_path_for_lookup(attr_info.get("scimAttribute") or attr_name)] = attr_name
+
+    for documented_name, documented_info in documented_attributes.items():
+        info = dict(documented_info)
+        scim_attribute = info.get("scimAttribute")
+        scim_path_raw = str(scim_attribute or documented_name).strip()
+        scim_path = normalize_scim_path_for_lookup(scim_path_raw)
+        baseline_name = scim_path_to_name.get(scim_path)
+
+        if baseline_name is None:
+            if attribute_context and object_class:
+                embedded_type = get_scim_complex_attribute_reference_type(
+                    scim_path_raw,
+                    attribute_context,
+                    object_class,
+                )
+                if embedded_type:
+                    info["type"] = embedded_type
+                    info["format"] = "embedded"
+                    merged[documented_name] = info
+                    continue
+
+            if attribute_context and scim_path_targets_filtered_attribute(scim_path, attribute_context):
+                logger.info(
+                    "[SCIM:Attributes] Filtered documented mapping '%s' for SCIM path '%s' because it belongs to a different SCIM object class",
+                    documented_name,
+                    scim_attribute,
+                )
+                continue
+            if include_unmatched_mappings:
+                merged[documented_name] = info
+            continue
+
+        documented_key = str(documented_name).strip()
+        target_name = documented_key or baseline_name
+        baseline_info = dict(merged.get(baseline_name, {}))
+        if target_name != baseline_name:
+            existing_target = merged.get(target_name)
+            if isinstance(existing_target, dict):
+                baseline_info.update(existing_target)
+            merged.pop(baseline_name, None)
+
+        baseline_scim_attribute = baseline_info.get("scimAttribute") or scim_attribute or baseline_name
+        embedded_type = None
+        if attribute_context and object_class:
+            embedded_type = get_scim_complex_attribute_reference_type(
+                str(baseline_scim_attribute),
+                attribute_context,
+                object_class,
+            )
+        for key, value in info.items():
+            if key == "scimAttribute":
+                continue
+            if embedded_type and key in {"type", "format"}:
+                continue
+            if key == "relevantDocumentations":
+                existing_refs = baseline_info.get("relevantDocumentations")
+                existing_list = existing_refs if isinstance(existing_refs, list) else []
+                incoming_list = value if isinstance(value, list) else []
+                seen = {
+                    (str(item.get("docId") or item.get("doc_id")), str(item.get("chunkId") or item.get("chunk_id")))
+                    for item in existing_list
+                    if isinstance(item, dict)
+                }
+                for item in incoming_list:
+                    if not isinstance(item, dict):
+                        continue
+                    key_pair = (
+                        str(item.get("docId") or item.get("doc_id")),
+                        str(item.get("chunkId") or item.get("chunk_id")),
+                    )
+                    if key_pair in seen:
+                        continue
+                    existing_list.append(item)
+                    seen.add(key_pair)
+                baseline_info["relevantDocumentations"] = existing_list
+                continue
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            baseline_info[key] = value
+
+        baseline_info["scimAttribute"] = baseline_scim_attribute
+        if embedded_type:
+            baseline_info["type"] = embedded_type
+            baseline_info["format"] = "embedded"
+        merged[target_name] = baseline_info
+        scim_path_to_name[scim_path] = target_name
+        scim_path_to_name[normalize_scim_path_for_lookup(target_name)] = target_name
 
     return merged
 
@@ -181,10 +292,38 @@ async def extract_scim_attributes(
     if chunk_details is None:
         chunk_details = [""] * len(chunks)
 
-    # Step 1: Load base SCIM attributes (if standard class)
-    base_attributes = {}
-    if is_scim_standard_class(object_class):
-        base_attributes = get_base_scim_attributes(object_class)
+    schema_attributes = get_scim_schema_attributes_for_object_class(object_class)
+    if schema_attributes is not None and not chunks:
+        await update_job_progress(
+            job_id,
+            total_processing=1,
+            processing_completed=0,
+            message=f"Deriving SCIM attributes for {object_class}",
+        )
+        await increment_processed_documents(job_id, delta=1)
+        logger.info(
+            "[SCIM:Attributes] Derived %d attributes for %s from SCIM schema heuristics",
+            len(schema_attributes),
+            object_class,
+        )
+        return {
+            "result": {"attributes": schema_attributes},
+            "relevantDocumentations": [],
+        }
+
+    # Step 1: Load base SCIM attributes for LLM context when schema heuristics are unavailable.
+    base_attributes = schema_attributes or {}
+    has_schema_baseline = schema_attributes is not None
+    is_standard_class = is_scim_standard_class(object_class)
+    if has_schema_baseline:
+        logger.info(
+            "[SCIM:Attributes] Using %d schema baseline attributes for %s",
+            len(base_attributes),
+            object_class,
+        )
+    elif is_standard_class:
+        if not base_attributes:
+            base_attributes = get_base_scim_attributes(object_class)
         logger.info(
             "[SCIM:Attributes] Loaded %d base attributes for %s",
             len(base_attributes),
@@ -272,11 +411,21 @@ async def extract_scim_attributes(
         attribute_chunk_pairs,
     )
 
+    if schema_attributes is not None:
+        merged_custom_with_references = _merge_schema_attributes_with_documented_mappings(
+            schema_attributes,
+            merged_custom_with_references,
+            include_unmatched_mappings=is_standard_class,
+            attribute_context=get_scim_schema_attribute_context(object_class) if is_standard_class else None,
+            object_class=object_class,
+        )
+
     logger.info(
-        "[SCIM:Attributes] Completed for %s. Total mappings: %d (base reference attrs: %d)",
+        "[SCIM:Attributes] Completed for %s. Total attributes: %d (schema baseline: %d, documented mappings: %d)",
         object_class,
         len(merged_custom_with_references),
-        len(base_attributes),
+        len(schema_attributes or {}),
+        len(merged_custom),
     )
 
     return {
@@ -306,7 +455,8 @@ async def extract_custom_scim_attributes(
     try:
         summary, tags = extract_summary_and_tags(chunk_metadata)
 
-        result = await chain.ainvoke(
+        result = await invoke_llm(
+            chain,
             {
                 "chunk": chunk,
                 "summary": summary,
@@ -315,10 +465,10 @@ async def extract_custom_scim_attributes(
             config={"callbacks": [langfuse_handler] if langfuse_handler else []},
         )
 
-        if isinstance(result, ExtractedAttributeResponse):
+        if isinstance(result, ExtractedAttributeResponseSCIM):
             attributes = result.attributes or {}
         elif isinstance(result, dict):
-            parsed = ExtractedAttributeResponse.model_validate(result)
+            parsed = ExtractedAttributeResponseSCIM.model_validate(result)
             attributes = parsed.attributes or {}
         else:
             logger.warning("[SCIM:Attributes] Unexpected result type: %s", type(result))

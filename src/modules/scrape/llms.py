@@ -12,9 +12,16 @@ from langchain_core.runnables.config import RunnableConfig
 
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.config import ReasoningEffort, config
 from src.modules.scrape.schema import IrrelevantLinks, RelevantLinks
 
 logger = logging.getLogger(__name__)
+
+
+def _get_irrelevant_links_reasoning_effort() -> ReasoningEffort | None:
+    if config.llm.reasoning_effort is None:
+        return None
+    return "medium"
 
 
 async def get_irrelevant_llm_response(prompts: Tuple[str, str], max_retries: int = 3) -> IrrelevantLinks | None:
@@ -29,7 +36,7 @@ async def get_irrelevant_llm_response(prompts: Tuple[str, str], max_retries: int
     logger.debug("[LLM] Starting LLM call for irrelevant links filtering")
     developer_msg, user_msg = prompts
 
-    llm = get_default_llm(temperature=1, reasoning_effort="medium")
+    llm = get_default_llm(temperature=1, reasoning_effort=_get_irrelevant_links_reasoning_effort())
 
     developer_message = SystemMessage(content=developer_msg)
     developer_message.additional_kwargs = {"__openai_role__": "developer"}

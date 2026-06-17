@@ -7,7 +7,7 @@ Codegen endpoints for V2 API (session-centric).
 All codegen operations are nested under sessions.
 """
 
-from typing import Any, Optional
+from typing import Any, Mapping, Optional, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.config import get_db
 from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import ApiType
 from src.common.jobs import schedule_coroutine_job
 from src.common.schema import (
     JobCreateResponse,
@@ -23,16 +24,20 @@ from src.common.schema import (
     JobStatusStageResponse,
 )
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
-from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api
+from src.common.utils.normalize import normalize_object_class_name
+from src.common.utils.relevance import hydrate_auth_sequences_from_relevance as _hydrate_auth_sequences_from_relevance
+from src.common.utils.session_info_metadata import get_session_api_types, resolve_session_api_type
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
 from src.modules.codegen import service
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.schema import (
+    AuthorizationCodegenInput,
     CodegenOperationInput,
     CodegenRepairContext,
     GroovyCodePayload,
 )
-from src.modules.digester.schema import RelationsResponse
+from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
+from src.modules.digester.schemas import RelationsResponse
 
 router = APIRouter()
 
@@ -43,16 +48,178 @@ def _preferred_endpoints_from_input(codegen_input: Optional[CodegenOperationInpu
     return [endpoint.model_dump() for endpoint in codegen_input.preferred_endpoints]
 
 
-def _repair_context_from_input(codegen_input: Optional[CodegenOperationInput]) -> Optional[CodegenRepairContext]:
-    if codegen_input is None:
+def _repair_context_from_input(codegen_input: Optional[CodegenRepairContext]) -> Optional[CodegenRepairContext]:
+    if codegen_input is None or not codegen_input.is_repair:
         return None
-    return codegen_input.repair_context()
+    return CodegenRepairContext(
+        current_script=codegen_input.current_script,
+        midpoint_errors=codegen_input.midpoint_errors,
+    )
 
 
-def _context_payload_from_input(codegen_input: Optional[CodegenOperationInput]) -> dict:
-    if codegen_input is None:
+def _context_payload_from_input(codegen_input: Optional[CodegenRepairContext]) -> dict:
+    if codegen_input is None or not codegen_input.is_repair:
         return {}
-    return codegen_input.context_payload()
+    return CodegenRepairContext(
+        current_script=codegen_input.current_script,
+        midpoint_errors=codegen_input.midpoint_errors,
+    ).to_payload()
+
+
+def _preferred_authorizations_from_input(
+    codegen_input: Optional[AuthorizationCodegenInput],
+) -> Optional[list[dict]]:
+    if codegen_input is None or not codegen_input.preferred_authorizations:
+        return None
+    return [authorization.model_dump(exclude_none=True) for authorization in codegen_input.preferred_authorizations]
+
+
+def _missing_operation_surface_detail(protocol: ApiType, object_class: str, session_id: UUID) -> str:
+    if protocol == ApiType.SQL:
+        return (
+            f"No SQL table metadata found for {object_class} in session {session_id}. "
+            "Please run the table/schema extraction step for this object class first."
+        )
+    return (
+        f"No endpoints found for {object_class} in session {session_id}. "
+        f"Please run /classes/{object_class}/endpoints endpoint first."
+    )
+
+
+# Codegen Operations - Authorization
+@router.post(
+    "/{session_id}/authorization",
+    response_model=JobCreateResponse,
+    summary="Generate authorization code",
+)
+async def generate_authorization(
+    session_id: UUID = Path(..., description="Session ID"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
+    db: AsyncSession = Depends(get_db),
+    codegen_input: AuthorizationCodegenInput = Body(...),
+):
+    """
+    Generate connector-level Groovy authentication/authorization code from digester auth output.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    input_preferred_authorizations = _preferred_authorizations_from_input(codegen_input)
+
+    auth_output_raw = await repo.get_session_data(session_id, "authOutput")
+    if not isinstance(auth_output_raw, Mapping) or not auth_output_raw:
+        auth_output: Mapping[str, Any] = {"auth": []}
+    else:
+        auth_output = cast(Mapping[str, Any], auth_output_raw)
+        try:
+            auth_output = cast(
+                Mapping[str, Any],
+                await _hydrate_auth_sequences_from_relevance(db, session_id, auth_output),
+            )
+        except Exception:
+            # Keep existing payload when relevance rows are unavailable (e.g., tests/mocks or partial sessions).
+            pass
+
+    preferred_authorizations = enrich_preferred_authorizations(
+        auth_output,
+        input_preferred_authorizations,
+    )
+    repair_context = codegen_input.repair_context() if codegen_input else None
+    context_payload = codegen_input.context_payload() if codegen_input else {}
+
+    job_input: dict[str, Any] = {
+        "sessionId": session_id,
+        "auth": auth_output,
+        "skipCache": skip_cache,
+    }
+    job_input.update(context_payload)
+    if preferred_authorizations is not None:
+        job_input["preferredAuthorizations"] = preferred_authorizations
+
+    worker_kwargs: dict[str, Any] = {
+        "auth_payload": auth_output,
+        "preferred_authorizations": preferred_authorizations,
+        "session_id": session_id,
+    }
+    if repair_context is not None:
+        worker_kwargs["repair_context"] = repair_context
+
+    job_id = await schedule_coroutine_job(
+        job_type="codegen.getAuthorization",
+        input_payload=job_input,
+        worker=service.create_authorization,
+        worker_args=(),
+        worker_kwargs=worker_kwargs,
+        initial_stage="preparing",
+        initial_message="Preparing authorization code generation from relevant chunks",
+        session_id=session_id,
+        session_result_key="authorizationOutput",
+    )
+
+    session_input: dict[str, Any] = {}
+    session_input.update(context_payload)
+    if preferred_authorizations is not None:
+        session_input["preferredAuthorizations"] = preferred_authorizations
+    await repo.update_session(
+        session_id,
+        {
+            "authorizationJobId": str(job_id),
+            "authorizationInput": session_input,
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/authorization",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get authorization generation status",
+)
+async def get_authorization_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the status of authorization code generation job.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    jobId = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="authorizationJobId",
+        job_label="authorization",
+        not_found_detail=f"No authorization job found in session {session_id}",
+    )
+
+    return await build_multi_doc_status_response(jobId)
+
+
+@router.put(
+    "/{session_id}/authorization",
+    summary="Override authorization code",
+)
+async def override_authorization(
+    session_id: UUID = Path(..., description="Session ID"),
+    authorization_code: GroovyCodePayload = Body(..., description="Authorization code as JSON"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually override the authorization code.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    await repo.update_session(session_id, {"authorizationOutput": authorization_code.model_dump()})
+
+    return {
+        "message": "Authorization code overridden successfully",
+        "sessionId": session_id,
+    }
 
 
 # Codegen Operations - Native Schema
@@ -66,12 +233,13 @@ async def generate_native_schema(
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
-    codegen_input: Optional[CodegenOperationInput] = None,
+    codegen_input: Optional[CodegenRepairContext] = None,
 ):
     """
     Generate native Groovy schema from attributes.
     Loads attributes from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -136,6 +304,7 @@ async def get_native_schema_status(
     """
     Get the status of native schema generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -164,6 +333,7 @@ async def override_native_schema(
     """
     Manually override the native schema for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -187,12 +357,13 @@ async def generate_connid(
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
     db: AsyncSession = Depends(get_db),
-    codegen_input: Optional[CodegenOperationInput] = None,
+    codegen_input: Optional[CodegenRepairContext] = None,
 ):
     """
     Generate ConnID Groovy code from attributes.
     Loads attributes from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -257,6 +428,7 @@ async def get_connid_status(
     """
     Get the status of ConnID generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -285,6 +457,7 @@ async def override_connid(
     """
     Manually override the ConnID for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -315,6 +488,7 @@ async def generate_search(
     Generate Groovy search code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -327,15 +501,15 @@ async def generate_search(
         )
 
     api_types = await get_session_api_types(session_id)
-    is_scim = is_scim_api(api_types)
+    protocol = resolve_session_api_type(api_types)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and not is_scim:
+    if eps is None and protocol != ApiType.SCIM:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
+            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
         )
 
     job_input = {
@@ -407,6 +581,7 @@ async def get_search_status(
     """
     Get the status of search code generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -439,6 +614,7 @@ async def override_search(
     """
     Manually override the search code for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -469,6 +645,7 @@ async def generate_create(
     Generate Groovy create code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -481,15 +658,15 @@ async def generate_create(
         )
 
     api_types = await get_session_api_types(session_id)
-    is_scim = is_scim_api(api_types)
+    protocol = resolve_session_api_type(api_types)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and not is_scim:
+    if eps is None and protocol != ApiType.SCIM:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
+            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
         )
 
     job_input = {
@@ -556,6 +733,7 @@ async def get_create_status(
     """
     Get the status of create code generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -584,6 +762,7 @@ async def override_create(
     """
     Manually override the create code for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -613,6 +792,7 @@ async def generate_update(
     Generate Groovy update code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -625,15 +805,15 @@ async def generate_update(
         )
 
     api_types = await get_session_api_types(session_id)
-    is_scim = is_scim_api(api_types)
+    protocol = resolve_session_api_type(api_types)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and not is_scim:
+    if eps is None and protocol != ApiType.SCIM:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
+            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
         )
 
     job_input = {
@@ -700,6 +880,7 @@ async def get_update_status(
     """
     Get the status of update code generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -728,6 +909,7 @@ async def override_update(
     """
     Manually override the update code for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -757,6 +939,7 @@ async def generate_delete(
     Generate Groovy delete code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -769,15 +952,15 @@ async def generate_delete(
         )
 
     api_types = await get_session_api_types(session_id)
-    is_scim = is_scim_api(api_types)
+    protocol = resolve_session_api_type(api_types)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and not is_scim:
+    if eps is None and protocol != ApiType.SCIM:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No endpoints found for {object_class} in session {session_id}. Please run /classes/{object_class}/endpoints endpoint first.",
+            detail=_missing_operation_surface_detail(protocol, object_class, session_id),
         )
 
     job_input = {
@@ -844,6 +1027,7 @@ async def get_delete_status(
     """
     Get the status of delete code generation job.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -872,6 +1056,7 @@ async def override_delete(
     """
     Manually override the delete code for an object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 

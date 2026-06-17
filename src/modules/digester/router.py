@@ -2,7 +2,8 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Dict, Optional
+import logging
+from typing import Any, Awaitable, Callable, Dict, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
@@ -10,32 +11,156 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.database.config import get_db
+from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStatus
+from src.common.errors import (
+    InvalidObjectClassesOutputError,
+    ObjectClassesNotFoundError,
+    ObjectClassNotFoundError,
+    RelevantChunksNotFoundError,
+)
 from src.common.jobs import schedule_coroutine_job
 from src.common.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.common.session.session import ensure_session_exists, get_session_documentation, resolve_session_job_id
 from src.common.utils.normalize import normalize_object_class_name
-from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url, is_scim_api
+from src.common.utils.relevance import (
+    build_chunk_to_doc_map as _build_chunk_to_doc_map,
+)
+from src.common.utils.relevance import (
+    extract_attribute_relevance_rows as _extract_attribute_relevance_rows,
+)
+from src.common.utils.relevance import (
+    extract_endpoint_relevance_rows as _extract_endpoint_relevance_rows,
+)
+from src.common.utils.relevance import (
+    extract_object_class_relevance_rows as _extract_object_class_relevance_rows,
+)
+from src.common.utils.relevance import (
+    hydrate_attributes_with_relevance as _hydrate_attributes_with_relevance,
+)
+from src.common.utils.relevance import (
+    hydrate_endpoints_with_relevance as _hydrate_endpoints_with_relevance,
+)
+from src.common.utils.relevance import (
+    hydrate_object_classes_with_relevance as _hydrate_object_classes_with_relevance,
+)
+from src.common.utils.relevance import (
+    load_object_class_relevance_map as _load_object_class_relevance_map,
+)
+from src.common.utils.relevance import (
+    strip_attributes_relevance as _strip_attributes_relevance,
+)
+from src.common.utils.relevance import (
+    strip_endpoints_relevance as _strip_endpoints_relevance,
+)
+from src.common.utils.relevance import (
+    strip_object_class_relevance as _strip_object_class_relevance,
+)
+from src.common.utils.session_info_metadata import get_session_api_types, get_session_base_api_url
 from src.common.utils.status_response import build_typed_job_status_response
 from src.modules.digester import service
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     AttributeResponse,
     AuthResponse,
+    ConnectivityEndpointResponse,
     EndpointResponse,
     InfoResponse,
     ObjectClassesResponse,
     RelationsResponse,
 )
-from src.modules.digester.utils.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
-from src.modules.digester.utils.inputs import auth_input, metadata_input, object_classes_input
+from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
+from src.modules.digester.utils.documentation_selector import DocumentationSelector
+from src.modules.digester.utils.inputs import (
+    auth_input,
+    connectivity_endpoint_input,
+    metadata_input,
+    object_classes_input,
+)
 from src.modules.digester.utils.object_classes import (
     find_object_class,
-    get_relevant_chunks,
     upsert_object_class,
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _safe_exception_summary(exc: Exception) -> str:
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            return repr(errors(include_input=False))
+        except TypeError:
+            return type(exc).__name__
+    return type(exc).__name__
+
+
+def _log_status_result_fallback(
+    session_id: UUID,
+    result_key: str,
+    response_model: type[Any],
+    exc: Exception,
+) -> None:
+    logger.warning(
+        "[Digester:Router] Failed to hydrate session result; keeping original job result. session_id=%s result_key=%s response_model=%s error=%s",
+        session_id,
+        result_key,
+        response_model.__name__,
+        _safe_exception_summary(exc),
+    )
+
+
+async def _store_result_with_relevance(
+    db: AsyncSession,
+    repo: SessionRepository,
+    session_id: UUID,
+    result_key: str,
+    stripped_payload: Dict[str, Any],
+    relevance_rows: list[Dict[str, Any]],
+) -> None:
+    await repo.update_session(session_id, {result_key: stripped_payload})
+    relevant_repo = RelevantChunkRepository(db)
+    await relevant_repo.replace_relevant_chunks_for_result(
+        session_id=session_id,
+        result_key=result_key,
+        chunks=relevance_rows,
+    )
+
+
+def _build_documentation_selector(db: AsyncSession) -> DocumentationSelector:
+    return DocumentationSelector(
+        db,
+        filter_items=filter_documentation_items,
+        get_documentation=get_session_documentation,
+        get_api_types=get_session_api_types,
+        get_base_url=get_session_base_api_url,
+        relevant_repo_factory=RelevantChunkRepository,
+    )
+
+
+async def _refresh_finished_status_result(
+    response: JobStatusMultiDocResponse,
+    repo: SessionRepository,
+    session_id: UUID,
+    result_key: str,
+    response_model: type[Any],
+    hydrate_payload: Callable[[Any], Awaitable[Any]],
+) -> JobStatusMultiDocResponse:
+    if response.status != JobStatus.finished:
+        return response
+
+    session_output = await repo.get_session_data(session_id, result_key)
+    if not session_output:
+        return response
+
+    try:
+        hydrated_output = await hydrate_payload(session_output)
+        response.result = response_model.model_validate(hydrated_output)
+    except Exception as exc:
+        _log_status_result_fallback(session_id, result_key, response_model, exc)
+
+    return response
 
 
 # Digester Operations - Object Classes
@@ -118,17 +243,17 @@ async def get_object_classes_status(
 
     response = await build_typed_job_status_response(resolved_job_id, ObjectClassesResponse)
 
-    if response.status == JobStatus.finished:
-        object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-        if object_classes_output:
-            try:
-                # Validate and parse the session data
-                response.result = ObjectClassesResponse.model_validate(object_classes_output)
-            except Exception:
-                # If validation fails, keep the original job result
-                pass
+    async def hydrate_payload(payload: Any) -> Any:
+        return await _hydrate_object_classes_with_relevance(db, session_id, payload)
 
-    return response
+    return await _refresh_finished_status_result(
+        response,
+        repo,
+        session_id,
+        "objectClassesOutput",
+        ObjectClassesResponse,
+        hydrate_payload,
+    )
 
 
 @router.get(
@@ -153,14 +278,14 @@ async def get_specific_object_class(
     if not object_classes_output or not isinstance(object_classes_output, dict):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No object classes found in session {session_id}. Please run /classes endpoint first.",
+            detail=str(ObjectClassesNotFoundError(session_id)),
         )
 
     object_classes = object_classes_output.get("objectClasses", [])
     if not isinstance(object_classes, list):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Invalid object classes data in session {session_id}",
+            detail=str(InvalidObjectClassesOutputError(session_id)),
         )
 
     target_object_class = find_object_class(object_classes, object_class)
@@ -168,22 +293,52 @@ async def get_specific_object_class(
         result = target_object_class.copy()
         normalized_name = normalize_object_class_name(object_class)
 
+        try:
+            relevance_map = await _load_object_class_relevance_map(db, session_id)
+            result["relevantDocumentations"] = relevance_map.get(normalized_name, [])
+        except Exception as exc:
+            logger.warning(
+                "[Digester:Router] Failed to load object class relevance map; using stored relevance. session_id=%s object_class=%s error=%s",
+                session_id,
+                object_class,
+                _safe_exception_summary(exc),
+            )
+            result["relevantDocumentations"] = result.get("relevantDocumentations", [])
+
         # Get attributes from session
         attributes_output = await repo.get_session_data(session_id, f"{normalized_name}AttributesOutput")
         if attributes_output and isinstance(attributes_output, dict):
-            result["attributes"] = attributes_output.get("attributes", {})
+            hydrated_attributes = await _hydrate_attributes_with_relevance(
+                db,
+                session_id,
+                f"{normalized_name}AttributesOutput",
+                attributes_output,
+            )
+            if isinstance(hydrated_attributes.get("attributes"), dict):
+                result["attributes"] = hydrated_attributes.get("attributes", {})
+            else:
+                result["attributes"] = hydrated_attributes
 
         # Get endpoints from session
         endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
         if endpoints_output and isinstance(endpoints_output, dict):
-            result["endpoints"] = endpoints_output.get("endpoints", [])
+            hydrated_endpoints = await _hydrate_endpoints_with_relevance(
+                db,
+                session_id,
+                f"{normalized_name}EndpointsOutput",
+                endpoints_output,
+            )
+            if isinstance(hydrated_endpoints.get("endpoints"), list):
+                result["endpoints"] = hydrated_endpoints.get("endpoints", [])
+            else:
+                result["endpoints"] = []
 
         return result
 
     # If not found, raise 404
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Object class '{object_class}' not found in session {session_id}",
+        detail=str(ObjectClassNotFoundError(object_class, session_id)),
     )
 
 
@@ -203,8 +358,10 @@ async def upload_all_object_classes(
     """
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
+    relevant_rows = _extract_object_class_relevance_rows(object_classes_data)
+    stripped_payload = _strip_object_class_relevance(object_classes_data)
 
-    await repo.update_session(session_id, {"objectClassesOutput": object_classes_data})
+    await _store_result_with_relevance(db, repo, session_id, "objectClassesOutput", stripped_payload, relevant_rows)
 
     return {
         "message": "All object classes uploaded successfully",
@@ -232,8 +389,10 @@ async def upload_one_object_class(
 
     object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
     object_classes_output, updated = upsert_object_class(object_classes_output, object_class, object_class_data)
+    relevant_rows = _extract_object_class_relevance_rows(object_classes_output)
+    stripped_payload = _strip_object_class_relevance(object_classes_output)
 
-    await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
+    await _store_result_with_relevance(db, repo, session_id, "objectClassesOutput", stripped_payload, relevant_rows)
 
     return {
         "message": f"Object class '{object_class}' {'updated' if updated else 'added'} successfully",
@@ -260,47 +419,32 @@ async def extract_class_attributes(
 
     NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Get the object class data to find relevant chunks
-    object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-    if not object_classes_output or not isinstance(object_classes_output, dict):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No object classes found in session {session_id}. Please run /classes endpoint first.",
+    try:
+        selection = await _build_documentation_selector(db).build_attribute_plan(
+            repo=repo,
+            session_id=session_id,
+            object_class=object_class,
         )
+    except (ObjectClassesNotFoundError, InvalidObjectClassesOutputError, ObjectClassNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except RelevantChunksNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    object_classes = object_classes_output.get("objectClasses", [])
-    target_object_class = find_object_class(object_classes, object_class)
-
-    if not target_object_class:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Object class '{object_class}' not found in session {session_id}.",
-        )
-
-    relevant_chunks = get_relevant_chunks(target_object_class)
-    if not relevant_chunks:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No relevant chunks found for object class '{object_class}'. Cannot extract attributes.",
-        )
-
-    # Get full documentation to extract relevant chunks
-    doc_items = await get_session_documentation(session_id, db=db)
-
-    total_chunks = len(relevant_chunks)
+    total_chunks = len(selection.relevant_chunks)
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClassSchema",
         input_payload={
-            "documentationItems": doc_items,
+            "documentationItems": selection.doc_items,
             "objectClass": object_class,
-            "relevantDocumentations": relevant_chunks,
+            "relevantDocumentations": selection.relevant_chunks,
             "skipCache": skip_cache,
         },
         worker=service.extract_attributes,
-        worker_args=(doc_items, object_class, session_id, relevant_chunks),
+        worker_args=(selection.doc_items, object_class, session_id, selection.relevant_chunks),
         initial_stage="chunking",
         initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
         session_id=session_id,
@@ -336,6 +480,7 @@ async def get_class_attributes_status(
     Get the status of attributes extraction job for the specified object class.
     Returns the current session data (which may have been updated after job completion).
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -351,18 +496,19 @@ async def get_class_attributes_status(
     # Get job status but override result with current session data
     response = await build_typed_job_status_response(resolved_job_id, AttributeResponse)
 
-    # If job is finished, replace result with current session data (which may have been updated)
-    if response.status == JobStatus.finished:
-        attributes_output = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
-        if attributes_output:
-            try:
-                # Validate and parse the session data
-                response.result = AttributeResponse.model_validate(attributes_output)
-            except Exception:
-                # If validation fails, keep the original job result
-                pass
+    result_key = f"{object_class}AttributesOutput"
 
-    return response
+    async def hydrate_payload(payload: Any) -> Any:
+        return await _hydrate_attributes_with_relevance(db, session_id, result_key, payload)
+
+    return await _refresh_finished_status_result(
+        response,
+        repo,
+        session_id,
+        result_key,
+        AttributeResponse,
+        hydrate_payload,
+    )
 
 
 @router.put(
@@ -382,7 +528,11 @@ async def override_class_attributes(
     await ensure_session_exists(repo, session_id)
 
     object_class = normalize_object_class_name(object_class)
-    await repo.update_session(session_id, {f"{object_class}AttributesOutput": attributes})
+    result_key = f"{object_class}AttributesOutput"
+    stripped_attributes = _strip_attributes_relevance(attributes)
+    chunk_to_doc = _build_chunk_to_doc_map(await get_session_documentation(session_id, db=db))
+    relevance_rows = _extract_attribute_relevance_rows(attributes, result_key, chunk_to_doc=chunk_to_doc)
+    await _store_result_with_relevance(db, repo, session_id, result_key, stripped_attributes, relevance_rows)
 
     return {
         "message": f"Attributes for {object_class} overridden successfully",
@@ -411,68 +561,34 @@ async def extract_class_endpoints(
 
     NOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Get the object class data to find relevant chunks
-    object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-    if not object_classes_output or not isinstance(object_classes_output, dict):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No object classes found in session {session_id}. Please run /classes endpoint first.",
+    try:
+        selection = await _build_documentation_selector(db).build_endpoint_plan(
+            repo=repo,
+            session_id=session_id,
+            object_class=object_class,
         )
+    except (ObjectClassesNotFoundError, InvalidObjectClassesOutputError, ObjectClassNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except RelevantChunksNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    object_classes = object_classes_output.get("objectClasses", [])
-    target_object_class = find_object_class(object_classes, object_class)
-
-    if not target_object_class:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Object class '{object_class}' not found in session {session_id}.",
-        )
-
-    api_type = await get_session_api_types(session_id)
-    base_api_url = await get_session_base_api_url(session_id)
-    is_scim = is_scim_api(api_type)
-
-    criteria = ENDPOINT_CRITERIA.model_copy()
-    criteria.allowed_tags = [[normalize_object_class_name(object_class)], ["endpoint", "endpoints"]]
-    relevant_chunks_full = await filter_documentation_items(criteria, session_id, db=db)
-
-    # If we dont have relevant chunks with ENDPOINT_CRITERIA, try to find relevant chunks with DEFAULT_CRITERIA
-    if not relevant_chunks_full:
-        criteria = DEFAULT_CRITERIA.model_copy()
-        relevant_chunks_full = await filter_documentation_items(criteria, session_id, db=db)
-
-    relevant_chunks = [
-        {"doc_id": str(chunk["docId"]), "chunk_id": str(chunk["chunkId"])}
-        for chunk in relevant_chunks_full
-        if chunk.get("docId") and chunk.get("chunkId")
-    ]
-    if not relevant_chunks and not is_scim:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No relevant chunks found for object class '{object_class}'. Cannot extract endpoints.",
-        )
-    if not relevant_chunks and is_scim:
-        relevant_chunks = get_relevant_chunks(target_object_class)
-
-    # Get full documentation to extract relevant chunks
-    doc_items = await get_session_documentation(session_id, db=db)
-
-    total_chunks = len(relevant_chunks)
+    total_chunks = len(selection.relevant_chunks)
     job_id = await schedule_coroutine_job(
         job_type="digester.getEndpoints",
         input_payload={
-            "documentationItems": doc_items,
+            "documentationItems": selection.doc_items,
             "objectClass": object_class,
-            "baseApiUrl": base_api_url,
-            "relevantDocumentations": relevant_chunks,
+            "baseApiUrl": selection.base_api_url,
+            "relevantDocumentations": selection.relevant_chunks,
             "skipCache": skip_cache,
         },
         worker=service.extract_endpoints,
-        worker_args=(doc_items, object_class, session_id, relevant_chunks),
-        worker_kwargs={"base_api_url": base_api_url},
+        worker_args=(selection.doc_items, object_class, session_id, selection.relevant_chunks),
+        worker_kwargs={"base_api_url": selection.base_api_url},
         initial_stage="chunking",
         initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
         session_id=session_id,
@@ -486,7 +602,7 @@ async def extract_class_endpoints(
             f"{object_class}EndpointsInput": {
                 "objectClass": object_class,
                 "relevantDocumentationsCount": total_chunks,
-                "baseApiUrl": base_api_url,
+                "baseApiUrl": selection.base_api_url,
             },
         },
     )
@@ -508,6 +624,7 @@ async def get_class_endpoints_status(
     """
     Get the status of endpoints extraction job for the specified object class.
     """
+    object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -520,7 +637,20 @@ async def get_class_endpoints_status(
         not_found_detail=f"No endpoints job found for {object_class} in session {session_id}",
     )
 
-    return await build_typed_job_status_response(resolved_job_id, EndpointResponse)
+    response = await build_typed_job_status_response(resolved_job_id, EndpointResponse)
+    result_key = f"{object_class}EndpointsOutput"
+
+    async def hydrate_payload(payload: Any) -> Any:
+        return await _hydrate_endpoints_with_relevance(db, session_id, result_key, payload)
+
+    return await _refresh_finished_status_result(
+        response,
+        repo,
+        session_id,
+        result_key,
+        EndpointResponse,
+        hydrate_payload,
+    )
 
 
 @router.put(
@@ -540,7 +670,10 @@ async def override_class_endpoints(
     await ensure_session_exists(repo, session_id)
 
     object_class = normalize_object_class_name(object_class)
-    await repo.update_session(session_id, {f"{object_class}EndpointsOutput": endpoints})
+    result_key = f"{object_class}EndpointsOutput"
+    stripped_endpoints = _strip_endpoints_relevance(endpoints)
+    relevance_rows = _extract_endpoint_relevance_rows(endpoints, result_key)
+    await _store_result_with_relevance(db, repo, session_id, result_key, stripped_endpoints, relevance_rows)
 
     return {
         "message": f"Endpoints for {object_class} overridden successfully",
@@ -579,7 +712,7 @@ async def extract_relations(
     if not relevant:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No object classes found in session. Please run /classes endpoint first.",
+            detail=str(ObjectClassesNotFoundError()),
         )
 
     job_id = await schedule_coroutine_job(
@@ -656,6 +789,125 @@ async def override_relations(
     await repo.update_session(session_id, {"relationsOutput": relations.model_dump(by_alias=True, mode="json")})
 
     return {"message": "Relations overridden successfully", "sessionId": session_id}
+
+
+# Digester Operations - Connectivity Endpoint
+@router.post(
+    "/{session_id}/connectivity-endpoint",
+    response_model=JobCreateResponse,
+    summary="Extract connectivity test endpoint",
+)
+async def extract_connectivity_endpoint(
+    session_id: UUID = Path(..., description="Session ID"),
+    skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Extract one documented endpoint suitable for testing connectivity to the target application.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    base_api_url = await get_session_base_api_url(session_id)
+    job_id = await schedule_coroutine_job(
+        job_type="digester.getConnectivityEndpoint",
+        input_payload={
+            "baseApiUrl": base_api_url,
+            "skipCache": skip_cache,
+        },
+        dynamic_input_enabled=True,
+        dynamic_input_provider=connectivity_endpoint_input,
+        worker=service.extract_connectivity_endpoint,
+        worker_kwargs={
+            "session_id": session_id,
+            "base_api_url": base_api_url,
+        },
+        initial_stage="chunking",
+        initial_message="Preparing documentation for connectivity endpoint extraction",
+        session_id=session_id,
+        session_result_key="connectivityEndpointOutput",
+        await_documentation=True,
+        await_documentation_timeout=750,
+    )
+
+    await repo.update_session(
+        session_id,
+        {
+            "connectivityEndpointJobId": str(job_id),
+            "connectivityEndpointInput": {
+                "baseApiUrl": base_api_url,
+                "skipCache": skip_cache,
+            },
+        },
+    )
+
+    return JobCreateResponse(jobId=job_id)
+
+
+@router.get(
+    "/{session_id}/connectivity-endpoint",
+    response_model=JobStatusMultiDocResponse,
+    summary="Get connectivity endpoint extraction status",
+)
+async def get_connectivity_endpoint_status(
+    session_id: UUID = Path(..., description="Session ID"),
+    jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the status of connectivity endpoint extraction job.
+    Returns current session data when the job has finished, including manual overrides.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    resolved_job_id = await resolve_session_job_id(
+        repo,
+        session_id,
+        jobId,
+        session_key="connectivityEndpointJobId",
+        job_label="connectivity endpoint",
+    )
+
+    response = await build_typed_job_status_response(resolved_job_id, ConnectivityEndpointResponse)
+    result_key = "connectivityEndpointOutput"
+
+    async def hydrate_payload(payload: Any) -> Any:
+        return await _hydrate_endpoints_with_relevance(db, session_id, result_key, payload)
+
+    return await _refresh_finished_status_result(
+        response,
+        repo,
+        session_id,
+        result_key,
+        ConnectivityEndpointResponse,
+        hydrate_payload,
+    )
+
+
+@router.put(
+    "/{session_id}/connectivity-endpoint",
+    summary="Override connectivity test endpoint",
+)
+async def override_connectivity_endpoint(
+    session_id: UUID = Path(..., description="Session ID"),
+    connectivity_endpoint: ConnectivityEndpointResponse = Body(..., description="Connectivity endpoint payload"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually override the selected connectivity endpoint in the session.
+    """
+    repo = SessionRepository(db)
+    await ensure_session_exists(repo, session_id)
+
+    payload = connectivity_endpoint.model_dump(by_alias=True, mode="json")
+    result_key = "connectivityEndpointOutput"
+    stripped_payload = _strip_endpoints_relevance(payload)
+    relevance_rows = _extract_endpoint_relevance_rows(payload, result_key)
+
+    await _store_result_with_relevance(db, repo, session_id, result_key, stripped_payload, relevance_rows)
+
+    return {"message": "Connectivity endpoint overridden successfully", "sessionId": session_id}
 
 
 # Digester Operations - Auth & Metadata

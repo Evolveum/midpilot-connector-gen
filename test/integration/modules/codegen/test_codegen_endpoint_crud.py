@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from src.modules.codegen.router import generate_create, generate_delete, generate_update
 from src.modules.codegen.schema import CodegenOperationInput
@@ -20,7 +21,7 @@ from src.modules.codegen.schema import CodegenOperationInput
         (
             generate_create,
             "codegen.getCreate",
-            "UserCreateInput",
+            "userCreateInput",
             [
                 {"method": "POST", "path": "/users"},
                 {"method": "POST", "path": "/users/create"},
@@ -29,7 +30,7 @@ from src.modules.codegen.schema import CodegenOperationInput
         (
             generate_update,
             "codegen.getUpdate",
-            "UserUpdateInput",
+            "userUpdateInput",
             [
                 {"method": "PATCH", "path": "/users/{id}"},
                 {"method": "PUT", "path": "/users/{id}"},
@@ -38,7 +39,7 @@ from src.modules.codegen.schema import CodegenOperationInput
         (
             generate_delete,
             "codegen.getDelete",
-            "UserDeleteInput",
+            "userDeleteInput",
             [
                 {"method": "DELETE", "path": "/users/{id}"},
             ],
@@ -88,6 +89,8 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
 
     _, schedule_kwargs = mock_schedule.call_args
     assert schedule_kwargs["job_type"] == job_type
+    assert mock_repo.get_session_data.await_args_list[0].args[1] == "userAttributesOutput"
+    assert mock_repo.get_session_data.await_args_list[1].args[1] == "userEndpointsOutput"
     assert schedule_kwargs["input_payload"]["preferredEndpoints"] == preferred_endpoints
     assert schedule_kwargs["worker_kwargs"]["preferred_endpoints"] == preferred_endpoints
 
@@ -144,6 +147,34 @@ async def test_generate_update_includes_repair_context_in_job_and_session_input(
     assert schedule_kwargs["worker_kwargs"]["repair_context"].current_script.startswith('objectClass("User")')
 
     update_args = mock_repo.update_session.call_args[0]
-    inputs = update_args[1]["UserUpdateInput"]
+    inputs = update_args[1]["userUpdateInput"]
     assert "mode" not in inputs
     assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]
+
+
+@pytest.mark.asyncio
+async def test_generate_create_sql_missing_table_metadata_uses_sql_error_detail():
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.update_session = AsyncMock()
+
+    async def fake_get_session_data(session_id, key):
+        if key.endswith("AttributesOutput"):
+            return {"username": {"type": "varchar"}}
+        if key.endswith("EndpointsOutput"):
+            return None
+        return None
+
+    mock_repo.get_session_data = AsyncMock(side_effect=fake_get_session_data)
+
+    with (
+        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=["SQL"]),
+    ):
+        session_id = uuid4()
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_create(session_id, "User", db=MagicMock())
+
+    assert exc_info.value.status_code == 404
+    assert "No SQL table metadata found" in exc_info.value.detail
+    assert "endpoint first" not in exc_info.value.detail

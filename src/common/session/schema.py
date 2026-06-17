@@ -3,10 +3,48 @@
 # Licensed under the EUPL-1.2 or later.
 
 import uuid
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, Field
+
+
+@dataclass(frozen=True)
+class RawUploadedDocumentation:
+    data: bytes
+    filename: str
+    content_type: str
+    content_hash: str
+
+
+@dataclass(frozen=True)
+class UploadedDocumentation:
+    text: str
+    filename: str
+    content_type: str
+    metadata: Dict[str, Any]
+    preserve_as_single_item: bool = False
+
+
+@dataclass(frozen=True)
+class SessionUploadContext:
+    app: str
+    app_version: str
+
+
+@dataclass(frozen=True)
+class PreparedDocumentationUpload:
+    raw_upload: RawUploadedDocumentation
+    context: SessionUploadContext
+
+
+@dataclass(frozen=True)
+class ProcessedDocumentationChunk:
+    index: int
+    text: str
+    summary: str
+    metadata: Dict[str, Any]
 
 
 class Session(BaseModel):
@@ -54,7 +92,7 @@ class DocumentationItem(BaseModel):
         default_factory=dict,
         serialization_alias="@metadata",
         validation_alias=AliasChoices("@metadata", "metadata"),
-        description="Additional metadata: chunk_number, num_endpoints, length, contentType, tags, category",
+        description="Additional metadata: chunk_number, num_endpoints, token_count, character_count, content_type, tags, category",
     )
 
 

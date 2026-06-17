@@ -1,0 +1,15 @@
+= Develop SQL database connector
+
+This reference covers database connector generation from an uploaded native SQL schema.
+
+The schema upload provides tables, columns, primary keys, foreign keys, nullable flags, generated columns, and optional midPoint heuristics. Code generation should use table metadata as the native operation surface.
+
+== Principles
+
+* Use uploaded tables instead of REST endpoints.
+* Use primary keys for identity operations.
+* Use foreign keys only when joins or relationship handling are required by the selected object class.
+* Do not write generated, identity, or serial columns during create.
+* Do not update primary keys unless documentation explicitly says they are mutable.
+* Leave TODO comments for missing join, cascade, or transaction semantics instead of guessing.
+

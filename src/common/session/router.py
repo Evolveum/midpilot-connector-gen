@@ -12,18 +12,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Respon
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.chunks import split_text_with_token_overlap
 from src.common.database.config import get_db
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.job_repository import JobRepository
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import JobStage, JobStatus
-from src.common.jobs import schedule_coroutine_job
+from src.common.enums import JobStatus
 from src.common.session.schema import (
     Documentation,
     SessionCreateResponse,
 )
-from src.common.session.session import process_documentation_worker
+from src.common.session.utils.documentation_upload import prepare_documentation_upload, queue_documentation_upload_job
 from src.common.utils.status_response import build_group_documentation_response
 from src.config import config
 
@@ -215,13 +213,8 @@ async def check_documentation_item(
         if not await repo.session_exists(session_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-        doc_items: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
-
-        # Find item by UUID
-        index_to_check = next(
-            (i for i, d in enumerate(doc_items) if str(d.get("docId")) == str(documentation_id)), None
-        )
-        if index_to_check is not None:
+        doc_repo = DocumentationRepository(db)
+        if await doc_repo.get_documentation_items_by_doc_id(session_id, documentation_id):
             return Response(status_code=status.HTTP_204_NO_CONTENT)
 
         # If the item is not yet persisted, check if an upload job for this doc is queued/running.
@@ -306,7 +299,7 @@ async def create_session_with_id(
 @router.post("/{session_id}/documentation", summary="Upload documentation to session")
 async def upload_documentation(
     session_id: UUID = Path(..., description="Session ID"),
-    documentation: UploadFile = File(..., description="OpenAPI/Swagger YAML or JSON file"),
+    documentation: UploadFile = File(..., description="Documentation file"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -320,53 +313,16 @@ async def upload_documentation(
         if not await repo.session_exists(session_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-        # Load app and app_version from session
-        session_data = await repo.get_session_data(session_id) or {}
-        discovery_input = session_data.get("discoveryInput", {})
-        scrape_input = session_data.get("scrapeInput", {})
-
-        # Try discoveryInput first, fallback to scrapeInput, then to "unknown"
-        app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
-        app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
-
-        doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
-        filename = documentation.filename or "unknown"
-
-        # Chunk the content
-        logger.info("[Upload] Chunking documentation for session %s", session_id)
-        chunks = split_text_with_token_overlap(
-            doc_text, max_tokens=config.scrape_and_process.chunk_length, overlap_ratio=0.05
-        )
-        logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
+        prepared = await prepare_documentation_upload(repo, session_id, documentation)
 
     doc_id = uuid.uuid4()  # Single doc_id for the entire uploaded file
 
-    # Create job with the processing logic
-    job_id = await schedule_coroutine_job(
-        job_type="documentation.processUpload",
-        input_payload={
-            "session_id": str(session_id),
-            "filename": filename,
-            "doc_id": str(doc_id),
-            "chunks_count": len(chunks),
-        },
-        worker=process_documentation_worker,
-        worker_kwargs={
-            "session_id": session_id,
-            "chunks": chunks,
-            "filename": filename,
-            "doc_id": doc_id,
-            "app": app,
-            "app_version": app_version,
-        },
-        initial_stage=JobStage.processing,
-        initial_message=f"Processing {len(chunks)} chunks",
+    job_id = await queue_documentation_upload_job(
+        repo=repo,
         session_id=session_id,
+        doc_id=doc_id,
+        prepared=prepared,
     )
-
-    # Store job_id in session
-    job_key = f"documentation.processUpload_{doc_id}_job_id"
-    await repo.update_session(session_id, {job_key: str(job_id)})
 
     # Return immediately with job info
     return {
@@ -374,7 +330,6 @@ async def upload_documentation(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": len(chunks),
         "status": "queued",
     }
 
@@ -383,7 +338,7 @@ async def upload_documentation(
 async def upload_documentation_by_id(
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation ID"),
-    documentation: UploadFile = File(..., description="OpenAPI/Swagger YAML or JSON file"),
+    documentation: UploadFile = File(..., description="Documentation file"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -398,57 +353,17 @@ async def upload_documentation_by_id(
         if not await repo.session_exists(session_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-        # Load app and app_version from session
-        session_data = await repo.get_session_data(session_id) or {}
-        discovery_input = session_data.get("discoveryInput", {})
-        scrape_input = session_data.get("scrapeInput", {})
-
-        # Try discoveryInput first, fallback to scrapeInput, then to "unknown"
-        app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
-        app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
-
-        doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
-        filename = documentation.filename or "unknown"
-
-    # Chunk the content
-    logger.info("[Upload] Chunking documentation for session %s with doc_id %s", session_id, documentation_id)
-    chunks = split_text_with_token_overlap(
-        doc_text, max_tokens=config.scrape_and_process.chunk_length, overlap_ratio=0.05
-    )
-    logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
+        prepared = await prepare_documentation_upload(repo, session_id, documentation)
 
     doc_id = documentation_id  # Use the provided documentation_id as doc_id
 
-    # Create job with the processing logic
-    job_id = await schedule_coroutine_job(
-        job_type="documentation.processUpload",
-        input_payload={
-            "session_id": str(session_id),
-            "filename": filename,
-            "doc_id": str(doc_id),
-            "chunks_count": len(chunks),
-            "chunks": chunks,
-            "app": app,
-            "app_version": app_version,
-            "skipCache": skip_cache,
-        },
-        worker=process_documentation_worker,
-        worker_kwargs={
-            "session_id": session_id,
-            "chunks": chunks,
-            "filename": filename,
-            "doc_id": doc_id,
-            "app": app,
-            "app_version": app_version,
-        },
-        initial_stage=JobStage.processing,
-        initial_message=f"Processing {len(chunks)} chunks",
+    job_id = await queue_documentation_upload_job(
+        repo=repo,
         session_id=session_id,
+        doc_id=doc_id,
+        prepared=prepared,
+        skip_cache=skip_cache,
     )
-
-    # Store job_id in session
-    job_key = f"documentation.processUpload_{doc_id}_job_id"
-    await repo.update_session(session_id, {job_key: str(job_id)})
 
     # Return immediately with job info
     return {
@@ -456,7 +371,6 @@ async def upload_documentation_by_id(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": len(chunks),
         "status": "queued",
     }
 
@@ -465,7 +379,7 @@ async def upload_documentation_by_id(
 @router.put("/{session_id}/documentation", summary="Replace all documentation in session")
 async def replace_documentation(
     session_id: UUID = Path(..., description="Session ID"),
-    documentation: UploadFile = File(..., description="OpenAPI/Swagger YAML or JSON file"),
+    documentation: UploadFile = File(..., description="Documentation file"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -480,61 +394,20 @@ async def replace_documentation(
         if not await repo.session_exists(session_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-        # Load app and app_version from session
-        session_data = await repo.get_session_data(session_id) or {}
-        discovery_input = session_data.get("discoveryInput", {})
-        scrape_input = session_data.get("scrapeInput", {})
-
-        # Try discoveryInput first, fallback to scrapeInput, then to "unknown"
-        app = discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown"
-        app_version = discovery_input.get("applicationVersion") or scrape_input.get("applicationVersion") or "unknown"
-
-        doc_text = (await documentation.read()).decode("utf-8", errors="ignore")
-        filename = documentation.filename or "unknown"
+        prepared = await prepare_documentation_upload(repo, session_id, documentation)
 
         # Clear existing documentation first
-        await repo.update_session(session_id, {"documentationItems": []})
         await doc_repo.delete_documentation_items_by_session(session_id)
-
-        # Chunk the content
-        logger.info("[Upload] Chunking documentation for session %s", session_id)
-        chunks = split_text_with_token_overlap(
-            doc_text, max_tokens=config.scrape_and_process.chunk_length, overlap_ratio=0.05
-        )
-        logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
 
     doc_id = uuid.uuid4()  # Single doc_id for the entire uploaded file
 
-    # Create job with the processing logic
-    job_id = await schedule_coroutine_job(
-        job_type="documentation.processUpload",
-        input_payload={
-            "session_id": str(session_id),
-            "filename": filename,
-            "doc_id": str(doc_id),
-            "chunks_count": len(chunks),
-            "chunks": chunks,
-            "app": app,
-            "app_version": app_version,
-            "skipCache": skip_cache,
-        },
-        worker=process_documentation_worker,
-        worker_kwargs={
-            "session_id": session_id,
-            "chunks": chunks,
-            "filename": filename,
-            "doc_id": doc_id,
-            "app": app,
-            "app_version": app_version,
-        },
-        initial_stage=JobStage.processing,
-        initial_message=f"Processing {len(chunks)} chunks",
+    job_id = await queue_documentation_upload_job(
+        repo=repo,
         session_id=session_id,
+        doc_id=doc_id,
+        prepared=prepared,
+        skip_cache=skip_cache,
     )
-
-    # Store job_id in session
-    job_key = f"documentation.processUpload_{doc_id}_job_id"
-    await repo.update_session(session_id, {job_key: str(job_id)})
 
     # Return immediately with job info
     return {
@@ -542,7 +415,6 @@ async def replace_documentation(
         "sessionId": session_id,
         "jobId": job_id,
         "docId": str(doc_id),
-        "chunksToProcess": len(chunks),
         "status": "queued",
     }
 
@@ -573,15 +445,7 @@ async def import_documentation_by_id(
 
     doc_repo = DocumentationRepository(db)
 
-    existing_session_doc_items: list[Dict[str, Any]] = (
-        await session_repo.get_session_data(session_id, "documentationItems") or []
-    )
-    remaining_session_doc_items = [
-        item for item in existing_session_doc_items if str(item.get("docId")) != str(documentation_id)
-    ]
-
     flat_items: list[Dict[str, Any]] = []
-    imported_session_doc_items: list[Dict[str, Any]] = []
     seen_chunk_ids: set[str] = set()
 
     for chunk in document.chunks:
@@ -605,18 +469,6 @@ async def import_documentation_by_id(
             "scrapeJobIds": [str(job_id) for job_id in chunk.scrape_job_ids],
         }
         flat_items.append(flat_chunk)
-        imported_session_doc_items.append(
-            {
-                "chunkId": flat_chunk["chunkId"],
-                "docId": flat_chunk["docId"],
-                "source": flat_chunk["source"],
-                "url": flat_chunk["url"],
-                "summary": flat_chunk["summary"],
-                "content": flat_chunk["content"],
-                "metadata": flat_chunk["metadata"],
-                "scrapeJobIds": flat_chunk["scrapeJobIds"],
-            }
-        )
 
     await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
 
@@ -635,9 +487,6 @@ async def import_documentation_by_id(
                 f"DB says: {db_message}"
             ),
         ) from exc
-
-    updated_session_doc_items = remaining_session_doc_items + imported_session_doc_items
-    await session_repo.update_session(session_id, {"documentationItems": updated_session_doc_items})
 
     return {
         "message": "Documentation imported successfully",
@@ -678,7 +527,6 @@ async def delete_documentation(
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    await repo.update_session(session_id, {"documentationItems": []})
     await doc_repo.delete_documentation_items_by_session(session_id)
     return {"message": "All documentation deleted successfully", "sessionId": session_id}
 
@@ -694,40 +542,27 @@ async def delete_documentation_item(
     Since uploaded documentation is chunked, this removes all chunks belonging to the same document.
     Returns 404 if the session or any documentation with that doc_id is not found.
     """
-    # TODO: Maybe we should handle relevantDocumentations
     repo = SessionRepository(db)
     doc_repo = DocumentationRepository(db)
     if not await repo.session_exists(session_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
-    doc_items: list[dict] = await repo.get_session_data(session_id, "documentationItems") or []
-    doc_items_with_doc_id = [item for item in doc_items if str(item.get("docId")) == str(documentation_id)]
-    source = doc_items_with_doc_id[0].get("source") if len(doc_items_with_doc_id) > 0 else ""
+    doc_items_with_doc_id = await doc_repo.get_documentation_items_by_doc_id(session_id, documentation_id)
+    source = doc_items_with_doc_id[0].get("source") if doc_items_with_doc_id else ""
     if not source:
         logger.warning(
             "Could not determine source for documentation with doc_id %s in session %s", documentation_id, session_id
         )
     else:
         await doc_repo.remove_job_ids_from_documentation_items(session_id, source)
-    if not doc_items:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"No documentation found in session {session_id}"
-        )
 
-    # Filter out all items with the specified doc_id
-    initial_count = len(doc_items)
-    filtered_items = [item for item in doc_items if item.get("docId") != str(documentation_id)]
-    deleted_count = initial_count - len(filtered_items)
-
-    if deleted_count == 0:
+    if not doc_items_with_doc_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Documentation with documentation_id {documentation_id} not found in session {session_id}",
         )
 
-    # Update session with filtered items
-    await repo.update_session(session_id, {"documentationItems": filtered_items})
-    await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
+    deleted_count = await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
 
     return {
         "message": f"Documentation deleted successfully ({deleted_count} chunk(s) removed)",

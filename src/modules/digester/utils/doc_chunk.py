@@ -5,7 +5,8 @@
 import logging
 from typing import Any, Dict, List, Set, Tuple
 
-from src.common.chunks import normalize_to_text
+from src.common.chunking import normalize_to_text
+from src.modules.digester.schemas.common import ChunkReference
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +24,38 @@ def build_chunk_id_to_doc_id(chunk_items: List[dict]) -> Dict[str, str]:
 
 def build_relevant_chunks_from_doc_items(chunk_items: List[dict]) -> List[Dict[str, Any]]:
     """Build relevant chunk descriptors from filtered documentation items."""
-    relevant_chunks: List[Dict[str, Any]] = []
+    return [chunk_ref.to_internal_dict() for chunk_ref in build_chunk_references_from_doc_items(chunk_items)]
+
+
+def build_chunk_references_from_doc_items(chunk_items: List[dict]) -> List[ChunkReference]:
+    """Build normalized chunk references from documentation items."""
+    chunk_refs: List[ChunkReference] = []
     for item in chunk_items:
         raw_chunk_id = item.get("chunkId")
         raw_doc_id = item.get("docId")
         if raw_chunk_id and raw_doc_id:
-            relevant_chunks.append({"doc_id": str(raw_doc_id).strip(), "chunk_id": str(raw_chunk_id).strip()})
-    return relevant_chunks
+            chunk_refs.append(ChunkReference(doc_id=str(raw_doc_id).strip(), chunk_id=str(raw_chunk_id).strip()))
+    return chunk_refs
+
+
+def build_chunk_references_from_mappings(chunks: List[Dict[str, Any]]) -> List[ChunkReference]:
+    """Normalize mixed doc_id/docId and chunk_id/chunkId mappings."""
+    chunk_refs: List[ChunkReference] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for chunk in chunks:
+        raw_doc_id = chunk.get("doc_id") or chunk.get("docId")
+        raw_chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+        if not raw_doc_id or not raw_chunk_id:
+            continue
+
+        pair = (str(raw_doc_id).strip(), str(raw_chunk_id).strip())
+        if not pair[0] or not pair[1] or pair in seen_pairs:
+            continue
+
+        chunk_refs.append(ChunkReference(doc_id=pair[0], chunk_id=pair[1]))
+        seen_pairs.add(pair)
+
+    return chunk_refs
 
 
 def chunk_ids_from_relevant_chunks(relevant_chunks: List[Dict[str, Any]]) -> set[str]:

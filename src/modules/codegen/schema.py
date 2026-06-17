@@ -1,12 +1,29 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Mapping, Optional, TypeAlias, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
+from src.modules.digester.enums import normalize_auth_type_value
+from src.modules.digester.schemas import AttributeResponse, EndpointResponse
+
+AttributesPayload: TypeAlias = Union[AttributeResponse, Mapping[str, Any]]
+EndpointsPayload: TypeAlias = Union[EndpointResponse, Mapping[str, Any]]
+AuthPayload: TypeAlias = Mapping[str, Any]
+PreferredAuthorizations: TypeAlias = Optional[List[Dict[str, Any]]]
+
+
+@dataclass
+class OperationConfig:
+    operation_name: str
+    system_prompt: str
+    user_prompt: str
+    default_scaffold: str
+    logger_prefix: str
+    extra_prompt_vars: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -61,6 +78,64 @@ class PreferredEndpointsInput(BaseModel):
     def normalize_preferred_endpoints(cls, value: Any) -> Any:
         if value is None:
             return []
+        return value
+
+
+class PreferredAuthorizationPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., description="Authentication/authorization method name selected by the user.")
+    type: str = Field(
+        ...,
+        description=(
+            "Authentication/authorization type, e.g. bearer, jwtBearer, oauth2ClientCredentials, or oauth2Jwt."
+        ),
+    )
+    quirks: str | None = Field(default=None, description="Optional extracted implementation notes.")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("name cannot be empty")
+        return normalized
+
+    @field_validator("type")
+    @classmethod
+    def normalize_type(cls, value: str) -> str:
+        normalized = normalize_auth_type_value(value, preserve_unknown=True)
+        if normalized is None:
+            raise ValueError("type cannot be empty")
+        return normalized
+
+    @field_validator("quirks")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class PreferredAuthorizationsInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    preferred_authorizations: list[PreferredAuthorizationPayload] = Field(
+        ...,
+        min_length=1,
+        validation_alias=AliasChoices(
+            "preferredAuthorizations",
+        ),
+        serialization_alias="preferredAuthorizations",
+        description="Required user-selected authentication/authorization methods used to focus code generation.",
+    )
+
+    @field_validator("preferred_authorizations", mode="before")
+    @classmethod
+    def normalize_preferred_authorizations(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return [value]
         return value
 
 
@@ -124,3 +199,29 @@ class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
             current_script=self.current_script,
             midpoint_errors=self.midpoint_errors,
         ).to_payload()
+
+
+class AuthorizationCodegenInput(PreferredAuthorizationsInput, CodegenRepairContext):
+    def repair_context(self) -> CodegenRepairContext | None:
+        if not self.is_repair:
+            return None
+        return CodegenRepairContext(
+            current_script=self.current_script,
+            midpoint_errors=self.midpoint_errors,
+        )
+
+    def context_payload(self) -> dict[str, Any]:
+        payload = self.model_dump(
+            by_alias=True,
+            mode="json",
+            exclude_none=True,
+            exclude={"current_script", "midpoint_errors"},
+        )
+        if self.is_repair:
+            payload.update(
+                CodegenRepairContext(
+                    current_script=self.current_script,
+                    midpoint_errors=self.midpoint_errors,
+                ).to_payload()
+            )
+        return payload

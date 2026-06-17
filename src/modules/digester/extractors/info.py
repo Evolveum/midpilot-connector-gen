@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from src.modules.digester.prompts.info_prompts import get_info_system_prompt, get_info_user_prompt
-from src.modules.digester.schema import InfoMetadata, InfoResponse
+from src.modules.digester.schemas import InfoMetadata, InfoResponse
 from src.modules.digester.utils.chunk_extraction import extract_single_chunk
 from src.modules.digester.utils.merges import is_empty_info_result_payload
 

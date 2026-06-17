@@ -19,19 +19,67 @@ from src.modules.digester.prompts.scim.object_class_prompts import (
     scim_object_class_system_prompt,
     scim_object_class_user_prompt,
 )
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     ExtendedObjectClass,
     FinalObjectClass,
     ObjectClassesExtendedResponse,
     ObjectClassesResponse,
 )
+from src.modules.digester.scim.embedded import get_embedded_object_classes_from_scim_schemas
 from src.modules.digester.scim.loader import get_base_scim_object_classes, load_scim_base_schemas
 from src.modules.digester.utils.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
-from src.modules.digester.utils.concurrent_chunk_runner import run_chunks_concurrently
+from src.modules.digester.utils.llm_execution import run_chunks_concurrently
 from src.modules.digester.utils.metadata_helper import build_doc_metadata_map
 from src.modules.digester.utils.object_classes import confidence_order_key
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_scim_final_object_classes(object_classes: List[FinalObjectClass]) -> List[FinalObjectClass]:
+    """
+    Merge SCIM object classes by name while preserving deterministic structural metadata.
+    """
+    by_name: Dict[str, FinalObjectClass] = {}
+
+    for obj_class in object_classes:
+        class_name = obj_class.name.strip().lower()
+        if not class_name:
+            continue
+
+        existing = by_name.get(class_name)
+        if existing is None:
+            by_name[class_name] = obj_class
+            continue
+
+        if confidence_order_key(obj_class.confidence) < confidence_order_key(existing.confidence):
+            existing.confidence = obj_class.confidence
+
+        existing.superclass = existing.superclass or obj_class.superclass
+        existing.abstract = bool(existing.abstract or obj_class.abstract)
+        existing.embedded = bool(existing.embedded or obj_class.embedded)
+
+        if not existing.description and obj_class.description:
+            existing.description = obj_class.description
+
+        seen_chunks = {
+            (
+                str(chunk.get("doc_id") or chunk.get("docId")),
+                str(chunk.get("chunk_id") or chunk.get("chunkId")),
+            )
+            for chunk in existing.relevant_documentations
+            if chunk.get("doc_id") or chunk.get("docId")
+        }
+        for chunk in obj_class.relevant_documentations:
+            key = (
+                str(chunk.get("doc_id") or chunk.get("docId")),
+                str(chunk.get("chunk_id") or chunk.get("chunkId")),
+            )
+            if key in seen_chunks:
+                continue
+            existing.relevant_documentations.append(chunk)
+            seen_chunks.add(key)
+
+    return list(by_name.values())
 
 
 async def extract_scim_object_classes(
@@ -41,8 +89,9 @@ async def extract_scim_object_classes(
     """
     Extract SCIM object classes using guided approach:
     1. Start with SCIM base classes (User, Group, EnterpriseUser)
-    2. Extract only custom extensions from documentation
-    3. Merge base + custom
+    2. Derive embedded classes from standard SCIM complex attributes
+    3. Extract only custom extensions from documentation
+    4. Merge base + embedded + custom
 
     Args:
         doc_items: List of documentation items to process
@@ -62,6 +111,7 @@ async def extract_scim_object_classes(
     )
 
     # Step 1: Load SCIM base object classes
+    scim_schemas = load_scim_base_schemas()
     base_classes_data = get_base_scim_object_classes()
     base_classes = [
         FinalObjectClass(
@@ -78,7 +128,27 @@ async def extract_scim_object_classes(
 
     logger.info("[SCIM:ObjectClasses] Loaded %d base SCIM classes", len(base_classes))
 
-    # Step 2: Extract custom extensions from documentation
+    # Step 2: Derive embedded object classes from standard SCIM complex attributes
+    embedded_classes_data = get_embedded_object_classes_from_scim_schemas(scim_schemas)
+    embedded_classes = [
+        FinalObjectClass(
+            name=cls["name"],
+            relevant=RelevantLevel.TRUE,
+            confidence=ConfidenceLevel.HIGH,
+            superclass=cls.get("superclass"),
+            abstract=cls.get("abstract", False),
+            embedded=cls.get("embedded", True),
+            description=cls["description"],
+        )
+        for cls in embedded_classes_data
+    ]
+
+    logger.info(
+        "[SCIM:ObjectClasses] Derived %d embedded classes from SCIM complex attributes",
+        len(embedded_classes),
+    )
+
+    # Step 3: Extract custom extensions from documentation
     all_custom_classes: List[ExtendedObjectClass] = []
     all_relevant_chunks: List[Dict[str, Any]] = []
     class_to_chunks: Dict[str, List[Dict[str, Any]]] = {}
@@ -91,8 +161,6 @@ async def extract_scim_object_classes(
         if raw_chunk_id and raw_doc_id:
             chunk_id_to_doc_id[str(raw_chunk_id).strip()] = str(raw_doc_id).strip()
 
-    # Load base schemas for LLM context
-    scim_schemas = load_scim_base_schemas()
     extraction_chain = (
         build_chunk_extraction_chain(
             pydantic_model=ObjectClassesExtendedResponse,
@@ -166,7 +234,7 @@ async def extract_scim_object_classes(
         len(doc_items),
     )
 
-    # Step 3: Find relevant chunks for base classes (User, Group)
+    # Step 4: Find relevant chunks for base classes (User, Group)
     # Search documents for mentions of these standard SCIM classes
     await _find_relevant_chunks_for_base_classes(
         base_classes=base_classes,
@@ -174,7 +242,7 @@ async def extract_scim_object_classes(
         class_to_chunks=class_to_chunks,
     )
 
-    # Step 4: Merge base + custom
+    # Step 5: Merge base + embedded + custom
     custom_classes = [
         FinalObjectClass(
             name=obj_class.name,
@@ -187,9 +255,9 @@ async def extract_scim_object_classes(
         )
         for obj_class in all_custom_classes
     ]
-    all_classes = base_classes + custom_classes
+    all_classes = _merge_scim_final_object_classes(base_classes + embedded_classes + custom_classes)
 
-    # Step 5: Attach relevant chunks to merged classes
+    # Step 6: Attach relevant chunks to merged classes
     for obj_class in all_classes:
         class_name = obj_class.name.strip().lower()
         if class_name in class_to_chunks:

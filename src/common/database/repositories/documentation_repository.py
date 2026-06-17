@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.models import DocumentationItem
-from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,6 @@ class DocumentationRepository:
         :param db: SQLAlchemy AsyncSession
         """
         self.db = db
-        self.relevant_chunk_repo = RelevantChunkRepository(db)
 
     async def create_documentation_item(
         self,
@@ -97,6 +95,39 @@ class DocumentationRepository:
                 "summary": item.summary,
                 "content": item.content,
                 "metadata": item.doc_metadata,
+            }
+            for item in items
+        ]
+
+    async def get_documentation_items_by_doc_id(self, session_id: UUID, doc_id: UUID) -> List[Dict[str, Any]]:
+        """
+        Get all documentation items for one logical document (doc_id) in a session.
+
+        :param session_id: Session ID
+        :param doc_id: Document ID
+        :return: List of documentation item dicts
+        """
+        query = (
+            select(DocumentationItem)
+            .where(
+                DocumentationItem.session_id == session_id,
+                DocumentationItem.doc_id == doc_id,
+            )
+            .order_by(DocumentationItem.created_at, DocumentationItem.chunk_id)
+        )
+
+        items = (await self.db.execute(query)).scalars().all()
+        return [
+            {
+                "chunkId": str(item.chunk_id),
+                "docId": str(item.doc_id) if item.doc_id else None,
+                "source": item.source,
+                "url": item.url,
+                "summary": item.summary,
+                "content": item.content,
+                "metadata": item.doc_metadata,
+                "createdAt": item.created_at.isoformat(),
+                "scrapeJobIds": list(item.scrape_job_ids or []),
             }
             for item in items
         ]

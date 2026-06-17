@@ -8,18 +8,16 @@ import re
 from typing import Any, Dict, List, Set, Tuple, cast
 from uuid import UUID
 
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.chunks import get_neighboring_tokens
+from src.common.chunking import get_neighboring_tokens
 from src.common.enums import JobStage
 from src.common.jobs import (
     append_job_error,
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain, get_default_llm
 from src.common.utils.normalize import normalize_chunk_pair, normalize_endpoint_key
 from src.modules.digester.prompts.rest.endpoints_prompts import (
     check_endpoint_params_system_prompt,
@@ -27,8 +25,8 @@ from src.modules.digester.prompts.rest.endpoints_prompts import (
     get_endpoints_system_prompt,
     get_endpoints_user_prompt,
 )
-from src.modules.digester.schema import EndpointParamInfo, ExtractedEndpointInfo, ExtractedEndpointResponse
-from src.modules.digester.utils.concurrent_chunk_runner import run_chunk_groups_concurrently
+from src.modules.digester.schemas import EndpointParamInfo, ExtractedEndpointInfo, ExtractedEndpointResponse
+from src.modules.digester.utils.llm_execution import invoke_llm, run_chunk_groups_concurrently
 from src.modules.digester.utils.merges import merge_endpoint_candidates
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
@@ -122,22 +120,25 @@ async def extract_endpoints(
         "{base_api_url}", base_api_url
     )
 
-    parser: PydanticOutputParser[ExtractedEndpointResponse] = PydanticOutputParser(
-        pydantic_object=ExtractedEndpointResponse
-    )
     llm = get_default_llm()
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", system_prompt + "\n\n{format_instructions}"), ("human", user_prompt)]
-    ).partial(total=total_chunks, format_instructions=parser.get_format_instructions())
-    chain = make_basic_chain(prompt, llm, parser)
+    chain = build_structured_chain(
+        system_prompt,
+        user_prompt,
+        ExtractedEndpointResponse,
+        llm=llm,
+        partial_variables={"total": total_chunks},
+        user_role="human",
+    )
 
-    param_parser: PydanticOutputParser[EndpointParamInfo] = PydanticOutputParser(pydantic_object=EndpointParamInfo)
     param_system_prompt = check_endpoint_params_system_prompt.replace("{object_class}", object_class)
     param_user_prompt = check_endpoint_params_user_prompt.replace("{object_class}", object_class)
-    param_prompt = ChatPromptTemplate.from_messages(
-        [("system", param_system_prompt + "\n\n{format_instructions}"), ("human", param_user_prompt)]
-    ).partial(format_instructions=param_parser.get_format_instructions())
-    param_chain = make_basic_chain(param_prompt, llm, param_parser)
+    param_chain = build_structured_chain(
+        param_system_prompt,
+        param_user_prompt,
+        EndpointParamInfo,
+        llm=llm,
+        user_role="human",
+    )
 
     # Process each chunk
     extracted_endpoints: List[ExtractedEndpointInfo] = []
@@ -171,7 +172,8 @@ async def extract_endpoints(
 
                 result = cast(
                     ExtractedEndpointResponse,
-                    await chain.ainvoke(
+                    await invoke_llm(
+                        chain,
                         {"chunk": chunk, "summary": summary, "tags": tags},
                         config=RunnableConfig(callbacks=[langfuse_handler]),
                     ),
@@ -225,7 +227,8 @@ async def extract_endpoints(
                     )
                     checked_result = cast(
                         EndpointParamInfo,
-                        await param_chain.ainvoke(
+                        await invoke_llm(
+                            param_chain,
                             {
                                 "endpoint": endpoint.model_dump(by_alias=True, exclude={"relevant_documentations"}),
                                 "chunk": context_snippet,

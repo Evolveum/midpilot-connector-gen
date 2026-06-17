@@ -1,0 +1,11 @@
+= SQL delete operation
+
+SQL delete generation should remove or deactivate rows for the selected object class.
+
+== Delete rules
+
+* Use primary keys for row identity.
+* Respect foreign key dependencies.
+* If cascade behavior is not documented, avoid inventing cascade deletes and leave a TODO.
+* If the schema or documentation indicates soft delete columns, prefer soft delete over physical delete.
+

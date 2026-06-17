@@ -31,7 +31,8 @@ RULES:
    - If not present, leave empty string "".
 
 4) apiType
-   - A list with normalized technology labels, chosen from: REST or SCIM
+   - A list with normalized technology labels, chosen from: REST, SCIM, or SQL.
+   - Treat OpenAPI/Swagger evidence as REST; treat direct database/schema/table integration evidence as SQL.
    - If unclear, leave empty list.
 
 5) baseApiEndpoint
@@ -52,6 +53,14 @@ RULES:
      * "type": "constant" only if docs assert a single, global, non-tenant URL for everyone.
    - Return ALL distinct canonical base endpoints supported by evidence in docs.
    - Deduplicate by (uri, type) and sort the final list by uri ascending, then type (constant before dynamic).
+   - This applies to HTTP APIs (REST/SCIM) only. For a SQL/database integration, leave baseApiEndpoint empty.
+
+6) databaseName
+   - The name of the database/schema the connector must connect to, for SQL/database integrations only.
+   - Sources: connection strings/JDBC URLs (the path segment after the host, e.g. "jdbc:postgresql://host:5432/<databaseName>"),
+     "Database:"/"Schema:" notes, or explicit setup instructions.
+   - Extract the bare database/schema identifier only (no host, port, driver, credentials, or query string).
+   - For REST/SCIM integrations, leave empty string "".
 
 CONFIDENCE:
 - This call is standalone for one documentation chunk.
@@ -85,9 +94,10 @@ Text from actual documentation:
 </chunk>
 
 Return structured output for THIS fragment only:
-- Apply the FIELD RULES for name, applicationVersion, apiVersion, apiType, and baseApiEndpoint.
-- For apiType, output only REST/SCIM; treat OpenAPI/Swagger evidence as REST.
-- For baseApiEndpoint, return a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless docs guarantee a single global URL).
+- Apply the FIELD RULES for name, applicationVersion, apiVersion, apiType, baseApiEndpoint, and databaseName.
+- For apiType, output only REST/SCIM/SQL; treat OpenAPI/Swagger evidence as REST and database/schema-only integration evidence as SQL.
+- For baseApiEndpoint, return a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless docs guarantee a single global URL). Leave empty for SQL/database integrations.
+- For databaseName, populate only for SQL/database integrations (bare database/schema identifier); leave empty otherwise.
 - Summary/tags may be empty; rely primarily on <chunk>.
 - If this fragment adds nothing reliable, keep fields empty.
 """)

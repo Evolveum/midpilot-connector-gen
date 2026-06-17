@@ -11,13 +11,12 @@ from uuid import UUID
 from crawl4ai.utils import get_base_domain  # type: ignore
 
 from src.common.chunk_processor.processor import process_all_documentations
-from src.common.chunk_processor.schema import SavedDocumentation
+from src.common.chunk_processor.schema import ChunkProcessingError, SavedDocumentation
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.job_repository import JobRepository
-from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage
-from src.common.jobs import update_job_progress
+from src.common.jobs import append_job_error, update_job_progress
 from src.common.session.schema import DocumentationItem
 from src.common.utils.normalize import normalize_url
 from src.common.utils.status_response import build_group_documentation_response
@@ -49,7 +48,6 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                     str(latest_job.job_id),
                     datetime.isoformat(latest_job.created_at),
                 )
-                repo = SessionRepository(db)
                 doc_repo = DocumentationRepository(db)
                 doc_items = await doc_repo.get_documentation_items_by_session_and_job(
                     latest_job.session_id, latest_job.job_id
@@ -62,14 +60,12 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                         latest_job.job_id,
                     )
                     # Save these items to the current session
-                    existing_docs_loaded: List[Dict[str, Any]] = (
-                        await repo.get_session_data(session_id, "documentationItems") or []
-                    )
+                    existing_docs_loaded = await doc_repo.get_documentation_items_by_session(session_id)
                     existing_docs_urls = {
                         normalize_url(item.get("url")) for item in existing_docs_loaded if item.get("url")
                     }
                     new_docs = [item for item in doc_items if normalize_url(item.get("url")) not in existing_docs_urls]
-                    updated_chunks_existing: List[Dict[str, Any]] = []
+                    inserted_chunks_count = 0
                     for chunk in new_docs:
                         chunk_id = await doc_repo.create_documentation_item(
                             session_id=session_id,
@@ -81,13 +77,18 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                             summary=chunk["summary"],
                             metadata=chunk["metadata"],
                         )
-                        chunk["scrapeJobIds"] = [job_id]
-                        chunk["chunkId"] = chunk_id
-                        updated_chunks_existing.append(
-                            DocumentationItem(**chunk).model_dump(by_alias=True, mode="json")
-                        )
+                        if chunk_id:
+                            inserted_chunks_count += 1
                     for chunk in existing_docs_loaded:
-                        chunk_id = UUID(chunk.get("chunkId", ""))
+                        raw_chunk_id = chunk.get("chunkId")
+                        if not raw_chunk_id:
+                            logger.warning(
+                                "[Scrape] Job %s: Existing documentation item in session is missing ID, cannot link to job %s",
+                                job_id,
+                                job_id,
+                            )
+                            continue
+                        chunk_id = UUID(str(raw_chunk_id))
                         if chunk_id:
                             update_res = await doc_repo.update_documentation_item(
                                 chunk_id=chunk_id, original_job_id=job_id
@@ -106,13 +107,11 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                                 job_id,
                             )
 
-                    all_docs = existing_docs_loaded + updated_chunks_existing
-                    await repo.update_session(session_id, {"documentationItems": all_docs})
                     await db.commit()
                     logger.info(
                         "[Scrape] Job %s: Saved %s chunks to session",
                         job_id,
-                        len(updated_chunks_existing),
+                        inserted_chunks_count,
                     )
 
                     orig_job_result = latest_job.result or {}
@@ -131,7 +130,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                     return ScrapeResult(
                         finish_reason="reused_previous_session_data",
                         saved_documentations_count=orig_job_result.get("savedDocumentationsCount", 0),
-                        saved_chunks_count=len(updated_chunks_existing),
+                        saved_chunks_count=inserted_chunks_count,
                         saved_documentations=build_group_documentation_response(reused_doc_rows_for_export),
                     )
                 else:
@@ -177,8 +176,8 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
     doc_rows_for_export: List[Dict[str, Any]] = []
     if session_id:
         async with async_session_maker() as db:
-            repo = SessionRepository(db)
-            existing_documentation_chunks = await repo.get_session_data(session_id, "documentationItems") or []
+            doc_repo = DocumentationRepository(db)
+            existing_documentation_chunks = await doc_repo.get_documentation_items_by_session(session_id)
         existing_documentation_chunks_urls = {
             normalize_url(url) for item in existing_documentation_chunks for url in [item.get("url")] if url
         }
@@ -189,7 +188,9 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             len(existing_documentation_chunks_urls),
         )
 
-    processing_tasks: List[tuple[SavedDocumentation, asyncio.Task[List[DocumentationItem]]]] = []
+    processing_tasks: List[
+        tuple[SavedDocumentation, asyncio.Task[tuple[List[DocumentationItem], List[ChunkProcessingError]]]]
+    ] = []
     processing_semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
     scheduled_documentations: List[SavedDocumentation] = []
     scheduled_documentation_urls: set[str] = set()
@@ -329,13 +330,28 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
         for (documentation, _), batch in zip(processing_tasks, processed_batches):
             if isinstance(batch, BaseException):
                 logger.exception(
-                    "[Scrape] Job %s: Chunk processing failed for documentation %s",
+                    "[Scrape] Job %s: Documentation processing failed for %s",
                     job_id,
                     documentation.url,
                     exc_info=batch,
                 )
-                raise RuntimeError(f"Chunk processing failed for documentation {documentation.url}: {batch}") from batch
-            documentation_chunks.extend(batch)
+                append_job_error(job_id, f"Documentation processing failed for {documentation.url}: {batch}")
+                continue
+
+            chunks, chunk_errors = batch
+            documentation_chunks.extend(chunks)
+            for chunk_error in chunk_errors:
+                logger.warning(
+                    "[Scrape] Job %s: Chunk %s of %s failed: %s",
+                    job_id,
+                    chunk_error.chunk_index,
+                    chunk_error.url,
+                    chunk_error.error,
+                )
+                append_job_error(
+                    job_id,
+                    f"Chunk {chunk_error.chunk_index} of {chunk_error.url} skipped after failure: {chunk_error.error}",
+                )
     else:
         logger.info(
             "[Scrape] Job %s: No new documentations queued for chunk processing (scraped URLs were already present or no docs were scraped)",
@@ -344,26 +360,27 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
 
     if session_id:
         async with async_session_maker() as db:
-            repo = SessionRepository(db)
             doc_repo = DocumentationRepository(db)
 
             for chunk in existing_documentation_chunks:
-                chunk_id = UUID(chunk.get("chunkId"))
-                if chunk_id:
-                    update_res = await doc_repo.update_documentation_item(chunk_id=chunk_id, original_job_id=job_id)
-                    if update_res:
-                        updated_existing_chunks_count += 1
-                    else:
-                        logger.warning(
-                            "[Scrape] Job %s: Failed to update existing documentation item with ID %s to link to job %s",
-                            job_id,
-                            chunk_id,
-                            job_id,
-                        )
-                else:
+                raw_chunk_id = chunk.get("chunkId")
+                if not raw_chunk_id:
                     logger.warning(
                         "[Scrape] Job %s: Existing documentation item in session is missing ID, cannot link to job %s",
                         job_id,
+                        job_id,
+                    )
+                    continue
+
+                chunk_id = UUID(str(raw_chunk_id))
+                update_res = await doc_repo.update_documentation_item(chunk_id=chunk_id, original_job_id=job_id)
+                if update_res:
+                    updated_existing_chunks_count += 1
+                else:
+                    logger.warning(
+                        "[Scrape] Job %s: Failed to update existing documentation item with ID %s to link to job %s",
+                        job_id,
+                        chunk_id,
                         job_id,
                     )
 
@@ -375,7 +392,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                 )
 
                 # Create documentation items in DB and update chunks with DB IDs
-                updated_chunks: List[DocumentationItem] = []
+                saved_chunks_count = 0
                 for documentation_chunk in documentation_chunks:
                     chunk_id = await doc_repo.create_documentation_item(
                         session_id=session_id,
@@ -387,24 +404,14 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                         summary=documentation_chunk.summary,
                         metadata=documentation_chunk.metadata,
                     )
-                    # Update chunk ID to match database
-                    documentation_chunk.chunk_id = chunk_id
-                    updated_chunks.append(documentation_chunk)
-
-                # Get existing documentation items (if any from uploads)
-                existing_docs = await repo.get_session_data(session_id, "documentationItems") or []
-
-                # Append new scraped items with DB IDs (use mode='json' to serialize UUIDs as strings)
-                all_docs = existing_docs + [doc.model_dump(by_alias=True, mode="json") for doc in updated_chunks]
-
-                # Save to session
-                await repo.update_session(session_id, {"documentationItems": all_docs})
+                    if chunk_id:
+                        saved_chunks_count += 1
                 await db.commit()
 
                 logger.info(
                     "[Scrape] Job %s: Saved %s chunks to session",
                     job_id,
-                    len(all_docs),
+                    saved_chunks_count,
                 )
             elif updated_existing_chunks_count > 0:
                 await db.commit()

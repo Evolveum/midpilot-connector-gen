@@ -16,7 +16,7 @@ from src.modules.codegen.router import (
     get_native_schema_status,
     override_native_schema,
 )
-from src.modules.codegen.schema import GroovyCodePayload
+from src.modules.codegen.schema import CodegenRepairContext, GroovyCodePayload
 
 
 # NATIVE SCHEMA
@@ -46,23 +46,65 @@ async def test_generate_native_schema_success():
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
-        mock_repo.get_session_data.assert_awaited_once_with(session_id, "UserAttributesOutput")
+        mock_repo.get_session_data.assert_awaited_once_with(session_id, "userAttributesOutput")
         mock_schedule.assert_awaited_once_with(
             job_type="codegen.getNativeSchema",
             input_payload={
                 "attributes": {"username": {"type": "string"}},
-                "objectClass": "User",
+                "objectClass": "user",
                 "skipCache": True,
             },
             worker=ANY,
-            worker_args=({"username": {"type": "string"}}, "User"),
+            worker_args=({"username": {"type": "string"}}, "user"),
             worker_kwargs={"session_id": session_id},
             initial_stage="queue",
             initial_message="Queued code generation",
             session_id=session_id,
-            session_result_key="UserNativeSchemaOutput",
+            session_result_key="userNativeSchemaOutput",
         )
         mock_repo.update_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_native_schema_uses_repair_context_only():
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.get_session_data = AsyncMock(return_value={"username": {"type": "string"}})
+    mock_repo.update_session = AsyncMock()
+
+    with (
+        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+    ):
+        job_id = uuid4()
+        session_id = uuid4()
+        mock_schedule.return_value = job_id
+
+        response = await generate_native_schema(
+            session_id,
+            "User",
+            db=MagicMock(),
+            codegen_input=CodegenRepairContext.model_validate(
+                {
+                    "currentScript": 'objectClass("User") {',
+                    "midpointErrors": ["Missing method: request.pathParameter(...)"],
+                    "preferredEndpoints": [{"method": "GET", "path": "/users"}],
+                }
+            ),
+        )
+
+    assert response.jobId == job_id
+    _, schedule_kwargs = mock_schedule.call_args
+    assert "preferredEndpoints" not in schedule_kwargs["input_payload"]
+    assert schedule_kwargs["input_payload"]["currentScript"].startswith('objectClass("User")')
+    assert schedule_kwargs["worker_kwargs"]["repair_context"].midpoint_errors == [
+        "Missing method: request.pathParameter(...)"
+    ]
+
+    update_args = mock_repo.update_session.call_args[0]
+    inputs = update_args[1]["userNativeSchemaInput"]
+    assert "preferredEndpoints" not in inputs
+    assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]
 
 
 @pytest.mark.asyncio
@@ -112,12 +154,12 @@ async def test_override_native_schema_success():
             db=MagicMock(),
         )
 
-        assert response["message"] == "Native schema for User overridden successfully"
+        assert response["message"] == "Native schema for user overridden successfully"
         assert response["sessionId"] == session_id
-        assert response["objectClass"] == "User"
+        assert response["objectClass"] == "user"
         mock_repo.update_session.assert_awaited_once_with(
             session_id,
-            {"UserNativeSchemaOutput": {"code": 'objectClass("User") {}'}},
+            {"userNativeSchemaOutput": {"code": 'objectClass("User") {}'}},
         )
 
 
@@ -134,4 +176,4 @@ async def test_generate_native_schema_missing_class():
             await generate_native_schema(uuid4(), "NonExistentClass", db=MagicMock())
 
     assert exc_info.value.status_code == 404
-    assert "No attributes found for NonExistentClass" in exc_info.value.detail
+    assert "No attributes found for nonexistentclass" in exc_info.value.detail

@@ -35,6 +35,10 @@ dependencies = [
     "asyncpg>=0.31.0",
     "python-dotenv>=1.2.2",
     "groovy-parser>=0.2.2",
+    "fuzzysearch>=0.8.0",
+    "pypdf>=6.5.0",
+    "beautifulsoup4>=4.14.0",
+    "python-docx>=1.2.0",
 ]
 
 [dependency-groups]

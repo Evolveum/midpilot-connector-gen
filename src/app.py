@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from src import pool
 from src.common.jobs import recover_stale_running_jobs
 from src.config import config
 from src.router import root_router
@@ -13,8 +14,16 @@ from src.router import root_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await recover_stale_running_jobs()
-    yield
+    try:
+        pool.process_pool = pool.create_pool()
+        await recover_stale_running_jobs()
+    except Exception:
+        pass
+    try:
+        yield
+    finally:
+        if pool.process_pool:
+            pool.process_pool.shutdown(wait=True)
 
 
 def create_api() -> FastAPI:

@@ -2,6 +2,13 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+"""Token-level chunking utilities.
+
+Low-level helpers for counting tokens and splitting raw text by token budget.
+Structure-aware splitting (valid JSON/YAML/SQL fragments) lives in
+``src.common.chunking.schema``.
+"""
+
 import json
 import logging
 import re
@@ -118,3 +125,9 @@ def normalize_to_text(schema: Union[str, dict, list]) -> str:
         return json.dumps(schema, ensure_ascii=False, indent=2, default=str)
     except (TypeError, ValueError):
         return yaml.safe_dump(schema, allow_unicode=True)
+
+
+def count_tokens(text: str, encoding_type: str = "cl100k_base") -> int:
+    """Count the number of tokens in the given text using the specified encoding."""
+    enc = encoding(encoding_type)
+    return len(enc.encode(text))

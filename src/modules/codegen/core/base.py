@@ -4,17 +4,16 @@
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Union, cast
+from typing import Any, Dict, List, Mapping, Optional, cast
 from uuid import UUID
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.chunks import normalize_to_text
+from src.common.chunking import normalize_to_text
 from src.common.database.config import async_session_maker
-from src.common.database.repositories.session_repository import SessionRepository
+from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.enums import JobStage
 from src.common.jobs import (
     append_job_error,
@@ -28,29 +27,13 @@ from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_user_prompt,
 )
 from src.modules.codegen.repair import build_repair_prompt_vars, get_repair_initial_result
-from src.modules.codegen.schema import CodegenRepairContext
+from src.modules.codegen.schema import AttributesPayload, CodegenRepairContext, EndpointsPayload, OperationConfig
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.map_to_record import _without_relevant_documentations
 from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
-from src.modules.digester.schema import AttributeResponse, EndpointResponse
+from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 
 logger = logging.getLogger(__name__)
-
-AttributesPayload = Union[AttributeResponse, Mapping[str, Any]]
-EndpointsPayload = Union[EndpointResponse, Mapping[str, Any]]
-
-
-@dataclass
-class OperationConfig:
-    """Configuration for a specific code generation operation."""
-
-    operation_name: str  # e.g., "Search", "Create", "Update", "Delete", "Relation"
-    system_prompt: str
-    user_prompt: str
-    default_scaffold: str  # Fallback code when generation fails
-    logger_prefix: str  # For logging, e.g., "Codegen:Search"
-
-    extra_prompt_vars: Dict[str, Any] = field(default_factory=dict)
 
 
 class ChunkProcessor:
@@ -278,10 +261,10 @@ class BaseGroovyGenerator(ABC):
             return code
 
     async def _load_documentation_items(self, session_id: UUID) -> List[Dict[str, Any]]:
-        """Load documentation items from session."""
+        """Load documentation items from documentation_items table."""
         async with async_session_maker() as db:
-            repo = SessionRepository(db)
-            doc_items = await repo.get_session_data(session_id, "documentationItems")
+            repo = DocumentationRepository(db)
+            doc_items = await repo.get_documentation_items_by_session(session_id)
             return doc_items or []
 
     def _build_chunks(

@@ -14,25 +14,23 @@ import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain
 from src.common.utils.normalize import normalize_chunk_pair, normalize_endpoint_key
 from src.modules.digester.prompts.scim.endpoints_prompts import (
     scim_endpoints_system_prompt,
     scim_endpoints_user_prompt,
 )
-from src.modules.digester.schema import ExtractedEndpointInfo, ExtractedEndpointResponse
+from src.modules.digester.schemas import ExtractedEndpointInfo, ExtractedEndpointResponse
 from src.modules.digester.scim.loader import (
     generate_scim_crud_endpoints,
     get_base_scim_endpoints,
     is_scim_standard_class,
 )
+from src.modules.digester.utils.llm_execution import invoke_llm
 from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 from src.modules.digester.utils.scim_resource import extract_scim_resource_path, infer_scim_resource_path
 
@@ -128,30 +126,22 @@ def _build_scim_endpoint_chain(object_class: str, base_api_url: str, base_endpoi
     Returns:
         Configured LangChain runnable
     """
-    parser: PydanticOutputParser[ExtractedEndpointResponse] = PydanticOutputParser(
-        pydantic_object=ExtractedEndpointResponse
-    )
-    llm = get_default_llm()
-
     formatted_base = _format_endpoints_for_prompt(base_endpoints)
     base_summary = (
         f"Standard SCIM {object_class} endpoints:\n{formatted_base if base_endpoints else 'None (custom resource)'}"
     )
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", scim_endpoints_system_prompt + "\n\n{format_instructions}"),
-            ("user", scim_endpoints_user_prompt),
-        ]
-    ).partial(
-        object_class=object_class,
-        base_api_url=base_api_url or "{base_api_url}",
-        scim_base_endpoints=base_summary,
-        formatted_base_endpoints=formatted_base if base_endpoints else "None (custom resource)",
-        format_instructions=parser.get_format_instructions(),
+    return build_structured_chain(
+        scim_endpoints_system_prompt,
+        scim_endpoints_user_prompt,
+        ExtractedEndpointResponse,
+        partial_variables={
+            "object_class": object_class,
+            "base_api_url": base_api_url or "{base_api_url}",
+            "scim_base_endpoints": base_summary,
+            "formatted_base_endpoints": formatted_base if base_endpoints else "None (custom resource)",
+        },
     )
-
-    return make_basic_chain(prompt, llm, parser)
 
 
 async def extract_scim_endpoints(
@@ -320,7 +310,8 @@ async def extract_custom_scim_endpoints(
     try:
         summary, tags = extract_summary_and_tags(chunk_metadata)
 
-        result = await chain.ainvoke(
+        result = await invoke_llm(
+            chain,
             {
                 "chunk": chunk,
                 "summary": summary,

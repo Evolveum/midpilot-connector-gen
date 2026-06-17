@@ -12,7 +12,7 @@ import pytest
 from src.common.enums import JobStatus
 from src.modules.digester import service
 from src.modules.digester.router import extract_metadata, get_metadata_status, restore_metadata
-from src.modules.digester.schema import InfoResponse
+from src.modules.digester.schemas import InfoResponse
 
 
 # METADATA

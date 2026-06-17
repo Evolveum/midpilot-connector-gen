@@ -65,16 +65,16 @@ async def _filter_documentation_items_impl(
         metadata = item.get("@metadata", {})
 
         # Extract relevant fields from metadata
-        length = metadata.get("length")
+        token_count = metadata.get("token_count")
         num_endpoints = metadata.get("num_endpoints")
         category = metadata.get("category")
         tags = metadata.get("tags")
-        content_type = metadata.get("contentType")
+        content_type = metadata.get("content_type")
 
         # Apply filters
-        if criteria.min_length is not None and (length is None or length < criteria.min_length):
+        if criteria.min_length is not None and (token_count is None or token_count < criteria.min_length):
             continue
-        if criteria.max_length is not None and (length is not None and length > criteria.max_length):
+        if criteria.max_length is not None and (token_count is not None and token_count > criteria.max_length):
             continue
         if criteria.min_endpoints_num is not None and (
             num_endpoints is None or num_endpoints < criteria.min_endpoints_num

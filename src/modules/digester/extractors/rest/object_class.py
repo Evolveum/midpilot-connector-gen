@@ -16,7 +16,7 @@ from langchain_core.runnables.config import RunnableConfig
 from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import build_structured_chain, get_default_llm, make_basic_chain
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.prompts.rest.object_class_prompts import (
     get_object_class_system_prompt,
@@ -30,7 +30,7 @@ from src.modules.digester.prompts.rest.sorting_output_prompts import (
     sort_object_classes_system_prompt,
     sort_object_classes_user_prompt,
 )
-from src.modules.digester.schema import (
+from src.modules.digester.schemas import (
     BaseObjectClass,
     ExtendedObjectClass,
     FinalObjectClass,
@@ -41,6 +41,7 @@ from src.modules.digester.schema import (
     RankedObjectClass,
 )
 from src.modules.digester.utils.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
+from src.modules.digester.utils.llm_execution import invoke_llm
 from src.modules.digester.utils.merges import merge_object_classes
 
 logger = logging.getLogger(__name__)
@@ -122,17 +123,14 @@ async def _sort_bucket_by_importance(
     if len(object_classes) <= 1:
         return list(object_classes)
 
-    parser: PydanticOutputParser[ObjectClassesRankedResponse] = PydanticOutputParser(
-        pydantic_object=ObjectClassesRankedResponse
-    )
     llm_sort = get_default_llm()
-    sort_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", sort_object_classes_system_prompt + "\n\n{format_instructions}"),
-            ("human", sort_object_classes_user_prompt),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    sort_chain = make_basic_chain(sort_prompt, llm_sort, parser)
+    sort_chain = build_structured_chain(
+        sort_object_classes_system_prompt,
+        sort_object_classes_user_prompt,
+        ObjectClassesRankedResponse,
+        llm=llm_sort,
+        user_role="human",
+    )
 
     original_map = {obj.name.strip().lower(): obj for obj in object_classes}
     alphabetical_bucket = sorted(object_classes, key=lambda item: item.name.strip().lower())
@@ -147,7 +145,8 @@ async def _sort_bucket_by_importance(
         )
         sort_result = cast(
             ObjectClassesRankedResponse,
-            await sort_chain.ainvoke(
+            await invoke_llm(
+                sort_chain,
                 {"items_json": items_json, "confidence_level": confidence_level},
                 config=RunnableConfig(callbacks=[langfuse_handler]),
             ),
@@ -285,7 +284,11 @@ async def deduplicate_and_sort_object_classes(
 
         confidence_result = cast(
             ObjectClassesConfidenceResponse,
-            await confidence_chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler])),
+            await invoke_llm(
+                confidence_chain,
+                {},
+                config=RunnableConfig(callbacks=[langfuse_handler]),
+            ),
         )
         logger.info("[Digester:ObjectClasses] Confidence LLM raw: %r", (confidence_result or ""))
 

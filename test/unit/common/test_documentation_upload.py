@@ -1,0 +1,193 @@
+# Copyright (C) 2010-2026 Evolveum and contributors
+#
+# Licensed under the EUPL-1.2 or later.
+
+import hashlib
+from io import BytesIO
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from fastapi import HTTPException, UploadFile
+from starlette.datastructures import Headers
+
+from src.common.session.utils import documentation_upload as upload_utils
+from src.common.session.utils.documentation_upload import RawUploadedDocumentation, read_uploaded_documentation
+
+
+def _upload(filename: str, content_type: str, data: bytes) -> UploadFile:
+    upload = UploadFile(BytesIO(data), filename=filename)
+    upload.headers = Headers({"content-type": content_type})
+    return upload
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_keeps_content_type_metadata_for_json():
+    uploaded = await read_uploaded_documentation(
+        _upload("openapi.json", "application/json", b'{"openapi":"3.0.0","paths":{}}')
+    )
+
+    assert uploaded.filename == "openapi.json"
+    assert uploaded.content_type == "application/json"
+    assert uploaded.metadata["content_type"] == "application/json"
+    assert uploaded.metadata["parser"] == "json"
+    assert "character_count" not in uploaded.metadata
+    assert "original_size" not in uploaded.metadata
+    assert "contentType" not in uploaded.metadata
+    assert '"openapi": "3.0.0"' in uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_inferrs_content_type_when_upload_type_is_generic():
+    uploaded = await read_uploaded_documentation(
+        _upload("openapi.yaml", "application/octet-stream", b"openapi: 3.0.0\npaths: {}\n")
+    )
+
+    assert uploaded.content_type == "application/yaml"
+    assert uploaded.metadata["content_type"] == "application/yaml"
+    assert uploaded.metadata["parser"] == "yaml"
+    assert "openapi: 3.0.0" in uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_inferrs_json_content_type_for_generic_json_upload():
+    uploaded = await read_uploaded_documentation(
+        _upload("user.json", "application/octet-stream", b'{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]}')
+    )
+
+    assert uploaded.content_type == "application/json"
+    assert uploaded.metadata["content_type"] == "application/json"
+    assert uploaded.metadata["parser"] == "json"
+    assert "urn:ietf:params:scim:schemas:core:2.0:User" in uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_read_raw_uploaded_documentation_keeps_bytes_and_hash_without_parsing():
+    data = b'{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]}'
+
+    raw_upload = await upload_utils.read_raw_uploaded_documentation(
+        _upload("user.json", "application/octet-stream", data)
+    )
+
+    assert raw_upload.data == data
+    assert raw_upload.filename == "user.json"
+    assert raw_upload.content_type == "application/json"
+    assert raw_upload.content_hash == hashlib.sha256(data).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_uses_explicit_content_type_over_upload_default():
+    uploaded = await read_uploaded_documentation(
+        _upload("user.json", "application/octet-stream", b'{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]}'),
+        content_type="application/scim+json",
+    )
+
+    assert uploaded.content_type == "application/scim+json"
+    assert uploaded.metadata["content_type"] == "application/scim+json"
+    assert uploaded.metadata["parser"] == "json"
+    assert uploaded.metadata["preserve_as_single_documentation_item"] is True
+    assert uploaded.metadata["chunking_strategy"] == "single_item_schema"
+    assert "preserveAsSingleDocumentationItem" not in uploaded.metadata
+    assert "chunkingStrategy" not in uploaded.metadata
+    assert uploaded.preserve_as_single_item is True
+    assert "urn:ietf:params:scim:schemas:core:2.0:User" in uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_marks_raw_sql_schema_as_single_item():
+    uploaded = await read_uploaded_documentation(
+        _upload("schema.sql", "text/sql", b"CREATE TABLE users (id bigint primary key);\n")
+    )
+
+    assert uploaded.content_type == "text/sql"
+    assert uploaded.metadata["parser"] == "text"
+    assert uploaded.metadata["preserve_as_single_documentation_item"] is True
+    assert uploaded.metadata["chunking_strategy"] == "single_item_schema"
+    assert uploaded.preserve_as_single_item is True
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_inferrs_sql_content_type_for_generic_sql_upload():
+    uploaded = await read_uploaded_documentation(
+        _upload("schema.sql", "application/octet-stream", b"CREATE TABLE users (id bigint primary key);\n")
+    )
+
+    assert uploaded.content_type == "application/sql"
+    assert uploaded.metadata["content_type"] == "application/sql"
+    assert uploaded.metadata["parser"] == "text"
+    assert uploaded.metadata["preserve_as_single_documentation_item"] is True
+    assert uploaded.metadata["chunking_strategy"] == "single_item_schema"
+    assert uploaded.preserve_as_single_item is True
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_marks_conndev_yaml_schema_as_single_item():
+    uploaded = await read_uploaded_documentation(
+        _upload("schema.yaml", "application/conndev+yaml", b"objects:\n  - name: User\n")
+    )
+
+    assert uploaded.content_type == "application/conndev+yaml"
+    assert uploaded.metadata["parser"] == "yaml"
+    assert uploaded.metadata["preserve_as_single_documentation_item"] is True
+    assert uploaded.metadata["chunking_strategy"] == "single_item_schema"
+    assert uploaded.preserve_as_single_item is True
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_extracts_html_text():
+    uploaded = await read_uploaded_documentation(
+        _upload("docs.html", "text/html", b"<html><script>ignore()</script><body><h1>API Docs</h1></body></html>")
+    )
+
+    assert uploaded.metadata["parser"] == "html"
+    assert "API Docs" in uploaded.text
+    assert "ignore()" not in uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_extracts_docx_text():
+    from docx import Document
+
+    buffer = BytesIO()
+    document = Document()
+    document.add_paragraph("Connector documentation")
+    document.save(buffer)
+
+    uploaded = await read_uploaded_documentation(
+        _upload(
+            "docs.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            buffer.getvalue(),
+        )
+    )
+
+    assert uploaded.metadata["parser"] == "docx"
+    assert "Connector documentation" in uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_parse_uploaded_documentation_offloads_docx_parsing_to_thread():
+    raw_upload = RawUploadedDocumentation(
+        data=b"docx-bytes",
+        filename="docs.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        content_hash="hash",
+    )
+
+    with patch.object(upload_utils.asyncio, "to_thread", new_callable=AsyncMock) as mock_to_thread:
+        mock_to_thread.return_value = ("Connector documentation", {"docx_paragraphs": 1, "docx_tables": 0})
+
+        uploaded = await upload_utils.parse_uploaded_documentation(raw_upload)
+
+    mock_to_thread.assert_awaited_once()
+    assert mock_to_thread.await_args.args[0] is upload_utils._docx_to_text
+    assert uploaded.metadata["parser"] == "docx"
+    assert uploaded.text == "Connector documentation"
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_rejects_unsupported_binary_type():
+    with pytest.raises(HTTPException) as exc_info:
+        await read_uploaded_documentation(_upload("archive.zip", "application/zip", b"PK\x03\x04"))
+
+    assert exc_info.value.status_code == 415
+    assert "Unsupported documentation content type" in exc_info.value.detail

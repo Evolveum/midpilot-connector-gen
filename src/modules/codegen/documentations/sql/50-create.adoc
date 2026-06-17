@@ -1,0 +1,11 @@
+= SQL create operation
+
+SQL create generation should insert into the table or tables mapped to the object class.
+
+== Create rules
+
+* Do not insert generated, identity, serial, or read-only columns unless explicitly required.
+* Include mandatory non-generated columns.
+* Use foreign key columns only when the referenced object identity is available in the input attributes.
+* If several tables are selected, make transaction boundaries and ordering explicit.
+
