@@ -8,9 +8,9 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
 from src.common.enums import JobStatus
+from src.common.errors import AttributesNotFoundError
 from src.modules.codegen.router import (
     generate_native_schema,
     get_native_schema_status,
@@ -172,8 +172,8 @@ async def test_generate_native_schema_missing_class():
     mock_repo.get_session_data = AsyncMock(return_value=None)
 
     with patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo):
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(AttributesNotFoundError) as exc_info:
             await generate_native_schema(uuid4(), "NonExistentClass", db=MagicMock())
 
     assert exc_info.value.status_code == 404
-    assert "No attributes found for nonexistentclass" in exc_info.value.detail
+    assert "No attributes found for nonexistentclass" in exc_info.value.message

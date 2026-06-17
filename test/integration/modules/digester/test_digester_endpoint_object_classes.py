@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
 from src.common.enums import JobStatus
+from src.common.errors import SessionNotFoundError
 from src.modules.digester.router import extract_object_classes, get_object_classes_status
 
 # CLASSES (object classes)
@@ -47,11 +47,11 @@ async def test_extract_object_classes_session_not_found():
     mock_repo.session_exists = AsyncMock(return_value=False)
 
     with patch("src.modules.digester.router.SessionRepository", return_value=mock_repo):
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(SessionNotFoundError) as exc_info:
             await extract_object_classes(uuid4(), db=MagicMock())
 
         assert exc_info.value.status_code == 404
-        assert "not found" in str(exc_info.value.detail).lower()
+        assert "not found" in exc_info.value.message.lower()
 
 
 @pytest.mark.asyncio

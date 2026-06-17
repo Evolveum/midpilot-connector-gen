@@ -6,18 +6,13 @@ import logging
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Body, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.database.config import get_db
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.errors import (
-    InvalidObjectClassesOutputError,
-    ObjectClassesNotFoundError,
-    ObjectClassNotFoundError,
-    RelevantChunksNotFoundError,
-)
+from src.common.errors import ObjectClassesNotFoundError, SessionNotFoundError
 from src.common.jobs import schedule_coroutine_job
 from src.common.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
@@ -146,10 +141,7 @@ async def get_specific_object_class(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    try:
-        return await results.build_object_class_detail(db, repo, session_id, object_class)
-    except (ObjectClassesNotFoundError, InvalidObjectClassesOutputError, ObjectClassNotFoundError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return await results.build_object_class_detail(db, repo, session_id, object_class)
 
 
 @router.put(
@@ -226,16 +218,11 @@ async def extract_class_attributes(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    try:
-        selection = await DocumentationSelector(db).build_attribute_plan(
-            repo=repo,
-            session_id=session_id,
-            object_class=object_class,
-        )
-    except (ObjectClassesNotFoundError, InvalidObjectClassesOutputError, ObjectClassNotFoundError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except RelevantChunksNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    selection = await DocumentationSelector(db).build_attribute_plan(
+        repo=repo,
+        session_id=session_id,
+        object_class=object_class,
+    )
 
     total_chunks = len(selection.relevant_chunks)
     job_id = await schedule_coroutine_job(
@@ -351,16 +338,11 @@ async def extract_class_endpoints(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    try:
-        selection = await DocumentationSelector(db).build_endpoint_plan(
-            repo=repo,
-            session_id=session_id,
-            object_class=object_class,
-        )
-    except (ObjectClassesNotFoundError, InvalidObjectClassesOutputError, ObjectClassNotFoundError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except RelevantChunksNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    selection = await DocumentationSelector(db).build_endpoint_plan(
+        repo=repo,
+        session_id=session_id,
+        object_class=object_class,
+    )
 
     total_chunks = len(selection.relevant_chunks)
     job_id = await schedule_coroutine_job(
@@ -476,15 +458,12 @@ async def extract_relations(
     try:
         doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
+        raise SessionNotFoundError(session_id) from e
 
     # Load object_classes from session
     relevant = await repo.get_session_data(session_id, "objectClassesOutput")
     if not relevant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(ObjectClassesNotFoundError()),
-        )
+        raise ObjectClassesNotFoundError(session_id)
 
     job_id = await schedule_coroutine_job(
         job_type="digester.getRelations",

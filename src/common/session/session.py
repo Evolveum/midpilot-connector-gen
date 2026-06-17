@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Dict
 from uuid import UUID
 
-from fastapi import HTTPException, UploadFile, status
+from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_processor.llms import get_llm_processed_chunk
@@ -18,6 +18,7 @@ from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import JobStage
+from src.common.errors import JobNotFoundError, NoDocumentationStoredError, SessionNotFoundError
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.session.schema import ProcessedDocumentationChunk, RawUploadedDocumentation
 from src.common.session.utils.documentation_upload import (
@@ -195,7 +196,7 @@ async def _get_session_documentation_impl(
 ) -> list[dict]:
     repo = SessionRepository(db)
     if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
 
     doc_repo = DocumentationRepository(db)
 
@@ -243,10 +244,7 @@ async def _get_session_documentation_impl(
             for item in doc_items
         ]
 
-    raise HTTPException(
-        status_code=400,
-        detail=f"Session {session_id} has no stored documentation. Please upload documentation file or run scraper.",
-    )
+    raise NoDocumentationStoredError(session_id)
 
 
 async def resolve_session_job_id(
@@ -262,14 +260,11 @@ async def resolve_session_job_id(
 
     job_id_value = await repo.get_session_data(session_id, session_key)
     if not job_id_value:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=not_found_detail or f"No {job_label} job found in session {session_id}",
-        )
+        raise JobNotFoundError(job_label, session_id, detail=not_found_detail)
 
     return job_id_value if isinstance(job_id_value, UUID) else UUID(str(job_id_value))
 
 
 async def ensure_session_exists(repo: SessionRepository, session_id: UUID) -> None:
     if not await repo.session_exists(session_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        raise SessionNotFoundError(session_id)
