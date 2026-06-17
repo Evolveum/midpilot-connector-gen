@@ -14,7 +14,7 @@ from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
 from src.modules.discovery.prompts.prompts import get_irrelevant_filter_prompts, get_rank_links_prompts
 from src.modules.discovery.schema import DiscoveryIntegrationType, RankedLinks
-from src.modules.scrape.llms import get_irrelevant_llm_response
+from src.modules.scrape.core.llms import get_irrelevant_llm_response
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ async def filter_candidate_links(
             break
 
         logger.info(
-            "[Discovery:Filter] Starting LLM filtering call %s/%s with %s links via scrape.llms",
+            "[Discovery:Filter] Starting LLM filtering call %s/%s with %s links via scrape.core.llms",
             call_num + 1,
             max_llm_calls,
             len(relevant_links),

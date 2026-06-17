@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from src.common.llm import build_structured_chain, get_default_llm
 from src.config import config
-from src.modules.scrape.llms import _get_irrelevant_links_reasoning_effort
+from src.modules.scrape.core.llms import _get_irrelevant_links_reasoning_effort
 
 
 def test_get_default_llm_uses_configured_reasoning_effort(monkeypatch):

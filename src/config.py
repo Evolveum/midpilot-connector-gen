@@ -127,10 +127,6 @@ class ScrapeAndProcessSettings(BaseModel):
         4,
         description="Max outer iterations of the scraper loop",
     )
-    max_iterations_filter_irrelevant: int = Field(
-        5,
-        description="Max LLM filtering passes per iteration",
-    )
     max_links_per_documentation: int = Field(
         3000,
         description="Maximum number of raw links to process from a single scraped documentation page",
