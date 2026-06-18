@@ -64,7 +64,7 @@ INTENT PROFILE: `id`
 - Generate ONLY identifier-based lookup.
 - Prefer dedicated id endpoint paths like `Users/{{id}}` when documented.
 - For id lookup, include `singleResult()` and an exact-match `supportedFilter(...)` block mapping identifier value to path/query parameter.
-- If endpoint uses path placeholder `{id}`, map it with `request.pathParameter("id", value)`.
+- If endpoint uses path placeholder `{{id}}`, map it with `request.pathParameter("id", value)`.
 - If path lookup is not documented, map exact id filter with documented SCIM query (`filter=id eq \\"value\\"`) behavior.
 - Do not add list/get-all logic or non-id filters.
 """)
