@@ -229,7 +229,7 @@ class RelationGenerator(BaseGroovyGenerator):
 def build_other_authorization_scaffold(protocol: ApiType) -> str:
     return (
         "authentication {\n"
-        f"    {protocol.value.lower()} {{\n"
+        f"    {protocol.value} {{\n"
         "        other {\n"
         "            implementation {\n"
         "                // write your custom implementation of authorization here\n"
@@ -272,7 +272,7 @@ def build_authorization_scaffold(
 ) -> str:
     lines = [
         "authentication {",
-        f"    {protocol.value.lower()} {{",
+        f"    {protocol.value} {{",
     ]
     lines.extend(f"        // {comment}" for comment in _unsupported_authorization_comments(preferred_authorizations))
     lines.extend(
@@ -296,14 +296,14 @@ class AuthorizationGenerator(BaseGroovyGenerator):
         base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
-        authentication_container = protocol.value.lower()
+        authentication_container = protocol.value
         default_scaffold = build_authorization_scaffold(protocol, preferred_authorizations)
         config = OperationConfig(
             operation_name="Authorization",
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold=default_scaffold,
-            logger_prefix=f"[Codegen:Authorization:{protocol.name}]",
+            logger_prefix=f"[Codegen:Authorization:{protocol.value}]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["authorization_docs"] = docs_text

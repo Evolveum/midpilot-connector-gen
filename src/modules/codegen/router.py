@@ -32,7 +32,7 @@ from src.common.schema import (
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
 from src.common.utils.normalize import normalize_object_class_name
 from src.common.utils.relevance import hydrate_auth_sequences_from_relevance as _hydrate_auth_sequences_from_relevance
-from src.common.utils.session_info_metadata import get_session_api_types, resolve_session_api_type
+from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
 from src.modules.codegen import service
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
@@ -101,6 +101,11 @@ def _missing_operation_surface_detail(protocol: ApiType, object_class: str, sess
 async def generate_authorization(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
     codegen_input: AuthorizationCodegenInput = Body(...),
 ):
@@ -109,6 +114,8 @@ async def generate_authorization(
     """
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
+
+    protocol = await resolve_effective_api_type(session_id, api_type)
 
     input_preferred_authorizations = _preferred_authorizations_from_input(codegen_input)
 
@@ -123,7 +130,6 @@ async def generate_authorization(
                 await _hydrate_auth_sequences_from_relevance(db, session_id, auth_output),
             )
         except Exception:
-            # Keep existing payload when relevance rows are unavailable (e.g., tests/mocks or partial sessions).
             pass
 
     preferred_authorizations = enrich_preferred_authorizations(
@@ -137,6 +143,7 @@ async def generate_authorization(
         "sessionId": session_id,
         "auth": auth_output,
         "skipCache": skip_cache,
+        "apiType": protocol.value,
     }
     job_input.update(context_payload)
     if preferred_authorizations is not None:
@@ -146,6 +153,7 @@ async def generate_authorization(
         "auth_payload": auth_output,
         "preferred_authorizations": preferred_authorizations,
         "session_id": session_id,
+        "protocol": protocol,
     }
     if repair_context is not None:
         worker_kwargs["repair_context"] = repair_context
@@ -238,6 +246,11 @@ async def generate_native_schema(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
     codegen_input: Optional[CodegenRepairContext] = None,
 ):
@@ -254,14 +267,16 @@ async def generate_native_schema(
     if not attrs:
         raise AttributesNotFoundError(object_class, session_id)
 
+    protocol = await resolve_effective_api_type(session_id, api_type)
     repair_context = _repair_context_from_input(codegen_input)
     job_input = {
         "attributes": attrs,
         "objectClass": object_class,
         "skipCache": skip_cache,
+        "apiType": protocol.value,
     }
     job_input.update(_context_payload_from_input(codegen_input))
-    worker_kwargs: dict[str, Any] = {"session_id": session_id}
+    worker_kwargs: dict[str, Any] = {"session_id": session_id, "protocol": protocol}
     if repair_context is not None:
         worker_kwargs["repair_context"] = repair_context
 
@@ -481,6 +496,11 @@ async def generate_search(
     object_class: str = Path(..., description="Object class name"),
     intent: SearchIntent = Path(..., description="Intent"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
     codegen_input: Optional[CodegenOperationInput] = None,
 ):
@@ -497,8 +517,7 @@ async def generate_search(
     if not attrs:
         raise AttributesNotFoundError(object_class, session_id)
 
-    api_types = await get_session_api_types(session_id)
-    protocol = resolve_session_api_type(api_types)
+    protocol = await resolve_effective_api_type(session_id, api_type)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
@@ -512,6 +531,7 @@ async def generate_search(
         "object_class": object_class,
         "intent": intent,
         "skipCache": skip_cache,
+        "apiType": protocol.value,
     }
     job_input.update(_context_payload_from_input(codegen_input))
     if preferred_endpoints is not None:
@@ -522,6 +542,7 @@ async def generate_search(
         "object_class": object_class,
         "intent": intent,
         "preferred_endpoints": preferred_endpoints,
+        "protocol": protocol,
     }
     if repair_context is not None:
         worker_kwargs["repair_context"] = repair_context
@@ -632,6 +653,11 @@ async def generate_create(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
     codegen_input: Optional[CodegenOperationInput] = None,
 ):
@@ -648,8 +674,7 @@ async def generate_create(
     if not attrs:
         raise AttributesNotFoundError(object_class, session_id)
 
-    api_types = await get_session_api_types(session_id)
-    protocol = resolve_session_api_type(api_types)
+    protocol = await resolve_effective_api_type(session_id, api_type)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
@@ -662,6 +687,7 @@ async def generate_create(
         "attributes": attrs,
         "object_class": object_class,
         "skipCache": skip_cache,
+        "apiType": protocol.value,
     }
     job_input.update(_context_payload_from_input(codegen_input))
     if preferred_endpoints is not None:
@@ -671,6 +697,7 @@ async def generate_create(
         "session_id": session_id,
         "object_class": object_class,
         "preferred_endpoints": preferred_endpoints,
+        "protocol": protocol,
     }
     if repair_context is not None:
         worker_kwargs["repair_context"] = repair_context
@@ -773,6 +800,11 @@ async def generate_update(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
     codegen_input: Optional[CodegenOperationInput] = None,
 ):
@@ -789,8 +821,7 @@ async def generate_update(
     if not attrs:
         raise AttributesNotFoundError(object_class, session_id)
 
-    api_types = await get_session_api_types(session_id)
-    protocol = resolve_session_api_type(api_types)
+    protocol = await resolve_effective_api_type(session_id, api_type)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
@@ -803,6 +834,7 @@ async def generate_update(
         "attributes": attrs,
         "object_class": object_class,
         "skipCache": skip_cache,
+        "apiType": protocol.value,
     }
     job_input.update(_context_payload_from_input(codegen_input))
     if preferred_endpoints is not None:
@@ -812,6 +844,7 @@ async def generate_update(
         "session_id": session_id,
         "object_class": object_class,
         "preferred_endpoints": preferred_endpoints,
+        "protocol": protocol,
     }
     if repair_context is not None:
         worker_kwargs["repair_context"] = repair_context
@@ -914,6 +947,11 @@ async def generate_delete(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
     codegen_input: Optional[CodegenOperationInput] = None,
 ):
@@ -930,8 +968,7 @@ async def generate_delete(
     if not attrs:
         raise AttributesNotFoundError(object_class, session_id)
 
-    api_types = await get_session_api_types(session_id)
-    protocol = resolve_session_api_type(api_types)
+    protocol = await resolve_effective_api_type(session_id, api_type)
     preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
     repair_context = _repair_context_from_input(codegen_input)
 
@@ -944,6 +981,7 @@ async def generate_delete(
         "attributes": attrs,
         "object_class": object_class,
         "skipCache": skip_cache,
+        "apiType": protocol.value,
     }
     job_input.update(_context_payload_from_input(codegen_input))
     if preferred_endpoints is not None:
@@ -953,6 +991,7 @@ async def generate_delete(
         "session_id": session_id,
         "object_class": object_class,
         "preferred_endpoints": preferred_endpoints,
+        "protocol": protocol,
     }
     if repair_context is not None:
         worker_kwargs["repair_context"] = repair_context

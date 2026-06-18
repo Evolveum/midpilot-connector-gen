@@ -50,6 +50,6 @@ class JobStage(StrEnum):
 
 
 class ApiType(StrEnum):
-    REST = "REST"
-    SCIM = "SCIM"
-    SQL = "SQL"
+    REST = "rest"
+    SCIM = "scim"
+    SQL = "sql"

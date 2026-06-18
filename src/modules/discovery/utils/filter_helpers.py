@@ -35,7 +35,7 @@ async def filter_candidate_links(
     candidates_enriched: List[Dict[str, Any]],
     app: str,
     app_version: str,
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
     max_llm_calls: int = 3,
 ) -> tuple[List[str], List[str]]:
     """
@@ -151,7 +151,7 @@ async def rank_candidate_links(
     app: str,
     app_version: str,
     max_links: int,
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
 ) -> List[str]:
     """
     Rank candidate links by relevance using LLM and return ordered URLs.

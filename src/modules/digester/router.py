@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.database.config import get_db
 from src.common.database.repositories.session_repository import SessionRepository
+from src.common.enums import ApiType
 from src.common.errors import ObjectClassesNotFoundError, SessionNotFoundError
 from src.common.jobs import schedule_coroutine_job
 from src.common.schema import JobCreateResponse, JobStatusMultiDocResponse
@@ -51,6 +52,11 @@ logger = logging.getLogger(__name__)
 async def extract_object_classes(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -62,16 +68,19 @@ async def extract_object_classes(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
+    input_payload: dict[str, Any] = {"skipCache": skip_cache}
+    if api_type is not None:
+        input_payload["apiType"] = api_type.value
+
     job_id = await schedule_coroutine_job(
         job_type="digester.getObjectClass",
-        input_payload={
-            "skipCache": skip_cache,
-        },
+        input_payload=input_payload,
         dynamic_input_enabled=True,
         dynamic_input_provider=object_classes_input,
         worker=service.extract_object_classes,
         worker_kwargs={
             "session_id": session_id,
+            "api_type_override": api_type,
         },
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
@@ -85,9 +94,7 @@ async def extract_object_classes(
         session_id,
         {
             "objectClassesJobId": str(job_id),
-            "objectClassesInput": {
-                "skipCache": skip_cache,
-            },
+            "objectClassesInput": dict(input_payload),
         },
     )
 
@@ -205,6 +212,11 @@ async def extract_class_attributes(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name (e.g., 'User', 'Group')"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -222,6 +234,7 @@ async def extract_class_attributes(
         repo=repo,
         session_id=session_id,
         object_class=object_class,
+        api_type_override=api_type,
     )
 
     total_chunks = len(selection.relevant_chunks)
@@ -235,6 +248,7 @@ async def extract_class_attributes(
         },
         worker=service.extract_attributes,
         worker_args=(selection.doc_items, object_class, session_id, selection.relevant_chunks),
+        worker_kwargs={"api_type_override": api_type},
         initial_stage="chunking",
         initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
         session_id=session_id,
@@ -324,6 +338,11 @@ async def extract_class_endpoints(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -342,6 +361,7 @@ async def extract_class_endpoints(
         repo=repo,
         session_id=session_id,
         object_class=object_class,
+        api_type_override=api_type,
     )
 
     total_chunks = len(selection.relevant_chunks)
@@ -356,7 +376,7 @@ async def extract_class_endpoints(
         },
         worker=service.extract_endpoints,
         worker_args=(selection.doc_items, object_class, session_id, selection.relevant_chunks),
-        worker_kwargs={"base_api_url": selection.base_api_url},
+        worker_kwargs={"base_api_url": selection.base_api_url, "api_type_override": api_type},
         initial_stage="chunking",
         initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
         session_id=session_id,

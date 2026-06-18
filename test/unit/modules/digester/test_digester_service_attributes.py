@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.digester import service
 from src.modules.digester.schemas import AttributeInfoRest
 
@@ -43,7 +44,9 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         mock_extract_chunks.return_value = (
             ["chunk-0 text", "chunk-2 text"],
@@ -105,7 +108,7 @@ async def test_extract_attributes_no_relevant_chunks(mock_llm, mock_digester_upd
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
         patch(
-            "src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
         ) as mock_api_types,
     ):
         result = await service.extract_attributes([], "User", session_id, [], job_id)
@@ -113,7 +116,7 @@ async def test_extract_attributes_no_relevant_chunks(mock_llm, mock_digester_upd
         assert result["result"]["attributes"] == {}
         assert result["relevantDocumentations"] == []
         mock_extract_chunks.assert_not_called()
-        mock_api_types.assert_awaited_once_with(session_id)
+        mock_api_types.assert_awaited_once_with(session_id, None)
 
 
 @pytest.mark.asyncio
@@ -150,7 +153,9 @@ async def test_extract_attributes_scim_preserves_doc_maps_when_relevance_is_empt
     }
 
     with (
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=["SCIM"]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.SCIM
+        ),
         patch(
             "src.modules.digester.service.filter_documentation_items", new_callable=AsyncMock, return_value=doc_items
         ),
@@ -209,7 +214,9 @@ async def test_extract_attributes_session_not_found(mock_llm, mock_digester_upda
             new_callable=AsyncMock,
             return_value=False,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         mock_extract_chunks.return_value = (["chunk text"], [(0, doc_uuid)])
         mock_extract_attrs.return_value = {"result": {"attributes": {"id": {}}}, "relevantDocumentations": []}

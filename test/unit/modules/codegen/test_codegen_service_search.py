@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.codegen import service
 from src.modules.codegen.enums import SearchIntent
 
@@ -28,7 +29,6 @@ async def test_generate_search():
     ]
 
     with (
-        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch(
             "src.modules.codegen.service.get_session_connection_target",
             new_callable=AsyncMock,
@@ -51,6 +51,7 @@ async def test_generate_search():
             object_class="User",
             intent=SearchIntent.FILTER,
             job_id=uuid4(),
+            protocol=ApiType.REST,
         )
 
         assert isinstance(result, dict)

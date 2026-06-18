@@ -4,11 +4,12 @@
 
 """Unit tests for codegen service schema generators."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.codegen import service
 
 
@@ -22,7 +23,6 @@ async def test_generate_native_schema():
 
     with (
         patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy,
-        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         mock_generate_groovy.return_value = "mocked groovy code"
 
@@ -31,6 +31,7 @@ async def test_generate_native_schema():
             "User",
             session_id=uuid4(),
             job_id=uuid4(),
+            protocol=ApiType.REST,
         )
 
         assert isinstance(result, dict)
@@ -48,7 +49,6 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
 
     with (
         patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy,
-        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=["SQL"]),
     ):
         mock_generate_groovy.return_value = "mocked sql schema code"
 
@@ -57,6 +57,7 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
             "User",
             session_id=uuid4(),
             job_id=uuid4(),
+            protocol=ApiType.SQL,
         )
 
     assert result == {"code": "mocked sql schema code"}

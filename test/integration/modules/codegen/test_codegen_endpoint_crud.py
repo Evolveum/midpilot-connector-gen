@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.common.errors import OperationSurfaceNotFoundError
 from src.modules.codegen.router import generate_create, generate_delete, generate_update
 from src.modules.codegen.schema import CodegenOperationInput
@@ -71,7 +72,9 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
-        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.codegen.router.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         job_id = uuid4()
         session_id = uuid4()
@@ -121,7 +124,9 @@ async def test_generate_update_includes_repair_context_in_job_and_session_input(
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
-        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.codegen.router.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         job_id = uuid4()
         session_id = uuid4()
@@ -169,7 +174,9 @@ async def test_generate_create_sql_missing_table_metadata_uses_sql_error_detail(
 
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=["SQL"]),
+        patch(
+            "src.modules.codegen.router.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.SQL
+        ),
     ):
         session_id = uuid4()
         with pytest.raises(OperationSurfaceNotFoundError) as exc_info:

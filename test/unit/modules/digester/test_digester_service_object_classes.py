@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.digester import service
 from src.modules.digester.schemas import ExtendedObjectClass
 
@@ -39,7 +40,9 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
         patch("src.modules.digester.service.run_doc_extractors_concurrently") as mock_parallel,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         mock_parallel.return_value = [
             (
@@ -113,7 +116,9 @@ async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_
     with (
         patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
         patch("src.modules.digester.service.run_doc_extractors_concurrently") as mock_parallel,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         mock_parallel.return_value = []
 

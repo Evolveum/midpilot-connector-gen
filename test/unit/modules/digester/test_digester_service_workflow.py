@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.digester import service
 from src.modules.digester.schemas import ExtendedObjectClass
 
@@ -44,7 +45,11 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
             patch(
                 "src.modules.digester.service.deduplicate_and_sort_object_classes", new_callable=AsyncMock
             ) as mock_dedupe_classes,
-            patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "src.modules.digester.service.resolve_effective_api_type",
+                new_callable=AsyncMock,
+                return_value=ApiType.REST,
+            ),
         ):
             mock_parallel.return_value = [
                 (
@@ -90,7 +95,11 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                 new_callable=AsyncMock,
                 return_value=True,
             ) as mock_update_object_class,
-            patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "src.modules.digester.service.resolve_effective_api_type",
+                new_callable=AsyncMock,
+                return_value=ApiType.REST,
+            ),
         ):
             mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
             mock_attrs.return_value = {
@@ -113,7 +122,11 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
                 new_callable=AsyncMock,
                 return_value=True,
             ) as mock_update_object_class,
-            patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "src.modules.digester.service.resolve_effective_api_type",
+                new_callable=AsyncMock,
+                return_value=ApiType.REST,
+            ),
         ):
             mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
             mock_endpoints.return_value = {
