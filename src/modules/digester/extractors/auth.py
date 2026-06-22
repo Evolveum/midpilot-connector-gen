@@ -14,7 +14,7 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.config import config
-from src.modules.digester.enums import AuthType
+from src.modules.digester.enums import AuthType, normalize_auth_type
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.extraction.sequences import extract_sequence
@@ -236,6 +236,25 @@ async def deduplicate_auth(
         name_norm = (auth.name or "").strip().lower().replace("-", "").replace(" ", "")
         type_norm = (auth.type or "").strip().lower()
         key = (name_norm, type_norm)
+
+        if normalize_auth_type(auth.type) is not AuthType.OTHER:
+            existing_key = next((seen_key for seen_key in seen if seen_key[1] == type_norm), None)
+            if existing_key is None:
+                seen[key] = auth
+                continue
+
+            kept = seen[existing_key]
+            if len(auth.name.strip()) > len(kept.name.strip()):
+                _merge_relevant_sequences(auth, kept)
+                if isinstance(auth, AuthProcessingInfo) and isinstance(kept, AuthProcessingInfo):
+                    _merge_quirks(auth, kept)
+                del seen[existing_key]
+                seen[key] = auth
+            else:
+                _merge_relevant_sequences(kept, auth)
+                if isinstance(kept, AuthProcessingInfo) and isinstance(auth, AuthProcessingInfo):
+                    _merge_quirks(kept, auth)  # type: ignore # - we check that with type
+            continue
 
         # Check if key is substring of any seen key or if any seen key is substring of key.
         # We consider two keys duplicates only when their types are the same.
