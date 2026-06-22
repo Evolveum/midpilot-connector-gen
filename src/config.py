@@ -280,6 +280,36 @@ class DigesterSettings(BaseModel):
             "Values below this evidence ratio across processed documents are ignored as uncertain."
         ),
     )
+    scim_cloud_enabled: bool = Field(
+        True,
+        description="Enable the scim.cloud registry signal when detecting apiType.",
+    )
+    scim_cloud_v1_url: str = Field(
+        "https://raw.githubusercontent.com/aaronpk/scim.cloud/master/public/json/scim_v1_implementations.json",
+        description="Source URL for the scim.cloud SCIM 1.1 implementations list.",
+    )
+    scim_cloud_v2_url: str = Field(
+        "https://raw.githubusercontent.com/aaronpk/scim.cloud/master/public/json/scim_v2_implementations.json",
+        description="Source URL for the scim.cloud SCIM 2.0 implementations list.",
+    )
+    scim_cloud_cache_ttl: timedelta = Field(
+        timedelta(hours=24),
+        description="How long the fetched scim.cloud registry is cached in-memory before refresh.",
+    )
+    scim_cloud_fetch_timeout_seconds: float = Field(
+        10.0,
+        ge=0,
+        description="HTTP timeout when fetching the scim.cloud registry.",
+    )
+    scim_cloud_match_threshold: float = Field(
+        0.85,
+        ge=0,
+        le=1,
+        description=(
+            "Minimum fuzzy match score (0-1) for an application name to be considered present in the "
+            "scim.cloud registry, matched against both product name and developer."
+        ),
+    )
     fuzzy_start_marker_error_ratio: float = Field(
         0.05,
         description="Allowed fuzzy-match error ratio when validating extracted sequence markers.",

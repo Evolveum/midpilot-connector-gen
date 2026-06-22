@@ -12,12 +12,13 @@ from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.enums import ApiType, JobStage
 from src.common.jobs import update_job_progress
 from src.common.utils.normalize import normalize_endpoint_key
-from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.common.utils.session_info_metadata import get_discovery_application_name, resolve_effective_api_type
 from src.modules.digester.aggregation.merges import (
     merge_api_type,
     merge_info_metadata,
     merge_relations_results,
 )
+from src.modules.digester.apitype.scim_cloud import lookup_scim_support
 from src.modules.digester.entities.object_classes import (
     extract_attributes_from_result,
     extract_endpoints_from_result,
@@ -481,15 +482,17 @@ async def _retry_rest_endpoints_with_default_criteria(
     return fallback_result
 
 
-async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
+async def extract_info_metadata(doc_items: List[dict], job_id: UUID, session_id: UUID):
     """
     Extract metadata from multiple documentation items in parallel.
 
     Step 1: Run two independent per-chunk extractors concurrently:
             - info metadata (name, versions, base endpoints, database name),
-            - apiType (REST/SCIM/SQL protocol detection) as a standalone LLM call.
-    Step 2: Merge both sets of candidates using threshold-based heuristics and join the
-            detected apiType into one final InfoResponse payload.
+            - apiType (REST/SCIM/SQL protocol detection) as a standalone LLM call,
+            plus a one-off scim.cloud registry lookup for the discovery application name.
+    Step 2: Merge both sets of candidates using threshold-based heuristics, union in SCIM
+            when the scim.cloud registry confirms it, and join the detected apiType into one
+            final InfoResponse payload.
     """
     all_info_candidates: List[InfoMetadataExtraction] = []
     all_api_type_candidates: List[ApiTypeResponse] = []
@@ -518,17 +521,15 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
                 chunk_id_str,
             )
 
-    # Info and apiType run as two concurrent passes over the same chunks, i.e. two LLM calls
-    # per chunk. Set the combined total once here so progress only reaches 100% once both
-    # passes finish; each pass then increments completed counts (set_total=False avoids
-    # either pass overwriting the shared total).
     await update_job_progress(
         job_id,
         total_processing=len(doc_items) * 2,
         message="Processing chunks",
     )
 
-    info_results, api_type_results = await asyncio.gather(
+    application_name = await get_discovery_application_name(session_id)
+
+    info_results, api_type_results, scim_cloud_match = await asyncio.gather(
         run_doc_extractors_concurrently(
             chunk_items=doc_items,
             job_id=job_id,
@@ -543,6 +544,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
             logger_scope="Digester:ApiType",
             set_total=False,
         ),
+        lookup_scim_support(application_name),
     )
 
     for raw_infos, has_relevant_data, chunk_id in info_results:
@@ -643,6 +645,13 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
     )
 
     api_types = merge_api_type(all_api_type_candidates, total_items=len(doc_items))
+    if scim_cloud_match.matched and ApiType.SCIM not in api_types:
+        logger.info(
+            "[Digester:ApiType] scim.cloud confirmed SCIM for '%s' (matched '%s'); adding SCIM to detected apiType",
+            application_name,
+            scim_cloud_match.project_name,
+        )
+        api_types = sorted([*api_types, ApiType.SCIM], key=lambda api_type: api_type.value)
     merged_result = merge_info_metadata(all_info_candidates, total_items=len(doc_items), api_types=api_types)
     await update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
 

@@ -10,6 +10,7 @@ import pytest
 from src.common.enums import ApiType
 from src.modules.digester import service
 from src.modules.digester.aggregation.merges import merge_api_type, merge_info_metadata
+from src.modules.digester.apitype.scim_cloud import ScimCloudMatch
 from src.modules.digester.enums import EndpointType
 from src.modules.digester.schemas import ApiTypeResponse, BaseAPIEndpoint, InfoMetadata, InfoMetadataExtraction
 
@@ -58,12 +59,22 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
 
     with (
         patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch(
+            "src.modules.digester.service.get_discovery_application_name",
+            new_callable=AsyncMock,
+            return_value="ExampleAPI",
+        ),
+        patch(
+            "src.modules.digester.service.lookup_scim_support",
+            new_callable=AsyncMock,
+            return_value=ScimCloudMatch(matched=False),
+        ),
     ):
         # First gather call extracts info metadata, second detects apiType.
         mock_parallel.side_effect = [info_results, api_type_results]
 
         job_id = uuid4()
-        result = await service.extract_info_metadata(fake_doc_items, job_id)
+        result = await service.extract_info_metadata(fake_doc_items, job_id, uuid4())
 
         assert "result" in result
         assert "relevantDocumentations" in result
@@ -78,10 +89,53 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
 
 
 @pytest.mark.asyncio
+async def test_extract_info_metadata_scim_cloud_adds_scim(mock_llm, mock_digester_update_job_progress):
+    """scim.cloud confirming SCIM unions it into the detected apiType alongside doc findings."""
+    doc_uuid = uuid4()
+    fake_doc_items = [{"uuid": str(doc_uuid), "content": "Acme REST API"}]
+
+    info_results = [([InfoMetadataExtraction(name="Acme")], True, doc_uuid)]
+    api_type_results = [([ApiTypeResponse(api_type=[ApiType.REST])], True, doc_uuid)]
+
+    with (
+        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch(
+            "src.modules.digester.service.get_discovery_application_name",
+            new_callable=AsyncMock,
+            return_value="Acme",
+        ),
+        patch(
+            "src.modules.digester.service.lookup_scim_support",
+            new_callable=AsyncMock,
+            return_value=ScimCloudMatch(
+                matched=True, application_name="Acme", project_name="Acme", scim_versions=["2.0"]
+            ),
+        ),
+    ):
+        mock_parallel.side_effect = [info_results, api_type_results]
+
+        result = await service.extract_info_metadata(fake_doc_items, uuid4(), uuid4())
+
+        assert result["result"]["infoMetadata"]["apiType"] == [ApiType.REST.value, ApiType.SCIM.value]
+
+
+@pytest.mark.asyncio
 async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_job_progress):
     """Test extract_info_metadata with no documentation items."""
-    with patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock):
-        result = await service.extract_info_metadata([], uuid4())
+    with (
+        patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.modules.digester.service.get_discovery_application_name",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch(
+            "src.modules.digester.service.lookup_scim_support",
+            new_callable=AsyncMock,
+            return_value=ScimCloudMatch(matched=False),
+        ),
+    ):
+        result = await service.extract_info_metadata([], uuid4(), uuid4())
 
         assert result["result"] == {"infoMetadata": None}
         assert result["relevantDocumentations"] == []
@@ -111,6 +165,16 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
         patch("src.modules.digester.service._extract_info_metadata", new_callable=AsyncMock) as mock_extract,
         patch("src.modules.digester.service._extract_api_type", new_callable=AsyncMock) as mock_extract_api_type,
         patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch(
+            "src.modules.digester.service.get_discovery_application_name",
+            new_callable=AsyncMock,
+            return_value="ExampleAPI",
+        ),
+        patch(
+            "src.modules.digester.service.lookup_scim_support",
+            new_callable=AsyncMock,
+            return_value=ScimCloudMatch(matched=False),
+        ),
     ):
         mock_extract_api_type.return_value = ([], False)
         mock_extract.side_effect = [
@@ -149,7 +213,7 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
 
         mock_parallel.side_effect = run_extractor_for_docs
 
-        await service.extract_info_metadata(fake_doc_items, uuid4())
+        await service.extract_info_metadata(fake_doc_items, uuid4(), uuid4())
 
         first_call = mock_extract.await_args_list[0]
         assert first_call.args[3] == {

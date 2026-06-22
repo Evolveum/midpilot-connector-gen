@@ -116,6 +116,15 @@ async def get_session_database_name(session_id: UUID) -> str:
     return extract_database_name(metadata)
 
 
+async def get_discovery_application_name(session_id: UUID) -> str:
+    """Return the application name the user entered in discovery, if any."""
+    discovery_input = await load_session_metadata(session_id, key="discoveryInput")
+    if not isinstance(discovery_input, dict):
+        return ""
+    name = discovery_input.get("applicationName")
+    return name.strip() if isinstance(name, str) else ""
+
+
 async def get_session_connection_target(session_id: UUID) -> tuple[str, str]:
     """
     Return the connector's connection target from a single session metadata load.
