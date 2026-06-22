@@ -53,8 +53,11 @@ from src.modules.digester.schemas.endpoints import (
     RankedEndpointKey,
 )
 from src.modules.digester.schemas.metadata import (
+    ApiTypeResponse,
     BaseAPIEndpoint,
+    InfoExtractionResponse,
     InfoMetadata,
+    InfoMetadataExtraction,
     InfoResponse,
 )
 from src.modules.digester.schemas.object_classes import (
@@ -74,6 +77,7 @@ from src.modules.digester.schemas.relations import (
 )
 
 __all__ = [
+    "ApiTypeResponse",
     "AttributeBase",
     "AttributeBooleanFlagsBase",
     "AttributeBooleanFlagsBuildResponse",
@@ -119,7 +123,9 @@ __all__ = [
     "ExtractedEndpointInfo",
     "ExtractedEndpointResponse",
     "FinalObjectClass",
+    "InfoExtractionResponse",
     "InfoMetadata",
+    "InfoMetadataExtraction",
     "InfoResponse",
     "ObjectClassWithConfidence",
     "ObjectClassesConfidenceResponse",

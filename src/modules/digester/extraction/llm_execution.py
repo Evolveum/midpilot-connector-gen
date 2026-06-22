@@ -59,6 +59,7 @@ async def run_chunks_concurrently(
     job_id: UUID,
     extractor: Callable[[str, UUID, UUID], Awaitable[Tuple[T, bool]]],
     logger_scope: str,
+    set_total: bool = True,
 ) -> List[Tuple[T, bool, UUID]]:
     """
     Process multiple chunks in parallel using the provided extractor function.
@@ -72,12 +73,17 @@ async def run_chunks_concurrently(
         job_id: UUID for job tracking and progress updates
         extractor: Async function that processes chunk content and returns (result, has_relevant_data)
         logger_scope: String prefix for logging messages
+        set_total: Whether to set the job's total document count to this run's chunk count. Set to
+            False when several extractors run over the same chunks concurrently and the caller has
+            already set the combined total; each run still increments completed counts so the total
+            reflects every LLM call (e.g. info + apiType) and only reaches 100% when all are done.
 
     Returns:
         List of tuples containing (result, has_relevant_data, chunk_id) for each processed chunk
     """
     total_chunks = len(chunk_items)
-    await update_job_progress(job_id, total_processing=total_chunks, message="Processing chunks")
+    if set_total:
+        await update_job_progress(job_id, total_processing=total_chunks, message="Processing chunks")
     semaphore = asyncio.Semaphore(_get_digester_llm_limit())
 
     async def _process_single_chunk_item(chunk_item: dict) -> Tuple[T, bool, UUID]:

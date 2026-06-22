@@ -43,10 +43,46 @@ class BaseAPIEndpoint(BaseModel):
         return EndpointType.UNKNOWN
 
 
-class InfoMetadata(BaseModel):
+def normalize_api_type_values(value: Any) -> List[ApiType]:
     """
-    High-level product and API metadata extracted from documentations.
-    Focus on global application info, not per-endpoint details.
+    Normalize api types from various upstream sources.
+    Keep only supported values and canonicalize their casing.
+    """
+    if value is None:
+        return []
+
+    raw_values: List[Any]
+    if isinstance(value, str):
+        raw_values = [value]
+    elif isinstance(value, list):
+        raw_values = value
+    else:
+        return []
+
+    aliases: Dict[str, ApiType] = {
+        "rest": ApiType.REST,
+        "openapi": ApiType.REST,
+        "swagger": ApiType.REST,
+        "scim": ApiType.SCIM,
+        "sql": ApiType.SQL,
+        "db": ApiType.SQL,
+    }
+
+    normalized: List[ApiType] = []
+    for item in raw_values:
+        if not isinstance(item, str):
+            continue
+        canonical = aliases.get(item.strip().lower())
+        if canonical:
+            normalized.append(canonical)
+
+    # Preserve the first-seen order while deduplicating.
+    return list(dict.fromkeys(normalized))
+
+
+class InfoMetadataExtraction(BaseModel):
+    """
+    High-level product and API metadata extracted from documentation chunks.
     """
 
     name: str = Field(
@@ -65,14 +101,6 @@ class InfoMetadata(BaseModel):
         serialization_alias="apiVersion",
         description="API version string as documented (e.g., 'v1', '2024-05', semantic).",
     )
-    api_type: List[ApiType] = Field(
-        default_factory=list,
-        validation_alias="apiType",
-        serialization_alias="apiType",
-        description=(
-            "API technology types. Allowed values: REST, SCIM, SQL. OpenAPI/Swagger should be normalized to REST."
-        ),
-    )
     base_api_endpoint: List[BaseAPIEndpoint] = Field(
         default_factory=list,
         validation_alias="baseApiEndpoint",
@@ -90,44 +118,6 @@ class InfoMetadata(BaseModel):
     )
 
     model_config = {"populate_by_name": True}
-
-    @field_validator("api_type", mode="before")
-    @classmethod
-    def _normalize_api_type(cls, value: Any) -> List[ApiType]:
-        """
-        Normalize api types from various upstream sources.
-        Keep only supported values and canonicalize their casing.
-        """
-        if value is None:
-            return []
-
-        raw_values: List[Any]
-        if isinstance(value, str):
-            raw_values = [value]
-        elif isinstance(value, list):
-            raw_values = value
-        else:
-            return []
-
-        aliases: Dict[str, ApiType] = {
-            "rest": ApiType.REST,
-            "openapi": ApiType.REST,
-            "swagger": ApiType.REST,
-            "scim": ApiType.SCIM,
-            "sql": ApiType.SQL,
-            "db": ApiType.SQL,
-        }
-
-        normalized: List[ApiType] = []
-        for item in raw_values:
-            if not isinstance(item, str):
-                continue
-            canonical = aliases.get(item.strip().lower())
-            if canonical:
-                normalized.append(canonical)
-
-        # Preserve the first-seen order while deduplicating.
-        return list(dict.fromkeys(normalized))
 
     @field_validator("base_api_endpoint", mode="before")
     @classmethod
@@ -161,6 +151,29 @@ class InfoMetadata(BaseModel):
             key=lambda endpoint: (endpoint.uri.lower(), 0 if endpoint.type == EndpointType.CONSTANT else 1),
         )
 
+
+class InfoMetadata(InfoMetadataExtraction):
+    """
+    Final high-level product and API metadata, including the detected ``apiType``.
+
+    This is the stored/returned payload. ``apiType`` is filled by the dedicated
+    detection pipeline and merged in by the service layer, not by chunk extraction.
+    """
+
+    api_type: List[ApiType] = Field(
+        default_factory=list,
+        validation_alias="apiType",
+        serialization_alias="apiType",
+        description=(
+            "API technology types. Allowed values: REST, SCIM, SQL. OpenAPI/Swagger should be normalized to REST."
+        ),
+    )
+
+    @field_validator("api_type", mode="before")
+    @classmethod
+    def _normalize_api_type(cls, value: Any) -> List[ApiType]:
+        return normalize_api_type_values(value)
+
     @model_serializer(mode="wrap")
     def _serialize_for_api_type(self, handler: Any) -> Any:
         """
@@ -184,6 +197,51 @@ class InfoMetadata(BaseModel):
             data.pop("base_api_endpoint", None)
 
         return data
+
+
+class ApiTypeResponse(BaseModel):
+    """
+    Structured output for the standalone apiType detection LLM call.
+
+    Runs as its own per-chunk extraction, separate from the generic info metadata
+    extraction, and is merged into the final ``InfoMetadata.apiType``.
+    """
+
+    api_type: List[ApiType] = Field(
+        default_factory=list,
+        validation_alias="apiType",
+        serialization_alias="apiType",
+        description="API technology types detected for this fragment. Allowed values: REST, SCIM, SQL.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("api_type", mode="before")
+    @classmethod
+    def _normalize_api_type(cls, value: Any) -> List[ApiType]:
+        return normalize_api_type_values(value)
+
+
+class InfoExtractionResponse(BaseModel):
+    """
+    Container for per-chunk info metadata extraction (apiType handled separately).
+    """
+
+    info_metadata: Optional[InfoMetadataExtraction] = Field(
+        default=None,
+        validation_alias="infoMetadata",
+        serialization_alias="infoMetadata",
+        description="High-level application metadata if discovered in the documentation. Null when unavailable.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("info_metadata", mode="before")
+    @classmethod
+    def _normalize_info(cls, v):
+        if v is None:
+            return None
+        return v
 
 
 class InfoResponse(BaseModel):

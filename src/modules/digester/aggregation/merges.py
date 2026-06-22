@@ -17,6 +17,7 @@ from src.modules.digester.enums import EndpointMethod, EndpointType
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.extraction.sequences import extract_sequence
 from src.modules.digester.schemas import (
+    ApiTypeResponse,
     AttributeDedupResponse,
     AttributeProcessingInfo,
     BaseAPIEndpoint,
@@ -26,6 +27,7 @@ from src.modules.digester.schemas import (
     ExtendedObjectClass,
     ExtractedEndpointInfo,
     InfoMetadata,
+    InfoMetadataExtraction,
     InfoResponse,
 )
 
@@ -452,9 +454,48 @@ def _empty_info_metadata_payload() -> Dict[str, Any]:
     return cast(Dict[str, Any], InfoResponse(info_metadata=None).model_dump(by_alias=True))
 
 
-def merge_info_metadata(
-    info_candidates: List[InfoMetadata],
+def merge_api_type(
+    api_type_candidates: List[ApiTypeResponse],
     total_items: int,
+) -> List[ApiType]:
+    """
+    Merge per-chunk apiType candidates into a final list using the same frequency
+    threshold heuristic as the rest of the info metadata merge:
+    - count how often each supported type occurs across processed documents,
+    - keep only types that occur frequently enough (above the uncertainty threshold).
+    """
+    if total_items <= 0:
+        logger.info("[Digester:ApiType] Merge skipped: total_items=%s", total_items)
+        return []
+
+    threshold = total_items * config.digester.info_metadata_uncertainty_threshold
+
+    api_type_distribution: Dict[ApiType, int] = {}
+    for candidate in api_type_candidates:
+        for api_type in candidate.api_type or []:
+            normalized_type = str(api_type).strip().lower()
+            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value, ApiType.SQL.value}:
+                canonical_type = ApiType(normalized_type)
+                api_type_distribution[canonical_type] = api_type_distribution.get(canonical_type, 0) + 1
+
+    found_api_types = sorted(
+        (api_type for api_type, count in api_type_distribution.items() if count > threshold),
+        key=lambda api_type: api_type.value,
+    )
+
+    logger.info(
+        "[Digester:ApiType] Distribution: %s threshold_count=%s selected=%s",
+        api_type_distribution,
+        threshold,
+        found_api_types,
+    )
+    return found_api_types
+
+
+def merge_info_metadata(
+    info_candidates: List[InfoMetadataExtraction],
+    total_items: int,
+    api_types: List[ApiType],
 ) -> Dict[str, Any]:
     """
     Merge per-document InfoMetadata candidates into a single payload using frequency heuristics.
@@ -472,7 +513,6 @@ def merge_info_metadata(
     name_distribution: Dict[str, int] = {}
     app_version_distribution: Dict[str, int] = {}
     api_version_distribution: Dict[str, int] = {}
-    api_type_distribution: Dict[ApiType, int] = {}
     base_api_endpoints_url_distribution: Dict[str, int] = {}
     base_api_endpoints_type_distribution: Dict[tuple[str, EndpointType], int] = {}
     database_name_distribution: Dict[str, int] = {}
@@ -489,12 +529,6 @@ def merge_info_metadata(
         api_version = (info.api_version or "").strip()
         if api_version:
             api_version_distribution[api_version] = api_version_distribution.get(api_version, 0) + 1
-
-        for api_type in info.api_type or []:
-            normalized_type = str(api_type).strip().lower()
-            if normalized_type in {ApiType.REST.value, ApiType.SCIM.value, ApiType.SQL.value}:
-                canonical_type = ApiType(normalized_type)
-                api_type_distribution[canonical_type] = api_type_distribution.get(canonical_type, 0) + 1
 
         for endpoint in info.base_api_endpoint or []:
             uri = (endpoint.uri or "").strip().lower()
@@ -527,10 +561,7 @@ def merge_info_metadata(
         if api_version_distribution[candidate_api_version] > threshold:
             found_api_version = candidate_api_version
 
-    found_api_types: List[ApiType] = [
-        api_type for api_type, count in api_type_distribution.items() if count > threshold
-    ]
-    found_api_types = sorted(found_api_types, key=lambda api_type: api_type.value)
+    found_api_types: List[ApiType] = sorted(api_types, key=lambda api_type: api_type.value)
 
     found_base_api_endpoints: List[BaseAPIEndpoint] = []
     for uri, count in base_api_endpoints_url_distribution.items():
@@ -570,7 +601,6 @@ def merge_info_metadata(
     logger.info("[Digester:InfoMetadata] Name distribution: %s", name_distribution)
     logger.info("[Digester:InfoMetadata] Application version distribution: %s", app_version_distribution)
     logger.info("[Digester:InfoMetadata] API version distribution: %s", api_version_distribution)
-    logger.info("[Digester:InfoMetadata] API type distribution: %s", api_type_distribution)
     logger.info("[Digester:InfoMetadata] Base API endpoint URI distribution: %s", base_api_endpoints_url_distribution)
     logger.info(
         "[Digester:InfoMetadata] Base API endpoint (URI, type) distribution: %s",
