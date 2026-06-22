@@ -78,6 +78,7 @@ async def test_extract_class_attributes_success():
             session_id=session_id,
             object_class="User",
             db=MagicMock(),
+            api_type=None,
         )
 
         assert response.jobId == job_id
@@ -128,7 +129,7 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
-            return_value=["SCIM"],
+            return_value=["scim"],
         ),
         patch(
             "src.modules.digester.selection.documentation_selector.filter_documentation_items",
@@ -146,6 +147,7 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
             session_id=session_id,
             object_class="UserPhoneNumbers",
             db=MagicMock(),
+            api_type=None,
         )
 
     assert response.jobId == job_id

@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
+from src.common.enums import ApiType, JobStatus
 from src.common.errors import AttributesNotFoundError
 from src.modules.codegen.router import (
     generate_native_schema,
@@ -31,7 +31,11 @@ async def test_generate_native_schema_success():
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
-        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.codegen.router.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         job_id = uuid4()
         session_id = uuid4()
@@ -53,10 +57,11 @@ async def test_generate_native_schema_success():
                 "attributes": {"username": {"type": "string"}},
                 "objectClass": "user",
                 "skipCache": True,
+                "apiType": "rest",
             },
             worker=ANY,
             worker_args=({"username": {"type": "string"}}, "user"),
-            worker_kwargs={"session_id": session_id},
+            worker_kwargs={"session_id": session_id, "protocol": ApiType.REST},
             initial_stage="queue",
             initial_message="Queued code generation",
             session_id=session_id,
@@ -75,6 +80,11 @@ async def test_generate_native_schema_uses_repair_context_only():
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch(
+            "src.modules.codegen.router.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         job_id = uuid4()
         session_id = uuid4()

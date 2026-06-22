@@ -54,23 +54,36 @@ def extract_database_name(metadata: Mapping[str, Any] | None) -> str:
 
 
 def is_scim_api(api_types: Iterable[str]) -> bool:
-    """Detect SCIM when it appears anywhere in the API type list (case-insensitive)."""
-    return any(isinstance(api, str) and api.strip().upper() == "SCIM" for api in api_types)
+    """Detect SCIM when it appears anywhere in the API type list."""
+    return any(isinstance(api, str) and api.strip().lower() == ApiType.SCIM.value for api in api_types)
 
 
 def is_sql_api(api_types: Iterable[str]) -> bool:
-    """Detect SQL when it appears anywhere in the API type list (case-insensitive)."""
-    return any(isinstance(api, str) and api.strip().upper() == "SQL" for api in api_types)
+    """Detect SQL when it appears anywhere in the API type list."""
+    return any(isinstance(api, str) and api.strip().lower() == ApiType.SQL.value for api in api_types)
 
 
 def resolve_session_api_type(api_types: Iterable[str]) -> ApiType:
     """Resolve session apiType metadata to the codegen protocol, defaulting to REST."""
-    normalized = [api.strip().upper() for api in api_types if isinstance(api, str)]
+    normalized = {api.strip().lower() for api in api_types if isinstance(api, str)}
     if ApiType.SQL.value in normalized:
         return ApiType.SQL
     if ApiType.SCIM.value in normalized:
         return ApiType.SCIM
     return ApiType.REST
+
+
+async def resolve_effective_api_type(session_id: UUID, override: ApiType | None) -> ApiType:
+    """
+    Resolve the protocol to use for an operation.
+
+    When the caller provides an explicit ``override`` (e.g. the ``apiType`` request
+    parameter) it wins unconditionally. Otherwise the protocol is derived from the
+    apiType the LLM stored in the session ``infoMetadata``.
+    """
+    if override is not None:
+        return override
+    return resolve_session_api_type(await get_session_api_types(session_id))
 
 
 async def load_session_metadata(session_id: UUID, key: str = "metadataOutput") -> dict[str, Any] | None:

@@ -32,7 +32,7 @@ async def test_extract_object_classes_success():
     ):
         mock_schedule.return_value = job_id
 
-        response = await extract_object_classes(session_id, db=MagicMock())
+        response = await extract_object_classes(session_id, db=MagicMock(), api_type=None)
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)

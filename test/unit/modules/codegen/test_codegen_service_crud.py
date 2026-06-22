@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.codegen import service
 from src.modules.codegen.prompts.sql.create_prompts import get_sql_create_system_prompt
 
@@ -30,7 +31,6 @@ async def test_generate_create():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
-        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch(
             "src.modules.codegen.service.get_session_connection_target",
             new_callable=AsyncMock,
@@ -56,6 +56,7 @@ async def test_generate_create():
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
+            protocol=ApiType.REST,
         )
 
         assert isinstance(result, dict)
@@ -75,7 +76,6 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
     test_tables = {"endpoints": [{"table": "users", "columns": [{"name": "username", "type": "varchar"}]}]}
 
     with (
-        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=["SQL"]),
         patch(
             "src.modules.codegen.service.get_session_connection_target",
             new_callable=AsyncMock,
@@ -95,12 +95,13 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
+            protocol=ApiType.SQL,
         )
 
     assert result == {"code": "mocked sql create code"}
     _, kwargs = mock_create_generator_class.call_args
     assert kwargs["system_prompt"] == get_sql_create_system_prompt
-    assert kwargs["protocol_label"] == "SQL"
+    assert kwargs["protocol_label"] == "sql"
 
 
 @pytest.mark.asyncio
@@ -120,7 +121,6 @@ async def test_generate_update():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
-        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch(
             "src.modules.codegen.service.get_session_connection_target",
             new_callable=AsyncMock,
@@ -146,6 +146,7 @@ async def test_generate_update():
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
+            protocol=ApiType.REST,
         )
 
         assert isinstance(result, dict)
@@ -172,7 +173,6 @@ async def test_generate_delete():
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
-        patch("src.modules.codegen.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
         patch(
             "src.modules.codegen.service.get_session_connection_target",
             new_callable=AsyncMock,
@@ -198,6 +198,7 @@ async def test_generate_delete():
             session_id=uuid4(),
             object_class="User",
             job_id=uuid4(),
+            protocol=ApiType.REST,
         )
 
         assert isinstance(result, dict)

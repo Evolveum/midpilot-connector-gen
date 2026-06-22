@@ -31,8 +31,29 @@ RULES:
    - If not present, leave empty string "".
 
 4) apiType
-   - A list with normalized technology labels, chosen from: REST, SCIM, or SQL.
-   - Treat OpenAPI/Swagger evidence as REST; treat direct database/schema/table integration evidence as SQL.
+   - A list with normalized labels chosen from: REST, SCIM, or SQL.
+   - Classify by the underlying PROTOCOL / integration paradigm the application actually exposes,
+     NOT by surface wording. Words like "REST", "RESTful", "API", "endpoint", or "HTTP" describe the
+     transport and are NOT by themselves evidence of the REST type — almost every HTTP API is "RESTful".
+     Identify what the API *is*, not how it is loosely described.
+
+   Definitions:
+   - SCIM = the SCIM identity-provisioning standard (RFC 7643/7644), regardless of how it is transported.
+     SCIM is ALWAYS delivered over HTTP and is RESTful by design, so phrases like "SCIM API is RESTful",
+     "SCIM REST API", or "RESTful SCIM endpoints" still mean SCIM — the "REST/RESTful" word only names the
+     transport, while SCIM is the actual protocol. Signals: the term "SCIM"; standardized resources such as
+     /Users and /Groups; /ServiceProviderConfig, /Schemas, /ResourceTypes; SCIM core schema URNs
+     (e.g. "urn:ietf:params:scim:..."); SCIM filter syntax. If any of these appear, classify as SCIM
+     (NOT REST), even when the docs also call it REST/RESTful/HTTP.
+   - REST = the application's OWN custom/proprietary HTTP API that does NOT follow the SCIM standard.
+     Treat OpenAPI/Swagger specifications as REST. Use REST only for a vendor-defined resource model, not
+     for SCIM endpoints.
+   - SQL = direct database/schema/table integration (e.g. JDBC/ODBC connection strings, SQL queries,
+     table/schema definitions) with no HTTP API layer.
+
+   - An application may expose more than one of these (e.g. a custom REST Web API AND a separate SCIM API),
+     so include each type that has its OWN independent evidence in this fragment. But do NOT add REST merely
+     because a SCIM API is described as "RESTful".
    - If unclear, leave empty list.
 
 5) baseApiEndpoint
@@ -70,6 +91,10 @@ CONFIDENCE:
 COMMON PITFALLS TO AVOID
 - Do NOT set applicationVersion = "3" just because the docs say "OpenAPI 3".
 - Do NOT return a resource path as baseApiEndpoint (e.g., "/api/v3/users"). Keep the API base root.
+- Do NOT classify a SCIM API as REST just because it is described as "RESTful", "REST", or "HTTP".
+  SCIM being RESTful is expected and does NOT make it the REST type — it stays SCIM.
+- Do NOT classify as REST based only on generic words like "API", "endpoint", "HTTP", or "RESTful".
+  Decide from the actual protocol/semantics (SCIM standard vs. proprietary API vs. direct database).
 - Do NOT invent values. If unknown, leave empty or null per schema.
 """)
 
@@ -95,7 +120,7 @@ Text from actual documentation:
 
 Return structured output for THIS fragment only:
 - Apply the FIELD RULES for name, applicationVersion, apiVersion, apiType, baseApiEndpoint, and databaseName.
-- For apiType, output only REST/SCIM/SQL; treat OpenAPI/Swagger evidence as REST and database/schema-only integration evidence as SQL.
+- For apiType, output only REST/SCIM/SQL based on the underlying protocol, not surface wording: classify as SCIM whenever the SCIM standard is used (even if the docs call it "REST"/"RESTful"/"HTTP"), as REST only for a proprietary/non-SCIM HTTP API (OpenAPI/Swagger counts as REST), and as SQL for direct database/schema integration.
 - For baseApiEndpoint, return a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless docs guarantee a single global URL). Leave empty for SQL/database integrations.
 - For databaseName, populate only for SQL/database integrations (bare database/schema identifier); leave empty otherwise.
 - Summary/tags may be empty; rely primarily on <chunk>.

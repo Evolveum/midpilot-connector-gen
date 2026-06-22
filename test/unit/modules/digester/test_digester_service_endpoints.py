@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.digester import service
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.schemas import EndpointInfo
@@ -44,7 +45,9 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         mock_extract_chunks.return_value = (["chunk-0 text"], [(0, doc_uuid)])
 
@@ -103,7 +106,9 @@ async def test_extract_endpoints_no_relevant_chunks(mock_llm, mock_digester_upda
 
     with (
         patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         mock_extract_chunks.return_value = ([], [])
 
@@ -132,7 +137,9 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         mock_extract_chunks.return_value = (["chunk"], [(0, doc_uuid)])
         mock_extract_endpoints.return_value = {
@@ -198,7 +205,9 @@ async def test_extract_endpoints_retries_with_default_criteria_when_primary_is_e
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         mock_select_chunks.side_effect = [
             (["group overview"], [primary_chunk_id]),
@@ -244,7 +253,9 @@ async def test_extract_endpoints_does_not_retry_when_default_criteria_matches_sa
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+        ),
     ):
         mock_select_chunks.return_value = (["group overview"], [chunk_id])
         mock_extract_endpoints.return_value = empty_primary

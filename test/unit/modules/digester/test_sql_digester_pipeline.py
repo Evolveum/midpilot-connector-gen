@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.digester import service
 from src.modules.digester.extractors.sql.attributes import extract_sql_attributes
 from src.modules.digester.extractors.sql.schema import collect_sql_tables
@@ -158,7 +159,9 @@ async def test_extract_sql_object_classes_uses_heuristics_and_single_llm_call(mo
         patch(
             "src.modules.digester.extractors.sql.object_class.build_structured_chain", return_value=FakeChain()
         ) as build_chain,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=["SQL"]),
+        patch(
+            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.SQL
+        ),
     ):
         result = await service.extract_object_classes([doc], uuid4(), uuid4())
 

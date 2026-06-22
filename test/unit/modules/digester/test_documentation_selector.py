@@ -41,7 +41,7 @@ async def test_attribute_plan_uses_scim_object_class_relevance_when_filter_has_n
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
-            return_value=["SCIM"],
+            return_value=["scim"],
         ),
         patch(
             "src.modules.digester.selection.documentation_selector.filter_documentation_items",
@@ -154,7 +154,7 @@ async def test_attribute_plan_uses_sql_schema_chunks_without_rest_filtering():
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
-            return_value=["SQL"],
+            return_value=["sql"],
         ),
         patch(
             "src.modules.digester.selection.documentation_selector.filter_documentation_items",
@@ -213,7 +213,7 @@ async def test_endpoint_plan_uses_sql_schema_chunks_with_zero_endpoint_metadata(
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
-            return_value=["SQL"],
+            return_value=["sql"],
         ),
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_base_api_url",

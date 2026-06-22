@@ -81,6 +81,7 @@ async def test_extract_class_endpoints_success():
             session_id=session_id,
             object_class="User",
             db=MagicMock(),
+            api_type=None,
         )
 
         assert response.jobId == job_id

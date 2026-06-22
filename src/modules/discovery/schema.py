@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-DiscoveryIntegrationType = Literal["SCIM", "REST", "DUMMY"]
+DiscoveryIntegrationType = Literal["scim", "rest", "dummy"]
 
 
 class IrrelevantLinks(BaseModel):
@@ -34,12 +34,12 @@ class CandidateLinksInput(BaseModel):
     @classmethod
     def normalize_integration_type(cls, value: Any) -> str:
         if value is None:
-            return "DUMMY"
+            return "dummy"
         if not isinstance(value, str):
             raise TypeError("integrationType must be a string")
-        normalized = value.strip().upper()
-        if normalized not in {"SCIM", "REST", "DUMMY"}:
-            raise ValueError("integrationType must be one of: SCIM, REST, DUMMY")
+        normalized = value.strip().lower()
+        if normalized not in {"scim", "rest", "dummy"}:
+            raise ValueError("integrationType must be one of: scim, rest, dummy")
         return normalized
 
     application_name: str = Field(
@@ -55,10 +55,10 @@ class CandidateLinksInput(BaseModel):
         description="Optional version string",
     )
     integration_type: DiscoveryIntegrationType = Field(
-        default="DUMMY",
+        default="dummy",
         serialization_alias="integrationType",
         validation_alias="integrationType",
-        description="Discovery protocol priority: SCIM, REST, or DUMMY.",
+        description="Discovery protocol priority: scim, rest, or dummy.",
     )
     llm_generated_search_query: bool = Field(
         default=False,

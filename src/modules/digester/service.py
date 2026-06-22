@@ -8,10 +8,10 @@ from typing import Any, Dict, List, Set, Tuple, cast
 from uuid import UUID
 
 from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.enums import JobStage
+from src.common.enums import ApiType, JobStage
 from src.common.jobs import update_job_progress
 from src.common.utils.normalize import normalize_endpoint_key
-from src.common.utils.session_info_metadata import get_session_api_types, is_scim_api, is_sql_api
+from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.modules.digester.aggregation.merges import (
     merge_info_metadata,
     merge_relations_results,
@@ -91,28 +91,28 @@ async def extract_object_classes(
     doc_items: List[dict],
     job_id: UUID,
     session_id: UUID,
+    api_type_override: ApiType | None = None,
 ):
     """
     Extract object classes from multiple documentation items and return merged result with metadata.
 
-    This function automatically detects whether to use REST or SCIM extraction based on the
-    api_type from the infoMetadata stored in the session.
+    The extraction protocol (REST/SCIM/SQL) is taken from ``api_type_override`` when provided,
+    otherwise it is derived from the apiType stored in the session ``infoMetadata``.
 
     Args:
         doc_items: List of documentation items to process
         job_id: Job ID for progress tracking
         session_id: Session ID to retrieve api_type from infoMetadata
+        api_type_override: Explicit protocol override; falls back to detected apiType when None
 
     Returns:
         Dictionary with result and relevantDocumentations
     """
-    api_type = await get_session_api_types(session_id)
-    if is_sql_api(api_type):
+    protocol = await resolve_effective_api_type(session_id, api_type_override)
+    if protocol == ApiType.SQL:
         return await extract_sql_object_classes(doc_items, job_id)
 
-    is_scim = is_scim_api(api_type)
-
-    if is_scim:
+    if protocol == ApiType.SCIM:
         return await extract_scim_object_classes(doc_items, job_id)
 
     return await _extract_rest_object_classes(doc_items, job_id)
@@ -712,13 +712,14 @@ async def extract_attributes(
     session_id: UUID,
     relevant_chunks: List[Dict[str, Any]],
     job_id: UUID,
+    api_type_override: ApiType | None = None,
 ) -> Dict[str, Any]:
     """
     Extract attributes from only the relevant chunks of documentation and update the specific object class
     in objectClassesOutput with the extracted attributes.
 
-    This function automatically detects whether to use REST or SCIM extraction based on the
-    api_type from the infoMetadata stored in the session.
+    The extraction protocol (REST/SCIM/SQL) is taken from ``api_type_override`` when provided,
+    otherwise it is derived from the apiType stored in the session ``infoMetadata``.
 
     Args:
         doc_items: Full documentation items
@@ -726,10 +727,11 @@ async def extract_attributes(
         session_id: Session ID
         relevant_chunks: List of {doc_id, chunk_id} dicts indicating which chunks to process
         job_id: Job ID for progress tracking
+        api_type_override: Explicit protocol override; falls back to detected apiType when None
     """
     # TODO: Refactor this function
-    api_type = await get_session_api_types(session_id)
-    if is_sql_api(api_type):
+    protocol = await resolve_effective_api_type(session_id, api_type_override)
+    if protocol == ApiType.SQL:
         result = await extract_sql_attributes(doc_items, object_class, job_id)
         try:
             attributes_dict = extract_attributes_from_result(result)
@@ -749,7 +751,7 @@ async def extract_attributes(
             )
         return result
 
-    is_scim = is_scim_api(api_type)
+    is_scim = protocol == ApiType.SCIM
 
     if not doc_items:
         if is_scim:
@@ -868,13 +870,14 @@ async def extract_endpoints(
     relevant_chunks: List[Dict[str, Any]],
     job_id: UUID,
     base_api_url: str = "",
+    api_type_override: ApiType | None = None,
 ):
     """
     Extract endpoints from only the relevant chunks of documentation and update the specific object class
     in objectClassesOutput with the extracted endpoints.
 
-    This function automatically detects whether to use REST or SCIM extraction based on the
-    api_type from the infoMetadata stored in the session.
+    The extraction protocol (REST/SCIM/SQL) is taken from ``api_type_override`` when provided,
+    otherwise it is derived from the apiType stored in the session ``infoMetadata``.
 
     Args:
         doc_items: Full documentation items
@@ -883,10 +886,11 @@ async def extract_endpoints(
         relevant_chunks: List of {doc_id, chunk_id} dicts indicating which chunks to process
         job_id: Job ID for progress tracking
         base_api_url: Base API URL for endpoint extraction
+        api_type_override: Explicit protocol override; falls back to detected apiType when None
     """
 
-    api_type = await get_session_api_types(session_id)
-    if is_sql_api(api_type):
+    protocol = await resolve_effective_api_type(session_id, api_type_override)
+    if protocol == ApiType.SQL:
         result = await extract_sql_tables(doc_items, object_class, job_id)
         try:
             tables_list = extract_endpoints_from_result(result)
@@ -903,7 +907,7 @@ async def extract_endpoints(
             logger.exception("[Digester:Endpoints] Failed to update object class with SQL tables for %s", object_class)
         return result
 
-    is_scim = is_scim_api(api_type)
+    is_scim = protocol == ApiType.SCIM
 
     if is_scim:
         result = await pregenerate_scim_endpoints(

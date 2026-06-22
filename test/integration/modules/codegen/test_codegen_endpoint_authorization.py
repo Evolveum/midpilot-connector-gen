@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.enums import ApiType
 from src.modules.codegen.router import generate_authorization, get_authorization_status, override_authorization
 from src.modules.codegen.schema import AuthorizationCodegenInput, GroovyCodePayload
 
@@ -57,6 +58,11 @@ async def test_generate_authorization_includes_preferred_authorizations_in_job_a
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch(
+            "src.modules.codegen.router.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         job_id = uuid4()
         session_id = uuid4()
@@ -111,6 +117,11 @@ async def test_generate_authorization_allows_midpoint_authorization_when_auth_ou
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch(
+            "src.modules.codegen.router.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         job_id = uuid4()
         session_id = uuid4()

@@ -97,7 +97,7 @@ async def test_restore_metadata_success():
         {
             "infoMetadata": {
                 "name": "OpenProject",
-                "apiType": ["REST"],
+                "apiType": ["rest"],
                 "apiVersion": "3",
                 "baseApiEndpoint": [{"uri": "https://example.com/api", "type": ""}],
                 "applicationVersion": "12.1.0",

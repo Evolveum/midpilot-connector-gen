@@ -9,8 +9,9 @@ import pytest
 
 from src.modules.digester import service
 from src.modules.digester.enums import AuthType
-from src.modules.digester.extractors.auth import build_auth_items
+from src.modules.digester.extractors.auth import build_auth_items, deduplicate_auth
 from src.modules.digester.schemas import (
+    AuthDedupResponse,
     AuthInfo,
     AuthProcessingInfo,
     AuthResponse,
@@ -230,6 +231,58 @@ async def test_build_auth_items_filters_failed_build_results():
         result = await build_auth_items([valid_item], uuid4())
 
     assert result == [valid_item]
+
+
+@pytest.mark.asyncio
+async def test_deduplicate_auth_collapses_same_concrete_type():
+    """Two entries normalizing to the same concrete type (e.g. jwtBearer) must collapse
+    into one even when their names are not substrings of each other, keeping the longer name."""
+    items = [
+        AuthProcessingInfo(name="JWT authentication", type=AuthType.JWT_BEARER, quirks="", relevant_sequences=[]),
+        AuthProcessingInfo(
+            name="JWT bearer authentication", type=AuthType.JWT_BEARER, quirks="", relevant_sequences=[]
+        ),
+    ]
+
+    with (
+        patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.auth.build_structured_chain"),
+        patch(
+            "src.modules.digester.extractors.auth.invoke_llm",
+            new_callable=AsyncMock,
+            return_value=AuthDedupResponse(duplicates=[], to_be_deleted=[]),
+        ),
+    ):
+        result = await deduplicate_auth(items, uuid4())
+
+    assert len(result) == 1
+    assert result[0].type == AuthType.JWT_BEARER
+    assert result[0].name == "JWT bearer authentication"
+
+
+@pytest.mark.asyncio
+async def test_deduplicate_auth_keeps_distinct_other_methods():
+    """The 'other' bucket is a catch-all for distinct unknown flows, so entries with
+    different names must NOT collapse the way concrete types do."""
+    items = [
+        AuthProcessingInfo(
+            name="OAuth 2.0 Authorization Code Grant", type=AuthType.OTHER, quirks="", relevant_sequences=[]
+        ),
+        AuthProcessingInfo(name="Custom signed request", type=AuthType.OTHER, quirks="", relevant_sequences=[]),
+    ]
+
+    with (
+        patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.auth.build_structured_chain"),
+        patch(
+            "src.modules.digester.extractors.auth.invoke_llm",
+            new_callable=AsyncMock,
+            return_value=AuthDedupResponse(duplicates=[], to_be_deleted=[]),
+        ),
+    ):
+        result = await deduplicate_auth(items, uuid4())
+
+    assert {auth.name for auth in result} == {"OAuth 2.0 Authorization Code Grant", "Custom signed request"}
 
 
 def test_auth_response_serializes_relevant_sequences_in_camel_case():

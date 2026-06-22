@@ -25,7 +25,6 @@ async def test_generate_connid_success():
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
-        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
     ):
         job_id = uuid4()
         session_id = uuid4()

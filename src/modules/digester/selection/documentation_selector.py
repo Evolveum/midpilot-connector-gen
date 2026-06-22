@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.common.enums import ApiType
 from src.common.errors import (
     InvalidObjectClassesOutputError,
     ObjectClassesNotFoundError,
@@ -65,14 +66,21 @@ class DocumentationSelector:
         self._get_base_url = get_base_url or get_session_base_api_url
         self._relevant_repo_factory = relevant_repo_factory or RelevantChunkRepository
 
+    async def _resolve_api_types(self, session_id: UUID, api_type_override: ApiType | None) -> Any:
+        """Use the explicit override when provided; otherwise read the session apiType metadata."""
+        if api_type_override is not None:
+            return [api_type_override.value]
+        return await self._get_api_types(session_id)
+
     async def build_attribute_plan(
         self,
         repo: Any,
         session_id: UUID,
         object_class: str,
+        api_type_override: ApiType | None = None,
     ) -> DocumentationSelection:
         target_object_class = await self._get_target_object_class(repo, session_id, object_class)
-        api_types = await self._get_api_types(session_id)
+        api_types = await self._resolve_api_types(session_id, api_type_override)
         is_scim = is_scim_api(api_types)
         is_sql = is_sql_api(api_types)
 
@@ -115,10 +123,11 @@ class DocumentationSelector:
         repo: Any,
         session_id: UUID,
         object_class: str,
+        api_type_override: ApiType | None = None,
     ) -> DocumentationSelection:
         target_object_class = await self._get_target_object_class(repo, session_id, object_class)
         base_api_url = await self._get_base_url(session_id)
-        api_types = await self._get_api_types(session_id)
+        api_types = await self._resolve_api_types(session_id, api_type_override)
         is_scim = is_scim_api(api_types)
         is_sql = is_sql_api(api_types)
 

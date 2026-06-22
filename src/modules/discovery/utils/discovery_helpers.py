@@ -183,7 +183,7 @@ def query_and_search_candidates_llm(
     system_prompt: str,
     app: str,
     version: str,
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
     num_queries: int,
     max_results_per_query: int,
 ) -> Tuple[List[DiscoverySearchBatch], Any, PySearchPrompts]:
@@ -231,7 +231,7 @@ def query_and_search_candidates_template(
     *,
     app: str,
     version: str,
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
     num_queries: int,
     max_results_per_query: int,
 ) -> Tuple[List[DiscoverySearchBatch], str, PySearchPrompts]:
@@ -269,7 +269,7 @@ def fetch_candidate_links_simplified(
     system_prompt: str,
     app: str,
     version: str,
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
     llm_generated_search_query: bool,
     num_queries: int,
     max_results_per_query: int,
