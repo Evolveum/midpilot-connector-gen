@@ -14,6 +14,25 @@ DEFAULT_CRITERIA = ChunkFilterCriteria(
     ],
 )
 
+METADATA_CRITERIA = ChunkFilterCriteria(
+    min_length=None,
+    min_endpoints_num=None,
+    allowed_categories=[
+        "spec_yaml",
+        "spec_json",
+        "reference_api",
+    ],
+    # Also keep chunks whose category is outside the spec set but that are tagged as a relevant
+    # API protocol, so apiType/metadata extraction does not miss SCIM/REST/provisioning evidence.
+    category_override_tags=[
+        "scim",
+        "rest",
+        "sql",
+        "db",
+        "provisioning",
+    ],
+)
+
 DEFAULT_AUTH_CRITERIA = ChunkFilterCriteria(
     min_length=None,
     min_endpoints_num=None,

@@ -16,6 +16,7 @@ from src.modules.digester.selection.criteria import (
     DEFAULT_AUTH_CRITERIA,
     DEFAULT_CRITERIA,
     EXTENDED_AUTH_CRITERIA,
+    METADATA_CRITERIA,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ async def metadata_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
             'sessionInput' key with metadata for input in session field,
             'jobInput' key with metadata for input in job field
     """
-    doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
+    doc_items = await filter_documentation_items(METADATA_CRITERIA, session_id, db=db)
     return {
         "sessionInput": {},
         "jobInput": {

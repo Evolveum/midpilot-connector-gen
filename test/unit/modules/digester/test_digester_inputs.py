@@ -8,12 +8,13 @@ from uuid import uuid4
 import pytest
 
 from src.config import config
-from src.modules.digester.inputs import auth_input, connectivity_endpoint_input
+from src.modules.digester.inputs import auth_input, connectivity_endpoint_input, metadata_input
 from src.modules.digester.selection.criteria import (
     CONNECTIVITY_ENDPOINT_CRITERIA,
     CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA,
     DEFAULT_AUTH_CRITERIA,
     EXTENDED_AUTH_CRITERIA,
+    METADATA_CRITERIA,
 )
 
 
@@ -57,6 +58,26 @@ async def test_auth_input_falls_back_to_extended_when_auth_filter_has_too_few_do
             call(EXTENDED_AUTH_CRITERIA, session_id, db=db),
         ]
     )
+
+
+@pytest.mark.asyncio
+async def test_metadata_input_uses_metadata_criteria():
+    session_id = uuid4()
+    db = MagicMock()
+    docs = [{"chunkId": str(uuid4()), "docId": str(uuid4()), "content": "metadata chunk"}]
+
+    with patch("src.modules.digester.inputs.filter_documentation_items", new_callable=AsyncMock) as mock_filter:
+        mock_filter.return_value = docs
+        result = await metadata_input(db=db, session_id=session_id)
+
+    assert result["jobInput"]["documentationItems"] == docs
+    assert result["args"] == (docs,)
+    mock_filter.assert_awaited_once_with(METADATA_CRITERIA, session_id, db=db)
+
+
+@pytest.mark.asyncio
+async def test_metadata_criteria_overrides_categories_with_protocol_tags():
+    assert METADATA_CRITERIA.category_override_tags == ["scim", "rest", "sql", "db", "provisioning"]
 
 
 @pytest.mark.asyncio
