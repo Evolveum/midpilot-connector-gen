@@ -53,6 +53,7 @@ from src.modules.digester.schemas.endpoints import (
     RankedEndpointKey,
 )
 from src.modules.digester.schemas.metadata import (
+    ApiTypeKnowledgeResponse,
     ApiTypeResponse,
     BaseAPIEndpoint,
     InfoExtractionResponse,
@@ -77,6 +78,7 @@ from src.modules.digester.schemas.relations import (
 )
 
 __all__ = [
+    "ApiTypeKnowledgeResponse",
     "ApiTypeResponse",
     "AttributeBase",
     "AttributeBooleanFlagsBase",

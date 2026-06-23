@@ -222,6 +222,37 @@ class ApiTypeResponse(BaseModel):
         return normalize_api_type_values(value)
 
 
+class ApiTypeKnowledgeResponse(BaseModel):
+    """
+    Structured output for the documentation-free, knowledge-based apiType signal.
+
+    The model receives only the application name (no documentation) and answers from
+    its own training knowledge whether the product is known to support SCIM
+    provisioning and which integration protocol types it exposes. This complements
+    the scim.cloud registry signal and the per-chunk documentation extraction.
+    """
+
+    supports_scim: bool = Field(
+        default=False,
+        validation_alias="supportsScim",
+        serialization_alias="supportsScim",
+        description="True only when the named application is known to expose a SCIM provisioning API.",
+    )
+    api_type: List[ApiType] = Field(
+        default_factory=list,
+        validation_alias="apiType",
+        serialization_alias="apiType",
+        description="Integration protocol types the application is known to support. Allowed values: REST, SCIM, SQL.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("api_type", mode="before")
+    @classmethod
+    def _normalize_api_type(cls, value: Any) -> List[ApiType]:
+        return normalize_api_type_values(value)
+
+
 class InfoExtractionResponse(BaseModel):
     """
     Container for per-chunk info metadata extraction (apiType handled separately).

@@ -310,6 +310,13 @@ class DigesterSettings(BaseModel):
             "scim.cloud registry, matched against both product name and developer."
         ),
     )
+    apitype_knowledge_enabled: bool = Field(
+        True,
+        description=(
+            "Enable the documentation-free, LLM-knowledge apiType signal that asks the model whether the "
+            "named application is known to support SCIM provisioning."
+        ),
+    )
     fuzzy_start_marker_error_ratio: float = Field(
         0.05,
         description="Allowed fuzzy-match error ratio when validating extracted sequence markers.",

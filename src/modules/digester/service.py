@@ -18,6 +18,7 @@ from src.modules.digester.aggregation.merges import (
     merge_info_metadata,
     merge_relations_results,
 )
+from src.modules.digester.apitype.knowledge import lookup_api_type_knowledge
 from src.modules.digester.apitype.scim_cloud import lookup_scim_support
 from src.modules.digester.entities.object_classes import (
     extract_attributes_from_result,
@@ -489,10 +490,11 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID, session_id:
     Step 1: Run two independent per-chunk extractors concurrently:
             - info metadata (name, versions, base endpoints, database name),
             - apiType (REST/SCIM/SQL protocol detection) as a standalone LLM call,
-            plus a one-off scim.cloud registry lookup for the discovery application name.
+            plus two documentation-free SCIM signals for the discovery application name:
+            a scim.cloud registry lookup and an LLM knowledge lookup.
     Step 2: Merge both sets of candidates using threshold-based heuristics, union in SCIM
-            when the scim.cloud registry confirms it, and join the detected apiType into one
-            final InfoResponse payload.
+            when either documentation-free signal confirms it, and join the detected
+            apiType into one final InfoResponse payload.
     """
     all_info_candidates: List[InfoMetadataExtraction] = []
     all_api_type_candidates: List[ApiTypeResponse] = []
@@ -529,7 +531,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID, session_id:
 
     application_name = await get_discovery_application_name(session_id)
 
-    info_results, api_type_results, scim_cloud_match = await asyncio.gather(
+    info_results, api_type_results, scim_cloud_match, knowledge_result = await asyncio.gather(
         run_doc_extractors_concurrently(
             chunk_items=doc_items,
             job_id=job_id,
@@ -545,6 +547,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID, session_id:
             set_total=False,
         ),
         lookup_scim_support(application_name),
+        lookup_api_type_knowledge(application_name),
     )
 
     for raw_infos, has_relevant_data, chunk_id in info_results:
@@ -645,12 +648,18 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID, session_id:
     )
 
     api_types = merge_api_type(all_api_type_candidates, total_items=len(doc_items))
-    if scim_cloud_match.matched and ApiType.SCIM not in api_types:
-        logger.info(
-            "[Digester:ApiType] scim.cloud confirmed SCIM for '%s' (matched '%s'); adding SCIM to detected apiType",
-            application_name,
-            scim_cloud_match.project_name,
-        )
+    if ApiType.SCIM not in api_types and (scim_cloud_match.matched or knowledge_result.supports_scim):
+        if scim_cloud_match.matched:
+            logger.info(
+                "[Digester:ApiType] scim.cloud confirmed SCIM for '%s' (matched '%s'); adding SCIM to detected apiType",
+                application_name,
+                scim_cloud_match.project_name,
+            )
+        if knowledge_result.supports_scim:
+            logger.info(
+                "[Digester:ApiType] LLM knowledge signal reports SCIM support for '%s'; adding SCIM to detected apiType",
+                application_name,
+            )
         api_types = sorted([*api_types, ApiType.SCIM], key=lambda api_type: api_type.value)
     merged_result = merge_info_metadata(all_info_candidates, total_items=len(doc_items), api_types=api_types)
     await update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
