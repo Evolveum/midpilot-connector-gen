@@ -61,18 +61,25 @@ async def test_auth_input_falls_back_to_extended_when_auth_filter_has_too_few_do
 
 
 @pytest.mark.asyncio
-async def test_metadata_input_uses_metadata_criteria():
+async def test_metadata_input_uses_metadata_criteria_and_includes_application_name():
     session_id = uuid4()
     db = MagicMock()
     docs = [{"chunkId": str(uuid4()), "docId": str(uuid4()), "content": "metadata chunk"}]
 
-    with patch("src.modules.digester.inputs.filter_documentation_items", new_callable=AsyncMock) as mock_filter:
+    with (
+        patch("src.modules.digester.inputs.filter_documentation_items", new_callable=AsyncMock) as mock_filter,
+        patch("src.modules.digester.inputs.get_discovery_application_name", new_callable=AsyncMock) as mock_app_name,
+    ):
         mock_filter.return_value = docs
+        mock_app_name.return_value = "Okta"
         result = await metadata_input(db=db, session_id=session_id)
 
     assert result["jobInput"]["documentationItems"] == docs
+    # applicationName must be part of jobInput so it flows into the cache key.
+    assert result["jobInput"]["applicationName"] == "Okta"
     assert result["args"] == (docs,)
     mock_filter.assert_awaited_once_with(METADATA_CRITERIA, session_id, db=db)
+    mock_app_name.assert_awaited_once_with(session_id)
 
 
 @pytest.mark.asyncio
