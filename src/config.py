@@ -321,7 +321,7 @@ class DigesterSettings(BaseModel):
         True,
         description=(
             "Enable the web-search apiType signal (Brave/ddgs via the shared search backend) that looks up "
-            "SCIM support and availability for the application name. Disabled by default because it performs "
+            "SCIM support and availability for the application name. Enabled by default but it performs "
             "an external web search on every metadata extraction."
         ),
     )

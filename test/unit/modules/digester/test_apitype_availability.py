@@ -48,3 +48,23 @@ def test_unknown_only_signals_contribute_no_sources():
     )
     assert summary.status is ScimAvailability.UNKNOWN
     assert summary.sources == ()
+
+
+def test_non_supporting_signal_availability_is_ignored():
+    summary = summarize_scim_availability(
+        {
+            ScimSource.KNOWLEDGE: ApiTypeSignalResult(
+                supports_scim=False,
+                scim_availability=ScimAvailability.PAID,
+                required_plan="Enterprise",
+            ),
+            ScimSource.WEB_SEARCH: ApiTypeSignalResult(
+                supports_scim=True,
+                scim_availability=ScimAvailability.AVAILABLE,
+            ),
+        }
+    )
+
+    assert summary.status is ScimAvailability.AVAILABLE
+    assert summary.required_plan == ""
+    assert summary.sources == (ScimSource.WEB_SEARCH,)
