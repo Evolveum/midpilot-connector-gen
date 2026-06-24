@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.common.enums import ApiType, ScimAvailability
-from src.modules.digester.apitype.knowledge import lookup_api_type_knowledge
+from src.modules.digester.extractors.apitype.knowledge import lookup_api_type_knowledge
 from src.modules.digester.schemas import ApiTypeSignalResult
 
 
@@ -15,7 +15,7 @@ from src.modules.digester.schemas import ApiTypeSignalResult
 async def test_lookup_returns_supported_scim_from_llm():
     response = ApiTypeSignalResult(supports_scim=True, api_type=[ApiType.SCIM, ApiType.REST])
     with patch(
-        "src.modules.digester.apitype.knowledge.invoke_llm",
+        "src.modules.digester.extractors.apitype.knowledge.invoke_llm",
         new_callable=AsyncMock,
         return_value=response,
     ) as mock_invoke:
@@ -39,7 +39,7 @@ async def test_lookup_surfaces_paid_availability():
         }
     )
     with patch(
-        "src.modules.digester.apitype.knowledge.invoke_llm",
+        "src.modules.digester.extractors.apitype.knowledge.invoke_llm",
         new_callable=AsyncMock,
         return_value=response,
     ):
@@ -63,7 +63,7 @@ def test_knowledge_response_unrecognized_availability_falls_back_to_unknown():
 
 @pytest.mark.asyncio
 async def test_lookup_empty_name_skips_llm():
-    with patch("src.modules.digester.apitype.knowledge.invoke_llm", new_callable=AsyncMock) as mock_invoke:
+    with patch("src.modules.digester.extractors.apitype.knowledge.invoke_llm", new_callable=AsyncMock) as mock_invoke:
         result = await lookup_api_type_knowledge("   ")
 
     assert result.supports_scim is False
@@ -73,8 +73,8 @@ async def test_lookup_empty_name_skips_llm():
 @pytest.mark.asyncio
 async def test_lookup_disabled_skips_llm():
     with (
-        patch("src.modules.digester.apitype.knowledge.config") as mock_config,
-        patch("src.modules.digester.apitype.knowledge.invoke_llm", new_callable=AsyncMock) as mock_invoke,
+        patch("src.modules.digester.extractors.apitype.knowledge.config") as mock_config,
+        patch("src.modules.digester.extractors.apitype.knowledge.invoke_llm", new_callable=AsyncMock) as mock_invoke,
     ):
         mock_config.digester.apitype_knowledge_enabled = False
         result = await lookup_api_type_knowledge("Slack")
@@ -86,7 +86,7 @@ async def test_lookup_disabled_skips_llm():
 @pytest.mark.asyncio
 async def test_lookup_llm_failure_is_graceful():
     with patch(
-        "src.modules.digester.apitype.knowledge.invoke_llm",
+        "src.modules.digester.extractors.apitype.knowledge.invoke_llm",
         new_callable=AsyncMock,
         side_effect=RuntimeError("llm down"),
     ):

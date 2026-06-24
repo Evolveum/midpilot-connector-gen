@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.modules.digester.apitype.scim_cloud import (
+from src.modules.digester.extractors.apitype.scim_cloud import (
     ScimCloudImplementation,
     lookup_scim_support,
     match_registry,
@@ -156,7 +156,7 @@ def test_client_only_versions_are_not_collected():
 @pytest.mark.asyncio
 async def test_lookup_returns_match_from_registry():
     with patch(
-        "src.modules.digester.apitype.scim_cloud.get_registry",
+        "src.modules.digester.extractors.apitype.scim_cloud.get_registry",
         new_callable=AsyncMock,
         return_value=_registry(),
     ):
@@ -167,7 +167,9 @@ async def test_lookup_returns_match_from_registry():
 
 @pytest.mark.asyncio
 async def test_lookup_empty_name_skips_registry():
-    with patch("src.modules.digester.apitype.scim_cloud.get_registry", new_callable=AsyncMock) as mock_registry:
+    with patch(
+        "src.modules.digester.extractors.apitype.scim_cloud.get_registry", new_callable=AsyncMock
+    ) as mock_registry:
         match = await lookup_scim_support("   ")
     assert match.matched is False
     mock_registry.assert_not_awaited()
@@ -176,7 +178,7 @@ async def test_lookup_empty_name_skips_registry():
 @pytest.mark.asyncio
 async def test_lookup_registry_failure_is_graceful():
     with patch(
-        "src.modules.digester.apitype.scim_cloud.get_registry",
+        "src.modules.digester.extractors.apitype.scim_cloud.get_registry",
         new_callable=AsyncMock,
         side_effect=RuntimeError("network down"),
     ):

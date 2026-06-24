@@ -9,8 +9,8 @@ import pytest
 
 from src.common.enums import ApiType, ScimAvailability
 from src.config import DigesterSettings
-from src.modules.digester.apitype import web_search
-from src.modules.digester.apitype.web_search import lookup_api_type_web_search
+from src.modules.digester.extractors.apitype import web_search
+from src.modules.digester.extractors.apitype.web_search import lookup_api_type_web_search
 from src.modules.digester.schemas import ApiTypeSignalResult
 from src.modules.discovery.schema import SearchResult
 
@@ -37,9 +37,9 @@ def _results() -> list[SearchResult]:
 @pytest.mark.asyncio
 async def test_disabled_skips_search_and_llm():
     with (
-        patch("src.modules.digester.apitype.web_search.config") as mock_config,
-        patch("src.modules.digester.apitype.web_search.search_web") as mock_search,
-        patch("src.modules.digester.apitype.web_search.invoke_llm", new_callable=AsyncMock) as mock_invoke,
+        patch("src.modules.digester.extractors.apitype.web_search.config") as mock_config,
+        patch("src.modules.digester.extractors.apitype.web_search.search_web") as mock_search,
+        patch("src.modules.digester.extractors.apitype.web_search.invoke_llm", new_callable=AsyncMock) as mock_invoke,
     ):
         mock_config.digester.apitype_web_search_enabled = False
         result = await lookup_api_type_web_search("Slack")
@@ -52,8 +52,8 @@ async def test_disabled_skips_search_and_llm():
 @pytest.mark.asyncio
 async def test_empty_name_skips_search():
     with (
-        patch("src.modules.digester.apitype.web_search.config") as mock_config,
-        patch("src.modules.digester.apitype.web_search.search_web") as mock_search,
+        patch("src.modules.digester.extractors.apitype.web_search.config") as mock_config,
+        patch("src.modules.digester.extractors.apitype.web_search.search_web") as mock_search,
     ):
         _enable_web_search(mock_config)
         result = await lookup_api_type_web_search("   ")
@@ -65,9 +65,9 @@ async def test_empty_name_skips_search():
 @pytest.mark.asyncio
 async def test_no_results_skips_llm():
     with (
-        patch("src.modules.digester.apitype.web_search.config") as mock_config,
-        patch("src.modules.digester.apitype.web_search.search_web", return_value=[]) as mock_search,
-        patch("src.modules.digester.apitype.web_search.invoke_llm", new_callable=AsyncMock) as mock_invoke,
+        patch("src.modules.digester.extractors.apitype.web_search.config") as mock_config,
+        patch("src.modules.digester.extractors.apitype.web_search.search_web", return_value=[]) as mock_search,
+        patch("src.modules.digester.extractors.apitype.web_search.invoke_llm", new_callable=AsyncMock) as mock_invoke,
     ):
         _enable_web_search(mock_config)
         result = await lookup_api_type_web_search("Totally Unknown App")
@@ -86,10 +86,10 @@ async def test_returns_classified_scim_from_results():
         required_plan="Enterprise Grid",
     )
     with (
-        patch("src.modules.digester.apitype.web_search.config") as mock_config,
-        patch("src.modules.digester.apitype.web_search.search_web", return_value=_results()) as mock_search,
+        patch("src.modules.digester.extractors.apitype.web_search.config") as mock_config,
+        patch("src.modules.digester.extractors.apitype.web_search.search_web", return_value=_results()) as mock_search,
         patch(
-            "src.modules.digester.apitype.web_search.invoke_llm",
+            "src.modules.digester.extractors.apitype.web_search.invoke_llm",
             new_callable=AsyncMock,
             return_value=response,
         ) as mock_invoke,
@@ -108,9 +108,9 @@ async def test_returns_classified_scim_from_results():
 @pytest.mark.asyncio
 async def test_search_failure_is_graceful():
     with (
-        patch("src.modules.digester.apitype.web_search.config") as mock_config,
-        patch("src.modules.digester.apitype.web_search.search_web", side_effect=RuntimeError("brave down")),
-        patch("src.modules.digester.apitype.web_search.invoke_llm", new_callable=AsyncMock) as mock_invoke,
+        patch("src.modules.digester.extractors.apitype.web_search.config") as mock_config,
+        patch("src.modules.digester.extractors.apitype.web_search.search_web", side_effect=RuntimeError("brave down")),
+        patch("src.modules.digester.extractors.apitype.web_search.invoke_llm", new_callable=AsyncMock) as mock_invoke,
     ):
         _enable_web_search(mock_config)
         result = await lookup_api_type_web_search("Slack")
@@ -122,10 +122,10 @@ async def test_search_failure_is_graceful():
 @pytest.mark.asyncio
 async def test_llm_failure_is_graceful():
     with (
-        patch("src.modules.digester.apitype.web_search.config") as mock_config,
-        patch("src.modules.digester.apitype.web_search.search_web", return_value=_results()),
+        patch("src.modules.digester.extractors.apitype.web_search.config") as mock_config,
+        patch("src.modules.digester.extractors.apitype.web_search.search_web", return_value=_results()),
         patch(
-            "src.modules.digester.apitype.web_search.invoke_llm",
+            "src.modules.digester.extractors.apitype.web_search.invoke_llm",
             new_callable=AsyncMock,
             side_effect=RuntimeError("llm down"),
         ),
@@ -145,8 +145,8 @@ def test_query_template_without_placeholder_is_rejected():
 @pytest.mark.asyncio
 async def test_malformed_query_template_degrades_gracefully():
     with (
-        patch("src.modules.digester.apitype.web_search.config") as mock_config,
-        patch("src.modules.digester.apitype.web_search.search_web") as mock_search,
+        patch("src.modules.digester.extractors.apitype.web_search.config") as mock_config,
+        patch("src.modules.digester.extractors.apitype.web_search.search_web") as mock_search,
     ):
         _enable_web_search(mock_config)
         mock_config.digester.apitype_web_search_query_template = "{application_name} {unexpected}"
@@ -199,14 +199,14 @@ async def test_fetches_pages_and_feeds_full_content_to_llm():
         return ApiTypeSignalResult(supports_scim=True, api_type=[ApiType.SCIM])
 
     with (
-        patch("src.modules.digester.apitype.web_search.config") as mock_config,
-        patch("src.modules.digester.apitype.web_search.search_web", return_value=_results()) as mock_search,
+        patch("src.modules.digester.extractors.apitype.web_search.config") as mock_config,
+        patch("src.modules.digester.extractors.apitype.web_search.search_web", return_value=_results()) as mock_search,
         patch(
-            "src.modules.digester.apitype.web_search._fetch_page_contents",
+            "src.modules.digester.extractors.apitype.web_search._fetch_page_contents",
             new_callable=AsyncMock,
             return_value={"https://api.slack.com/scim": "FULL PAGE: Slack SCIM on Enterprise Grid."},
         ) as mock_fetch,
-        patch("src.modules.digester.apitype.web_search.invoke_llm", side_effect=fake_invoke),
+        patch("src.modules.digester.extractors.apitype.web_search.invoke_llm", side_effect=fake_invoke),
     ):
         _enable_web_search(mock_config, fetch_pages=True)
         result = await lookup_api_type_web_search("Slack")

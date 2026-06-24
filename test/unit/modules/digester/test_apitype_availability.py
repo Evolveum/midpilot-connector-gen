@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 from src.common.enums import ScimAvailability, ScimSource
-from src.modules.digester.apitype.availability import summarize_scim_availability
+from src.modules.digester.extractors.apitype.availability import summarize_scim_availability
 from src.modules.digester.schemas import ApiTypeSignalResult
 
 

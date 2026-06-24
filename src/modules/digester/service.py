@@ -18,10 +18,6 @@ from src.modules.digester.aggregation.merges import (
     merge_info_metadata,
     merge_relations_results,
 )
-from src.modules.digester.apitype.availability import summarize_scim_availability
-from src.modules.digester.apitype.knowledge import lookup_api_type_knowledge
-from src.modules.digester.apitype.scim_cloud import lookup_scim_support
-from src.modules.digester.apitype.web_search import lookup_api_type_web_search
 from src.modules.digester.entities.object_classes import (
     extract_attributes_from_result,
     extract_endpoints_from_result,
@@ -29,7 +25,11 @@ from src.modules.digester.entities.object_classes import (
 )
 from src.modules.digester.extraction.chunk_extraction import process_over_chunks, run_doc_extractors_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
-from src.modules.digester.extractors.apitype import extract_api_type as _extract_api_type
+from src.modules.digester.extractors.apitype.availability import summarize_scim_availability
+from src.modules.digester.extractors.apitype.documentation import extract_api_type as _extract_api_type
+from src.modules.digester.extractors.apitype.knowledge import lookup_api_type_knowledge
+from src.modules.digester.extractors.apitype.scim_cloud import lookup_scim_support
+from src.modules.digester.extractors.apitype.web_search import lookup_api_type_web_search
 
 # Shared extractors
 from src.modules.digester.extractors.auth import (

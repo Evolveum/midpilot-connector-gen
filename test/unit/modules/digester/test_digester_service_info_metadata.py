@@ -10,8 +10,8 @@ import pytest
 from src.common.enums import ApiType, ScimAvailability
 from src.modules.digester import service
 from src.modules.digester.aggregation.merges import merge_api_type, merge_info_metadata
-from src.modules.digester.apitype.scim_cloud import ScimCloudMatch
 from src.modules.digester.enums import EndpointType
+from src.modules.digester.extractors.apitype.scim_cloud import ScimCloudMatch
 from src.modules.digester.schemas import (
     ApiTypeResponse,
     ApiTypeSignalResult,
