@@ -7,7 +7,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk
-from src.modules.digester.prompts.apitype_prompts import get_api_type_system_prompt, get_api_type_user_prompt
+from src.modules.digester.prompts.apitype.documentation_prompts import (
+    get_api_type_system_prompt,
+    get_api_type_user_prompt,
+)
 from src.modules.digester.schemas import ApiTypeResponse
 
 logger = logging.getLogger(__name__)

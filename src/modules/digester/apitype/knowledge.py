@@ -24,18 +24,18 @@ from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.config import config
 from src.modules.digester.extraction.llm_execution import invoke_llm
-from src.modules.digester.prompts.apitype_knowledge_prompts import (
+from src.modules.digester.prompts.apitype.knowledge_prompts import (
     get_api_type_knowledge_system_prompt,
     get_api_type_knowledge_user_prompt,
 )
-from src.modules.digester.schemas import ApiTypeKnowledgeResponse
+from src.modules.digester.schemas import ApiTypeSignalResult
 
 logger = logging.getLogger(__name__)
 
 _LOG_PREFIX = "[ApiType:Knowledge] "
 
 
-async def lookup_api_type_knowledge(application_name: str) -> ApiTypeKnowledgeResponse:
+async def lookup_api_type_knowledge(application_name: str) -> ApiTypeSignalResult:
     """
     Ask the LLM, from its own knowledge, whether ``application_name`` supports SCIM.
 
@@ -44,21 +44,21 @@ async def lookup_api_type_knowledge(application_name: str) -> ApiTypeKnowledgeRe
     documentation-based and scim.cloud signals.
     """
     if not config.digester.apitype_knowledge_enabled:
-        return ApiTypeKnowledgeResponse()
+        return ApiTypeSignalResult()
     if not application_name or not application_name.strip():
         logger.info("%sNo application name provided; skipping knowledge lookup", _LOG_PREFIX)
-        return ApiTypeKnowledgeResponse()
+        return ApiTypeSignalResult()
 
     chain = build_structured_chain(
         get_api_type_knowledge_system_prompt,
         get_api_type_knowledge_user_prompt,
-        ApiTypeKnowledgeResponse,
+        ApiTypeSignalResult,
         user_role="human",
     )
 
     try:
         result = cast(
-            ApiTypeKnowledgeResponse,
+            ApiTypeSignalResult,
             await invoke_llm(
                 chain,
                 {"application_name": application_name},
@@ -67,17 +67,19 @@ async def lookup_api_type_knowledge(application_name: str) -> ApiTypeKnowledgeRe
         )
     except Exception as exc:
         logger.warning("%sKnowledge lookup failed for '%s', skipping signal: %s", _LOG_PREFIX, application_name, exc)
-        return ApiTypeKnowledgeResponse()
+        return ApiTypeSignalResult()
 
     if not result:
         logger.warning("%sEmpty knowledge response for '%s'", _LOG_PREFIX, application_name)
-        return ApiTypeKnowledgeResponse()
+        return ApiTypeSignalResult()
 
     logger.info(
-        "%s'%s' knowledge result: supports_scim=%s, api_types=%s",
+        "%s'%s' knowledge result: supports_scim=%s, api_types=%s, scim_availability=%s, required_plan=%s",
         _LOG_PREFIX,
         application_name,
         result.supports_scim,
         [api_type.value for api_type in result.api_type],
+        result.scim_availability.value,
+        result.required_plan or "-",
     )
     return result

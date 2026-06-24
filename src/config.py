@@ -317,6 +317,38 @@ class DigesterSettings(BaseModel):
             "named application is known to support SCIM provisioning."
         ),
     )
+    apitype_web_search_enabled: bool = Field(
+        True,
+        description=(
+            "Enable the web-search apiType signal (Brave/ddgs via the shared search backend) that looks up "
+            "SCIM support and availability for the application name. Disabled by default because it performs "
+            "an external web search on every metadata extraction."
+        ),
+    )
+    apitype_web_search_max_results: int = Field(
+        5,
+        ge=1,
+        description="Maximum number of web search results fed into the web-search apiType signal LLM call.",
+    )
+    apitype_web_search_query_template: str = Field(
+        "{application_name} SCIM provisioning support plan",
+        description=(
+            "Query template for the web-search apiType signal. Must contain the '{application_name}' placeholder."
+        ),
+    )
+    apitype_web_search_fetch_pages: bool = Field(
+        True,
+        description=(
+            "Open every web search result page (via the shared crawl4ai scraper) and feed its full content to the "
+            "web-search apiType signal LLM instead of only the search snippets. Falls back to the snippet for any "
+            "page that cannot be fetched. The number of pages opened equals 'apitype_web_search_max_results'."
+        ),
+    )
+    apitype_web_search_page_max_chars: int = Field(
+        6000,
+        ge=0,
+        description="Maximum characters of each fetched page fed into the web-search apiType signal LLM call.",
+    )
     fuzzy_start_marker_error_ratio: float = Field(
         0.05,
         description="Allowed fuzzy-match error ratio when validating extracted sequence markers.",
@@ -403,6 +435,12 @@ class DigesterSettings(BaseModel):
         False,
         description="Enable detailed logging of extracted attributes as formatted tables for debugging purposes.",
     )
+
+    @model_validator(mode="after")
+    def _validate_apitype_web_search_query_template(self) -> "DigesterSettings":
+        if "{application_name}" not in self.apitype_web_search_query_template:
+            raise ValueError("apitype_web_search_query_template must contain the '{application_name}' placeholder")
+        return self
 
 
 class DatabaseSettings(BaseModel):

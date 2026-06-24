@@ -6,14 +6,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.common.enums import ApiType
+from src.common.enums import ApiType, ScimAvailability
 from src.modules.digester.apitype.knowledge import lookup_api_type_knowledge
-from src.modules.digester.schemas import ApiTypeKnowledgeResponse
+from src.modules.digester.schemas import ApiTypeSignalResult
 
 
 @pytest.mark.asyncio
 async def test_lookup_returns_supported_scim_from_llm():
-    response = ApiTypeKnowledgeResponse(supports_scim=True, api_type=[ApiType.SCIM, ApiType.REST])
+    response = ApiTypeSignalResult(supports_scim=True, api_type=[ApiType.SCIM, ApiType.REST])
     with patch(
         "src.modules.digester.apitype.knowledge.invoke_llm",
         new_callable=AsyncMock,
@@ -24,6 +24,41 @@ async def test_lookup_returns_supported_scim_from_llm():
     assert result.supports_scim is True
     assert ApiType.SCIM in result.api_type
     mock_invoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_lookup_surfaces_paid_availability():
+    # Validate from a raw dict (the realistic LLM->pydantic path) so the "enterprise"
+    # string exercises the scimAvailability normalizer.
+    response = ApiTypeSignalResult.model_validate(
+        {
+            "supportsScim": True,
+            "apiType": ["scim"],
+            "scimAvailability": "enterprise",
+            "requiredPlan": "Enterprise Grid",
+        }
+    )
+    with patch(
+        "src.modules.digester.apitype.knowledge.invoke_llm",
+        new_callable=AsyncMock,
+        return_value=response,
+    ):
+        result = await lookup_api_type_knowledge("Slack")
+
+    # "enterprise" is normalized to the paid availability state.
+    assert result.scim_availability is ScimAvailability.PAID
+    assert result.required_plan == "Enterprise Grid"
+
+
+def test_knowledge_response_defaults_availability_unknown():
+    response = ApiTypeSignalResult(supports_scim=False)
+    assert response.scim_availability is ScimAvailability.UNKNOWN
+    assert response.required_plan == ""
+
+
+def test_knowledge_response_unrecognized_availability_falls_back_to_unknown():
+    response = ApiTypeSignalResult.model_validate({"scimAvailability": "something-weird"})
+    assert response.scim_availability is ScimAvailability.UNKNOWN
 
 
 @pytest.mark.asyncio

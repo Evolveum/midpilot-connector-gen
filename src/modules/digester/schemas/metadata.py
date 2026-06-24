@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_serializer
 
-from src.common.enums import ApiType
+from src.common.enums import ApiType, ScimAvailability
 from src.modules.digester.enums import EndpointType
 
 
@@ -222,14 +222,14 @@ class ApiTypeResponse(BaseModel):
         return normalize_api_type_values(value)
 
 
-class ApiTypeKnowledgeResponse(BaseModel):
+class ApiTypeSignalResult(BaseModel):
     """
-    Structured output for the documentation-free, knowledge-based apiType signal.
+    Structured output shared by the documentation-free SCIM apiType signals
+    (knowledge-based and web-search-based).
 
-    The model receives only the application name (no documentation) and answers from
-    its own training knowledge whether the product is known to support SCIM
-    provisioning and which integration protocol types it exposes. This complements
-    the scim.cloud registry signal and the per-chunk documentation extraction.
+    Both signals answer the same questions about a single application name: whether it
+    exposes SCIM, which integration protocol types it has, and whether SCIM is generally
+    available or restricted to a paid/enterprise plan.
     """
 
     supports_scim: bool = Field(
@@ -244,6 +244,21 @@ class ApiTypeKnowledgeResponse(BaseModel):
         serialization_alias="apiType",
         description="Integration protocol types the application is known to support. Allowed values: REST, SCIM, SQL.",
     )
+    scim_availability: ScimAvailability = Field(
+        default=ScimAvailability.UNKNOWN,
+        validation_alias="scimAvailability",
+        serialization_alias="scimAvailability",
+        description=(
+            "Whether SCIM is generally available ('available'), restricted to a paid/enterprise tier ('paid'), "
+            "or not determinable ('unknown'). Use 'unknown' when unsure."
+        ),
+    )
+    required_plan: str = Field(
+        default="",
+        validation_alias="requiredPlan",
+        serialization_alias="requiredPlan",
+        description="Plan/tier required for SCIM when it is paid (e.g. 'Enterprise Grid'); empty otherwise.",
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -251,6 +266,27 @@ class ApiTypeKnowledgeResponse(BaseModel):
     @classmethod
     def _normalize_api_type(cls, value: Any) -> List[ApiType]:
         return normalize_api_type_values(value)
+
+    @field_validator("scim_availability", mode="before")
+    @classmethod
+    def _normalize_scim_availability(cls, value: Any) -> ScimAvailability:
+        if isinstance(value, ScimAvailability):
+            return value
+        if not isinstance(value, str):
+            return ScimAvailability.UNKNOWN
+        mapping = {
+            "available": ScimAvailability.AVAILABLE,
+            "free": ScimAvailability.AVAILABLE,
+            "included": ScimAvailability.AVAILABLE,
+            "standard": ScimAvailability.AVAILABLE,
+            "paid": ScimAvailability.PAID,
+            "gated": ScimAvailability.PAID,
+            "premium": ScimAvailability.PAID,
+            "enterprise": ScimAvailability.PAID,
+            "business": ScimAvailability.PAID,
+            "unknown": ScimAvailability.UNKNOWN,
+        }
+        return mapping.get(value.strip().lower(), ScimAvailability.UNKNOWN)
 
 
 class InfoExtractionResponse(BaseModel):

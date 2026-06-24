@@ -13,8 +13,8 @@ from src.modules.digester.aggregation.merges import merge_api_type, merge_info_m
 from src.modules.digester.apitype.scim_cloud import ScimCloudMatch
 from src.modules.digester.enums import EndpointType
 from src.modules.digester.schemas import (
-    ApiTypeKnowledgeResponse,
     ApiTypeResponse,
+    ApiTypeSignalResult,
     BaseAPIEndpoint,
     InfoMetadata,
     InfoMetadataExtraction,
@@ -78,7 +78,12 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
         patch(
             "src.modules.digester.service.lookup_api_type_knowledge",
             new_callable=AsyncMock,
-            return_value=ApiTypeKnowledgeResponse(supports_scim=False),
+            return_value=ApiTypeSignalResult(supports_scim=False),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_web_search",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=False),
         ),
     ):
         # First gather call extracts info metadata, second detects apiType.
@@ -125,7 +130,12 @@ async def test_extract_info_metadata_scim_cloud_adds_scim(mock_llm, mock_digeste
         patch(
             "src.modules.digester.service.lookup_api_type_knowledge",
             new_callable=AsyncMock,
-            return_value=ApiTypeKnowledgeResponse(supports_scim=False),
+            return_value=ApiTypeSignalResult(supports_scim=False),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_web_search",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=False),
         ),
     ):
         mock_parallel.side_effect = [info_results, api_type_results]
@@ -159,7 +169,51 @@ async def test_extract_info_metadata_knowledge_adds_scim(mock_llm, mock_digester
         patch(
             "src.modules.digester.service.lookup_api_type_knowledge",
             new_callable=AsyncMock,
-            return_value=ApiTypeKnowledgeResponse(supports_scim=True, api_type=[ApiType.SCIM]),
+            return_value=ApiTypeSignalResult(supports_scim=True, api_type=[ApiType.SCIM]),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_web_search",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=False),
+        ),
+    ):
+        mock_parallel.side_effect = [info_results, api_type_results]
+
+        result = await service.extract_info_metadata(fake_doc_items, uuid4(), uuid4())
+
+        assert result["result"]["infoMetadata"]["apiType"] == [ApiType.REST.value, ApiType.SCIM.value]
+
+
+@pytest.mark.asyncio
+async def test_extract_info_metadata_web_search_adds_scim(mock_llm, mock_digester_update_job_progress):
+    """The web-search signal unions SCIM even when scim.cloud and knowledge do not match."""
+    doc_uuid = uuid4()
+    fake_doc_items = [{"uuid": str(doc_uuid), "content": "Acme REST API"}]
+
+    info_results = [([InfoMetadataExtraction(name="Acme")], True, doc_uuid)]
+    api_type_results = [([ApiTypeResponse(api_type=[ApiType.REST])], True, doc_uuid)]
+
+    with (
+        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch(
+            "src.modules.digester.service.get_discovery_application_name",
+            new_callable=AsyncMock,
+            return_value="Acme",
+        ),
+        patch(
+            "src.modules.digester.service.lookup_scim_support",
+            new_callable=AsyncMock,
+            return_value=ScimCloudMatch(matched=False),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_knowledge",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=False),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_web_search",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=True, api_type=[ApiType.SCIM]),
         ),
     ):
         mock_parallel.side_effect = [info_results, api_type_results]
@@ -187,7 +241,12 @@ async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_j
         patch(
             "src.modules.digester.service.lookup_api_type_knowledge",
             new_callable=AsyncMock,
-            return_value=ApiTypeKnowledgeResponse(supports_scim=False),
+            return_value=ApiTypeSignalResult(supports_scim=False),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_web_search",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=False),
         ),
     ):
         result = await service.extract_info_metadata([], uuid4(), uuid4())
@@ -233,7 +292,12 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
         patch(
             "src.modules.digester.service.lookup_api_type_knowledge",
             new_callable=AsyncMock,
-            return_value=ApiTypeKnowledgeResponse(supports_scim=False),
+            return_value=ApiTypeSignalResult(supports_scim=False),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_web_search",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=False),
         ),
     ):
         mock_extract_api_type.return_value = ([], False)
