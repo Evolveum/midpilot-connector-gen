@@ -39,13 +39,18 @@ _RAW_V2 = """const scim_v2_implementations = {
 
 def _registry():
     return [
-        ScimCloudImplementation(project_name="Slack SCIM", developer="Slack", scim_version="2.0"),
-        ScimCloudImplementation(project_name="Slack SCIM", developer="Slack", scim_version="1.1"),
-        ScimCloudImplementation(project_name="Okta Provisioning", developer="Okta", scim_version="2.0"),
+        ScimCloudImplementation(project_name="Slack SCIM", developer="Slack", server="Yes", scim_version="2.0"),
+        ScimCloudImplementation(project_name="Slack SCIM", developer="Slack", server="Yes", scim_version="1.1"),
+        ScimCloudImplementation(project_name="Okta Provisioning", developer="Okta", server="Yes", scim_version="2.0"),
         ScimCloudImplementation(
-            project_name="Azure Active Directory SCIM Provisioning", developer="Microsoft", scim_version="2.0"
+            project_name="Azure Active Directory SCIM Provisioning",
+            developer="Microsoft",
+            server="Yes",
+            scim_version="2.0",
         ),
-        ScimCloudImplementation(project_name="SailPoint IdentityNow", developer="SailPoint", scim_version="2.0"),
+        ScimCloudImplementation(
+            project_name="SailPoint IdentityNow", developer="SailPoint", server="Yes", scim_version="2.0"
+        ),
     ]
 
 
@@ -99,6 +104,52 @@ def test_unknown_application_does_not_match():
 
 def test_blank_query_does_not_match():
     assert match_registry("", _registry()).matched is False
+
+
+def test_client_only_entries_do_not_match():
+    registry = [
+        ScimCloudImplementation(
+            project_name="Client Only App",
+            developer="Client Vendor",
+            client="Yes",
+            server="No",
+            scim_version="2.0",
+        ),
+        ScimCloudImplementation(
+            project_name="Boolean Client Only",
+            developer="Boolean Vendor",
+            client=True,
+            server=False,
+            scim_version="2.0",
+        ),
+    ]
+
+    assert match_registry("Client Only App", registry).matched is False
+    assert match_registry("Boolean Client Only", registry).matched is False
+
+
+def test_client_only_versions_are_not_collected():
+    registry = [
+        ScimCloudImplementation(
+            project_name="Slack SCIM",
+            developer="Slack",
+            client="Yes",
+            server="No",
+            scim_version="1.1",
+        ),
+        ScimCloudImplementation(
+            project_name="Slack SCIM",
+            developer="Slack",
+            client="No",
+            server="Yes",
+            scim_version="2.0",
+        ),
+    ]
+
+    match = match_registry("Slack", registry)
+
+    assert match.matched is True
+    assert match.scim_versions == ["2.0"]
 
 
 # ==================== LOOKUP ====================

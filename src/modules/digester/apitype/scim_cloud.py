@@ -81,9 +81,9 @@ class ScimCloudImplementation(BaseModel):
     """A single SCIM implementation entry from scim.cloud."""
 
     project_name: str = Field(default="")
-    client: str = Field(default="")
-    server: str = Field(default="")
-    open_source: str = Field(default="")
+    client: str | bool = Field(default="")
+    server: str | bool = Field(default="")
+    open_source: str | bool = Field(default="")
     developer: str = Field(default="")
     link: str = Field(default="")
     scim_version: str = Field(default="")
@@ -151,6 +151,14 @@ def _name_match_score(query_normalized: str, query_tokens: set[str], candidate: 
             SequenceMatcher(None, " ".join(sorted(query_tokens)), " ".join(sorted(candidate_tokens))).ratio(),
         )
     return ratio
+
+
+def _is_server_capable(implementation: ScimCloudImplementation) -> bool:
+    """Return whether the registry entry represents a SCIM server implementation."""
+    server = implementation.server
+    if isinstance(server, bool):
+        return server
+    return server.strip().lower() in {"yes", "true", "1"}
 
 
 def parse_implementations(raw: str, scim_version: str) -> List[ScimCloudImplementation]:
@@ -250,6 +258,9 @@ def match_registry(application_name: str, implementations: List[ScimCloudImpleme
     matched_versions: set[str] = set()
 
     for impl in implementations:
+        if not _is_server_capable(impl):
+            continue
+
         project_score = _name_match_score(query_normalized, query_tokens, impl.project_name)
         developer_score = _name_match_score(query_normalized, query_tokens, impl.developer)
         score, field = (
