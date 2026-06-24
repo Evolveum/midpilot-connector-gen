@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_serializer
 
-from src.common.enums import ApiType, ScimAvailability
+from src.common.enums import ApiType, ScimAvailability, ScimSource
 from src.modules.digester.enums import EndpointType
 
 
@@ -152,6 +152,44 @@ class InfoMetadataExtraction(BaseModel):
         )
 
 
+# TODO
+# In the future, this will be calculated from signal agreement
+DEFAULT_SCIM_AVAILABILITY_CONFIDENCE: float = 1.0
+
+
+class ScimAvailabilityInfo(BaseModel):
+    """
+    Advisory SCIM availability surfaced on the API response when SCIM is detected.
+
+    SCIM may exist for a product yet require a paid/enterprise plan the customer might not
+    have. Aggregated from the documentation-free SCIM signals; included only when ``scim``
+    is in ``apiType`` (dropped otherwise, like ``databaseName`` for non-SQL).
+    """
+
+    status: ScimAvailability = Field(
+        default=ScimAvailability.UNKNOWN,
+        description="SCIM availability: 'available', 'paid', or 'unknown'.",
+    )
+    required_plan: str = Field(
+        default="",
+        validation_alias="requiredPlan",
+        serialization_alias="requiredPlan",
+        description="Plan/tier required when status is 'paid' (e.g. 'Enterprise'); empty when unknown.",
+    )
+    sources: List[ScimSource] = Field(
+        default_factory=list,
+        description="Signals that confirmed SCIM: scim_cloud, documentation, knowledge, web_search.",
+    )
+    confidence: float = Field(
+        default=DEFAULT_SCIM_AVAILABILITY_CONFIDENCE,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in [0, 1]. Placeholder default until derived from signal agreement.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
 class InfoMetadata(InfoMetadataExtraction):
     """
     Final high-level product and API metadata, including the detected ``apiType``.
@@ -167,6 +205,12 @@ class InfoMetadata(InfoMetadataExtraction):
         description=(
             "API technology types. Allowed values: REST, SCIM, SQL. OpenAPI/Swagger should be normalized to REST."
         ),
+    )
+    scim_availability: Optional[ScimAvailabilityInfo] = Field(
+        default=None,
+        validation_alias="scimAvailability",
+        serialization_alias="scimAvailability",
+        description="SCIM availability advisory; present only when 'scim' is in apiType.",
     )
 
     @field_validator("api_type", mode="before")
@@ -186,6 +230,7 @@ class InfoMetadata(InfoMetadataExtraction):
             return data
 
         is_sql = ApiType.SQL in self.api_type
+        is_scim = ApiType.SCIM in self.api_type
         is_rest_or_scim = any(api_type in (ApiType.REST, ApiType.SCIM) for api_type in self.api_type)
 
         if not is_sql:
@@ -195,6 +240,10 @@ class InfoMetadata(InfoMetadataExtraction):
         if is_sql and not is_rest_or_scim:
             data.pop("baseApiEndpoint", None)
             data.pop("base_api_endpoint", None)
+
+        if not is_scim:
+            data.pop("scimAvailability", None)
+            data.pop("scim_availability", None)
 
         return data
 

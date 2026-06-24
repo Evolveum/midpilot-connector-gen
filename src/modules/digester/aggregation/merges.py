@@ -29,6 +29,7 @@ from src.modules.digester.schemas import (
     InfoMetadata,
     InfoMetadataExtraction,
     InfoResponse,
+    ScimAvailabilityInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -496,6 +497,7 @@ def merge_info_metadata(
     info_candidates: List[InfoMetadataExtraction],
     total_items: int,
     api_types: List[ApiType],
+    scim_availability: Optional[ScimAvailabilityInfo] = None,
 ) -> Dict[str, Any]:
     """
     Merge per-document InfoMetadata candidates into a single payload using frequency heuristics.
@@ -626,6 +628,7 @@ def merge_info_metadata(
             api_type=found_api_types,
             base_api_endpoint=found_base_api_endpoints,
             database_name=found_database_name,
+            scim_availability=scim_availability if ApiType.SCIM in found_api_types else None,
         )
     )
     merged_payload = cast(Dict[str, Any], merged_response.model_dump(by_alias=True))

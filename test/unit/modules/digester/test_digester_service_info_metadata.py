@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.common.enums import ApiType
+from src.common.enums import ApiType, ScimAvailability
 from src.modules.digester import service
 from src.modules.digester.aggregation.merges import merge_api_type, merge_info_metadata
 from src.modules.digester.apitype.scim_cloud import ScimCloudMatch
@@ -18,6 +18,7 @@ from src.modules.digester.schemas import (
     BaseAPIEndpoint,
     InfoMetadata,
     InfoMetadataExtraction,
+    ScimAvailabilityInfo,
 )
 
 
@@ -224,6 +225,57 @@ async def test_extract_info_metadata_web_search_adds_scim(mock_llm, mock_digeste
 
 
 @pytest.mark.asyncio
+async def test_extract_info_metadata_exposes_scim_availability(mock_llm, mock_digester_update_job_progress):
+    """When SCIM is detected, the response carries the aggregated scimAvailability advisory."""
+    doc_uuid = uuid4()
+    fake_doc_items = [{"uuid": str(doc_uuid), "content": "Acme"}]
+
+    info_results = [([InfoMetadataExtraction(name="Acme")], True, doc_uuid)]
+    api_type_results = [([ApiTypeResponse(api_type=[ApiType.REST])], True, doc_uuid)]
+
+    with (
+        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch(
+            "src.modules.digester.service.get_discovery_application_name",
+            new_callable=AsyncMock,
+            return_value="Acme",
+        ),
+        patch(
+            "src.modules.digester.service.lookup_scim_support",
+            new_callable=AsyncMock,
+            return_value=ScimCloudMatch(
+                matched=True, application_name="Acme", project_name="Acme", scim_versions=["2.0"]
+            ),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_knowledge",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=False),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_web_search",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(
+                supports_scim=True,
+                api_type=[ApiType.SCIM],
+                scim_availability=ScimAvailability.PAID,
+                required_plan="Enterprise",
+            ),
+        ),
+    ):
+        mock_parallel.side_effect = [info_results, api_type_results]
+        result = await service.extract_info_metadata(fake_doc_items, uuid4(), uuid4())
+
+    metadata = result["result"]["infoMetadata"]
+    assert ApiType.SCIM.value in metadata["apiType"]
+    availability = metadata["scimAvailability"]
+    assert availability["status"] == ScimAvailability.PAID.value
+    assert availability["requiredPlan"] == "Enterprise"
+    assert availability["sources"] == ["scim_cloud", "web_search"]
+    assert availability["confidence"] == 1.0
+
+
+@pytest.mark.asyncio
 async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_job_progress):
     """Test extract_info_metadata with no documentation items."""
     with (
@@ -392,6 +444,56 @@ def test_merge_info_metadata_preserves_sql_api_type():
     merged = merge_info_metadata(info_candidates, total_items=2, api_types=[ApiType.SQL])
 
     assert merged["infoMetadata"]["apiType"] == [ApiType.SQL.value]
+
+
+# ==================== SCIM AVAILABILITY ====================
+def test_info_metadata_serializes_scim_availability_for_scim():
+    metadata = InfoMetadata(
+        api_type=[ApiType.SCIM],
+        scim_availability=ScimAvailabilityInfo(
+            status=ScimAvailability.PAID, required_plan="Enterprise", sources=["web_search"]
+        ),
+    )
+    dumped = metadata.model_dump(by_alias=True)
+
+    assert dumped["scimAvailability"]["status"] == ScimAvailability.PAID.value
+    assert dumped["scimAvailability"]["requiredPlan"] == "Enterprise"
+    assert dumped["scimAvailability"]["sources"] == ["web_search"]
+    assert dumped["scimAvailability"]["confidence"] == 1.0
+
+
+def test_info_metadata_drops_scim_availability_when_not_scim():
+    metadata = InfoMetadata(
+        api_type=[ApiType.REST],
+        scim_availability=ScimAvailabilityInfo(status=ScimAvailability.PAID),
+    )
+    assert "scimAvailability" not in metadata.model_dump(by_alias=True)
+
+
+def test_merge_info_metadata_includes_scim_availability_for_scim():
+    merged = merge_info_metadata(
+        [InfoMetadataExtraction(name="Acme")],
+        total_items=1,
+        api_types=[ApiType.SCIM],
+        scim_availability=ScimAvailabilityInfo(
+            status=ScimAvailability.PAID, required_plan="Enterprise", sources=["scim_cloud"]
+        ),
+    )
+
+    availability = merged["infoMetadata"]["scimAvailability"]
+    assert availability["status"] == ScimAvailability.PAID.value
+    assert availability["sources"] == ["scim_cloud"]
+
+
+def test_merge_info_metadata_omits_scim_availability_without_scim():
+    merged = merge_info_metadata(
+        [InfoMetadataExtraction(name="Acme")],
+        total_items=1,
+        api_types=[ApiType.REST],
+        scim_availability=ScimAvailabilityInfo(status=ScimAvailability.PAID),
+    )
+
+    assert "scimAvailability" not in merged["infoMetadata"]
 
 
 # ==================== MERGE API TYPE ====================

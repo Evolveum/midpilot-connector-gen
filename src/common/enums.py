@@ -67,3 +67,17 @@ class ScimAvailability(StrEnum):
     AVAILABLE = "available"
     PAID = "paid"
     UNKNOWN = "unknown"
+
+
+class ScimSource(StrEnum):
+    """
+    Where a SCIM confirmation came from.
+
+    Used as provenance for the SCIM availability advisory (which signals confirmed SCIM).
+    Declaration order is the order sources are reported in.
+    """
+
+    SCIM_CLOUD = "scim_cloud"
+    DOCUMENTATION = "documentation"
+    KNOWLEDGE = "knowledge_of_llm"
+    WEB_SEARCH = "web_search"

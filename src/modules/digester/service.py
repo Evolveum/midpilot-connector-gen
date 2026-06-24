@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Set, Tuple, cast
 from uuid import UUID
 
 from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.enums import ApiType, JobStage
+from src.common.enums import ApiType, JobStage, ScimSource
 from src.common.jobs import update_job_progress
 from src.common.utils.normalize import normalize_endpoint_key
 from src.common.utils.session_info_metadata import get_discovery_application_name, resolve_effective_api_type
@@ -73,6 +73,7 @@ from src.modules.digester.schemas import (
     ExtractedConnectivityEndpointInfo,
     InfoExtractionResponse,
     InfoMetadataExtraction,
+    ScimAvailabilityInfo,
 )
 from src.modules.digester.selection.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, DEFAULT_CRITERIA
 from src.modules.digester.selection.doc_chunk import (
@@ -652,6 +653,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID, session_id:
     )
 
     api_types = merge_api_type(all_api_type_candidates, total_items=len(doc_items))
+    scim_detected_in_docs = ApiType.SCIM in api_types
     if ApiType.SCIM not in api_types and (
         scim_cloud_match.matched or knowledge_result.supports_scim or web_search_result.supports_scim
     ):
@@ -673,17 +675,40 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID, session_id:
             )
         api_types = sorted([*api_types, ApiType.SCIM], key=lambda api_type: api_type.value)
 
+    scim_availability_info: ScimAvailabilityInfo | None = None
     if ApiType.SCIM in api_types:
-        availability = summarize_scim_availability({"knowledge": knowledge_result, "web_search": web_search_result})
+        availability = summarize_scim_availability(
+            {
+                ScimSource.KNOWLEDGE: knowledge_result,
+                ScimSource.WEB_SEARCH: web_search_result,
+            }
+        )
+        contributing = set(availability.sources)
+        if scim_detected_in_docs:
+            contributing.add(ScimSource.DOCUMENTATION)
+        if scim_cloud_match.matched:
+            contributing.add(ScimSource.SCIM_CLOUD)
+        # Report sources in a stable order (the enum's declaration order).
+        sources = [source for source in ScimSource if source in contributing]
+        scim_availability_info = ScimAvailabilityInfo(
+            status=availability.status,
+            required_plan=availability.required_plan,
+            sources=sources,
+        )
         logger.info(
             "[Digester:ApiType] SCIM availability for '%s': status=%s, required_plan=%s, sources=%s",
             application_name,
             availability.status.value,
             availability.required_plan or "-",
-            ",".join(availability.sources) or "-",
+            ",".join(source.value for source in sources) or "-",
         )
 
-    merged_result = merge_info_metadata(all_info_candidates, total_items=len(doc_items), api_types=api_types)
+    merged_result = merge_info_metadata(
+        all_info_candidates,
+        total_items=len(doc_items),
+        api_types=api_types,
+        scim_availability=scim_availability_info,
+    )
     await update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
 
     return {

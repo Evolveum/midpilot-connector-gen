@@ -15,7 +15,7 @@ response until the representation is agreed with the team.
 from dataclasses import dataclass
 from typing import Mapping, Tuple
 
-from src.common.enums import ScimAvailability
+from src.common.enums import ScimAvailability, ScimSource
 from src.modules.digester.schemas import ApiTypeSignalResult
 
 _PRECEDENCE: dict[ScimAvailability, int] = {
@@ -31,10 +31,12 @@ class ScimAvailabilitySummary:
 
     status: ScimAvailability
     required_plan: str
-    sources: Tuple[str, ...]
+    sources: Tuple[ScimSource, ...]
 
 
-def summarize_scim_availability(signals: Mapping[str, ApiTypeSignalResult]) -> ScimAvailabilitySummary:
+def summarize_scim_availability(
+    signals: Mapping[ScimSource, ApiTypeSignalResult],
+) -> ScimAvailabilitySummary:
     """
     Aggregate per-signal SCIM availability into one summary.
 
@@ -44,7 +46,7 @@ def summarize_scim_availability(signals: Mapping[str, ApiTypeSignalResult]) -> S
     """
     status = ScimAvailability.UNKNOWN
     required_plan = ""
-    sources: list[str] = []
+    sources: list[ScimSource] = []
 
     for name, signal in signals.items():
         if signal.supports_scim or signal.scim_availability is not ScimAvailability.UNKNOWN:

@@ -60,6 +60,7 @@ from src.modules.digester.schemas.metadata import (
     InfoMetadata,
     InfoMetadataExtraction,
     InfoResponse,
+    ScimAvailabilityInfo,
 )
 from src.modules.digester.schemas.object_classes import (
     BaseObjectClass,
@@ -138,4 +139,5 @@ __all__ = [
     "RankedObjectClass",
     "RelationRecord",
     "RelationsResponse",
+    "ScimAvailabilityInfo",
 ]
