@@ -100,7 +100,7 @@ async def metadata_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
             "documentationItems": doc_items,
             "applicationName": application_name,
         },
-        "args": (doc_items,),
+        "args": (doc_items, application_name),
     }
 
 

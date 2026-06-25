@@ -547,10 +547,6 @@ def merge_info_metadata(
     - ignore sparse/noisy values
     """
     if total_items <= 0:
-        # Documentation heuristics need documents, but the documentation-free apiType signals
-        # (scim.cloud / LLM knowledge / web search) do not. Still emit their result so a
-        # confirmed SCIM detection (and its availability advisory) is not lost when no chunks
-        # were selected. Collapses to infoMetadata=null when no signal provided anything either.
         logger.info(
             "[Digester:InfoMetadata] No documents to merge (total_items=%s); using signal-derived apiType only: %s",
             total_items,

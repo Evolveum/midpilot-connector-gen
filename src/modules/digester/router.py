@@ -758,7 +758,7 @@ async def extract_metadata(
         dynamic_input_enabled=True,
         dynamic_input_provider=metadata_input,
         worker=service.extract_info_metadata,
-        worker_kwargs={"session_id": session_id},
+        worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,

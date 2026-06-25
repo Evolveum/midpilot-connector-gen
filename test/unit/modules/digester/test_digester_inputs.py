@@ -77,7 +77,7 @@ async def test_metadata_input_uses_metadata_criteria_and_includes_application_na
     assert result["jobInput"]["documentationItems"] == docs
     # applicationName must be part of jobInput so it flows into the cache key.
     assert result["jobInput"]["applicationName"] == "Okta"
-    assert result["args"] == (docs,)
+    assert result["args"] == (docs, "Okta")
     mock_filter.assert_awaited_once_with(METADATA_CRITERIA, session_id, db=db)
     mock_app_name.assert_awaited_once_with(session_id)
 

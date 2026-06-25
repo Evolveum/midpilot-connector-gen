@@ -12,7 +12,7 @@ from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.enums import ApiType, JobStage, ScimSource
 from src.common.jobs import update_job_progress
 from src.common.utils.normalize import normalize_endpoint_key
-from src.common.utils.session_info_metadata import get_discovery_application_name, resolve_effective_api_type
+from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.modules.digester.aggregation.merges import (
     merge_api_type,
     merge_info_metadata,
@@ -486,7 +486,7 @@ async def _retry_rest_endpoints_with_default_criteria(
     return fallback_result
 
 
-async def extract_info_metadata(doc_items: List[dict], job_id: UUID, session_id: UUID):
+async def extract_info_metadata(doc_items: List[dict], application_name: str, job_id: UUID):
     """
     Extract metadata from multiple documentation items in parallel.
 
@@ -533,7 +533,7 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID, session_id:
         message="Processing chunks",
     )
 
-    application_name = await get_discovery_application_name(session_id)
+    application_name = application_name.strip() if isinstance(application_name, str) else ""
 
     info_results, api_type_results, scim_cloud_match, knowledge_result, web_search_result = await asyncio.gather(
         run_doc_extractors_concurrently(
