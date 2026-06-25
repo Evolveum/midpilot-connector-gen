@@ -308,6 +308,48 @@ async def test_extract_info_metadata_empty_docs(mock_llm, mock_digester_update_j
 
 
 @pytest.mark.asyncio
+async def test_extract_info_metadata_no_docs_keeps_signal_scim(mock_llm, mock_digester_update_job_progress):
+    """With no documentation but a documentation-free signal confirming SCIM, the SCIM
+    detection and its availability advisory must survive instead of being discarded."""
+    with (
+        patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.modules.digester.service.get_discovery_application_name",
+            new_callable=AsyncMock,
+            return_value="Acme",
+        ),
+        patch(
+            "src.modules.digester.service.lookup_scim_support",
+            new_callable=AsyncMock,
+            return_value=ScimCloudMatch(matched=False),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_knowledge",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=False),
+        ),
+        patch(
+            "src.modules.digester.service.lookup_api_type_web_search",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(
+                supports_scim=True,
+                api_type=[ApiType.SCIM],
+                scim_availability=ScimAvailability.PAID,
+                required_plan="Enterprise",
+            ),
+        ),
+    ):
+        result = await service.extract_info_metadata([], uuid4(), uuid4())
+
+    metadata = result["result"]["infoMetadata"]
+    assert metadata is not None
+    assert metadata["apiType"] == [ApiType.SCIM.value]
+    assert metadata["scimAvailability"]["status"] == ScimAvailability.PAID.value
+    assert metadata["scimAvailability"]["requiredPlan"] == "Enterprise"
+    assert metadata["scimAvailability"]["sources"] == ["web_search"]
+
+
+@pytest.mark.asyncio
 async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, mock_digester_update_job_progress):
     doc_uuid1 = uuid4()
     doc_uuid2 = uuid4()
@@ -494,6 +536,30 @@ def test_merge_info_metadata_omits_scim_availability_without_scim():
     )
 
     assert "scimAvailability" not in merged["infoMetadata"]
+
+
+def test_merge_info_metadata_keeps_signal_scim_without_documents():
+    # The documentation-free signals do not need chunks: a SCIM confirmation must survive a
+    # zero-document merge instead of being discarded with an empty payload.
+    merged = merge_info_metadata(
+        [],
+        total_items=0,
+        api_types=[ApiType.SCIM],
+        scim_availability=ScimAvailabilityInfo(
+            status=ScimAvailability.PAID, required_plan="Enterprise", sources=["web_search"]
+        ),
+    )
+
+    assert merged["infoMetadata"]["apiType"] == [ApiType.SCIM.value]
+    assert merged["infoMetadata"]["scimAvailability"]["status"] == ScimAvailability.PAID.value
+    assert merged["infoMetadata"]["scimAvailability"]["sources"] == ["web_search"]
+
+
+def test_merge_info_metadata_without_documents_or_signals_is_null():
+    # No documents and no signal-derived apiType still collapses to infoMetadata=null.
+    merged = merge_info_metadata([], total_items=0, api_types=[])
+
+    assert merged == {"infoMetadata": None}
 
 
 # ==================== MERGE API TYPE ====================

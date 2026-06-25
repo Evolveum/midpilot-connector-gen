@@ -455,6 +455,46 @@ def _empty_info_metadata_payload() -> Dict[str, Any]:
     return cast(Dict[str, Any], InfoResponse(info_metadata=None).model_dump(by_alias=True))
 
 
+def _build_info_metadata_payload(
+    *,
+    name: str,
+    application_version: str,
+    api_version: str,
+    api_types: List[ApiType],
+    base_api_endpoints: List[BaseAPIEndpoint],
+    database_name: str,
+    scim_availability: Optional[ScimAvailabilityInfo],
+) -> Dict[str, Any]:
+    """
+    Assemble the final InfoResponse payload from already-selected fields.
+
+    ``api_types`` and ``scim_availability`` may originate from the documentation-free SCIM
+    signals (scim.cloud / LLM knowledge / web search), which do not need documentation, so
+    this can yield a non-empty payload even when no documentation-derived fields were found.
+    Collapses to ``infoMetadata=null`` only when nothing was found from either source.
+    """
+    found_api_types = sorted(api_types, key=lambda api_type: api_type.value)
+    merged_response = InfoResponse(
+        info_metadata=InfoMetadata(
+            name=name,
+            application_version=application_version,
+            api_version=api_version,
+            api_type=found_api_types,
+            base_api_endpoint=base_api_endpoints,
+            database_name=database_name,
+            scim_availability=scim_availability if ApiType.SCIM in found_api_types else None,
+        )
+    )
+    merged_payload = cast(Dict[str, Any], merged_response.model_dump(by_alias=True))
+
+    if is_empty_info_result_payload(merged_payload):
+        logger.info("[Digester:InfoMetadata] Merge result is empty -> returning infoMetadata=null")
+        return _empty_info_metadata_payload()
+
+    logger.info("[Digester:InfoMetadata] Merge produced non-empty infoMetadata")
+    return merged_payload
+
+
 def merge_api_type(
     api_type_candidates: List[ApiTypeResponse],
     total_items: int,
@@ -507,8 +547,24 @@ def merge_info_metadata(
     - ignore sparse/noisy values
     """
     if total_items <= 0:
-        logger.info("[Digester:InfoMetadata] Heuristic merge skipped: total_items=%s", total_items)
-        return _empty_info_metadata_payload()
+        # Documentation heuristics need documents, but the documentation-free apiType signals
+        # (scim.cloud / LLM knowledge / web search) do not. Still emit their result so a
+        # confirmed SCIM detection (and its availability advisory) is not lost when no chunks
+        # were selected. Collapses to infoMetadata=null when no signal provided anything either.
+        logger.info(
+            "[Digester:InfoMetadata] No documents to merge (total_items=%s); using signal-derived apiType only: %s",
+            total_items,
+            api_types,
+        )
+        return _build_info_metadata_payload(
+            name="",
+            application_version="",
+            api_version="",
+            api_types=api_types,
+            base_api_endpoints=[],
+            database_name="",
+            scim_availability=scim_availability,
+        )
 
     threshold = total_items * config.digester.info_metadata_uncertainty_threshold
 
@@ -620,22 +676,12 @@ def merge_info_metadata(
         found_database_name,
     )
 
-    merged_response = InfoResponse(
-        info_metadata=InfoMetadata(
-            name=found_name,
-            application_version=found_application_version,
-            api_version=found_api_version,
-            api_type=found_api_types,
-            base_api_endpoint=found_base_api_endpoints,
-            database_name=found_database_name,
-            scim_availability=scim_availability if ApiType.SCIM in found_api_types else None,
-        )
+    return _build_info_metadata_payload(
+        name=found_name,
+        application_version=found_application_version,
+        api_version=found_api_version,
+        api_types=found_api_types,
+        base_api_endpoints=found_base_api_endpoints,
+        database_name=found_database_name,
+        scim_availability=scim_availability,
     )
-    merged_payload = cast(Dict[str, Any], merged_response.model_dump(by_alias=True))
-
-    if is_empty_info_result_payload(merged_payload):
-        logger.info("[Digester:InfoMetadata] Heuristic result is empty -> returning infoMetadata=null")
-        return _empty_info_metadata_payload()
-
-    logger.info("[Digester:InfoMetadata] Heuristic merge produced non-empty infoMetadata")
-    return merged_payload
