@@ -84,10 +84,15 @@ async def _filter_documentation_items_impl(
             num_endpoints is not None and num_endpoints > criteria.max_endpoints_num
         ):
             continue
-        if criteria.allowed_categories is not None and (
-            category is None or category not in criteria.allowed_categories
-        ):
-            continue
+        if criteria.allowed_categories is not None:
+            category_allowed = category is not None and category in criteria.allowed_categories
+            has_override_tag = (
+                criteria.category_override_tags is not None
+                and tags is not None
+                and any(tag.lower().strip() in criteria.category_override_tags for tag in tags)
+            )
+            if not category_allowed and not has_override_tag:
+                continue
         if criteria.excluded_categories is not None and category in criteria.excluded_categories:
             continue
         if criteria.allowed_tags is not None:

@@ -290,11 +290,6 @@ async def store_connectivity_endpoint_override(
     )
 
 
-# --------------------------------------------------------------------------- #
-# Composite read (GET single object class)
-# --------------------------------------------------------------------------- #
-
-
 async def build_object_class_detail(
     db: AsyncSession,
     repo: SessionRepository,

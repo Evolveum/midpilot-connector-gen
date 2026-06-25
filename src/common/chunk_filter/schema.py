@@ -27,6 +27,14 @@ class ChunkFilterCriteria(BaseModel):
         default=None,
         description="List of excluded categories for chunk filtering, in a case of conflict with allowed_categories, exclusion takes precedence",
     )
+    category_override_tags: List[str] | None = Field(
+        default=None,
+        description=(
+            "Tags that let a chunk bypass the allowed_categories gate: a chunk whose category is not in "
+            "allowed_categories is still kept when it carries at least one of these tags. Only relaxes the "
+            "category check; all other criteria (including excluded_categories) still apply."
+        ),
+    )
     allowed_tags: List[List[str]] | None = Field(
         default=None,
         description="""

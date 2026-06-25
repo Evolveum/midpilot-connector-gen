@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_filter.filter import filter_documentation_items
+from src.common.utils.session_info_metadata import get_discovery_application_name
 from src.config import config
 from src.modules.digester.selection.criteria import (
     CONNECTIVITY_ENDPOINT_CRITERIA,
@@ -16,6 +17,7 @@ from src.modules.digester.selection.criteria import (
     DEFAULT_AUTH_CRITERIA,
     DEFAULT_CRITERIA,
     EXTENDED_AUTH_CRITERIA,
+    METADATA_CRITERIA,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,13 +92,15 @@ async def metadata_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
             'sessionInput' key with metadata for input in session field,
             'jobInput' key with metadata for input in job field
     """
-    doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
+    doc_items = await filter_documentation_items(METADATA_CRITERIA, session_id, db=db)
+    application_name = await get_discovery_application_name(session_id)
     return {
         "sessionInput": {},
         "jobInput": {
             "documentationItems": doc_items,
+            "applicationName": application_name,
         },
-        "args": (doc_items,),
+        "args": (doc_items, application_name),
     }
 
 

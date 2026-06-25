@@ -9,7 +9,7 @@ from uuid import UUID
 from src.modules.digester.aggregation.merges import is_empty_info_result_payload
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk
 from src.modules.digester.prompts.info_prompts import get_info_system_prompt, get_info_user_prompt
-from src.modules.digester.schemas import InfoMetadata, InfoResponse
+from src.modules.digester.schemas import InfoExtractionResponse, InfoMetadataExtraction
 
 logger = logging.getLogger(__name__)
 
@@ -19,17 +19,18 @@ async def extract_info_metadata(
     job_id: UUID,
     chunk_id: Optional[UUID] = None,
     chunk_metadata: Optional[Dict[str, Any]] = None,
-) -> Tuple[List[InfoMetadata], bool]:
+) -> Tuple[List[InfoMetadataExtraction], bool]:
     """
     Extract raw info metadata from a single chunk with a standalone LLM call.
-    Does NOT aggregate across chunks - aggregation is handled in the service layer.
+    Does NOT extract apiType (handled by the dedicated apiType extractor) and does NOT
+    aggregate across chunks - aggregation is handled in the service layer.
 
     Returns:
-        - List of extracted InfoMetadata candidates (0 or 1 item)
+        - List of extracted InfoMetadataExtraction candidates (0 or 1 item)
         - Boolean indicating if relevant data was found
     """
 
-    def parse_fn(result: InfoResponse) -> List[InfoMetadata]:
+    def parse_fn(result: InfoExtractionResponse) -> List[InfoMetadataExtraction]:
         payload = result.model_dump(by_alias=True)
         if is_empty_info_result_payload(payload) or result.info_metadata is None:
             return []
@@ -37,7 +38,7 @@ async def extract_info_metadata(
 
     extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
-        pydantic_model=InfoResponse,
+        pydantic_model=InfoExtractionResponse,
         system_prompt=get_info_system_prompt,
         user_prompt=get_info_user_prompt,
         parse_fn=parse_fn,

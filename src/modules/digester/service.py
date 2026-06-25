@@ -2,17 +2,19 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
 import logging
 from collections import Counter
 from typing import Any, Dict, List, Set, Tuple, cast
 from uuid import UUID
 
 from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.enums import ApiType, JobStage
+from src.common.enums import ApiType, JobStage, ScimSource
 from src.common.jobs import update_job_progress
 from src.common.utils.normalize import normalize_endpoint_key
 from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.modules.digester.aggregation.merges import (
+    merge_api_type,
     merge_info_metadata,
     merge_relations_results,
 )
@@ -23,6 +25,11 @@ from src.modules.digester.entities.object_classes import (
 )
 from src.modules.digester.extraction.chunk_extraction import process_over_chunks, run_doc_extractors_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
+from src.modules.digester.extractors.apitype.availability import summarize_scim_availability
+from src.modules.digester.extractors.apitype.documentation import extract_api_type as _extract_api_type
+from src.modules.digester.extractors.apitype.knowledge import lookup_api_type_knowledge
+from src.modules.digester.extractors.apitype.scim_cloud import lookup_scim_support
+from src.modules.digester.extractors.apitype.web_search import lookup_api_type_web_search
 
 # Shared extractors
 from src.modules.digester.extractors.auth import (
@@ -61,7 +68,13 @@ from src.modules.digester.extractors.scim.object_class import extract_scim_objec
 from src.modules.digester.extractors.sql.attributes import extract_sql_attributes
 from src.modules.digester.extractors.sql.object_class import extract_sql_object_classes
 from src.modules.digester.extractors.sql.tables import extract_sql_tables
-from src.modules.digester.schemas import ExtractedConnectivityEndpointInfo, InfoMetadata, InfoResponse
+from src.modules.digester.schemas import (
+    ApiTypeResponse,
+    ExtractedConnectivityEndpointInfo,
+    InfoExtractionResponse,
+    InfoMetadataExtraction,
+    ScimAvailabilityInfo,
+)
 from src.modules.digester.selection.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, DEFAULT_CRITERIA
 from src.modules.digester.selection.doc_chunk import (
     build_chunk_id_to_doc_id,
@@ -473,74 +486,122 @@ async def _retry_rest_endpoints_with_default_criteria(
     return fallback_result
 
 
-async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
+async def extract_info_metadata(doc_items: List[dict], application_name: str, job_id: UUID):
     """
     Extract metadata from multiple documentation items in parallel.
 
-    Step 1: Extract raw InfoMetadata candidates from each chunk (by chunkId) in parallel.
-    Step 2: Merge all candidates using threshold-based heuristics into one final InfoResponse payload.
+    Step 1: Run two independent per-chunk extractors concurrently:
+            - info metadata (name, versions, base endpoints, database name),
+            - apiType (REST/SCIM/SQL protocol detection) as a standalone LLM call,
+            plus three documentation-free SCIM signals for the discovery application name:
+            a scim.cloud registry lookup, an LLM knowledge lookup, and a web-search lookup.
+    Step 2: Merge both sets of candidates using threshold-based heuristics, union in SCIM
+            when any documentation-free signal confirms it, and join the detected apiType
+            into one final InfoResponse payload. SCIM availability (paid vs generally
+            available) is aggregated from the signals and logged only (not in the response).
     """
-    all_info_candidates: List[InfoMetadata] = []
-    all_relevant_chunks: List[Dict[str, Any]] = []
+    all_info_candidates: List[InfoMetadataExtraction] = []
+    all_api_type_candidates: List[ApiTypeResponse] = []
+    relevant_chunks_by_id: Dict[str, Dict[str, str]] = {}
     chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
     chunk_metadata_map = build_doc_metadata_map(doc_items)
 
-    async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
+    async def info_extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
         chunk_metadata = chunk_metadata_map.get(str(chunk_id))
         return await _extract_info_metadata(content, job_id, chunk_id, chunk_metadata)
 
-    results = await run_doc_extractors_concurrently(
-        chunk_items=doc_items,
-        job_id=job_id,
-        extractor=extractor_with_metadata,
-        logger_scope="Digester:InfoMetadata",
+    async def api_type_extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
+        return await _extract_api_type(content, job_id, chunk_id, chunk_metadata)
+
+    def track_relevant_chunk(chunk_id: UUID) -> None:
+        chunk_id_str = str(chunk_id)
+        if chunk_id_str in relevant_chunks_by_id:
+            return
+        doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+        if doc_id:
+            relevant_chunks_by_id[chunk_id_str] = {"doc_id": doc_id, "chunk_id": chunk_id_str}
+        else:
+            logger.warning(
+                "[Digester:InfoMetadata] Missing docId for chunk %s, skipping relevant chunk mapping",
+                chunk_id_str,
+            )
+
+    await update_job_progress(
+        job_id,
+        total_processing=len(doc_items) * 2,
+        message="Processing chunks",
     )
 
-    for raw_infos, has_relevant_data, chunk_id in results:
-        normalized_infos: List[InfoMetadata] = []
+    application_name = application_name.strip() if isinstance(application_name, str) else ""
+
+    info_results, api_type_results, scim_cloud_match, knowledge_result, web_search_result = await asyncio.gather(
+        run_doc_extractors_concurrently(
+            chunk_items=doc_items,
+            job_id=job_id,
+            extractor=info_extractor_with_metadata,
+            logger_scope="Digester:InfoMetadata",
+            set_total=False,
+        ),
+        run_doc_extractors_concurrently(
+            chunk_items=doc_items,
+            job_id=job_id,
+            extractor=api_type_extractor_with_metadata,
+            logger_scope="Digester:ApiType",
+            set_total=False,
+        ),
+        lookup_scim_support(application_name),
+        lookup_api_type_knowledge(application_name),
+        lookup_api_type_web_search(application_name),
+    )
+
+    for raw_infos, has_relevant_data, chunk_id in info_results:
+        normalized_infos: List[InfoMetadataExtraction] = []
 
         if isinstance(raw_infos, list):
             for item in raw_infos:
-                if isinstance(item, InfoMetadata):
+                if isinstance(item, InfoMetadataExtraction):
                     normalized_infos.append(item)
                     continue
-                if isinstance(item, InfoResponse):
+                if isinstance(item, InfoExtractionResponse):
                     if item.info_metadata is not None:
                         normalized_infos.append(item.info_metadata)
                     continue
                 if isinstance(item, dict):
                     try:
-                        parsed_info = InfoResponse.model_validate(item).info_metadata
+                        parsed_info = InfoExtractionResponse.model_validate(item).info_metadata
                         if parsed_info is not None:
                             normalized_infos.append(parsed_info)
                         continue
                     except Exception as response_exc:
                         try:
-                            normalized_infos.append(InfoMetadata.model_validate(item))
+                            normalized_infos.append(InfoMetadataExtraction.model_validate(item))
                         except Exception as metadata_exc:
                             logger.warning(
-                                "[Digester:InfoMetadata] Dropping invalid metadata item from chunk %s after InfoResponse and InfoMetadata validation failed. errors=%s/%s",
+                                "[Digester:InfoMetadata] Dropping invalid metadata item from chunk %s after "
+                                "InfoExtractionResponse and InfoMetadataExtraction validation failed. errors=%s/%s",
                                 chunk_id,
                                 type(response_exc).__name__,
                                 type(metadata_exc).__name__,
                             )
                             continue
-        elif isinstance(raw_infos, InfoMetadata):
+        elif isinstance(raw_infos, InfoMetadataExtraction):
             normalized_infos.append(raw_infos)
-        elif isinstance(raw_infos, InfoResponse):
+        elif isinstance(raw_infos, InfoExtractionResponse):
             if raw_infos.info_metadata is not None:
                 normalized_infos.append(raw_infos.info_metadata)
         elif isinstance(raw_infos, dict):
             try:
-                parsed_info = InfoResponse.model_validate(raw_infos).info_metadata
+                parsed_info = InfoExtractionResponse.model_validate(raw_infos).info_metadata
                 if parsed_info is not None:
                     normalized_infos.append(parsed_info)
             except Exception as response_exc:
                 try:
-                    normalized_infos.append(InfoMetadata.model_validate(raw_infos))
+                    normalized_infos.append(InfoMetadataExtraction.model_validate(raw_infos))
                 except Exception as metadata_exc:
                     logger.warning(
-                        "[Digester:InfoMetadata] Dropping invalid metadata payload from chunk %s after InfoResponse and InfoMetadata validation failed. errors=%s/%s",
+                        "[Digester:InfoMetadata] Dropping invalid metadata payload from chunk %s after "
+                        "InfoExtractionResponse and InfoMetadataExtraction validation failed. errors=%s/%s",
                         chunk_id,
                         type(response_exc).__name__,
                         type(metadata_exc).__name__,
@@ -554,28 +615,105 @@ async def extract_info_metadata(doc_items: List[dict], job_id: UUID):
         all_info_candidates.extend(normalized_infos)
 
         if has_relevant_data:
-            chunk_id_str = str(chunk_id)
-            doc_id = chunk_id_to_doc_id.get(chunk_id_str)
-            if doc_id:
-                all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
-            else:
-                logger.warning(
-                    "[Digester:InfoMetadata] Missing docId for chunk %s, skipping relevant chunk mapping",
-                    chunk_id_str,
-                )
+            track_relevant_chunk(chunk_id)
+
+    for raw_api_types, has_relevant_data, chunk_id in api_type_results:
+        normalized_api_types: List[ApiTypeResponse] = []
+
+        candidates = raw_api_types if isinstance(raw_api_types, list) else [raw_api_types]
+        for item in candidates:
+            if isinstance(item, ApiTypeResponse):
+                normalized_api_types.append(item)
+            elif isinstance(item, dict):
+                try:
+                    normalized_api_types.append(ApiTypeResponse.model_validate(item))
+                except Exception as exc:
+                    logger.warning(
+                        "[Digester:ApiType] Dropping invalid apiType payload from chunk %s: %s",
+                        chunk_id,
+                        type(exc).__name__,
+                    )
+
+        logger.info(
+            "[Digester:ApiType] Chunk %s: extracted %s apiType candidates",
+            chunk_id,
+            len(normalized_api_types),
+        )
+        all_api_type_candidates.extend(normalized_api_types)
+
+        if has_relevant_data:
+            track_relevant_chunk(chunk_id)
 
     logger.info(
-        "[Digester:InfoMetadata] Processing complete. Total: %s candidates from %s chunks. Starting heuristic merge...",
+        "[Digester:InfoMetadata] Processing complete. Total: %s info candidates and %s apiType candidates "
+        "from %s chunks. Starting heuristic merge...",
         len(all_info_candidates),
+        len(all_api_type_candidates),
         len(doc_items),
     )
 
-    merged_result = merge_info_metadata(all_info_candidates, total_items=len(doc_items))
+    api_types = merge_api_type(all_api_type_candidates, total_items=len(doc_items))
+    scim_detected_in_docs = ApiType.SCIM in api_types
+    if ApiType.SCIM not in api_types and (
+        scim_cloud_match.matched or knowledge_result.supports_scim or web_search_result.supports_scim
+    ):
+        if scim_cloud_match.matched:
+            logger.info(
+                "[Digester:ApiType] scim.cloud confirmed SCIM for '%s' (matched '%s'); adding SCIM to detected apiType",
+                application_name,
+                scim_cloud_match.project_name,
+            )
+        if knowledge_result.supports_scim:
+            logger.info(
+                "[Digester:ApiType] LLM knowledge signal reports SCIM support for '%s'; adding SCIM to detected apiType",
+                application_name,
+            )
+        if web_search_result.supports_scim:
+            logger.info(
+                "[Digester:ApiType] Web search signal reports SCIM support for '%s'; adding SCIM to detected apiType",
+                application_name,
+            )
+        api_types = sorted([*api_types, ApiType.SCIM], key=lambda api_type: api_type.value)
+
+    scim_availability_info: ScimAvailabilityInfo | None = None
+    if ApiType.SCIM in api_types:
+        availability = summarize_scim_availability(
+            {
+                ScimSource.KNOWLEDGE: knowledge_result,
+                ScimSource.WEB_SEARCH: web_search_result,
+            }
+        )
+        contributing = set(availability.sources)
+        if scim_detected_in_docs:
+            contributing.add(ScimSource.DOCUMENTATION)
+        if scim_cloud_match.matched:
+            contributing.add(ScimSource.SCIM_CLOUD)
+        # Report sources in a stable order (the enum's declaration order).
+        sources = [source for source in ScimSource if source in contributing]
+        scim_availability_info = ScimAvailabilityInfo(
+            status=availability.status,
+            required_plan=availability.required_plan,
+            sources=sources,
+        )
+        logger.info(
+            "[Digester:ApiType] SCIM availability for '%s': status=%s, required_plan=%s, sources=%s",
+            application_name,
+            availability.status.value,
+            availability.required_plan or "-",
+            ",".join(source.value for source in sources) or "-",
+        )
+
+    merged_result = merge_info_metadata(
+        all_info_candidates,
+        total_items=len(doc_items),
+        api_types=api_types,
+        scim_availability=scim_availability_info,
+    )
     await update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
 
     return {
         "result": merged_result,
-        "relevantDocumentations": all_relevant_chunks,
+        "relevantDocumentations": list(relevant_chunks_by_id.values()),
     }
 
 

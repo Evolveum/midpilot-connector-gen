@@ -53,3 +53,31 @@ class ApiType(StrEnum):
     REST = "rest"
     SCIM = "scim"
     SQL = "sql"
+
+
+class ScimAvailability(StrEnum):
+    """
+    Whether a detected SCIM capability is generally usable by the customer or paid.
+
+    Used as an advisory signal only (currently logged, not part of the API response):
+    SCIM may exist for a product yet require a paid/enterprise plan that the customer
+    might not have.
+    """
+
+    AVAILABLE = "available"
+    PAID = "paid"
+    UNKNOWN = "unknown"
+
+
+class ScimSource(StrEnum):
+    """
+    Where a SCIM confirmation came from.
+
+    Used as provenance for the SCIM availability advisory (which signals confirmed SCIM).
+    Declaration order is the order sources are reported in.
+    """
+
+    SCIM_CLOUD = "scim_cloud"
+    DOCUMENTATION = "documentation"
+    KNOWLEDGE = "knowledge_of_llm"
+    WEB_SEARCH = "web_search"
