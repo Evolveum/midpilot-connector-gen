@@ -23,8 +23,8 @@ htmlcov/
 .cache/
 
 # Sessions and Jobs and other directories
-jobs/
-sessions/
+/jobs/
+/sessions/
 /certificate/
 /clearml/
 

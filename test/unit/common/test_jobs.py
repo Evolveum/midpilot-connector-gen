@@ -36,12 +36,16 @@ async def test_schedule_coroutine_job_records_session_persistence_failure():
     repo.update_session = AsyncMock(side_effect=RuntimeError("database write failed"))
 
     with (
-        patch("src.common.jobs.create_job", new_callable=AsyncMock, return_value=job_id),
-        patch("src.common.jobs.set_running", new_callable=AsyncMock),
-        patch("src.common.jobs.set_finished", new_callable=AsyncMock, side_effect=set_finished) as mock_set_finished,
-        patch("src.common.jobs._append_job_error_now", new_callable=AsyncMock) as append_error,
-        patch("src.common.jobs.async_session_maker", MagicMock(return_value=_AsyncSessionContext())),
-        patch("src.common.jobs.SessionRepository", MagicMock(return_value=repo)),
+        patch("src.common.jobs.lifecycle.create_job", new_callable=AsyncMock, return_value=job_id),
+        patch("src.common.jobs.lifecycle.set_running", new_callable=AsyncMock),
+        patch(
+            "src.common.jobs.lifecycle.set_finished", new_callable=AsyncMock, side_effect=set_finished
+        ) as mock_set_finished,
+        patch("src.common.jobs.lifecycle._append_job_error_now", new_callable=AsyncMock) as append_error,
+        patch(
+            "src.common.jobs.session_persistence.async_session_maker", MagicMock(return_value=_AsyncSessionContext())
+        ),
+        patch("src.common.jobs.session_persistence.SessionRepository", MagicMock(return_value=repo)),
     ):
         returned_job_id = await jobs.schedule_coroutine_job(
             job_type="digester.test",
