@@ -7,10 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester.selection.documentation_selector import (
-    DocumentationSelector,
-    RelevantChunksNotFoundError,
-)
+from src.common.errors import RelevantChunksNotFoundError
+from src.modules.digester.selection import DocumentationSelector
 
 
 @pytest.mark.asyncio

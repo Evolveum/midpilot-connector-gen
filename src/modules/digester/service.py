@@ -75,8 +75,9 @@ from src.modules.digester.schemas import (
     InfoMetadataExtraction,
     ScimAvailabilityInfo,
 )
-from src.modules.digester.selection.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, DEFAULT_CRITERIA
-from src.modules.digester.selection.doc_chunk import (
+from src.modules.digester.selection import (
+    CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA,
+    DEFAULT_CRITERIA,
     build_chunk_id_to_doc_id,
     build_relevant_chunks_from_doc_items,
     chunk_ids_from_relevant_chunks,

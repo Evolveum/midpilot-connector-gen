@@ -4,7 +4,7 @@
 
 import asyncio
 import logging
-from typing import AsyncIterator, List, cast
+from typing import AsyncIterator, Dict, List, cast
 
 import aiohttp
 from crawl4ai import (  # type: ignore
@@ -20,6 +20,10 @@ from src.config import config
 logger = logging.getLogger(__name__)
 
 
+def _normalize_url(url: str) -> str:
+    return (url or "").rstrip("/")
+
+
 async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlResult]:
     """
     Scrape URLs and return successful CrawlResult objects.
@@ -30,17 +34,12 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
     md_generator = DefaultMarkdownGenerator(
         content_filter=prune_filter, options={"ignore_images": True, "skip_internal_links": True}
     )
-    browser_config = BrowserConfig(
-        verbose=config.scrape_and_process.crawl4ai_verbose
-    )  # accept_downloads=True, browser_type="firefox"
+    browser_config = BrowserConfig(verbose=config.scrape_and_process.crawl4ai_verbose)
     run_config = CrawlerRunConfig(
-        # user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
-        # simulate_user= True,
         check_robots_txt=True,
         wait_until="networkidle",
         delay_before_return_html=1.5,
         stream=True,
-        # screenshot=True,
         markdown_generator=md_generator,
         verbose=config.scrape_and_process.crawl4ai_verbose,
         log_console=False,
@@ -58,7 +57,6 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
         new_failed_links = []
         seen_links: set[str] = set()
 
-        # create a fresh crawler each attempt and ensure clean shutdown
         async with AsyncWebCrawler(config=browser_config) as crawler:
             raw_results = await crawler.arun_many(urls=links_to_scrape, config=run_config)
 
@@ -71,9 +69,8 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
                     if getattr(result, "success", False):
                         scrape_out_success_count += 1
                         yield result
-                    else:
-                        if result_url:
-                            new_failed_links.append(result_url.rstrip("/"))
+                    elif result_url:
+                        new_failed_links.append(result_url.rstrip("/"))
             else:
                 results: List[CrawlResult] = cast(List[CrawlResult], raw_results)
                 for link, result in zip(links_to_scrape, results):
@@ -91,12 +88,10 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
 
         new_failed_links = list(dict.fromkeys(new_failed_links))
 
-        # If everything succeeded, we're done
         if not new_failed_links:
             logger.info("[Scrape:URLs] Attempt %s: All URLs scraped successfully", attempt)
             break
 
-        # Otherwise, prepare for the next retry round
         logger.warning(
             "[Scrape:URLs] Attempt %s failed for %s/%s URLs",
             attempt,
@@ -121,18 +116,43 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
     return
 
 
+async def fetch_markdown_pages(
+    urls: list[str],
+    *,
+    logger_prefix: str = "",
+    log: logging.Logger | None = None,
+) -> Dict[str, str]:
+    """
+    Open URLs and return a normalized URL -> fetched page markdown map.
+
+    Best-effort: failed pages are omitted so callers can fall back to snippets or
+    other evidence sources.
+    """
+    active_logger = log or logger
+    contents: Dict[str, str] = {}
+    try:
+        async for result in scrape_urls(urls):
+            url = _normalize_url(str(getattr(result, "url", "") or ""))
+            markdown = getattr(result, "markdown", None)
+            text = getattr(markdown, "fit_markdown", None) if markdown is not None else None
+            if url and text:
+                contents[url] = text
+    except Exception as exc:
+        active_logger.warning("%sPage fetch failed, falling back to snippets: %s", logger_prefix, exc)
+    return contents
+
+
 async def get_content_type(url: str) -> str:
     """
-    Check content type without downloading the full documentation
-    inputs:
-        url: str - the URL to check
-    outputs:
-        str - the content type from the HTTP headers
+    Check content type without downloading the full documentation.
     """
     headers = {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",  # We need primarily HTML content for link extraction
-        "Accept-Encoding": "identity",  # Disable compression for HEAD requests to avoid gzip parsing issues
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Encoding": "identity",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36"
+        ),
     }
     async with aiohttp.ClientSession() as session:
         try:
@@ -145,18 +165,14 @@ async def get_content_type(url: str) -> str:
                 response.headers.get("Content-Type", "unknown"),
             )
             return response.headers.get("Content-Type", "")
-        except Exception as e:
-            logger.error("[Scrape:ContentType] Failed to get content type for %s: %s", url, e)
+        except Exception as exc:
+            logger.error("[Scrape:ContentType] Failed to get content type for %s: %s", url, exc)
             return ""
 
 
 async def get_all_content_types(urls: list[str]) -> dict[str, str]:
     """
     Get content types for a list of URLs.
-    inputs:
-        urls: list - list of URLs to check
-    outputs:
-        dict - dictionary mapping URL to its content type
     """
     tasks = [get_content_type(url) for url in urls]
     content_types = await asyncio.gather(*tasks)
@@ -166,17 +182,13 @@ async def get_all_content_types(urls: list[str]) -> dict[str, str]:
 async def fetch_data_documentation(url: str) -> tuple[str, str] | None:
     """
     Fetch the content of a data documentation (e.g., JSON, YAML).
-    inputs:
-        url: str - the URL to fetch
-    outputs:
-        tuple[str, str] | None - the tuple of the url and the content of the documentation or None if failed
     """
     try:
         async with aiohttp.ClientSession() as http_session:
             async with http_session.get(url) as response:
                 if response.status == 200:
                     content_type = response.headers.get("Content-Type", "")
-                    # This has to be here because some great admins ignore RFC 7231 and return different content types for HEAD and GET requests...
+                    # Some servers return different content types for HEAD and GET requests.
                     if (
                         "json" in content_type
                         or "yaml" in content_type
@@ -184,28 +196,24 @@ async def fetch_data_documentation(url: str) -> tuple[str, str] | None:
                         or "text/plain" in content_type
                     ):
                         return (url, await response.text())
-                    else:
-                        logger.warning(
-                            "[Scrape:DataDocumentation] URL %s has unsupported content type: %s, defaulting to crawl4ai scraping",
-                            url,
-                            content_type,
-                        )
-                        return (url, "error")
-                else:
-                    logger.error("[Scrape:DataDocumentation] Failed to fetch %s: HTTP %s", url, response.status)
-                    return None
-    except Exception as e:
-        logger.error("[Scrape:DataDocumentation] Exception while fetching %s: %s", url, e)
+
+                    logger.warning(
+                        "[Scrape:DataDocumentation] URL %s has unsupported content type: %s, defaulting to crawl4ai scraping",
+                        url,
+                        content_type,
+                    )
+                    return (url, "error")
+
+                logger.error("[Scrape:DataDocumentation] Failed to fetch %s: HTTP %s", url, response.status)
+                return None
+    except Exception as exc:
+        logger.error("[Scrape:DataDocumentation] Exception while fetching %s: %s", url, exc)
         return None
 
 
 async def scrape_all_data_documentations(links: list[str]) -> list[tuple[str, str]]:
     """
-    Scrape all data documentations (e.g., JSON, YAML) from the provided links.
-    inputs:
-        links: list - list of URLs to scrape
-    outputs:
-        list - list of tuples mapping URL to its content
+    Fetch all data documentations (e.g., JSON, YAML) from the provided links.
     """
     tasks = [fetch_data_documentation(link) for link in links]
     results = await asyncio.gather(*tasks)

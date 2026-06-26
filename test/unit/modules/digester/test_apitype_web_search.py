@@ -8,11 +8,11 @@ import pydantic
 import pytest
 
 from src.common.enums import ApiType, ScimAvailability
+from src.common.web import SearchResult
 from src.config import DigesterSettings
 from src.modules.digester.extractors.apitype import web_search
 from src.modules.digester.extractors.apitype.web_search import lookup_api_type_web_search
 from src.modules.digester.schemas import ApiTypeSignalResult
-from src.modules.discovery.schema import SearchResult
 
 
 def _enable_web_search(mock_config: MagicMock, *, fetch_pages: bool = False) -> None:
@@ -202,7 +202,7 @@ async def test_fetches_pages_and_feeds_full_content_to_llm():
         patch("src.modules.digester.extractors.apitype.web_search.config") as mock_config,
         patch("src.modules.digester.extractors.apitype.web_search.search_web", return_value=_results()) as mock_search,
         patch(
-            "src.modules.digester.extractors.apitype.web_search._fetch_page_contents",
+            "src.modules.digester.extractors.apitype.web_search.fetch_markdown_pages",
             new_callable=AsyncMock,
             return_value={"https://api.slack.com/scim": "FULL PAGE: Slack SCIM on Enterprise Grid."},
         ) as mock_fetch,
@@ -213,7 +213,9 @@ async def test_fetches_pages_and_feeds_full_content_to_llm():
 
     assert result.supports_scim is True
     mock_search.assert_called_once()
-    mock_fetch.assert_awaited_once_with(["https://api.slack.com/scim"])
+    mock_fetch.assert_awaited_once_with(
+        ["https://api.slack.com/scim"], logger_prefix=web_search._LOG_PREFIX, log=web_search.logger
+    )
     # The LLM must receive the fetched full page, not just the snippet.
     assert "PAGE CONTENT:" in captured["search_results"]
     assert "FULL PAGE: Slack SCIM on Enterprise Grid." in captured["search_results"]

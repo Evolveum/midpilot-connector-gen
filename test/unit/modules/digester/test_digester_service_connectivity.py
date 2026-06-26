@@ -10,7 +10,7 @@ import pytest
 from src.modules.digester import service
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.schemas import ExtractedConnectivityEndpointInfo
-from src.modules.digester.selection.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA
+from src.modules.digester.selection import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from langchain_openai import ChatOpenAI
 
 from src.app import api
-from src.modules.discovery.schema import SearchResult
+from src.common.web import SearchResult
 
 # Common fixtures
 

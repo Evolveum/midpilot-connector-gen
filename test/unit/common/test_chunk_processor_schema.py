@@ -2,7 +2,8 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.common.chunk_processor.schema import LlmChunkOutput, SummaryOutput
+from src.common.chunk_processor.schema import LlmChunkOutput
+from src.common.documentation import SummaryOutput
 
 
 def test_llm_chunk_output_normalizes_nullish_num_endpoints_to_zero() -> None:

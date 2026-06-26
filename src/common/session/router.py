@@ -562,6 +562,6 @@ async def delete_documentation_item(
     return {
         "message": f"Documentation deleted successfully ({deleted_count} chunk(s) removed)",
         "sessionId": session_id,
-        "deletedPageId": str(documentation_id),
+        "deletedDocId": str(documentation_id),
         "deletedChunks": deleted_count,
     }

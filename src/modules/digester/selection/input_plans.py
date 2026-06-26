@@ -3,13 +3,15 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.utils.session_info_metadata import get_discovery_application_name
+from src.common.enums import ApiType
+from src.common.session.session import get_session_documentation
+from src.common.utils.session_info_metadata import get_discovery_application_name, get_session_api_types, is_sql_api
 from src.config import config
 from src.modules.digester.selection.criteria import (
     CONNECTIVITY_ENDPOINT_CRITERIA,
@@ -23,21 +25,46 @@ from src.modules.digester.selection.criteria import (
 logger = logging.getLogger(__name__)
 
 
-async def object_classes_input(db: AsyncSession, session_id: UUID) -> Dict[str, Any]:
+def _api_type_override_from_payload(input_payload: Mapping[str, Any] | None) -> ApiType | None:
+    if not input_payload:
+        return None
+    api_type = input_payload.get("apiType")
+    if isinstance(api_type, ApiType):
+        return api_type
+    if isinstance(api_type, str):
+        try:
+            return ApiType(api_type.strip().lower())
+        except ValueError:
+            logger.warning("[Digester:ObjectClasses] Ignoring unsupported apiType override: %s", api_type)
+    return None
+
+
+async def build_object_class_extraction_input(
+    db: AsyncSession,
+    session_id: UUID,
+    input_payload: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
     """
-    Dynamic input provider for object classes extraction job.
-    It is important to wait for the documentation to be ready before starting the job.
-    input:
-        session_id - session ID to retrieve documentation items from
-        db - SQLAlchemy AsyncSession
-    output:
-        dict with:
-            sessionInput - dict with documentationItemsCount and totalLength - used for input in session field
-            jobInput - dict for job input field
-            args - tuple with documentation items
+    Dynamic input provider for object class extraction.
+
+    SQL object-class extraction needs direct access to schema chunks, which may not
+    be categorized as REST/OpenAPI-style API references. REST/SCIM keep the existing
+    filtered input to avoid sending broad documentation context to the LLM.
     """
-    # Apply static category filter to documentation items
-    doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
+    api_type_override = _api_type_override_from_payload(input_payload)
+    is_sql_session = api_type_override == ApiType.SQL
+    if api_type_override is None:
+        is_sql_session = is_sql_api(await get_session_api_types(session_id))
+
+    if is_sql_session:
+        doc_items = await get_session_documentation(session_id, db=db)
+        logger.info(
+            "[Digester:ObjectClasses] Using all %s documentation chunks for SQL object class extraction",
+            len(doc_items),
+        )
+    else:
+        doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
+
     return {
         "sessionInput": {},
         "jobInput": {

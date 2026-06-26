@@ -25,7 +25,7 @@ from src.modules.digester.extraction.fuzzysearch_worker import fuzzy_search_work
 from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.schemas import DocMarkerMatch, DocSequenceItem
-from src.modules.digester.selection.doc_chunk import build_chunk_id_to_doc_id
+from src.modules.digester.selection import build_chunk_id_to_doc_id
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
