@@ -11,10 +11,11 @@ from uuid import UUID
 from crawl4ai.utils import get_base_domain  # type: ignore
 
 from src.common.chunk_processor.processor import process_all_documentations
-from src.common.chunk_processor.schema import ChunkProcessingError, SavedDocumentation
+from src.common.chunk_processor.schema import ChunkProcessingError
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.job_repository import JobRepository
+from src.common.documentation import SavedDocumentation
 from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.session.schema import DocumentationItem
@@ -27,8 +28,10 @@ from src.modules.scrape.schema import ScrapeRequest, ScrapeResult
 logger = logging.getLogger(__name__)
 
 
-async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Optional[UUID] = None) -> ScrapeResult:
-    if not input.skip_cache and session_id:
+async def _run_scrape_async(
+    scrape_request: ScrapeRequest, job_id: UUID, session_id: Optional[UUID] = None
+) -> ScrapeResult:
+    if not scrape_request.skip_cache and session_id:
         logger.info(
             "[Scrape] Job %s (session %s): skipCache is false, checking for existing documentation items in all sessions for the same input",
             str(job_id),
@@ -37,7 +40,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
         async with async_session_maker() as db:
             job_repo = JobRepository(db)
             created_at_limits = datetime.now() - config.scrape_and_process.scrape_input_check_interval
-            normalized_input = input.model_dump(by_alias=True, exclude={"skip_cache"})
+            normalized_input = scrape_request.model_dump(by_alias=True, exclude={"skip_cache"})
             latest_job = await job_repo.get_job_by_input(
                 "scrape.getRelevantDocumentation", normalized_input, created_at_limits
             )
@@ -149,7 +152,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
     logger.info("[Scrape] Starting scrape job %s for session %s", job_id, session_id)
     await update_job_progress(job_id, stage=JobStage.running, message="initializing scraper")
 
-    if not input.starter_links:
+    if not scrape_request.starter_links:
         logger.warning("[Scrape] No starter links provided for job %s", job_id)
         await update_job_progress(job_id, stage=JobStage.failed, message="no-starter-links provided")
         return ScrapeResult(
@@ -160,7 +163,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
         )
 
     # Trusted domains
-    trusted_domains = list({get_base_domain(u) for u in input.starter_links})
+    trusted_domains = list({get_base_domain(u) for u in scrape_request.starter_links})
     logger.info("[Scrape] Trusted domains for job %s: %s", job_id, trusted_domains)
 
     forbidden_url_parts = config.scrape_and_process.forbidden_url_parts
@@ -168,7 +171,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
     # Main scrape loop
     saved_documentations: Dict[str, SavedDocumentation] = {}
     irrelevant_links: List[str] = []
-    links = list(input.starter_links)
+    links = list(scrape_request.starter_links)
 
     existing_documentation_chunks: List[Dict[str, Any]] = []
     existing_documentation_chunks_urls: set[str] = set()
@@ -209,8 +212,8 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
                 asyncio.create_task(
                     process_all_documentations(
                         [documentation],
-                        app=input.application_name,
-                        app_version=input.application_version,
+                        app=scrape_request.application_name,
+                        app_version=scrape_request.application_version,
                         source="scraper",
                         semaphore=processing_semaphore,
                         chunk_length=config.scrape_and_process.chunk_length,
@@ -268,8 +271,8 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
             saved_docs_before_iter = len(saved_documentations)
             new_links = await scraper_loop(
                 links_to_scrape=links,
-                app=input.application_name,
-                app_version=input.application_version,
+                app=scrape_request.application_name,
+                app_version=scrape_request.application_version,
                 curr_iteration=curr_iter,
                 irrelevant_links=irrelevant_links,
                 saved_documentations=saved_documentations,
@@ -443,7 +446,7 @@ async def _run_scrape_async(input: ScrapeRequest, job_id: UUID, session_id: Opti
 
 
 async def fetch_relevant_documentation(
-    input: ScrapeRequest,
+    scrape_request: ScrapeRequest,
     session_id: Optional[UUID] = None,
     *,
     job_id: UUID,
@@ -451,4 +454,4 @@ async def fetch_relevant_documentation(
     """
     Async entrypoint used by the router. Runs the async scrape workflow directly.
     """
-    return await _run_scrape_async(input, job_id=job_id, session_id=session_id)
+    return await _run_scrape_async(scrape_request, job_id=job_id, session_id=session_id)

@@ -2,18 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Background job package.
-
-Public facade re-exporting the job lifecycle operations and the background runner so that
-existing ``from src.common.jobs import ...`` call sites keep working after the split into
-focused submodules:
-
-- :mod:`src.common.jobs.futures` - in-process task/future registry
-- :mod:`src.common.jobs.lifecycle` - job state transitions and status
-- :mod:`src.common.jobs.cache` - previous-output reuse
-- :mod:`src.common.jobs.session_persistence` - persisting results into the session
-- :mod:`src.common.jobs.runner` - background orchestration entrypoint
-"""
+"""Public background job API."""
 
 from src.common.jobs.futures import _job_futures as _job_futures
 from src.common.jobs.lifecycle import (

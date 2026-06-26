@@ -2,7 +2,6 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-
 import logging
 import random
 import time
@@ -11,8 +10,8 @@ from typing import List
 import requests
 from ddgs import DDGS
 
+from src.common.web.schemas import SearchResult
 from src.config import config
-from src.modules.discovery.schema import SearchResult
 
 logger = logging.getLogger(__name__)
 

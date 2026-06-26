@@ -10,6 +10,7 @@ runs the worker, persists the result to the session, and finalizes the job state
 """
 
 import asyncio
+import inspect
 import logging
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, Union
 from uuid import UUID
@@ -77,7 +78,15 @@ async def schedule_coroutine_job(
             dynamic_input = {}
             if dynamic_input_enabled and dynamic_input_provider:
                 async with async_session_maker() as db:
-                    dynamic_input = await dynamic_input_provider(session_id=session_id, db=db)
+                    provider_kwargs: Dict[str, Any] = {"session_id": session_id, "db": db}
+                    accepts_input_payload = False
+                    try:
+                        accepts_input_payload = "input_payload" in inspect.signature(dynamic_input_provider).parameters
+                    except (TypeError, ValueError):
+                        pass
+                    if accepts_input_payload:
+                        provider_kwargs["input_payload"] = input_payload
+                    dynamic_input = await dynamic_input_provider(**provider_kwargs)
                     # Update Job input in Jobs table
                     input_payload.update(dynamic_input.get("jobInput", {}))
                     repo_job = JobRepository(db)

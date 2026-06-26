@@ -25,6 +25,7 @@ from langchain_core.runnables.config import RunnableConfig
 
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
+from src.common.web import SearchResult, fetch_markdown_pages, search_web
 from src.config import config
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.prompts.apitype.web_search_prompts import (
@@ -32,13 +33,6 @@ from src.modules.digester.prompts.apitype.web_search_prompts import (
     get_api_type_web_search_user_prompt,
 )
 from src.modules.digester.schemas import ApiTypeSignalResult
-
-# TODO
-# move to shared folder
-# Reuse the shared web search backend instead of duplicating the Brave/ddgs client.
-from src.modules.discovery.core.search import search_web
-from src.modules.discovery.schema import SearchResult
-from src.modules.scrape.core.crawling import scrape_urls
 
 logger = logging.getLogger(__name__)
 
@@ -50,27 +44,6 @@ _MAX_SNIPPET_CHARS = 500
 
 def _normalize_url(url: str) -> str:
     return (url or "").rstrip("/")
-
-
-async def _fetch_page_contents(urls: List[str]) -> Dict[str, str]:
-    """
-    Open the given URLs and return a map of normalized URL -> fetched page markdown.
-
-    Reuses the shared crawl4ai scraper. Best-effort: any failure (or a page that cannot
-    be scraped) is simply omitted so the caller falls back to that result's snippet.
-    """
-
-    contents: Dict[str, str] = {}
-    try:
-        async for result in scrape_urls(urls):
-            url = _normalize_url(str(getattr(result, "url", "") or ""))
-            markdown = getattr(result, "markdown", None)
-            text = getattr(markdown, "fit_markdown", None) if markdown is not None else None
-            if url and text:
-                contents[url] = text
-    except Exception as exc:
-        logger.warning("%sPage fetch failed, falling back to snippets: %s", _LOG_PREFIX, exc)
-    return contents
 
 
 def _format_search_results(
@@ -131,7 +104,7 @@ async def lookup_api_type_web_search(application_name: str) -> ApiTypeSignalResu
     if settings.apitype_web_search_fetch_pages:
         urls = [result.href for result in results if result.href]
         if urls:
-            page_contents = await _fetch_page_contents(urls)
+            page_contents = await fetch_markdown_pages(urls, logger_prefix=_LOG_PREFIX, log=logger)
             logger.info(
                 "%sFetched %d/%d result pages for '%s'", _LOG_PREFIX, len(page_contents), len(urls), application_name
             )

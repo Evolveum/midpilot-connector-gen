@@ -9,7 +9,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from langchain_openai import ChatOpenAI
 
 from src.common.llm import get_default_llm
-from src.modules.discovery.core.search import search_web
+from src.common.web import search_web
 from src.modules.discovery.schema import (
     CandidateLinksInput,
     DiscoveryIntegrationType,

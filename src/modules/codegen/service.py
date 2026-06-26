@@ -38,7 +38,7 @@ from src.modules.codegen.selection.authorization import (
     prepare_preferred_authorizations_for_generation,
     select_authorization_chunk_refs,
 )
-from src.modules.codegen.selection.docs_loader import read_adoc_text
+from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.codegen.utils.map_to_record import attributes_to_records_for_codegen
 from src.modules.digester.schemas import AttributeResponse, RelationsResponse
@@ -262,7 +262,7 @@ async def create_native_schema(
     """
 
     assets = get_operation_assets("native_schema", protocol)
-    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)
@@ -302,7 +302,7 @@ async def create_authorization(
         return {"code": build_other_authorization_scaffold(protocol)}
 
     assets = get_operation_assets("authorization", protocol)
-    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
     base_api_url = await get_session_base_api_url(session_id)
 
     generator_preferred_authorizations = prepare_preferred_authorizations_for_generation(
@@ -346,7 +346,9 @@ async def create_conn_id(
     """
     Generate Groovy for ConnID attribute mapping from attributes.
     """
-    docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc")
+    docs_text = load_required_adoc_text(
+        __package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc"
+    )
 
     attrs_map = _attrs_map_from_payload(attributes_payload)
     records = attributes_to_records_for_codegen(attrs_map)
@@ -381,7 +383,7 @@ async def create_search(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_search_operation_assets(protocol, intent)
-    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
     base_api_url, database_name = await get_session_connection_target(session_id)
 
     generator = SearchGenerator(
@@ -429,7 +431,7 @@ async def create_create(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("create", protocol)
-    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
     base_api_url, database_name = await get_session_connection_target(session_id)
 
     generator = CreateGenerator(
@@ -475,7 +477,7 @@ async def create_update(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("update", protocol)
-    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
     base_api_url, database_name = await get_session_connection_target(session_id)
 
     generator = UpdateGenerator(
@@ -521,7 +523,7 @@ async def create_delete(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("delete", protocol)
-    docs_text = read_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
     base_api_url, database_name = await get_session_connection_target(session_id)
 
     generator = DeleteGenerator(
@@ -561,7 +563,7 @@ async def create_relation(
     """
     Generate the Groovy `relation {}` block using relevant chunks + docs.
     """
-    relation_docs_text = read_adoc_text(__package__ + ".documentations" + ".rest", "50-relationship.adoc")
+    relation_docs_text = load_required_adoc_text(__package__ + ".documentations" + ".rest", "50-relationship.adoc")
 
     relevant_indices: Optional[List[int]] = None
     relevant_pairs: Optional[List[Dict[str, Any]]] = None

@@ -18,10 +18,12 @@ from src.modules.digester.prompts.sql.object_class_prompts import (
     sql_object_class_user_prompt,
 )
 from src.modules.digester.schemas import ExtendedObjectClass, FinalObjectClass, ObjectClassesExtendedResponse
-from src.modules.digester.selection.doc_chunk import build_relevant_chunks_from_doc_items
+from src.modules.digester.selection import build_relevant_chunks_from_doc_items
 
 logger = logging.getLogger(__name__)
 
+# TODO
+# Need to be edited
 _TECHNICAL_TABLE_MARKERS = (
     "audit",
     "cache",

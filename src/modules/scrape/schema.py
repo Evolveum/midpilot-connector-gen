@@ -8,6 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.common.session.schema import Documentation
 
+__all__ = [
+    "IrrelevantLinks",
+    "RelevantLinks",
+    "ScrapeRequest",
+    "ScrapeResult",
+]
+
 
 class ScrapeRequest(BaseModel):
     """
@@ -57,41 +64,3 @@ class RelevantLinks(BaseModel):
     """
 
     links: List[str] = Field(description="List of links deemed relevant")
-
-
-class ReferenceItem(BaseModel):
-    """
-    Individual reference item extracted from a documentation
-    """
-
-    url: str = Field(description="The URL of the reference")
-    description: str = Field(description="Description or context for the reference")
-    number: int = Field(description="Unique number assigned to the reference for citation")
-
-    def to_dict(self) -> dict:
-        return {
-            "url": self.url,
-            "description": self.description,
-            "number": self.number,
-        }
-
-
-class DocumentationReferences(BaseModel):
-    """
-    References extracted from a documentation using crawl4ai markdown generator
-    """
-
-    documentation_url: str = Field(description="The URL of the documentation from which references were extracted")
-    references: List[ReferenceItem] = Field(
-        description="List of structured reference items with URL, description, and number"
-    )
-    references_markdown: str = Field(description="Markdown of references in the format from the crawl4ai generator")
-    text_with_citations: str = Field(description="Markdown string containing in-text citations")
-
-    def to_dict(self) -> dict:
-        return {
-            "documentation_url": self.documentation_url,
-            "references": [ref.to_dict() for ref in self.references],
-            "references_markdown": self.references_markdown,
-            "text_with_citations": self.text_with_citations,
-        }

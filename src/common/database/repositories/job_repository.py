@@ -98,19 +98,21 @@ class JobRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_job_by_input(self, job_type: str, input: Dict[str, Any], date_since: datetime) -> Optional[Job]:
+    async def get_job_by_input(
+        self, job_type: str, input_payload: Dict[str, Any], date_since: datetime
+    ) -> Optional[Job]:
         """
         Get a job by its input payload.
 
         :param job_type: Type of job to look for
-        :param input: Input payload dict to match
+        :param input_payload: Input payload dict to match
         :return: Job model or None
         """
         query = (
             select(Job)
             .where(
                 Job.job_type == job_type,
-                Job.normalized_input == to_jsonable(input),
+                Job.normalized_input == to_jsonable(input_payload),
                 Job.created_at >= date_since,
                 Job.status == "finished",
             )

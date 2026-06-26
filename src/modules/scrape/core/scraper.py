@@ -7,8 +7,13 @@ from typing import Awaitable, Callable, List
 
 from pydantic import HttpUrl
 
-from src.common.chunk_processor.schema import SavedDocumentation
+from src.common.documentation import DocumentationReferences, SavedDocumentation
 from src.common.schema import validate_pydantic_object
+from src.common.web import (
+    get_all_content_types,
+    scrape_all_data_documentations,
+    scrape_urls,
+)
 from src.config import config
 from src.modules.scrape.core.citations import (
     deduplicate_links,
@@ -16,12 +21,7 @@ from src.modules.scrape.core.citations import (
     remove_citations,
     update_references,
 )
-from src.modules.scrape.core.crawling import (
-    get_all_content_types,
-    scrape_all_data_documentations,
-    scrape_urls,
-)
-from src.modules.scrape.core.link_filter import filterOutIrrelevantLinks
+from src.modules.scrape.core.link_filter import filter_out_irrelevant_links
 from src.modules.scrape.core.links import (
     clean_reference_list,
     is_forbidden_url,
@@ -31,7 +31,7 @@ from src.modules.scrape.core.links import (
 )
 from src.modules.scrape.core.llms import get_relevant_links_from_text
 from src.modules.scrape.prompts.prompts import get_relevant_filter_prompts
-from src.modules.scrape.schema import DocumentationReferences, RelevantLinks
+from src.modules.scrape.schema import RelevantLinks
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ async def scraper_loop(
             logger.debug("[Scrape:Loop] Loading %s as data file", str(url))
             documentation = SavedDocumentation(
                 url=url,
-                contentType=content_types[str(url)],
+                content_type=content_types[str(url)],
                 content=content,
                 links=[],
             )
@@ -164,10 +164,10 @@ async def scraper_loop(
         scraped_documentations_count += 1
         if validate_pydantic_object(scraped_link.url, HttpUrl) and scraped_link.markdown is not None:
             content = scraped_link.markdown.fit_markdown
-            contentType = "text/markdown"
+            content_type = "text/markdown"
             documentation = SavedDocumentation(
                 url=scraped_link.url.rstrip("/"),
-                contentType=contentType,
+                content_type=content_type,
                 content=content,
                 links=[],
             )
@@ -193,7 +193,7 @@ async def scraper_loop(
                     len(link_arr),
                     max_links,
                 )
-                documentation.documentationReferences = DocumentationReferences(
+                documentation.documentation_references = DocumentationReferences(
                     documentation_url=str(scraped_link.url),
                     references=[],
                     references_markdown="",
@@ -228,7 +228,7 @@ async def scraper_loop(
                     len(documentation_references.references),
                 )
             # Probably we dont need to return the irrelevant links arr
-            new_irrelevant_links, partly_filtered_new_links = await filterOutIrrelevantLinks(
+            new_irrelevant_links, partly_filtered_new_links = await filter_out_irrelevant_links(
                 links=link_arr_valid,
                 saved_documentations=saved_documentations,
                 trusted_domains=trusted_domains,
@@ -324,7 +324,7 @@ async def scraper_loop(
                 )
 
                 documentation.links = [HttpUrl(url=link) for link in relevant_links]
-                documentation.documentationReferences = documentation_references_saved
+                documentation.documentation_references = documentation_references_saved
                 saved_documentations[str(scraped_link.url)] = documentation
 
             else:
@@ -335,7 +335,7 @@ async def scraper_loop(
                 documentation.links = [
                     HttpUrl(url=ref.url) for ref in documentation_references_saved.references if ref.url
                 ]
-                documentation.documentationReferences = documentation_references_saved
+                documentation.documentation_references = documentation_references_saved
                 saved_documentations[str(scraped_link.url)] = documentation
 
     logger.info(

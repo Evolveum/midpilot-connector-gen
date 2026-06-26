@@ -21,12 +21,6 @@ from src.common.utils.normalize import normalize_object_class_name
 from src.common.utils.session_info_metadata import get_session_base_api_url
 from src.common.utils.status_response import build_typed_job_status_response
 from src.modules.digester import results, service
-from src.modules.digester.inputs import (
-    auth_input,
-    connectivity_endpoint_input,
-    metadata_input,
-    object_classes_input,
-)
 from src.modules.digester.schemas import (
     AttributeResponse,
     AuthResponse,
@@ -36,8 +30,14 @@ from src.modules.digester.schemas import (
     ObjectClassesResponse,
     RelationsResponse,
 )
-from src.modules.digester.selection.criteria import DEFAULT_CRITERIA
-from src.modules.digester.selection.documentation_selector import DocumentationSelector
+from src.modules.digester.selection import (
+    DEFAULT_CRITERIA,
+    DocumentationSelector,
+    auth_input,
+    build_object_class_extraction_input,
+    connectivity_endpoint_input,
+    metadata_input,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ async def extract_object_classes(
         job_type="digester.getObjectClass",
         input_payload=input_payload,
         dynamic_input_enabled=True,
-        dynamic_input_provider=object_classes_input,
+        dynamic_input_provider=build_object_class_extraction_input,
         worker=service.extract_object_classes,
         worker_kwargs={
             "session_id": session_id,

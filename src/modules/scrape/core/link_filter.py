@@ -9,7 +9,7 @@ from typing import List
 from crawl4ai.utils import get_base_domain  # type: ignore
 from pydantic import HttpUrl
 
-from src.common.chunk_processor.schema import SavedDocumentation
+from src.common.documentation import SavedDocumentation
 from src.common.schema import validate_pydantic_object
 from src.config import config
 from src.modules.scrape.core.links import is_forbidden_url
@@ -20,14 +20,14 @@ from src.modules.scrape.schema import IrrelevantLinks
 logger = logging.getLogger(__name__)
 
 
-async def processIrrelevantLinksPart(
+async def process_irrelevant_link_batch(
     irrelevant_links_part: list[str], app: str, app_version: str
 ) -> IrrelevantLinks | None:
     irrelevant_prompts = get_irrelevant_filter_prompts(irrelevant_links_part, app, app_version)
     return await get_irrelevant_llm_response(irrelevant_prompts)
 
 
-async def filterOutIrrelevantLinks(
+async def filter_out_irrelevant_links(
     links: list[str],
     saved_documentations: dict[str, SavedDocumentation],
     trusted_domains: list[str],
@@ -152,7 +152,7 @@ async def filterOutIrrelevantLinks(
             link_parts.append(part_links)
 
         irrelevant_llm_responses = await asyncio.gather(
-            *[processIrrelevantLinksPart(part, app, app_version) for part in link_parts]
+            *[process_irrelevant_link_batch(part, app, app_version) for part in link_parts]
         )
 
         if any(resp is None for resp in irrelevant_llm_responses):

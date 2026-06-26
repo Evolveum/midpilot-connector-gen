@@ -9,8 +9,9 @@ from uuid import UUID
 
 from src.common.chunk_processor.llms import get_llm_processed_chunk
 from src.common.chunk_processor.prompts import get_llm_chunk_process_prompt
-from src.common.chunk_processor.schema import ChunkProcessingError, LlmChunkOutput, SavedDocumentation
+from src.common.chunk_processor.schema import ChunkProcessingError, LlmChunkOutput
 from src.common.chunking import split_text_with_token_overlap
+from src.common.documentation import SavedDocumentation
 from src.common.session.schema import DocumentationItem
 from src.config import config
 
@@ -104,7 +105,7 @@ async def process_scraped_documentation(
                 token_count=chunk[1],
                 character_count=len(chunk[0]),
                 data=data,
-                content_type=documentation.contentType,
+                content_type=documentation.content_type,
             ),
             content=chunk[0],
         )

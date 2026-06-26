@@ -7,14 +7,14 @@ from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import AIMessage
 
-import src.modules.discovery.core.search as search
+import src.common.web.search as search
 import src.modules.discovery.utils.llm_helpers as llm_helpers
 from src.modules.discovery.schema import PyScrapeFetchReferences, PySearchPrompts
 
 
 def test_search_with_ddgs():
     """Test the DuckDuckGo search helper function."""
-    with patch("src.modules.discovery.core.search.DDGS") as mock_ddgs:
+    with patch("src.common.web.search.DDGS") as mock_ddgs:
         mock_instance = MagicMock()
         mock_instance.text.return_value = [{"title": "Test", "href": "https://example.com", "body": "Test body"}]
         mock_ddgs.return_value.__enter__.return_value = mock_instance
@@ -33,9 +33,9 @@ def test_search_web_uses_configured_backend():
     from types import SimpleNamespace
 
     with (
-        patch("src.modules.discovery.core.search.search_with_ddgs") as mock_ddgs,
-        patch("src.modules.discovery.core.search.search_with_brave") as mock_brave,
-        patch("src.modules.discovery.core.search.config") as mock_config,
+        patch("src.common.web.search.search_with_ddgs") as mock_ddgs,
+        patch("src.common.web.search.search_with_brave") as mock_brave,
+        patch("src.common.web.search.config") as mock_config,
     ):
         # ddgs path
         mock_config.search = SimpleNamespace(method_name="ddgs")

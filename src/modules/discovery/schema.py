@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from src.common.web import SearchResult
+
 DiscoveryIntegrationType = Literal["scim", "rest", "dummy"]
 
 
@@ -127,15 +129,6 @@ class CandidateLinksOutput(BaseModel):
         validation_alias="candidateLinksEnriched",
         description="Selected links to crawl with additional information",
     )
-
-
-class SearchResult(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    title: str = Field(..., description="Result title")
-    href: str = Field(..., description="Result URL")
-    body: str = Field(..., description="Result summary/snippet")
-    source: str = Field(..., description="Search backend source")
 
 
 # --- Pydantic models used only for LLM output parsing ---
