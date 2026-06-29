@@ -175,6 +175,22 @@ def auth_type_match_key(value: Any) -> str:
     return _auth_type_key(value)
 
 
+def auth_name_match_key(value: Any) -> str:
+    """Build a stable key for matching auth method names (casing/space/dash-insensitive)."""
+    if not isinstance(value, str):
+        return ""
+    return value.strip().lower().replace("-", "").replace(" ", "")
+
+
+def auth_match_key(name: Any, auth_type: Any) -> tuple[str, str]:
+    """Build a stable (name, type) identity key for matching auth methods during dedup/sort.
+
+    Combines name normalization with the canonical auth-type match key so the heuristic
+    and LLM passes always compare entries the same way.
+    """
+    return (auth_name_match_key(name), auth_type_match_key(auth_type))
+
+
 class EndpointType(StrEnum):
     CONSTANT = "constant"
     DYNAMIC = "dynamic"

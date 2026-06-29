@@ -14,7 +14,8 @@ from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.config import config
-from src.modules.digester.enums import AuthType, normalize_auth_type
+from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
+from src.modules.digester.enums import auth_match_key
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.extraction.sequences import extract_sequence
@@ -30,7 +31,6 @@ from src.modules.digester.prompts.rest.sorting_output_prompts import sort_auth_s
 from src.modules.digester.schemas import (
     AuthBuildResponse,
     AuthDedupResponse,
-    AuthDiscoveryResponse,
     AuthInfo,
     AuthProcessingInfo,
     AuthResponse,
@@ -51,7 +51,7 @@ def _order_dedup_pairs(
     """
 
     def _norm_key(item: Tuple[str, str]) -> Tuple[str, str]:
-        return (item[0].strip().lower(), AuthProcessingInfo._normalize_auth_type(item[1].strip().lower()))
+        return auth_match_key(item[0], item[1])
 
     indexed_pairs = list(enumerate(dedup_pairs))
     keep_keys = {idx: _norm_key(pair[0]) for idx, pair in indexed_pairs}
@@ -100,12 +100,12 @@ async def extract_auth_raw(
         - Boolean indicating if relevant data was found
     """
 
-    def parse_fn(result: AuthDiscoveryResponse) -> List[DiscoveryAuth]:
+    def parse_fn(result: AuthResponse[DiscoveryAuth]) -> List[DiscoveryAuth]:
         return result.auth or []
 
     extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
-        pydantic_model=AuthDiscoveryResponse,
+        pydantic_model=AuthResponse[DiscoveryAuth],
         system_prompt=get_auth_discovery_system_prompt,
         user_prompt=get_auth_discovery_user_prompt,
         parse_fn=parse_fn,
@@ -193,26 +193,6 @@ async def deduplicate_auth(
     # Dedup + merge relevant sequences for exact duplicates.
     seen: Dict[Tuple[str, str], DiscoveryAuth | AuthProcessingInfo] = {}
 
-    def _sequence_key(auth_seq) -> Tuple[str, str, str]:
-        return (auth_seq.chunk_id, auth_seq.start_sequence, auth_seq.end_sequence)
-
-    def _merge_relevant_sequences(
-        target: DiscoveryAuth | AuthProcessingInfo, source: DiscoveryAuth | AuthProcessingInfo
-    ) -> None:
-        if type(target) is not type(source):
-            logger.warning(
-                "[Digester:Auth] Attempting to merge relevant sequences of different types: %s and %s",
-                type(target),
-                type(source),
-            )
-            return
-        existing_keys = {_sequence_key(seq) for seq in target.relevant_sequences}
-        for seq in source.relevant_sequences:
-            key = _sequence_key(seq)
-            if key not in existing_keys:
-                target.relevant_sequences.append(seq)  # type: ignore # - we check that with type
-                existing_keys.add(key)
-
     def _merge_quirks(target: AuthProcessingInfo, source: AuthProcessingInfo) -> None:
         target_quirks = target.quirks.strip() if target.quirks else ""
         source_quirks = source.quirks.strip() if source.quirks else ""
@@ -233,53 +213,30 @@ async def deduplicate_auth(
     for auth in auth_info:
         if not auth or not auth.name:
             continue
-        name_norm = (auth.name or "").strip().lower().replace("-", "").replace(" ", "")
-        type_norm = (auth.type or "").strip().lower()
+        name_norm, type_norm = auth_match_key(auth.name, auth.type)
         key = (name_norm, type_norm)
 
-        if normalize_auth_type(auth.type) is not AuthType.OTHER:
-            existing_key = next((seen_key for seen_key in seen if seen_key[1] == type_norm), None)
-            if existing_key is None:
-                seen[key] = auth
-                continue
-
-            kept = seen[existing_key]
-            if len(auth.name.strip()) > len(kept.name.strip()):
-                _merge_relevant_sequences(auth, kept)
-                if isinstance(auth, AuthProcessingInfo) and isinstance(kept, AuthProcessingInfo):
-                    _merge_quirks(auth, kept)
-                del seen[existing_key]
-                seen[key] = auth
-            else:
-                _merge_relevant_sequences(kept, auth)
-                if isinstance(kept, AuthProcessingInfo) and isinstance(auth, AuthProcessingInfo):
-                    _merge_quirks(kept, auth)  # type: ignore # - we check that with type
-            continue
-
-        # Check if key is substring of any seen key or if any seen key is substring of key.
-        # We consider two keys duplicates only when their types are the same.
-        # Exact duplicates merge relevant_sequences. Substring duplicates keep the longer name.
         is_duplicate = False
         delete_from_seen: Optional[tuple[str, str]] = None
         for seen_key in seen:
             seen_name, seen_type = seen_key
             if seen_name == name_norm and seen_type == type_norm:
                 is_duplicate = True
-                _merge_relevant_sequences(seen[seen_key], auth)
+                merge_relevant_sequences(seen[seen_key], auth)
                 if isinstance(seen[seen_key], AuthProcessingInfo) and isinstance(auth, AuthProcessingInfo):
                     _merge_quirks(seen[seen_key], auth)  # type: ignore # - we check that with type
                 break
 
             if seen_name in name_norm and seen_type == type_norm:
                 delete_from_seen = seen_key
-                _merge_relevant_sequences(auth, seen[seen_key])
+                merge_relevant_sequences(auth, seen[seen_key])
                 if isinstance(auth, AuthProcessingInfo) and isinstance(seen[seen_key], AuthProcessingInfo):
                     _merge_quirks(auth, seen[seen_key])  # type: ignore # - we check that with type
                 break
 
             if name_norm in seen_name and type_norm == seen_type:
                 is_duplicate = True
-                _merge_relevant_sequences(seen[seen_key], auth)
+                merge_relevant_sequences(seen[seen_key], auth)
                 if isinstance(seen[seen_key], AuthProcessingInfo) and isinstance(auth, AuthProcessingInfo):
                     _merge_quirks(seen[seen_key], auth)  # type: ignore # - we check that with type
                 break
@@ -351,31 +308,30 @@ async def deduplicate_auth(
             )
             return auth_list
 
-        mark_for_deletion: List[Tuple[str, AuthType]] = []
+        mark_for_deletion: List[Tuple[str, str]] = []
         to_dedup: List[Tuple[Tuple[str, str], Tuple[str, str]]] = result.duplicates or []
         to_dedup = _order_dedup_pairs(to_dedup)
         logger.debug("[Digester:Auth] Pairs to deduplicate (keep, delete): %s", to_dedup)
         logger.debug("[Digester:Auth] Current auth list before deduplication: %s", auth_list)
-        # TODO: not nice solution
 
         for (keep_name, keep_type), (delete_name, delete_type) in to_dedup:
-            keep_type = cast(AuthType, AuthProcessingInfo._normalize_auth_type(keep_type.strip().lower()))
-            delete_type = cast(AuthType, AuthProcessingInfo._normalize_auth_type(delete_type.strip().lower()))
+            keep_key = auth_match_key(keep_name, keep_type)
+            delete_key = auth_match_key(delete_name, delete_type)
             old_auth: AuthProcessingInfo | None = None
             new_auth: AuthProcessingInfo | None = None
             for auth in auth_list:
-                key = (auth.name.strip().lower(), auth.type)
-                if key == (delete_name.strip().lower(), delete_type):
+                auth_key = auth_match_key(auth.name, auth.type)
+                if auth_key == delete_key:
                     old_auth = auth
-                elif key == (keep_name.strip().lower(), keep_type):
+                elif auth_key == keep_key:
                     new_auth = auth
 
             if old_auth and new_auth:
                 if old_auth in auth_list:
-                    mark_for_deletion.append((old_auth.name, old_auth.type))
+                    mark_for_deletion.append(auth_match_key(old_auth.name, old_auth.type))
                 if new_auth not in auth_list:
                     auth_list.append(new_auth)
-                _merge_relevant_sequences(new_auth, old_auth)
+                merge_relevant_sequences(new_auth, old_auth)
                 _merge_quirks(new_auth, old_auth)
             else:
                 logger.warning(
@@ -386,20 +342,18 @@ async def deduplicate_auth(
                     delete_type,
                 )
 
-        for keep_name, keep_type in mark_for_deletion:
+        for target_key in mark_for_deletion:
             for auth in auth_list:
-                key = (auth.name.strip().lower(), auth.type)
-                if key == (keep_name.strip().lower(), keep_type):
+                if auth_match_key(auth.name, auth.type) == target_key:
                     auth_list.remove(auth)
                     break
 
         to_delete: List[Tuple[str, str]] = result.to_be_deleted or []
         for del_auth in to_delete:
             delete_name, delete_type = del_auth
-            delete_type = cast(AuthType, AuthProcessingInfo._normalize_auth_type(delete_type.strip().lower()))
+            delete_key = auth_match_key(delete_name, delete_type)
             for potential_auth in auth_list:
-                key = (potential_auth.name.strip().lower(), potential_auth.type)
-                if key == (delete_name.strip().lower(), delete_type):
+                if auth_match_key(potential_auth.name, potential_auth.type) == delete_key:
                     auth_list.remove(potential_auth)
                     break
 
@@ -429,20 +383,20 @@ async def processInfoToAuthInfo(info: AuthProcessingInfo) -> AuthInfo:
     )
 
 
-async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_id: UUID) -> AuthResponse:
+async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_id: UUID) -> AuthResponse[AuthInfo]:
     dedup_list = [await processInfoToAuthInfo(info) for info in raw_dedup_list]
     try:
         logger.info("[Digester:Auth] Sorting via LLM. Items count: %d", len(dedup_list))
         chain = build_structured_chain(
             sort_auth_system_prompt,
             sort_auth_user_prompt,
-            AuthResponse,
+            AuthResponse[AuthInfo],
             user_role="human",
         )
 
         items_json = json.dumps([auth.model_dump(exclude={"relevant_sequences"}) for auth in dedup_list])
         sort_result = cast(
-            AuthResponse,
+            AuthResponse[AuthInfo],
             await invoke_llm(
                 chain,
                 {"items_json": items_json},
@@ -455,33 +409,31 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
         await update_job_progress(job_id, stage=JobStage.sorting, message="Sorting results by importance")
 
         if sort_result and sort_result.auth:
-            original_map: Dict[Tuple[str, str], AuthInfo] = {
-                (a.name.strip().lower(), a.type.strip().lower()): a for a in dedup_list
-            }
+            original_map: Dict[Tuple[str, str], AuthInfo] = {auth_match_key(a.name, a.type): a for a in dedup_list}
             used: Set[Tuple[str, str]] = set()
             out: List[AuthInfo] = []
             for auth in sort_result.auth:
-                key = (auth.name.strip().lower(), auth.type.strip().lower())
+                key = auth_match_key(auth.name, auth.type)
                 if key in original_map and key not in used:
                     out.append(original_map[key])
                     used.add(key)
             for auth in dedup_list:
-                key = (auth.name.strip().lower(), auth.type.strip().lower())
+                key = auth_match_key(auth.name, auth.type)
                 if key not in used:
                     out.append(auth)
             logger.info("[Digester:Auth] Sorting complete. Final count: %d", len(out))
             await update_job_progress(job_id, stage=JobStage.sorting_finished, message="Sorting finished; finalizing")
 
-            return AuthResponse(auth=out)
+            return AuthResponse[AuthInfo](auth=out)
 
         logger.warning("[Digester:Auth]  Sorting LLM returned empty; keeping original order.")
         await update_job_progress(job_id, stage=JobStage.sorting_finished, message="Sorting skipped/empty; finalizing")
 
-        return AuthResponse(auth=dedup_list)
+        return AuthResponse[AuthInfo](auth=dedup_list)
 
     except Exception as e:
         logger.error("[Digester:Auth] Sorting pass failed. Error: %s", e)
         await update_job_progress(job_id, stage=JobStage.sorting_failed, message=f"Sorting failed: {e}")
         append_job_error(job_id, f"[Digester:Auth] Sorting failed: {e}")
 
-        return AuthResponse(auth=dedup_list)
+        return AuthResponse[AuthInfo](auth=dedup_list)
