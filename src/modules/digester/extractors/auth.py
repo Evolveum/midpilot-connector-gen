@@ -404,8 +404,6 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
             ),
         )
 
-        logger.info(f"SORT: {sort_result}")
-
         await update_job_progress(job_id, stage=JobStage.sorting, message="Sorting results by importance")
 
         if sort_result and sort_result.auth:
