@@ -70,7 +70,7 @@ async def test_get_auth_status_found():
     fake_status = MagicMock(
         jobId=job_id,
         status=JobStatus.finished,
-        result=AuthResponse(
+        result=AuthResponse[AuthInfo](
             auth=[
                 AuthInfo(
                     name="OAuth2 client credentials", type=AuthType.OAUTH2_CLIENT_CREDENTIALS, relevant_sequences=[]

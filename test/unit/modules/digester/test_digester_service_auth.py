@@ -144,7 +144,7 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
             ),
         ]
 
-        sorted_result = AuthResponse(
+        sorted_result = AuthResponse[AuthInfo](
             auth=[
                 AuthInfo(
                     name="OAuth2 client credentials",
@@ -199,7 +199,7 @@ async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_prog
 
         mock_deduplicate.side_effect = [[], []]
         mock_build.return_value = []
-        mock_sort.return_value = AuthResponse(auth=[])
+        mock_sort.return_value = AuthResponse[AuthInfo](auth=[])
 
         job_id = uuid4()
         result = await service.extract_auth(fake_doc_items, job_id)
@@ -234,13 +234,20 @@ async def test_build_auth_items_filters_failed_build_results():
 
 
 @pytest.mark.asyncio
-async def test_deduplicate_auth_collapses_same_concrete_type():
-    """Two entries normalizing to the same concrete type (e.g. jwtBearer) must collapse
-    into one even when their names are not substrings of each other, keeping the longer name."""
+async def test_deduplicate_auth_keeps_distinct_methods_with_same_concrete_type():
+    """Entries with the same concrete type can still represent different auth mechanisms."""
     items = [
-        AuthProcessingInfo(name="JWT authentication", type=AuthType.JWT_BEARER, quirks="", relevant_sequences=[]),
         AuthProcessingInfo(
-            name="JWT bearer authentication", type=AuthType.JWT_BEARER, quirks="", relevant_sequences=[]
+            name="X-API-Key header",
+            type=AuthType.API_KEY,
+            quirks="Send the key in the X-API-Key header.",
+            relevant_sequences=[],
+        ),
+        AuthProcessingInfo(
+            name="api_key query parameter",
+            type=AuthType.API_KEY,
+            quirks="Send the key in the api_key query parameter.",
+            relevant_sequences=[],
         ),
     ]
 
@@ -255,9 +262,31 @@ async def test_deduplicate_auth_collapses_same_concrete_type():
     ):
         result = await deduplicate_auth(items, uuid4())
 
+    assert {auth.name for auth in result} == {"X-API-Key header", "api_key query parameter"}
+
+
+@pytest.mark.asyncio
+async def test_deduplicate_auth_uses_normalized_type_for_name_matches():
+    """Alias spellings of the same auth type should use the same comparison key."""
+    items = [
+        AuthProcessingInfo.model_construct(name="Token", type="token", quirks="", relevant_sequences=[]),
+        AuthProcessingInfo.model_construct(name="Bearer token", type="bearer", quirks="", relevant_sequences=[]),
+    ]
+
+    with (
+        patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.auth.build_structured_chain"),
+        patch(
+            "src.modules.digester.extractors.auth.invoke_llm",
+            new_callable=AsyncMock,
+            return_value=AuthDedupResponse(duplicates=[], to_be_deleted=[]),
+        ),
+    ):
+        result = await deduplicate_auth(items, uuid4())
+
     assert len(result) == 1
-    assert result[0].type == AuthType.JWT_BEARER
-    assert result[0].name == "JWT bearer authentication"
+    assert result[0].name == "Bearer token"
+    assert result[0].type == AuthType.BEARER
 
 
 @pytest.mark.asyncio
@@ -285,8 +314,38 @@ async def test_deduplicate_auth_keeps_distinct_other_methods():
     assert {auth.name for auth in result} == {"OAuth 2.0 Authorization Code Grant", "Custom signed request"}
 
 
+@pytest.mark.asyncio
+async def test_deduplicate_auth_llm_pair_matches_normalized_names():
+    """LLM dedup pairs must resolve against stored entries even when the names differ only
+    by casing/spaces/dashes, using the same normalization key as the heuristic pass."""
+    items = [
+        AuthProcessingInfo(name="API Key", type=AuthType.API_KEY, quirks="", relevant_sequences=[]),
+        AuthProcessingInfo(name="Legacy token", type=AuthType.BEARER, quirks="", relevant_sequences=[]),
+    ]
+
+    # The LLM spells the names differently than stored ("API-Key" vs "API Key",
+    # "legacytoken" vs "Legacy token"); they must still match and merge.
+    dedup = AuthDedupResponse(
+        duplicates=[(("API-Key", "apiKey"), ("legacytoken", "bearer"))],
+        to_be_deleted=[],
+    )
+
+    with (
+        patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.auth.build_structured_chain"),
+        patch(
+            "src.modules.digester.extractors.auth.invoke_llm",
+            new_callable=AsyncMock,
+            return_value=dedup,
+        ),
+    ):
+        result = await deduplicate_auth(items, uuid4())
+
+    assert [auth.name for auth in result] == ["API Key"]
+
+
 def test_auth_response_serializes_relevant_sequences_in_camel_case():
-    response = AuthResponse(
+    response = AuthResponse[AuthInfo](
         auth=[
             AuthInfo(
                 name="OAuth2",

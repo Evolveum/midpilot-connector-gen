@@ -55,7 +55,7 @@ sort_auth_system_prompt = textwrap.dedent("""
     - Prefer mechanisms documented as secure, comprehensive, and widely applicable.
     - If ties remain, keep original relative order.
 
-    Use the structured output schema (AuthResponse).
+    Use the structured output schema.
     Do not edit, invent, or drop items—only reorder the same set.
     No comments or prose.
     </instruction>
@@ -69,6 +69,6 @@ sort_auth_user_prompt = textwrap.dedent("""
     </items>
     
     Task:
-    - Return the same items reordered by relevance using the structured output schema (AuthResponse).
+    - Return the same items reordered by relevance using the structured output schema.
     - Do not add/remove/modify fields; only change order.
 """)

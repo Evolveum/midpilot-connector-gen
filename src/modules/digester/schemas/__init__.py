@@ -24,7 +24,6 @@ from src.modules.digester.schemas.attributes import (
 from src.modules.digester.schemas.auth import (
     AuthBuildResponse,
     AuthDedupResponse,
-    AuthDiscoveryResponse,
     AuthInfo,
     AuthProcessingInfo,
     AuthResponse,
@@ -97,7 +96,6 @@ __all__ = [
     "AttributeTypeFormatBuildResponse",
     "AuthBuildResponse",
     "AuthDedupResponse",
-    "AuthDiscoveryResponse",
     "AuthInfo",
     "AuthProcessingInfo",
     "AuthResponse",

@@ -23,6 +23,7 @@ from src.common.utils.status_response import build_typed_job_status_response
 from src.modules.digester import results, service
 from src.modules.digester.schemas import (
     AttributeResponse,
+    AuthInfo,
     AuthResponse,
     ConnectivityEndpointResponse,
     EndpointResponse,
@@ -733,7 +734,7 @@ async def get_auth_status(
         job_label="auth",
     )
 
-    return await build_typed_job_status_response(resolved_job_id, AuthResponse)
+    return await build_typed_job_status_response(resolved_job_id, AuthResponse[AuthInfo])
 
 
 @router.post(

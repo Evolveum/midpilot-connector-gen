@@ -12,7 +12,9 @@ from langchain_core.runnables.config import RunnableConfig
 from src.common.enums import ApiType, JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
+from src.common.utils.normalize import normalize_endpoint_key
 from src.config import config
+from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
 from src.modules.digester.enums import EndpointMethod, EndpointType
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.extraction.sequences import extract_sequence
@@ -147,17 +149,6 @@ async def merge_attribute_candidates(
         message=f"Deduplicating attributes for {object_class}",
     )
 
-    def _sequence_key(seq: DocProcessingSequenceItem) -> tuple[str, str, str]:
-        return (seq.chunk_id, seq.start_sequence, seq.end_sequence)
-
-    def _merge_relevant_sequences(target: AttributeProcessingInfo, source: AttributeProcessingInfo) -> None:
-        existing_keys = {_sequence_key(seq) for seq in target.relevant_sequences}
-        for seq in source.relevant_sequences:
-            key = _sequence_key(seq)
-            if key not in existing_keys:
-                target.relevant_sequences.append(seq)
-                existing_keys.add(key)
-
     def _merge_metadata(target: AttributeProcessingInfo, source: AttributeProcessingInfo) -> None:
         if source.type and not target.type:
             target.type = source.type
@@ -260,7 +251,7 @@ async def merge_attribute_candidates(
             continue
 
         current = seen[key]
-        _merge_relevant_sequences(current, item)
+        merge_relevant_sequences(current, item)
         _merge_metadata(current, item)
         _merge_relevant_documentations(current, item)
 
@@ -321,7 +312,7 @@ async def merge_attribute_candidates(
             delete_item = by_name.get(delete_key)
 
             if keep_item and delete_item:
-                _merge_relevant_sequences(keep_item, delete_item)
+                merge_relevant_sequences(keep_item, delete_item)
                 _merge_metadata(keep_item, delete_item)
                 mark_for_deletion.add(delete_key)
             else:
@@ -378,16 +369,12 @@ async def merge_endpoint_candidates(
         EndpointMethod.DELETE: 4,
     }
 
-    def _endpoint_key(ep: ExtractedEndpointInfo) -> tuple[str, EndpointMethod]:
-        return (ep.path.strip(), ep.method)
-
-    by_key: Dict[tuple[str, EndpointMethod], ExtractedEndpointInfo] = {}
+    by_key: Dict[tuple[str, str], ExtractedEndpointInfo] = {}
 
     for ep in extracted_endpoints:
-        if not ep.path:
+        key = normalize_endpoint_key(ep.path, ep.method)
+        if key is None:
             continue
-
-        key = _endpoint_key(ep)
 
         if key not in by_key:
             by_key[key] = ep
