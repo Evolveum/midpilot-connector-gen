@@ -7,7 +7,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from src.common.utils.coerce import as_list
+from src.common.utils.coerce import as_dict_list, as_list
 
 logger = logging.getLogger(__name__)
 
@@ -60,30 +60,6 @@ def normalize_endpoint_key(path: Any, method: Any) -> tuple[str, str] | None:
     return path_str, method_str
 
 
-def normalize_relevant_chunks_for_session(value: Any) -> Any:
-    """
-    Normalize relevant chunk references for session storage.
-
-    Converts dict entries to camelCase shape: {"docId": "...", "chunkId": "..."}.
-    """
-    if not isinstance(value, list):
-        return value
-
-    if value and all(isinstance(item, int) for item in value):
-        return value
-
-    normalized: list[dict[str, str]] = []
-    for item in value:
-        if not isinstance(item, Mapping):
-            continue
-        pair = normalize_chunk_pair(item)
-        if pair is None:
-            continue
-        doc_id, chunk_id = pair
-        normalized.append({"docId": doc_id, "chunkId": chunk_id})
-    return normalized
-
-
 def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize job input for better querying
@@ -128,12 +104,9 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
     relevant_object_classes = normalized_input.get("relevantObjectClasses")
     if isinstance(relevant_object_classes, Mapping):
         object_classes = relevant_object_classes.get("objectClasses")
-        if isinstance(object_classes, list):
-            for obj_class in object_classes:
-                if not isinstance(obj_class, dict):
-                    continue
-                obj_class.pop("relevantDocumentations", None)
-                obj_class.pop("relevant_chunk_indices", None)
+        for obj_class in as_dict_list(object_classes):
+            obj_class.pop("relevantDocumentations", None)
+            obj_class.pop("relevant_chunk_indices", None)
     if "relevantDocumentations" in normalized_input:
         normalized_input.pop("relevantDocumentations")
     return normalized_input

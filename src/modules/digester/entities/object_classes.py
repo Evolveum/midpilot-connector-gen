@@ -8,7 +8,7 @@ from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.utils.coerce import as_list
+from src.common.utils.coerce import as_dict_list, as_list
 from src.common.utils.normalize import normalize_object_class_name
 from src.modules.digester.enums import ConfidenceLevel
 
@@ -61,9 +61,7 @@ def sort_object_class_dicts(object_classes: List[Any]) -> List[Any]:
 def find_object_class(object_classes: List[Any], object_class: str) -> Optional[Dict[str, Any]]:
     """Find object class dict by name (case-insensitive)."""
     normalized_name = normalize_object_class_name(object_class)
-    for obj_cls in object_classes:
-        if not isinstance(obj_cls, dict):
-            continue
+    for obj_cls in as_dict_list(object_classes):
         name = obj_cls.get("name")
         if isinstance(name, str) and normalize_object_class_name(name) == normalized_name:
             return obj_cls

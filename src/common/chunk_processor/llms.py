@@ -9,46 +9,12 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.chunk_processor.prompts import get_summary_prompts
 from src.common.chunk_processor.schema import LlmChunkOutput
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain, retry_on_transient_llm_error
 from src.config import config
 
 logger = logging.getLogger(__name__)
-
-
-# For now not used, but may be useful later
-def get_summary_result(content: str, type: str = "partial") -> str:
-    """
-    Run a summary LLM on the given content and return the summary.
-    inputs:
-    - prompts: tuple of (developer_prompt, user_prompt)
-    - type: "partial" for partial summary, "full" for full summary
-    returns:
-    - summary string
-    """
-    llm = get_default_llm(temperature=1)
-
-    prompts = get_summary_prompts(content, type)
-
-    developer_prompt, user_prompt = prompts
-
-    developer_message = SystemMessage(content=developer_prompt)
-    developer_message.additional_kwargs = {"__openai_role__": "developer"}
-
-    user_message = HumanMessage(content=user_prompt)
-
-    llm_response = llm.invoke([developer_message, user_message])
-
-    print(f"LLM raw output for {type} summary: " + str(llm_response))
-
-    content_raw = llm_response.content
-    if isinstance(content_raw, str):
-        return content_raw
-    else:
-        # Handle list format
-        return str(content_raw)
 
 
 async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:

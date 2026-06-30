@@ -2,6 +2,8 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -12,9 +14,23 @@ from src.modules.digester.extractors.scim.attributes import (
     get_scim_schema_attributes_for_object_class,
 )
 
+_SCHEMA_DIR = Path(__file__).parent / "scim_schemas"
+
+
+def _baseline_schemas() -> dict:
+    """Load the SCIM baseline schemas that stand in for a session's conndev documents."""
+    schemas: dict = {}
+    for path in sorted(_SCHEMA_DIR.glob("*.json")):
+        schema = json.loads(path.read_text())
+        schemas[schema["name"]] = schema
+    return schemas
+
+
+BASELINE_SCHEMAS = _baseline_schemas()
+
 
 def test_scim_user_attributes_are_derived_from_schema_with_embedded_complex_attributes():
-    attributes = get_scim_schema_attributes_for_object_class("User")
+    attributes = get_scim_schema_attributes_for_object_class(BASELINE_SCHEMAS, "User")
 
     assert attributes is not None
     assert "userName" in attributes
@@ -48,7 +64,7 @@ def test_scim_user_attributes_are_derived_from_schema_with_embedded_complex_attr
 
 
 def test_scim_embedded_attributes_are_derived_from_source_subattributes():
-    attributes = get_scim_schema_attributes_for_object_class("UserPhoneNumbers")
+    attributes = get_scim_schema_attributes_for_object_class(BASELINE_SCHEMAS, "UserPhoneNumbers")
 
     assert attributes is not None
     assert set(attributes) == {"value", "display", "type", "primary"}
@@ -61,7 +77,7 @@ def test_scim_embedded_attributes_are_derived_from_source_subattributes():
 
 
 def test_scim_readonly_embedded_attributes_are_not_creatable_or_updatable():
-    attributes = get_scim_schema_attributes_for_object_class("UserGroups")
+    attributes = get_scim_schema_attributes_for_object_class(BASELINE_SCHEMAS, "UserGroups")
 
     assert attributes is not None
     assert attributes["value"]["updatable"] is False
@@ -72,7 +88,7 @@ def test_scim_readonly_embedded_attributes_are_not_creatable_or_updatable():
 
 
 def test_unknown_scim_object_class_returns_none_for_documentation_fallback():
-    assert get_scim_schema_attributes_for_object_class("CustomApplication") is None
+    assert get_scim_schema_attributes_for_object_class(BASELINE_SCHEMAS, "CustomApplication") is None
 
 
 @pytest.mark.asyncio
@@ -84,6 +100,11 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
         patch("src.modules.digester.extractors.scim.attributes.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain", return_value=object()),
+        patch(
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_schemas",
+            new_callable=AsyncMock,
+            return_value=BASELINE_SCHEMAS,
+        ),
         patch(
             "src.modules.digester.extractors.scim.attributes.invoke_llm",
             new_callable=AsyncMock,
@@ -136,6 +157,7 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
             ["mapping table"],
             "User",
             uuid4(),
+            uuid4(),
             [chunk_id],
             chunk_id_to_doc_id={chunk_id: doc_id},
         )
@@ -174,6 +196,11 @@ async def test_extract_scim_embedded_attributes_match_indexed_documented_paths_t
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain", return_value=object()),
         patch(
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_schemas",
+            new_callable=AsyncMock,
+            return_value=BASELINE_SCHEMAS,
+        ),
+        patch(
             "src.modules.digester.extractors.scim.attributes.invoke_llm",
             new_callable=AsyncMock,
             return_value={
@@ -210,6 +237,7 @@ async def test_extract_scim_embedded_attributes_match_indexed_documented_paths_t
             ["email mapping table"],
             "UserEmails",
             uuid4(),
+            uuid4(),
             [chunk_id],
             chunk_id_to_doc_id={chunk_id: doc_id},
         )
@@ -236,6 +264,11 @@ async def test_extract_scim_embedded_attributes_discards_unmatched_documented_ma
         patch("src.modules.digester.extractors.scim.attributes.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain", return_value=object()),
+        patch(
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_schemas",
+            new_callable=AsyncMock,
+            return_value=BASELINE_SCHEMAS,
+        ),
         patch(
             "src.modules.digester.extractors.scim.attributes.invoke_llm",
             new_callable=AsyncMock,
@@ -272,6 +305,7 @@ async def test_extract_scim_embedded_attributes_discards_unmatched_documented_ma
         result = await extract_scim_attributes(
             ["mapping table"],
             "UserName",
+            uuid4(),
             uuid4(),
             [chunk_id],
             chunk_id_to_doc_id={chunk_id: doc_id},

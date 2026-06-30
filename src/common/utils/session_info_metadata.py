@@ -141,11 +141,6 @@ async def get_session_base_api_url(session_id: UUID, protocol: ApiType | None = 
     return extract_base_api_url(await load_session_metadata(session_id), protocol)
 
 
-async def get_session_database_name(session_id: UUID) -> str:
-    """Return the database name documented in session metadata, if any (SQL integrations)."""
-    return extract_database_name(await load_session_metadata(session_id))
-
-
 async def get_discovery_application_name(session_id: UUID) -> str:
     """Return the application name the user entered in discovery, if any."""
     discovery_input = await load_session_metadata(session_id, key="discoveryInput")

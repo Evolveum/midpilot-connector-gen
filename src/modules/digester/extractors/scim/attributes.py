@@ -17,22 +17,22 @@ from uuid import UUID
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
-from src.common.utils.coerce import as_list
+from src.common.utils.coerce import as_dict_list, as_list
 from src.common.utils.normalize import normalize_chunk_pair
 from src.modules.digester.entities.attribute_filters import normalize_readability_flags
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
+from src.modules.digester.extractors.scim.baseline import (
+    get_base_scim_attributes,
+    is_scim_standard_class,
+    load_session_scim_schemas,
+)
 from src.modules.digester.extractors.scim.object_class import build_embedded_object_class_name
 from src.modules.digester.prompts.scim.attributes_prompts import (
     get_scim_attributes_system_prompt,
     get_scim_attributes_user_prompt,
 )
 from src.modules.digester.schemas import AttributeInfoScim, ExtractedAttributeResponseSCIM
-from src.modules.digester.scim_baseline.loader import (
-    get_base_scim_attributes,
-    is_scim_standard_class,
-    load_scim_base_schemas,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +266,7 @@ async def extract_scim_attributes(
     chunks: List[str],
     object_class: str,
     job_id: UUID,
+    session_id: UUID,
     chunk_details: List[str] | None = None,
     chunk_metadata_map: Dict[str, Dict[str, Any]] | None = None,
     chunk_id_to_doc_id: Dict[str, str] | None = None,
@@ -291,7 +292,8 @@ async def extract_scim_attributes(
     if chunk_details is None:
         chunk_details = [""] * len(chunks)
 
-    schema_attributes = get_scim_schema_attributes_for_object_class(object_class)
+    scim_schemas = await load_session_scim_schemas(session_id)
+    schema_attributes = get_scim_schema_attributes_for_object_class(scim_schemas, object_class)
     if schema_attributes is not None and not chunks:
         await update_job_progress(
             job_id,
@@ -313,7 +315,7 @@ async def extract_scim_attributes(
     # Step 1: Load base SCIM attributes for LLM context when schema heuristics are unavailable.
     base_attributes = schema_attributes or {}
     has_schema_baseline = schema_attributes is not None
-    is_standard_class = is_scim_standard_class(object_class)
+    is_standard_class = is_scim_standard_class(scim_schemas, object_class)
     if has_schema_baseline:
         logger.info(
             "[SCIM:Attributes] Using %d schema baseline attributes for %s",
@@ -322,7 +324,7 @@ async def extract_scim_attributes(
         )
     elif is_standard_class:
         if not base_attributes:
-            base_attributes = get_base_scim_attributes(object_class)
+            base_attributes = get_base_scim_attributes(scim_schemas, object_class)
         logger.info(
             "[SCIM:Attributes] Loaded %d base attributes for %s",
             len(base_attributes),
@@ -415,7 +417,9 @@ async def extract_scim_attributes(
             schema_attributes,
             merged_custom_with_references,
             include_unmatched_mappings=is_standard_class,
-            attribute_context=get_scim_schema_attribute_context(object_class) if is_standard_class else None,
+            attribute_context=get_scim_schema_attribute_context(scim_schemas, object_class)
+            if is_standard_class
+            else None,
             object_class=object_class,
         )
 
@@ -647,11 +651,10 @@ def normalize_scim_path_for_lookup(scim_path: Any) -> str:
     return re.sub(r"\[[^\]]*\]", "", normalized).lower()
 
 
-def get_scim_schema_attribute_context(object_class: str) -> Optional[Dict[str, set[str]]]:
+def get_scim_schema_attribute_context(schemas: Dict[str, Any], object_class: str) -> Optional[Dict[str, set[str]]]:
     """
     Return top-level SCIM attribute names that help scope documented mappings.
     """
-    schemas = load_scim_base_schemas()
     schema = _get_schema_case_insensitive(schemas, object_class)
     if schema is None:
         return None
@@ -660,29 +663,20 @@ def get_scim_schema_attribute_context(object_class: str) -> Optional[Dict[str, s
     complex_attributes: set[str] = set()
     other_standard_attributes: set[str] = set()
 
-    attributes = schema.get("attributes", [])
-    if isinstance(attributes, list):
-        for attr in attributes:
-            if not isinstance(attr, dict):
-                continue
-            attr_name = attr.get("name")
-            if not isinstance(attr_name, str) or not attr_name.strip():
-                continue
-            normalized_name = attr_name.strip().lower()
-            current_attributes.add(normalized_name)
-            if attr.get("type") == "complex":
-                complex_attributes.add(normalized_name)
+    for attr in as_dict_list(schema.get("attributes")):
+        attr_name = attr.get("name")
+        if not isinstance(attr_name, str) or not attr_name.strip():
+            continue
+        normalized_name = attr_name.strip().lower()
+        current_attributes.add(normalized_name)
+        if attr.get("type") == "complex":
+            complex_attributes.add(normalized_name)
 
     normalized_object_class = object_class.strip().lower()
     for schema_name, other_schema in schemas.items():
         if schema_name.strip().lower() == normalized_object_class or not isinstance(other_schema, dict):
             continue
-        other_attributes = other_schema.get("attributes", [])
-        if not isinstance(other_attributes, list):
-            continue
-        for attr in other_attributes:
-            if not isinstance(attr, dict):
-                continue
+        for attr in as_dict_list(other_schema.get("attributes")):
             attr_name = attr.get("name")
             if isinstance(attr_name, str) and attr_name.strip():
                 other_standard_attributes.add(attr_name.strip().lower())
@@ -732,11 +726,8 @@ def _find_embedded_source_attribute(
     for parent_class, schema in schemas.items():
         if not isinstance(schema, dict):
             continue
-        attributes = schema.get("attributes", [])
-        if not isinstance(attributes, list):
-            continue
-        for attr in attributes:
-            if not isinstance(attr, dict) or attr.get("type") != "complex":
+        for attr in as_dict_list(schema.get("attributes")):
+            if attr.get("type") != "complex":
                 continue
             attr_name = attr.get("name")
             if not isinstance(attr_name, str) or not attr_name.strip():
@@ -747,24 +738,19 @@ def _find_embedded_source_attribute(
     return None
 
 
-def get_scim_schema_attributes_for_object_class(object_class: str) -> Optional[Dict[str, Dict[str, Any]]]:
+def get_scim_schema_attributes_for_object_class(
+    schemas: Dict[str, Any], object_class: str
+) -> Optional[Dict[str, Dict[str, Any]]]:
     """
     Return deterministic SCIM attributes for a standard or embedded object class.
 
-    None means the object class is not backed by the local SCIM base schemas and
+    None means the object class is not backed by the session SCIM base schemas and
     should be handled by the custom/documentation extraction path.
     """
-    schemas = load_scim_base_schemas()
-
     schema = _get_schema_case_insensitive(schemas, object_class)
     if schema is not None:
         result: Dict[str, Dict[str, Any]] = {}
-        attributes = schema.get("attributes", [])
-        if not isinstance(attributes, list):
-            return result
-        for attr in attributes:
-            if not isinstance(attr, dict):
-                continue
+        for attr in as_dict_list(schema.get("attributes")):
             attr_name = attr.get("name")
             if not isinstance(attr_name, str) or not attr_name.strip():
                 continue
@@ -785,12 +771,7 @@ def get_scim_schema_attributes_for_object_class(object_class: str) -> Optional[D
 
     source_attr_name, source_attr = embedded_source
     result = {}
-    sub_attributes = source_attr.get("subAttributes", [])
-    if not isinstance(sub_attributes, list):
-        return result
-    for sub_attr in sub_attributes:
-        if not isinstance(sub_attr, dict):
-            continue
+    for sub_attr in as_dict_list(source_attr.get("subAttributes")):
         sub_attr_name = sub_attr.get("name")
         if not isinstance(sub_attr_name, str) or not sub_attr_name.strip():
             continue
