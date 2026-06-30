@@ -17,6 +17,7 @@ from uuid import UUID
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
+from src.common.utils.coerce import as_list
 from src.common.utils.normalize import normalize_chunk_pair
 from src.modules.digester.entities.attribute_filters import normalize_readability_flags
 from src.modules.digester.extraction.llm_execution import invoke_llm
@@ -198,8 +199,8 @@ def _merge_schema_attributes_with_documented_mappings(
                 continue
             if key == "relevantDocumentations":
                 existing_refs = baseline_info.get("relevantDocumentations")
-                existing_list = existing_refs if isinstance(existing_refs, list) else []
-                incoming_list = value if isinstance(value, list) else []
+                existing_list = as_list(existing_refs)
+                incoming_list = as_list(value)
                 seen = {
                     (str(item.get("docId") or item.get("doc_id")), str(item.get("chunkId") or item.get("chunk_id")))
                     for item in existing_list

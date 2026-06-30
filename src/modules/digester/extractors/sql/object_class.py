@@ -10,6 +10,7 @@ from uuid import UUID
 from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
 from src.common.llm import build_structured_chain
+from src.common.utils.coerce import as_list
 from src.modules.digester.entities.object_classes import confidence_order_key
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, object_class_name_from_table
@@ -64,10 +65,8 @@ def _is_probably_domain_table(table: dict[str, Any]) -> bool:
 
 def _object_class_from_table(table: dict[str, Any]) -> FinalObjectClass:
     table_name = str(table.get("table") or "").strip()
-    raw_columns = table.get("columns")
-    columns = raw_columns if isinstance(raw_columns, list) else []
-    raw_relevant_documentations = table.get("relevantDocumentations")
-    relevant_documentations = raw_relevant_documentations if isinstance(raw_relevant_documentations, list) else []
+    columns = as_list(table.get("columns"))
+    relevant_documentations = as_list(table.get("relevantDocumentations"))
     return FinalObjectClass(
         name=object_class_name_from_table(table_name),
         relevant=RelevantLevel.TRUE,
@@ -78,15 +77,14 @@ def _object_class_from_table(table: dict[str, Any]) -> FinalObjectClass:
         abstract=False,
         embedded=False,
         description=f"Database object mapped from table '{table_name}' with {len(columns)} columns.",
-        relevantDocumentations=relevant_documentations,
+        relevant_documentations=relevant_documentations,
     )
 
 
 def _build_schema_heuristics(tables: list[dict[str, Any]]) -> str:
     table_summaries = []
     for table in tables:
-        raw_columns = table.get("columns")
-        columns = raw_columns if isinstance(raw_columns, list) else []
+        columns = as_list(table.get("columns"))
         table_summaries.append(
             {
                 "table": table.get("table"),

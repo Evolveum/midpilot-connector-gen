@@ -26,6 +26,7 @@ from typing import List, Optional
 import httpx
 from pydantic import BaseModel, Field
 
+from src.common.utils.coerce import as_mapping
 from src.config import config
 
 logger = logging.getLogger(__name__)
@@ -174,7 +175,7 @@ def parse_implementations(raw: str, scim_version: str) -> List[ScimCloudImplemen
     body = re.sub(r",(\s*[}\]])", r"\1", body)  # drop JS-style trailing commas
 
     data = json.loads(body)
-    implementations = data.get("implementations", []) if isinstance(data, dict) else []
+    implementations = as_mapping(data).get("implementations", [])
     parsed: List[ScimCloudImplementation] = []
     for item in implementations:
         if not isinstance(item, dict):

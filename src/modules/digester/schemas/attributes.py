@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
+from src.common.utils.normalize import normalize_relevant_documentation_refs
 from src.modules.digester.schemas.common import DocProcessingSequenceItem, DocSequenceItem, DocSequenceMarker
 
 # --- Attributes ---
@@ -111,23 +112,7 @@ class AttributeRelevantDocumentationsMixin(BaseModel):
     @field_validator("relevant_documentations", mode="before")
     @classmethod
     def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
-        if not isinstance(v, list):
-            return []
-
-        validated_chunks: List[Dict[str, str]] = []
-        for chunk in v:
-            if not isinstance(chunk, dict):
-                continue
-            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-            doc_id = chunk.get("doc_id") or chunk.get("docId")
-            if chunk_id and doc_id:
-                validated_chunks.append(
-                    {
-                        "chunk_id": str(chunk_id),
-                        "doc_id": str(doc_id),
-                    }
-                )
-        return validated_chunks
+        return normalize_relevant_documentation_refs(v)
 
     @field_serializer("relevant_documentations", when_used="always")
     def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:

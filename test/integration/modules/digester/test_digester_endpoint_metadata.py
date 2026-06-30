@@ -8,6 +8,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from src.common.enums import JobStatus
 from src.modules.digester import service
@@ -99,7 +100,9 @@ async def test_restore_metadata_success():
                 "name": "OpenProject",
                 "apiType": ["rest"],
                 "apiVersion": "3",
-                "baseApiEndpoint": [{"uri": "https://example.com/api", "type": ""}],
+                "restAvailability": {
+                    "baseApiEndpoint": [{"uri": "https://example.com/api", "type": ""}],
+                },
                 "applicationVersion": "12.1.0",
             }
         }
@@ -120,3 +123,22 @@ async def test_restore_metadata_success():
     )
     assert response["message"].startswith("Metadata updated successfully")
     assert response["sessionId"] == session_id
+
+
+def test_restore_metadata_rejects_legacy_flat_metadata_contract():
+    """The restore contract no longer accepts flat connectivity fields."""
+    with pytest.raises(ValidationError) as exc:
+        InfoResponse.model_validate(
+            {
+                "infoMetadata": {
+                    "name": "OpenProject",
+                    "apiType": ["rest"],
+                    "baseApiEndpoint": [{"uri": "https://example.com/api", "type": ""}],
+                    "databaseName": "openproject",
+                }
+            }
+        )
+
+    message = str(exc.value)
+    assert "baseApiEndpoint" in message
+    assert "databaseName" in message

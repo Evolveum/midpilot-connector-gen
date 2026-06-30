@@ -6,6 +6,8 @@ import re
 from enum import StrEnum
 from typing import Any
 
+from src.common.utils.coerce import as_str
+
 
 class ConfidenceLevel(StrEnum):
     LOW = "low"
@@ -39,9 +41,7 @@ class AuthType(StrEnum):
 
 
 def _auth_type_key(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    return re.sub(r"[^a-z0-9]+", "", value.strip().lower())
+    return re.sub(r"[^a-z0-9]+", "", as_str(value).strip().lower())
 
 
 _AUTH_TYPE_ALIASES: dict[str, AuthType] = {
@@ -177,9 +177,7 @@ def auth_type_match_key(value: Any) -> str:
 
 def auth_name_match_key(value: Any) -> str:
     """Build a stable key for matching auth method names (casing/space/dash-insensitive)."""
-    if not isinstance(value, str):
-        return ""
-    return value.strip().lower().replace("-", "").replace(" ", "")
+    return as_str(value).strip().lower().replace("-", "").replace(" ", "")
 
 
 def auth_match_key(name: Any, auth_type: Any) -> tuple[str, str]:
