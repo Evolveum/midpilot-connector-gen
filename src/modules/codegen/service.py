@@ -303,7 +303,7 @@ async def create_authorization(
 
     assets = get_operation_assets("authorization", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url = await get_session_base_api_url(session_id)
+    base_api_url = await get_session_base_api_url(session_id, protocol)
 
     generator_preferred_authorizations = prepare_preferred_authorizations_for_generation(
         auth_payload,
@@ -384,7 +384,7 @@ async def create_search(
     """
     assets = get_search_operation_assets(protocol, intent)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url, database_name = await get_session_connection_target(session_id)
+    base_api_url, database_name = await get_session_connection_target(session_id, protocol)
 
     generator = SearchGenerator(
         object_class=object_class,
@@ -432,7 +432,7 @@ async def create_create(
     """
     assets = get_operation_assets("create", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url, database_name = await get_session_connection_target(session_id)
+    base_api_url, database_name = await get_session_connection_target(session_id, protocol)
 
     generator = CreateGenerator(
         object_class=object_class,
@@ -478,7 +478,7 @@ async def create_update(
     """
     assets = get_operation_assets("update", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url, database_name = await get_session_connection_target(session_id)
+    base_api_url, database_name = await get_session_connection_target(session_id, protocol)
 
     generator = UpdateGenerator(
         object_class=object_class,
@@ -524,7 +524,7 @@ async def create_delete(
     """
     assets = get_operation_assets("delete", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url, database_name = await get_session_connection_target(session_id)
+    base_api_url, database_name = await get_session_connection_target(session_id, protocol)
 
     generator = DeleteGenerator(
         object_class=object_class,

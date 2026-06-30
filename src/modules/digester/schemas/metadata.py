@@ -4,16 +4,95 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_serializer
+from pydantic import BaseModel, Field, field_validator
 
 from src.common.enums import ApiType, ScimAvailability, ScimSource
 from src.modules.digester.enums import EndpointType
+
+# Shared alias table for canonicalizing API technology types from upstream sources.
+API_TYPE_ALIASES: Dict[str, ApiType] = {
+    "rest": ApiType.REST,
+    "openapi": ApiType.REST,
+    "swagger": ApiType.REST,
+    "scim": ApiType.SCIM,
+    "sql": ApiType.SQL,
+    "db": ApiType.SQL,
+}
+
+# HTTP base endpoints belong to an HTTP protocol; SQL integrations have no base endpoint.
+ENDPOINT_PROTOCOLS: tuple[ApiType, ...] = (ApiType.REST, ApiType.SCIM)
+
+
+def normalize_api_type_values(value: Any) -> List[ApiType]:
+    """
+    Normalize api types from various upstream sources.
+    Keep only supported values and canonicalize their casing.
+    """
+    if value is None:
+        return []
+
+    raw_values: List[Any]
+    if isinstance(value, str):
+        raw_values = [value]
+    elif isinstance(value, list):
+        raw_values = value
+    else:
+        return []
+
+    normalized: List[ApiType] = []
+    for item in raw_values:
+        if isinstance(item, ApiType):
+            normalized.append(item)
+            continue
+        if not isinstance(item, str):
+            continue
+        canonical = API_TYPE_ALIASES.get(item.strip().lower())
+        if canonical:
+            normalized.append(canonical)
+
+    # Preserve the first-seen order while deduplicating.
+    return list(dict.fromkeys(normalized))
+
+
+def normalize_endpoint_protocol(value: Any) -> ApiType | None:
+    """
+    Normalize the explicit HTTP protocol a base endpoint serves to REST or SCIM.
+
+    Missing, SQL, or unknown values remain unclassified so merge logic can fall back
+    to the session-level apiType before defaulting to REST.
+    """
+    canonical: ApiType | None
+    if isinstance(value, ApiType):
+        canonical = value
+    elif isinstance(value, str):
+        stripped = value.strip().lower()
+        if not stripped:
+            return None
+        canonical = API_TYPE_ALIASES.get(stripped)
+    else:
+        return None
+    return canonical if canonical in ENDPOINT_PROTOCOLS else None
+
+
+def coerce_base_api_endpoint_list(value: Any) -> List[Any]:
+    """
+    Keep base-endpoint fields resilient to partial/malformed upstream output.
+    Accept null, a single object, or a list of objects.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (dict, BaseAPIEndpoint)):
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, (dict, BaseAPIEndpoint))]
+    return []
 
 
 # ---  Info about schema ---
 class BaseAPIEndpoint(BaseModel):
     """
-    Base API endpoint for the product. Distinguish between constant URLs and tenant-specific (dynamic) URLs.
+    Base API endpoint for the product. Distinguishes constant vs tenant-specific (dynamic)
+    URLs, and which HTTP protocol (REST/SCIM) the endpoint serves.
     """
 
     uri: str = Field(..., description="Base URL or URI template to call the API (e.g., https://host/api/v1).")
@@ -22,6 +101,16 @@ class BaseAPIEndpoint(BaseModel):
         description=(
             "'constant' if same for all deployments; 'dynamic' if varies per tenant/installation; "
             "empty string when unknown."
+        ),
+    )
+    api_type: ApiType | None = Field(
+        default=None,
+        validation_alias="apiType",
+        serialization_alias="apiType",
+        exclude=True,
+        description=(
+            "Explicit HTTP protocol this base endpoint serves: 'rest' or 'scim'. When omitted, merge logic routes the "
+            "endpoint from the session-level apiType; not serialized (the block already implies the protocol)."
         ),
     )
 
@@ -42,47 +131,15 @@ class BaseAPIEndpoint(BaseModel):
             return EndpointType(normalized)
         return EndpointType.UNKNOWN
 
+    @field_validator("api_type", mode="before")
+    @classmethod
+    def _normalize_api_type(cls, value: Any) -> ApiType | None:
+        return normalize_endpoint_protocol(value)
 
-def normalize_api_type_values(value: Any) -> List[ApiType]:
+
+class InfoMetadataBase(BaseModel):
     """
-    Normalize api types from various upstream sources.
-    Keep only supported values and canonicalize their casing.
-    """
-    if value is None:
-        return []
-
-    raw_values: List[Any]
-    if isinstance(value, str):
-        raw_values = [value]
-    elif isinstance(value, list):
-        raw_values = value
-    else:
-        return []
-
-    aliases: Dict[str, ApiType] = {
-        "rest": ApiType.REST,
-        "openapi": ApiType.REST,
-        "swagger": ApiType.REST,
-        "scim": ApiType.SCIM,
-        "sql": ApiType.SQL,
-        "db": ApiType.SQL,
-    }
-
-    normalized: List[ApiType] = []
-    for item in raw_values:
-        if not isinstance(item, str):
-            continue
-        canonical = aliases.get(item.strip().lower())
-        if canonical:
-            normalized.append(canonical)
-
-    # Preserve the first-seen order while deduplicating.
-    return list(dict.fromkeys(normalized))
-
-
-class InfoMetadataExtraction(BaseModel):
-    """
-    High-level product and API metadata extracted from documentation chunks.
+    Scalar product/API identity fields shared by per-chunk extraction and the final payload.
     """
 
     name: str = Field(
@@ -101,12 +158,39 @@ class InfoMetadataExtraction(BaseModel):
         serialization_alias="apiVersion",
         description="API version string as documented (e.g., 'v1', '2024-05', semantic).",
     )
+
+    model_config = {"populate_by_name": True}
+
+
+class _EndpointCarrier(BaseModel):
+    """
+    Shared base-endpoint field and input normalization for metadata models.
+    """
+
     base_api_endpoint: List[BaseAPIEndpoint] = Field(
         default_factory=list,
         validation_alias="baseApiEndpoint",
         serialization_alias="baseApiEndpoint",
-        description="One or more base endpoints/URI templates with their constant/dynamic classification.",
+        description="Base endpoints/URI templates with their constant/dynamic and REST/SCIM classification.",
     )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("base_api_endpoint", mode="before")
+    @classmethod
+    def _normalize_base_api_endpoint(cls, v: Any) -> List[Any]:
+        return coerce_base_api_endpoint_list(v)
+
+
+class InfoMetadataExtraction(_EndpointCarrier, InfoMetadataBase):
+    """
+    High-level product and API metadata extracted from a single documentation chunk.
+
+    The per-chunk LLM contract is intentionally flat: base endpoints (each tagged with the
+    HTTP protocol it serves) and an optional database name live side by side. The service
+    layer regroups these into protocol-specific availability blocks on the final payload.
+    """
+
     database_name: str = Field(
         default="",
         validation_alias="databaseName",
@@ -117,38 +201,41 @@ class InfoMetadataExtraction(BaseModel):
         ),
     )
 
-    model_config = {"populate_by_name": True}
-
-    @field_validator("base_api_endpoint", mode="before")
-    @classmethod
-    def _normalize_base_api_endpoint(cls, v: Any) -> List[Any]:
-        """
-        Keep the field resilient to partial/malformed LLM output.
-        Accept null, a single object, or a list of objects.
-        """
-        if v is None:
-            return []
-        if isinstance(v, dict) or isinstance(v, BaseAPIEndpoint):
-            return [v]
-        if isinstance(v, list):
-            return [item for item in v if isinstance(item, (dict, BaseAPIEndpoint))]
-        return []
-
     @field_validator("base_api_endpoint", mode="after")
     @classmethod
     def _dedupe_and_sort_base_api_endpoint(cls, endpoints: List[BaseAPIEndpoint]) -> List[BaseAPIEndpoint]:
-        unique: Dict[tuple[str, EndpointType], BaseAPIEndpoint] = {}
+        unique: Dict[tuple[str, EndpointType, ApiType | None], BaseAPIEndpoint] = {}
         for endpoint in endpoints or []:
             uri = (endpoint.uri or "").strip()
             if not uri:
                 continue
-            key = (uri.lower(), endpoint.type)
+            key = (uri.lower(), endpoint.type, endpoint.api_type)
             if key not in unique:
-                unique[key] = BaseAPIEndpoint(uri=uri, type=endpoint.type)
+                unique[key] = BaseAPIEndpoint(uri=uri, type=endpoint.type, api_type=endpoint.api_type)
 
         return sorted(
             unique.values(),
-            key=lambda endpoint: (endpoint.uri.lower(), 0 if endpoint.type == EndpointType.CONSTANT else 1),
+            key=lambda endpoint: (
+                endpoint.uri.lower(),
+                endpoint.api_type.value if endpoint.api_type is not None else "",
+                0 if endpoint.type == EndpointType.CONSTANT else 1,
+            ),
+        )
+
+    def is_empty(self) -> bool:
+        """
+        True when this chunk yielded no usable metadata.
+
+        Operates on the flat per-chunk fields (apiType is detected separately and is not part
+        of this model). The final payload has a different, grouped shape and its own emptiness
+        check; see ``is_empty_info_result_payload``.
+        """
+        return not (
+            self.name.strip()
+            or (self.application_version or "").strip()
+            or self.api_version.strip()
+            or self.base_api_endpoint
+            or self.database_name.strip()
         )
 
 
@@ -157,13 +244,22 @@ class InfoMetadataExtraction(BaseModel):
 DEFAULT_SCIM_AVAILABILITY_CONFIDENCE: float = 1.0
 
 
-class ScimAvailabilityInfo(BaseModel):
+class RestAvailabilityInfo(_EndpointCarrier):
     """
-    Advisory SCIM availability surfaced on the API response when SCIM is detected.
+    REST-specific connectivity info: the base endpoint(s) classified as REST.
 
-    SCIM may exist for a product yet require a paid/enterprise plan the customer might not
-    have. Aggregated from the documentation-free SCIM signals; included only when ``scim``
-    is in ``apiType`` (dropped otherwise, like ``databaseName`` for non-SQL).
+    Always present on the final payload (empty when no REST endpoints were detected).
+    """
+
+
+class ScimAvailabilityInfo(_EndpointCarrier):
+    """
+    SCIM-specific connectivity info and advisory availability.
+
+    Carries the SCIM base endpoint(s) plus an advisory about whether SCIM is generally
+    usable: SCIM may exist for a product yet require a paid/enterprise plan the customer
+    might not have. Aggregated from the documentation-free SCIM signals. Always present on
+    the final payload (empty/unknown when SCIM was not detected).
     """
 
     status: ScimAvailability = Field(
@@ -187,15 +283,33 @@ class ScimAvailabilityInfo(BaseModel):
         description="Confidence in [0, 1]. Placeholder default until derived from signal agreement.",
     )
 
+
+class SqlAvailabilityInfo(BaseModel):
+    """
+    SQL-specific connectivity info: the target database/schema name.
+
+    Always present on the final payload (empty when the integration is not SQL).
+    """
+
+    database_name: str = Field(
+        default="",
+        validation_alias="databaseName",
+        serialization_alias="databaseName",
+        description="Database/schema name the connector must connect to. Populated only for SQL integrations.",
+    )
+
     model_config = {"populate_by_name": True}
 
 
-class InfoMetadata(InfoMetadataExtraction):
+class InfoMetadata(InfoMetadataBase):
     """
     Final high-level product and API metadata, including the detected ``apiType``.
 
-    This is the stored/returned payload. ``apiType`` is filled by the dedicated
-    detection pipeline and merged in by the service layer, not by chunk extraction.
+    This is the stored/returned payload. ``apiType`` is filled by the dedicated detection
+    pipeline and merged in by the service layer, not by chunk extraction. Connectivity
+    details are grouped into protocol-specific availability blocks. All three blocks are
+    always present; irrelevant blocks are returned empty rather than dropped, so the payload
+    shape is stable regardless of the detected ``apiType``.
     """
 
     api_type: List[ApiType] = Field(
@@ -206,46 +320,29 @@ class InfoMetadata(InfoMetadataExtraction):
             "API technology types. Allowed values: REST, SCIM, SQL. OpenAPI/Swagger should be normalized to REST."
         ),
     )
-    scim_availability: Optional[ScimAvailabilityInfo] = Field(
-        default=None,
+    rest_availability: RestAvailabilityInfo = Field(
+        default_factory=RestAvailabilityInfo,
+        validation_alias="restAvailability",
+        serialization_alias="restAvailability",
+        description="REST connectivity info (base endpoints). Empty when REST is not detected.",
+    )
+    scim_availability: ScimAvailabilityInfo = Field(
+        default_factory=ScimAvailabilityInfo,
         validation_alias="scimAvailability",
         serialization_alias="scimAvailability",
-        description="SCIM availability advisory; present only when 'scim' is in apiType.",
+        description="SCIM connectivity info and availability advisory. Empty/unknown when SCIM is not detected.",
+    )
+    sql_availability: SqlAvailabilityInfo = Field(
+        default_factory=SqlAvailabilityInfo,
+        validation_alias="sqlAvailability",
+        serialization_alias="sqlAvailability",
+        description="SQL connectivity info (database name). Empty when the integration is not SQL.",
     )
 
     @field_validator("api_type", mode="before")
     @classmethod
     def _normalize_api_type(cls, value: Any) -> List[ApiType]:
         return normalize_api_type_values(value)
-
-    @model_serializer(mode="wrap")
-    def _serialize_for_api_type(self, handler: Any) -> Any:
-        """
-        Drop fields that are irrelevant for the detected apiType on output:
-        - ``databaseName`` is kept only for SQL integrations.
-        - ``baseApiEndpoint`` is dropped for SQL-only integrations (no REST/SCIM).
-        """
-        data = handler(self)
-        if not isinstance(data, dict):
-            return data
-
-        is_sql = ApiType.SQL in self.api_type
-        is_scim = ApiType.SCIM in self.api_type
-        is_rest_or_scim = any(api_type in (ApiType.REST, ApiType.SCIM) for api_type in self.api_type)
-
-        if not is_sql:
-            data.pop("databaseName", None)
-            data.pop("database_name", None)
-
-        if is_sql and not is_rest_or_scim:
-            data.pop("baseApiEndpoint", None)
-            data.pop("base_api_endpoint", None)
-
-        if not is_scim:
-            data.pop("scimAvailability", None)
-            data.pop("scim_availability", None)
-
-        return data
 
 
 class ApiTypeResponse(BaseModel):

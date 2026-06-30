@@ -46,8 +46,13 @@ RULES:
    - Classification:
      * "type": "dynamic" if the hostname or tenant can vary (default unless explicitly constant across all deployments).
      * "type": "constant" only if docs assert a single, global, non-tenant URL for everyone.
+     * "apiType": "scim" if the endpoint is clearly a SCIM provisioning base (e.g. ".../scim/v2/",
+       SCIM-labelled sections, or "/Users" + "/Groups" resource roots).
+     * "apiType": "rest" if the endpoint is clearly a general REST/OpenAPI/HTTP API base.
+     * Omit "apiType" when the endpoint URL is documented but the endpoint protocol is not clear.
    - Return ALL distinct canonical base endpoints supported by evidence in docs.
-   - Deduplicate by (uri, type) and sort the final list by uri ascending, then type (constant before dynamic).
+   - Deduplicate by (uri, type, apiType) and sort the final list by uri ascending, then apiType, then type
+     (constant before dynamic).
    - This applies to HTTP APIs (REST/SCIM) only. For a SQL/database integration, leave baseApiEndpoint empty.
 
 5) databaseName
@@ -90,7 +95,7 @@ Text from actual documentation:
 
 Return structured output for THIS fragment only:
 - Apply the FIELD RULES for name, applicationVersion, apiVersion, baseApiEndpoint, and databaseName.
-- For baseApiEndpoint, return a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless docs guarantee a single global URL). Leave empty for SQL/database integrations.
+- For baseApiEndpoint, return a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless docs guarantee a single global URL; classify apiType only when the endpoint is clearly REST/OpenAPI/general HTTP or SCIM provisioning). Leave empty for SQL/database integrations.
 - For databaseName, populate only for SQL/database integrations (bare database/schema identifier); leave empty otherwise.
 - Summary/tags may be empty; rely primarily on <chunk>.
 - If this fragment adds nothing reliable, keep fields empty.

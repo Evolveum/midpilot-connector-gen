@@ -33,13 +33,15 @@ def extract_api_type(metadata: Mapping[str, Any] | None) -> list[str]:
     return api_type if isinstance(api_type, list) else []
 
 
-def extract_base_api_url(metadata: Mapping[str, Any] | None) -> str:
-    """Return the first documented baseApiEndpoint uri, if present."""
-    base_api_endpoints = _collect_info_metadata(metadata).get("baseApiEndpoint", [])
-    if not isinstance(base_api_endpoints, list) or not base_api_endpoints:
+def _first_endpoint_uri(block: Any) -> str:
+    """Return the first base endpoint uri inside an availability block, if present."""
+    if not isinstance(block, Mapping):
+        return ""
+    endpoints = block.get("baseApiEndpoint", [])
+    if not isinstance(endpoints, list) or not endpoints:
         return ""
 
-    first = base_api_endpoints[0]
+    first = endpoints[0]
     if isinstance(first, Mapping):
         uri = first.get("uri")
         if isinstance(uri, str):
@@ -47,9 +49,52 @@ def extract_base_api_url(metadata: Mapping[str, Any] | None) -> str:
     return ""
 
 
+_PROTOCOL_AVAILABILITY_BLOCK: dict[ApiType, str] = {
+    ApiType.REST: "restAvailability",
+    ApiType.SCIM: "scimAvailability",
+}
+
+
+def extract_base_api_url(metadata: Mapping[str, Any] | None, protocol: ApiType | None = None) -> str:
+    """
+    Return the documented HTTP base endpoint uri for the connector, if present.
+
+    REST and SCIM endpoints live in separate availability blocks.
+
+    - When ``protocol`` is given (e.g. an explicit ``apiType`` override, or a protocol-specific
+      codegen run), it is honored strictly: only that protocol's block is read, never another
+      protocol's base URL. SQL (and any non-HTTP protocol) has no base endpoint, so this
+      yields an empty string.
+    - When ``protocol`` is ``None``, the protocol is derived from the stored ``apiType`` and the
+      other HTTP block is used as a fallback, so callers without a protocol directive still get
+      a documented base URL when endpoint classification is imperfect.
+    """
+    info = _collect_info_metadata(metadata)
+
+    if protocol is not None:
+        block_key = _PROTOCOL_AVAILABILITY_BLOCK.get(protocol)
+        return _first_endpoint_uri(info.get(block_key)) if block_key else ""
+
+    api_types = info.get("apiType", [])
+    api_types = api_types if isinstance(api_types, list) else []
+    block_order = (
+        ("scimAvailability", "restAvailability")
+        if resolve_session_api_type(api_types) is ApiType.SCIM
+        else ("restAvailability", "scimAvailability")
+    )
+    for block_key in block_order:
+        uri = _first_endpoint_uri(info.get(block_key))
+        if uri:
+            return uri
+    return ""
+
+
 def extract_database_name(metadata: Mapping[str, Any] | None) -> str:
     """Return the documented databaseName, if present (SQL integrations only)."""
-    database_name = _collect_info_metadata(metadata).get("databaseName", "")
+    sql_block = _collect_info_metadata(metadata).get("sqlAvailability", {})
+    if not isinstance(sql_block, Mapping):
+        return ""
+    database_name = sql_block.get("databaseName", "")
     return database_name if isinstance(database_name, str) else ""
 
 
@@ -104,10 +149,14 @@ async def get_session_api_types(session_id: UUID) -> list[str]:
     return extract_api_type(metadata)
 
 
-async def get_session_base_api_url(session_id: UUID) -> str:
-    """Return the base API URL documented in session metadata, if any."""
+async def get_session_base_api_url(session_id: UUID, protocol: ApiType | None = None) -> str:
+    """Return the base API URL documented in session metadata, if any.
+
+    Pass ``protocol`` (e.g. the effective/overridden apiType) to read that protocol's base URL
+    strictly; omit it to derive from the stored apiType. See ``extract_base_api_url``.
+    """
     metadata = await load_session_metadata(session_id)
-    return extract_base_api_url(metadata)
+    return extract_base_api_url(metadata, protocol)
 
 
 async def get_session_database_name(session_id: UUID) -> str:
@@ -125,12 +174,15 @@ async def get_discovery_application_name(session_id: UUID) -> str:
     return name.strip() if isinstance(name, str) else ""
 
 
-async def get_session_connection_target(session_id: UUID) -> tuple[str, str]:
+async def get_session_connection_target(session_id: UUID, protocol: ApiType | None = None) -> tuple[str, str]:
     """
     Return the connector's connection target from a single session metadata load.
 
     Yields (base_api_url, database_name). Only one is populated for a given session
     (HTTP base URL for REST/SCIM, database name for SQL); the other is an empty string.
+
+    Pass ``protocol`` (e.g. the effective/overridden apiType) so the HTTP base URL is read
+    strictly from that protocol's block; omit it to derive from the stored apiType.
     """
     metadata = await load_session_metadata(session_id)
-    return extract_base_api_url(metadata), extract_database_name(metadata)
+    return extract_base_api_url(metadata, protocol), extract_database_name(metadata)
