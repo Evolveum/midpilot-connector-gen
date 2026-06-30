@@ -8,6 +8,7 @@ from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
+from src.common.utils.coerce import as_list
 from src.common.utils.normalize import normalize_object_class_name
 from src.modules.digester.enums import ConfidenceLevel
 
@@ -69,23 +70,6 @@ def find_object_class(object_classes: List[Any], object_class: str) -> Optional[
     return None
 
 
-def get_relevant_chunks(object_class_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return normalized relevantDocumentations list with valid doc_id/chunk_id objects only."""
-    chunks = object_class_data.get("relevantDocumentations", [])
-    if not isinstance(chunks, list):
-        return []
-    normalized: List[Dict[str, Any]] = []
-    for chunk in chunks:
-        if not isinstance(chunk, dict):
-            continue
-        doc_id = chunk.get("doc_id") or chunk.get("docId")
-        chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-        if not doc_id or not chunk_id:
-            continue
-        normalized.append({"doc_id": str(doc_id), "chunk_id": str(chunk_id)})
-    return normalized
-
-
 def upsert_object_class(
     object_classes_output: Dict[str, Any] | None,
     object_class: str,
@@ -139,12 +123,8 @@ def extract_endpoints_from_result(result: Dict[str, Any] | None) -> List[Dict[st
     if not isinstance(result_data, dict):
         return []
 
-    raw_endpoints = result_data.get("endpoints", [])
-    if not isinstance(raw_endpoints, list):
-        return []
-
     endpoints: List[Dict[str, Any]] = []
-    for endpoint in raw_endpoints:
+    for endpoint in as_list(result_data.get("endpoints")):
         if hasattr(endpoint, "model_dump"):
             endpoints.append(endpoint.model_dump(by_alias=True))
         elif isinstance(endpoint, dict):

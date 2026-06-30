@@ -312,6 +312,8 @@ class InfoMetadata(InfoMetadataBase):
     shape is stable regardless of the detected ``apiType``.
     """
 
+    model_config = {"extra": "forbid", "populate_by_name": True}
+
     api_type: List[ApiType] = Field(
         default_factory=list,
         validation_alias="apiType",

@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.common.utils.coerce import as_list, as_mapping
 from src.common.utils.normalize import normalize_endpoint_key, normalize_object_class_name, normalize_url
 
 
@@ -109,12 +110,9 @@ def remap_reused_output_relevance(
     """
 
     def _remap_doc_refs(value: Any, *, snake_case: bool) -> list[Dict[str, str]]:
-        if not isinstance(value, list):
-            return []
-
         mapped: list[Dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
-        for item in value:
+        for item in as_list(value):
             if not isinstance(item, Mapping):
                 continue
             chunk_id = item.get("chunk_id") or item.get("chunkId")
@@ -137,12 +135,9 @@ def remap_reused_output_relevance(
         return mapped
 
     def _remap_sequence_refs(value: Any) -> list[Dict[str, str]]:
-        if not isinstance(value, list):
-            return []
-
         mapped: list[Dict[str, str]] = []
         seen: set[tuple[str, str, str, str]] = set()
-        for item in value:
+        for item in as_list(value):
             if not isinstance(item, Mapping):
                 continue
             chunk_id = item.get("chunk_id") or item.get("chunkId")
@@ -200,8 +195,7 @@ def remap_reused_output_relevance(
 
 
 def normalize_relevant_sequence(value: Any) -> Dict[str, str]:
-    if not isinstance(value, Mapping):
-        return {}
+    value = as_mapping(value)
     start_sequence = value.get("start_sequence") or value.get("startSequence")
     end_sequence = value.get("end_sequence") or value.get("endSequence")
     if not start_sequence or not end_sequence:
@@ -219,11 +213,8 @@ def normalize_chunk_refs_for_storage(
     entity_key: Optional[str] = None,
     chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-
     normalized: List[Dict[str, Any]] = []
-    for item in value:
+    for item in as_list(value):
         if not isinstance(item, Mapping):
             continue
 
@@ -490,11 +481,8 @@ def extract_attribute_relevance_rows(
     chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> list[Dict[str, Any]]:
     attributes_map, _ = extract_attributes_map(payload)
-    if not isinstance(attributes_map, dict):
-        return []
-
     rows: list[Dict[str, Any]] = []
-    for attribute_name, info in attributes_map.items():
+    for attribute_name, info in as_mapping(attributes_map).items():
         if not isinstance(info, dict):
             continue
         entity_key = attribute_entity_key(attribute_name)
@@ -562,12 +550,8 @@ def strip_endpoints_relevance(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def extract_endpoint_relevance_rows(payload: Dict[str, Any], result_key: str) -> list[Dict[str, Any]]:
-    endpoints = payload.get("endpoints")
-    if not isinstance(endpoints, list):
-        return []
-
     rows: list[Dict[str, Any]] = []
-    for endpoint in endpoints:
+    for endpoint in as_list(payload.get("endpoints")):
         if not isinstance(endpoint, dict):
             continue
         entity_key = build_endpoint_entity_key(endpoint.get("path"), endpoint.get("method"))
@@ -635,12 +619,8 @@ async def hydrate_object_classes_with_relevance(
 
 
 def extract_object_class_relevance_rows(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
-    object_classes = payload.get("objectClasses")
-    if not isinstance(object_classes, list):
-        return []
-
     rows: list[Dict[str, Any]] = []
-    for obj_class in object_classes:
+    for obj_class in as_list(payload.get("objectClasses")):
         if not isinstance(obj_class, dict):
             continue
         class_name = obj_class.get("name")
@@ -701,11 +681,8 @@ def _sequence_rows(
     entity_key: str,
     chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-
     rows: List[Dict[str, Any]] = []
-    for sequence in value:
+    for sequence in as_list(value):
         if not isinstance(sequence, Mapping):
             continue
         chunk_id = sequence.get("chunk_id") or sequence.get("chunkId")

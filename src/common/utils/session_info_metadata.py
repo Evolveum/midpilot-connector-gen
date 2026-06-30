@@ -5,54 +5,47 @@
 """Shared helpers for working with session metadata."""
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import ApiType
+from src.common.utils.coerce import as_list, as_mapping, as_str, as_str_list
 
 logger = logging.getLogger(__name__)
 
-
-def _collect_info_metadata(metadata: Mapping[str, Any] | None) -> Mapping[str, Any]:
-    if not isinstance(metadata, Mapping):
-        return {}
-
-    info_metadata = metadata.get("infoMetadata") or metadata.get("InfoMetadata")
-    if not isinstance(info_metadata, Mapping):
-        return {}
-
-    return info_metadata
-
-
-def extract_api_type(metadata: Mapping[str, Any] | None) -> list[str]:
-    """Return the apiType list from metadata payload (case-sensitive key)."""
-    api_type = _collect_info_metadata(metadata).get("apiType", [])
-    return api_type if isinstance(api_type, list) else []
-
-
-def _first_endpoint_uri(block: Any) -> str:
-    """Return the first base endpoint uri inside an availability block, if present."""
-    if not isinstance(block, Mapping):
-        return ""
-    endpoints = block.get("baseApiEndpoint", [])
-    if not isinstance(endpoints, list) or not endpoints:
-        return ""
-
-    first = endpoints[0]
-    if isinstance(first, Mapping):
-        uri = first.get("uri")
-        if isinstance(uri, str):
-            return uri
-    return ""
-
-
+# Maps a protocol to the availability block that carries its base endpoint. The single source
+# of truth for protocol <-> block: both the strict read and the no-protocol fallback derive
+# from it, so the read side cannot drift from the write side in the digester merge.
 _PROTOCOL_AVAILABILITY_BLOCK: dict[ApiType, str] = {
     ApiType.REST: "restAvailability",
     ApiType.SCIM: "scimAvailability",
 }
+
+
+def _collect_info_metadata(metadata: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    root = as_mapping(metadata)
+    return as_mapping(root.get("infoMetadata") or root.get("InfoMetadata"))
+
+
+def _normalize_api_types(api_types: Any) -> set[str]:
+    """Lower-cased set of the string apiType values in a payload (non-strings are ignored)."""
+    return {api_type.strip().lower() for api_type in as_str_list(api_types)}
+
+
+def extract_api_type(metadata: Mapping[str, Any] | None) -> list[str]:
+    """Return the apiType list from metadata payload (case-sensitive key)."""
+    return as_str_list(_collect_info_metadata(metadata).get("apiType"))
+
+
+def _first_endpoint_uri(block: Any) -> str:
+    """Return the first base endpoint uri inside an availability block, if present."""
+    endpoints = as_list(as_mapping(block).get("baseApiEndpoint"))
+    if not endpoints:
+        return ""
+    return as_str(as_mapping(endpoints[0]).get("uri"))
 
 
 def extract_base_api_url(metadata: Mapping[str, Any] | None, protocol: ApiType | None = None) -> str:
@@ -75,42 +68,33 @@ def extract_base_api_url(metadata: Mapping[str, Any] | None, protocol: ApiType |
         block_key = _PROTOCOL_AVAILABILITY_BLOCK.get(protocol)
         return _first_endpoint_uri(info.get(block_key)) if block_key else ""
 
-    api_types = info.get("apiType", [])
-    api_types = api_types if isinstance(api_types, list) else []
-    block_order = (
-        ("scimAvailability", "restAvailability")
-        if resolve_session_api_type(api_types) is ApiType.SCIM
-        else ("restAvailability", "scimAvailability")
-    )
-    for block_key in block_order:
-        uri = _first_endpoint_uri(info.get(block_key))
-        if uri:
+    preferred_block = _PROTOCOL_AVAILABILITY_BLOCK.get(resolve_session_api_type(info.get("apiType")))
+    candidate_blocks = [preferred_block, *_PROTOCOL_AVAILABILITY_BLOCK.values()]
+    for block_key in dict.fromkeys(block for block in candidate_blocks if block):
+        if uri := _first_endpoint_uri(info.get(block_key)):
             return uri
     return ""
 
 
 def extract_database_name(metadata: Mapping[str, Any] | None) -> str:
     """Return the documented databaseName, if present (SQL integrations only)."""
-    sql_block = _collect_info_metadata(metadata).get("sqlAvailability", {})
-    if not isinstance(sql_block, Mapping):
-        return ""
-    database_name = sql_block.get("databaseName", "")
-    return database_name if isinstance(database_name, str) else ""
+    sql_block = as_mapping(_collect_info_metadata(metadata).get("sqlAvailability"))
+    return as_str(sql_block.get("databaseName"))
 
 
-def is_scim_api(api_types: Iterable[str]) -> bool:
+def is_scim_api(api_types: Any) -> bool:
     """Detect SCIM when it appears anywhere in the API type list."""
-    return any(isinstance(api, str) and api.strip().lower() == ApiType.SCIM.value for api in api_types)
+    return ApiType.SCIM.value in _normalize_api_types(api_types)
 
 
-def is_sql_api(api_types: Iterable[str]) -> bool:
+def is_sql_api(api_types: Any) -> bool:
     """Detect SQL when it appears anywhere in the API type list."""
-    return any(isinstance(api, str) and api.strip().lower() == ApiType.SQL.value for api in api_types)
+    return ApiType.SQL.value in _normalize_api_types(api_types)
 
 
-def resolve_session_api_type(api_types: Iterable[str]) -> ApiType:
+def resolve_session_api_type(api_types: Any) -> ApiType:
     """Resolve session apiType metadata to the codegen protocol, defaulting to REST."""
-    normalized = {api.strip().lower() for api in api_types if isinstance(api, str)}
+    normalized = _normalize_api_types(api_types)
     if ApiType.SQL.value in normalized:
         return ApiType.SQL
     if ApiType.SCIM.value in normalized:
@@ -145,8 +129,7 @@ async def load_session_metadata(session_id: UUID, key: str = "metadataOutput") -
 
 async def get_session_api_types(session_id: UUID) -> list[str]:
     """Return the normalized apiType list for a session."""
-    metadata = await load_session_metadata(session_id)
-    return extract_api_type(metadata)
+    return extract_api_type(await load_session_metadata(session_id))
 
 
 async def get_session_base_api_url(session_id: UUID, protocol: ApiType | None = None) -> str:
@@ -155,23 +138,18 @@ async def get_session_base_api_url(session_id: UUID, protocol: ApiType | None = 
     Pass ``protocol`` (e.g. the effective/overridden apiType) to read that protocol's base URL
     strictly; omit it to derive from the stored apiType. See ``extract_base_api_url``.
     """
-    metadata = await load_session_metadata(session_id)
-    return extract_base_api_url(metadata, protocol)
+    return extract_base_api_url(await load_session_metadata(session_id), protocol)
 
 
 async def get_session_database_name(session_id: UUID) -> str:
     """Return the database name documented in session metadata, if any (SQL integrations)."""
-    metadata = await load_session_metadata(session_id)
-    return extract_database_name(metadata)
+    return extract_database_name(await load_session_metadata(session_id))
 
 
 async def get_discovery_application_name(session_id: UUID) -> str:
     """Return the application name the user entered in discovery, if any."""
     discovery_input = await load_session_metadata(session_id, key="discoveryInput")
-    if not isinstance(discovery_input, dict):
-        return ""
-    name = discovery_input.get("applicationName")
-    return name.strip() if isinstance(name, str) else ""
+    return as_str(as_mapping(discovery_input).get("applicationName")).strip()
 
 
 async def get_session_connection_target(session_id: UUID, protocol: ApiType | None = None) -> tuple[str, str]:

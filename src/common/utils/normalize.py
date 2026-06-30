@@ -7,6 +7,8 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
+from src.common.utils.coerce import as_list
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +32,23 @@ def normalize_chunk_pair(chunk: Mapping[str, Any]) -> tuple[str, str] | None:
     if not doc_id or not chunk_id:
         return None
     return str(doc_id), str(chunk_id)
+
+
+def normalize_relevant_documentation_refs(value: Any) -> list[dict[str, str]]:
+    """
+    Normalize a ``relevantDocumentations`` payload to a list of ``{"chunk_id", "doc_id"}`` refs.
+
+    Accepts the loose shapes that reach pydantic validators and stored payloads (snake_case or
+    camelCase keys, non-list / non-dict noise) and keeps only refs that carry both ids.
+    """
+    refs: list[dict[str, str]] = []
+    for chunk in as_list(value):
+        pair = normalize_chunk_pair(chunk)
+        if pair is None:
+            continue
+        doc_id, chunk_id = pair
+        refs.append({"chunk_id": chunk_id, "doc_id": doc_id})
+    return refs
 
 
 def normalize_endpoint_key(path: Any, method: Any) -> tuple[str, str] | None:
