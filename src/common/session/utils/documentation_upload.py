@@ -21,9 +21,7 @@ from src.common.chunking import count_tokens, split_single_item_schema, split_te
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.documentation.content_types import (
     CONNDEV_CONTENT_TYPES,
-    CONNDEV_JSON_CONTENT_TYPES,
     CONNDEV_SUFFIX,
-    CONNDEV_YAML_CONTENT_TYPES,
     DEFAULT_CONNDEV_CONTENT_TYPE,
     is_conndev_content_type,
     normalize_content_type,
@@ -47,13 +45,12 @@ _CONTENT_TYPES_BY_PARSER = {
         "application/schema+json",
         "application/scim+json",
         "application/sql+json",
-        *CONNDEV_JSON_CONTENT_TYPES,
+        *CONNDEV_CONTENT_TYPES,
     },
     "yaml": {
         "application/x-yaml",
         "application/yaml",
         "application/vnd.yaml",
-        *CONNDEV_YAML_CONTENT_TYPES,
     },
     "html": {"text/html", "application/xhtml+xml"},
     "text": {

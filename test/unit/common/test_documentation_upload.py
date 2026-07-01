@@ -120,13 +120,13 @@ async def test_read_uploaded_documentation_inferrs_sql_content_type_for_generic_
 
 
 @pytest.mark.asyncio
-async def test_read_uploaded_documentation_marks_conndev_yaml_schema_as_single_item():
+async def test_read_uploaded_documentation_marks_conndev_json_schema_as_single_item():
     uploaded = await read_uploaded_documentation(
-        _upload("schema.yaml", "application/conndev+yaml", b"objects:\n  - name: User\n")
+        _upload("User.conndev", "application/octet-stream", b'{"name":"User","attributes":[]}')
     )
 
-    assert uploaded.content_type == "application/conndev+yaml"
-    assert uploaded.metadata["parser"] == "yaml"
+    assert uploaded.content_type == "application/com.evolveum.conndev+json"
+    assert uploaded.metadata["parser"] == "json"
     assert uploaded.metadata["preserve_as_single_documentation_item"] is True
     assert uploaded.metadata["chunking_strategy"] == "single_item_schema"
     assert uploaded.preserve_as_single_item is True

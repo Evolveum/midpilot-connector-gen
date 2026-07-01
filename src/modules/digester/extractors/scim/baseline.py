@@ -20,7 +20,7 @@ from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
-from src.common.documentation.content_types import is_conndev_json_content_type
+from src.common.documentation.content_types import is_conndev_content_type
 from src.common.utils.coerce import as_dict_list, as_mapping
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ async def load_session_scim_schemas(session_id: UUID) -> Dict[str, Any]:
     Load the session's SCIM baseline schemas from its conndev connector documents.
 
     Returns a mapping of object-class name -> SCIM schema JSON, e.g.
-    ``{"User": {...}, "Group": {...}}``. Documents that are not conndev JSON, or whose content
+    ``{"User": {...}, "Group": {...}}``. Documents that are not conndev, or whose content
     is not a valid SCIM schema object, are skipped (logged). Returns an empty mapping when the
     session has no conndev schema documents.
     """
@@ -52,7 +52,7 @@ async def load_session_scim_schemas(session_id: UUID) -> Dict[str, Any]:
     schemas: Dict[str, Any] = {}
     for item in items:
         metadata = as_mapping(item.get("metadata"))
-        if not is_conndev_json_content_type(metadata.get("content_type")):
+        if not is_conndev_content_type(metadata.get("content_type")):
             continue
 
         content = item.get("content")
