@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch
 from pydantic import BaseModel
 
 from src.common.llm import build_structured_chain, get_default_llm
+from src.common.web.link_classification import _link_filter_reasoning_effort
 from src.config import config
-from src.modules.scrape.core.llms import _get_irrelevant_links_reasoning_effort
 
 
 def test_get_default_llm_uses_configured_reasoning_effort(monkeypatch):
@@ -31,10 +31,10 @@ def test_get_default_llm_explicit_none_disables_reasoning_effort(monkeypatch):
 
 def test_irrelevant_links_reasoning_effort_uses_medium_only_when_global_reasoning_is_enabled(monkeypatch):
     monkeypatch.setattr(config.llm, "reasoning_effort", None)
-    assert _get_irrelevant_links_reasoning_effort() is None
+    assert _link_filter_reasoning_effort() is None
 
     monkeypatch.setattr(config.llm, "reasoning_effort", "high")
-    assert _get_irrelevant_links_reasoning_effort() == "medium"
+    assert _link_filter_reasoning_effort() == "medium"
 
 
 def test_build_structured_chain_uses_provided_llm_and_partial_variables() -> None:

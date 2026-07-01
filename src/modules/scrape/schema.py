@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.common.session.schema import Documentation
 
 __all__ = [
-    "IrrelevantLinks",
     "RelevantLinks",
     "ScrapeRequest",
     "ScrapeResult",
@@ -48,14 +47,6 @@ class ScrapeResult(BaseModel):
     saved_documentations_count: int = Field(serialization_alias="savedDocumentationsCount")
     saved_chunks_count: int = Field(serialization_alias="savedChunksCount")
     saved_documentations: List[Documentation] = Field(serialization_alias="savedDocumentations")
-
-
-class IrrelevantLinks(BaseModel):
-    """
-    Schema for LLM output containing irrelevant links
-    """
-
-    links: List[str] = Field(description="List of links deemed irrelevant")
 
 
 class RelevantLinks(BaseModel):

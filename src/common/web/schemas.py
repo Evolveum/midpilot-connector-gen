@@ -2,6 +2,8 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from typing import List
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -12,3 +14,9 @@ class SearchResult(BaseModel):
     href: str = Field(..., description="Result URL")
     body: str = Field(..., description="Result summary/snippet")
     source: str = Field(..., description="Search backend source")
+
+
+class IrrelevantLinks(BaseModel):
+    """LLM output listing links deemed irrelevant for crawling/discovery."""
+
+    links: List[str] = Field(default_factory=list, description="List of links deemed irrelevant")

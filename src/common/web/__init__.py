@@ -12,7 +12,8 @@ from src.common.web.fetch import (
     scrape_all_data_documentations,
     scrape_urls,
 )
-from src.common.web.schemas import SearchResult
+from src.common.web.link_classification import classify_irrelevant_links
+from src.common.web.schemas import IrrelevantLinks, SearchResult
 from src.common.web.search import (
     normalize_result,
     search_web,
@@ -21,7 +22,9 @@ from src.common.web.search import (
 )
 
 __all__ = [
+    "IrrelevantLinks",
     "SearchResult",
+    "classify_irrelevant_links",
     "fetch_data_documentation",
     "fetch_markdown_pages",
     "get_all_content_types",

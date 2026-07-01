@@ -11,20 +11,19 @@ from pydantic import HttpUrl
 
 from src.common.documentation import SavedDocumentation
 from src.common.schema import validate_pydantic_object
+from src.common.web import IrrelevantLinks, classify_irrelevant_links
 from src.config import config
 from src.modules.scrape.core.links import is_forbidden_url
-from src.modules.scrape.core.llms import get_irrelevant_llm_response
 from src.modules.scrape.prompts.prompts import get_irrelevant_filter_prompts
-from src.modules.scrape.schema import IrrelevantLinks
 
 logger = logging.getLogger(__name__)
 
 
 async def process_irrelevant_link_batch(
     irrelevant_links_part: list[str], app: str, app_version: str
-) -> IrrelevantLinks | None:
+) -> IrrelevantLinks:
     irrelevant_prompts = get_irrelevant_filter_prompts(irrelevant_links_part, app, app_version)
-    return await get_irrelevant_llm_response(irrelevant_prompts)
+    return await classify_irrelevant_links(irrelevant_prompts)
 
 
 async def filter_out_irrelevant_links(

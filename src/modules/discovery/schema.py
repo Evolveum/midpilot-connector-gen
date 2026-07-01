@@ -13,14 +13,6 @@ from src.common.web import SearchResult
 DiscoveryIntegrationType = Literal["scim", "rest", "dummy"]
 
 
-class IrrelevantLinks(BaseModel):
-    """
-    Schema for LLM output containing irrelevant links
-    """
-
-    links: List[str] = Field(description="List of links deemed irrelevant")
-
-
 class RankedLinks(BaseModel):
     """
     Schema for LLM output containing ranked links
