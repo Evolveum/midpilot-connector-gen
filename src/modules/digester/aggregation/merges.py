@@ -31,7 +31,9 @@ from src.modules.digester.schemas import (
     InfoMetadata,
     InfoMetadataExtraction,
     InfoResponse,
+    RestAvailabilityInfo,
     ScimAvailabilityInfo,
+    SqlAvailabilityInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -420,20 +422,31 @@ async def merge_endpoint_candidates(
 
 
 def is_empty_info_result_payload(payload: Dict[str, Any]) -> bool:
-    """Detect if InfoResponse-like payload has no extracted metadata."""
+    """
+    Detect if a final ``InfoResponse`` payload has no extracted metadata.
+
+    Expects the grouped final shape (connectivity under ``restAvailability`` /
+    ``scimAvailability`` / ``sqlAvailability``). The flat per-chunk extraction shape has its
+    own check; see ``InfoMetadataExtraction.is_empty``.
+    """
     info = (payload or {}).get("infoMetadata")
     if info is None:
         return True
     if not isinstance(info, dict):
         return True
 
+    rest_block = info.get("restAvailability") or {}
+    scim_block = info.get("scimAvailability") or {}
+    sql_block = info.get("sqlAvailability") or {}
+
     return not bool(
         str(info.get("name") or "").strip()
         or str(info.get("applicationVersion") or "").strip()
         or str(info.get("apiVersion") or "").strip()
         or info.get("apiType")
-        or info.get("baseApiEndpoint")
-        or str(info.get("databaseName") or "").strip()
+        or rest_block.get("baseApiEndpoint")
+        or scim_block.get("baseApiEndpoint")
+        or str(sql_block.get("databaseName") or "").strip()
     )
 
 
@@ -448,28 +461,37 @@ def _build_info_metadata_payload(
     application_version: str,
     api_version: str,
     api_types: List[ApiType],
-    base_api_endpoints: List[BaseAPIEndpoint],
+    rest_endpoints: List[BaseAPIEndpoint],
+    scim_endpoints: List[BaseAPIEndpoint],
     database_name: str,
     scim_availability: Optional[ScimAvailabilityInfo],
 ) -> Dict[str, Any]:
     """
     Assemble the final InfoResponse payload from already-selected fields.
 
-    ``api_types`` and ``scim_availability`` may originate from the documentation-free SCIM
-    signals (scim.cloud / LLM knowledge / web search), which do not need documentation, so
-    this can yield a non-empty payload even when no documentation-derived fields were found.
-    Collapses to ``infoMetadata=null`` only when nothing was found from either source.
+    Connectivity is grouped into protocol-specific availability blocks; all three blocks are
+    always present (empty when the protocol was not detected). ``api_types`` and
+    ``scim_availability`` may originate from the documentation-free SCIM signals (scim.cloud /
+    LLM knowledge / web search), which do not need documentation, so this can yield a
+    non-empty payload even when no documentation-derived fields were found. Collapses to
+    ``infoMetadata=null`` only when nothing was found from either source.
     """
     found_api_types = sorted(api_types, key=lambda api_type: api_type.value)
+
+    if scim_availability is not None and ApiType.SCIM in found_api_types:
+        scim_block = scim_availability.model_copy(update={"base_api_endpoint": scim_endpoints})
+    else:
+        scim_block = ScimAvailabilityInfo(base_api_endpoint=scim_endpoints)
+
     merged_response = InfoResponse(
         info_metadata=InfoMetadata(
             name=name,
             application_version=application_version,
             api_version=api_version,
             api_type=found_api_types,
-            base_api_endpoint=base_api_endpoints,
-            database_name=database_name,
-            scim_availability=scim_availability if ApiType.SCIM in found_api_types else None,
+            rest_availability=RestAvailabilityInfo(base_api_endpoint=rest_endpoints),
+            scim_availability=scim_block,
+            sql_availability=SqlAvailabilityInfo(database_name=database_name),
         )
     )
     merged_payload = cast(Dict[str, Any], merged_response.model_dump(by_alias=True))
@@ -480,6 +502,25 @@ def _build_info_metadata_payload(
 
     logger.info("[Digester:InfoMetadata] Merge produced non-empty infoMetadata")
     return merged_payload
+
+
+def _http_endpoint_protocol_from_session(api_types: List[ApiType]) -> ApiType:
+    """Resolve an unclassified HTTP base endpoint from session-level apiType."""
+    if ApiType.SCIM in api_types:
+        return ApiType.SCIM
+    if ApiType.REST in api_types:
+        return ApiType.REST
+    return ApiType.REST
+
+
+def _allowed_http_endpoint_protocols(api_types: List[ApiType]) -> set[ApiType]:
+    """Return HTTP endpoint protocols allowed by session-level apiType."""
+    allowed = {api_type for api_type in api_types if api_type in {ApiType.REST, ApiType.SCIM}}
+    if allowed:
+        return allowed
+    if not api_types:
+        return {ApiType.REST}
+    return set()
 
 
 def merge_api_type(
@@ -544,18 +585,23 @@ def merge_info_metadata(
             application_version="",
             api_version="",
             api_types=api_types,
-            base_api_endpoints=[],
+            rest_endpoints=[],
+            scim_endpoints=[],
             database_name="",
             scim_availability=scim_availability,
         )
 
     threshold = total_items * config.digester.info_metadata_uncertainty_threshold
 
+    found_api_types: List[ApiType] = sorted(api_types, key=lambda api_type: api_type.value)
+    allowed_endpoint_protocols = _allowed_http_endpoint_protocols(found_api_types)
+
     name_distribution: Dict[str, int] = {}
     app_version_distribution: Dict[str, int] = {}
     api_version_distribution: Dict[str, int] = {}
-    base_api_endpoints_url_distribution: Dict[str, int] = {}
-    base_api_endpoints_type_distribution: Dict[tuple[str, EndpointType], int] = {}
+    base_api_endpoints_distribution: Dict[tuple[str, ApiType], int] = {}
+    base_api_endpoints_type_distribution: Dict[tuple[str, ApiType, EndpointType], int] = {}
+    dropped_base_api_endpoints_distribution: Dict[tuple[str, ApiType], int] = {}
     database_name_distribution: Dict[str, int] = {}
 
     for info in info_candidates:
@@ -576,9 +622,18 @@ def merge_info_metadata(
             endpoint_type: EndpointType = endpoint.type
             if not uri:
                 continue
-            base_api_endpoints_url_distribution[uri] = base_api_endpoints_url_distribution.get(uri, 0) + 1
-            key = (uri, endpoint_type)
-            base_api_endpoints_type_distribution[key] = base_api_endpoints_type_distribution.get(key, 0) + 1
+
+            endpoint_protocol = endpoint.api_type or _http_endpoint_protocol_from_session(found_api_types)
+            endpoint_key = (uri, endpoint_protocol)
+            if endpoint_protocol not in allowed_endpoint_protocols:
+                dropped_base_api_endpoints_distribution[endpoint_key] = (
+                    dropped_base_api_endpoints_distribution.get(endpoint_key, 0) + 1
+                )
+                continue
+
+            base_api_endpoints_distribution[endpoint_key] = base_api_endpoints_distribution.get(endpoint_key, 0) + 1
+            type_key = (uri, endpoint_protocol, endpoint_type)
+            base_api_endpoints_type_distribution[type_key] = base_api_endpoints_type_distribution.get(type_key, 0) + 1
 
         database_name = (info.database_name or "").strip()
         if database_name:
@@ -602,15 +657,14 @@ def merge_info_metadata(
         if api_version_distribution[candidate_api_version] > threshold:
             found_api_version = candidate_api_version
 
-    found_api_types: List[ApiType] = sorted(api_types, key=lambda api_type: api_type.value)
-
-    found_base_api_endpoints: List[BaseAPIEndpoint] = []
-    for uri, count in base_api_endpoints_url_distribution.items():
+    rest_endpoints: List[BaseAPIEndpoint] = []
+    scim_endpoints: List[BaseAPIEndpoint] = []
+    for (uri, endpoint_protocol), count in base_api_endpoints_distribution.items():
         if count <= threshold:
             continue
 
         type_distribution: Dict[EndpointType, int] = {
-            endpoint_type: base_api_endpoints_type_distribution.get((uri, endpoint_type), 0)
+            endpoint_type: base_api_endpoints_type_distribution.get((uri, endpoint_protocol, endpoint_type), 0)
             for endpoint_type in (EndpointType.CONSTANT, EndpointType.DYNAMIC, EndpointType.UNKNOWN)
         }
         top_count = max(type_distribution.values(), default=0)
@@ -621,7 +675,12 @@ def merge_info_metadata(
         selected_endpoint_type: EndpointType = (
             top_types[0] if top_count > 0 and len(top_types) == 1 else EndpointType.UNKNOWN
         )
-        found_base_api_endpoints.append(BaseAPIEndpoint(uri=uri, type=selected_endpoint_type))
+
+        endpoint = BaseAPIEndpoint(uri=uri, type=selected_endpoint_type, api_type=endpoint_protocol)
+        if endpoint_protocol is ApiType.SCIM:
+            scim_endpoints.append(endpoint)
+        else:
+            rest_endpoints.append(endpoint)
 
     found_database_name = ""
     if database_name_distribution:
@@ -642,20 +701,28 @@ def merge_info_metadata(
     logger.info("[Digester:InfoMetadata] Name distribution: %s", name_distribution)
     logger.info("[Digester:InfoMetadata] Application version distribution: %s", app_version_distribution)
     logger.info("[Digester:InfoMetadata] API version distribution: %s", api_version_distribution)
-    logger.info("[Digester:InfoMetadata] Base API endpoint URI distribution: %s", base_api_endpoints_url_distribution)
     logger.info(
-        "[Digester:InfoMetadata] Base API endpoint (URI, type) distribution: %s",
+        "[Digester:InfoMetadata] Base API endpoint (URI, protocol) distribution: %s",
+        base_api_endpoints_distribution,
+    )
+    logger.info(
+        "[Digester:InfoMetadata] Base API endpoint (URI, protocol, type) distribution: %s",
         base_api_endpoints_type_distribution,
+    )
+    logger.info(
+        "[Digester:InfoMetadata] Dropped base API endpoint (URI, protocol) distribution: %s",
+        dropped_base_api_endpoints_distribution,
     )
     logger.info("[Digester:InfoMetadata] Database name distribution: %s", database_name_distribution)
     logger.info(
         "[Digester:InfoMetadata] Heuristic selected values: name=%r applicationVersion=%r apiVersion=%r "
-        "apiType=%s baseApiEndpoint=%s databaseName=%r",
+        "apiType=%s restBaseApiEndpoint=%s scimBaseApiEndpoint=%s databaseName=%r",
         found_name,
         found_application_version,
         found_api_version,
         found_api_types,
-        [endpoint.model_dump() for endpoint in found_base_api_endpoints],
+        [endpoint.model_dump() for endpoint in rest_endpoints],
+        [endpoint.model_dump() for endpoint in scim_endpoints],
         found_database_name,
     )
 
@@ -664,7 +731,8 @@ def merge_info_metadata(
         application_version=found_application_version,
         api_version=found_api_version,
         api_types=found_api_types,
-        base_api_endpoints=found_base_api_endpoints,
+        rest_endpoints=rest_endpoints,
+        scim_endpoints=scim_endpoints,
         database_name=found_database_name,
         scim_availability=scim_availability,
     )

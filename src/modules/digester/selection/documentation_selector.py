@@ -56,7 +56,7 @@ class DocumentationSelector:
         filter_items: Callable[..., Awaitable[List[Dict[str, Any]]]] | None = None,
         get_documentation: Callable[..., Awaitable[List[Dict[str, Any]]]] | None = None,
         get_api_types: Callable[[UUID], Awaitable[Any]] | None = None,
-        get_base_url: Callable[[UUID], Awaitable[str]] | None = None,
+        get_base_url: Callable[[UUID, ApiType | None], Awaitable[str]] | None = None,
         relevant_repo_factory: Callable[[AsyncSession], Any] | None = None,
     ):
         self._db = db
@@ -126,7 +126,7 @@ class DocumentationSelector:
         api_type_override: ApiType | None = None,
     ) -> DocumentationSelection:
         target_object_class = await self._get_target_object_class(repo, session_id, object_class)
-        base_api_url = await self._get_base_url(session_id)
+        base_api_url = await self._get_base_url(session_id, api_type_override)
         api_types = await self._resolve_api_types(session_id, api_type_override)
         is_scim = is_scim_api(api_types)
         is_sql = is_sql_api(api_types)

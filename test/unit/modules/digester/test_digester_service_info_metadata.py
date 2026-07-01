@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.common.enums import ApiType, ScimAvailability
+from src.common.enums import ApiType, ScimAvailability, ScimSource
 from src.modules.digester import service
 from src.modules.digester.aggregation.merges import merge_api_type, merge_info_metadata
 from src.modules.digester.enums import EndpointType
@@ -52,7 +52,13 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
                     name="ExampleAPI",
                     api_version="v1.0",
                     application_version="1.0.0",
-                    base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1", type=EndpointType.CONSTANT)],
+                    base_api_endpoint=[
+                        BaseAPIEndpoint(
+                            uri="https://api.example.com/v1",
+                            type=EndpointType.CONSTANT,
+                            api_type=ApiType.REST,
+                        )
+                    ],
                 )
             ],
             True,
@@ -94,7 +100,7 @@ async def test_extract_info_metadata_success(mock_llm, mock_digester_update_job_
         metadata = result["result"]["infoMetadata"]
         assert metadata["name"] == "ExampleAPI"
         assert metadata["apiVersion"] == "v1.0"
-        assert len(metadata["baseApiEndpoint"]) == 1
+        assert len(metadata["restAvailability"]["baseApiEndpoint"]) == 1
         assert metadata["apiType"] == [ApiType.REST.value, ApiType.SCIM.value]
 
         assert mock_parallel.await_count == 2
@@ -304,7 +310,7 @@ async def test_extract_info_metadata_no_docs_keeps_signal_scim(mock_llm, mock_di
             ),
         ),
     ):
-        result = await service.extract_info_metadata([], "Acme", uuid4())
+        result = await service.extract_info_metadata([], application_name="Acme", job_id=uuid4())
 
     metadata = result["result"]["infoMetadata"]
     assert metadata is not None
@@ -355,29 +361,15 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
         ),
     ):
         mock_extract_api_type.return_value = ([], False)
+        # _extract_info_metadata yields per-chunk InfoMetadataExtraction (apiType is detected
+        # separately and is not part of this model).
         mock_extract.side_effect = [
             (
-                [
-                    InfoMetadata(
-                        name="ExampleAPI",
-                        api_version="1",
-                        application_version="1.0.0",
-                        api_type=[ApiType.REST],
-                        base_api_endpoint=[],
-                    )
-                ],
+                [InfoMetadataExtraction(name="ExampleAPI", api_version="1", application_version="1.0.0")],
                 True,
             ),
             (
-                [
-                    InfoMetadata(
-                        name="ExampleAPI",
-                        api_version="1",
-                        application_version="1.0.0",
-                        api_type=[ApiType.REST, ApiType.SCIM],
-                        base_api_endpoint=[],
-                    )
-                ],
+                [InfoMetadataExtraction(name="ExampleAPI", api_version="1", application_version="1.0.0")],
                 True,
             ),
         ]
@@ -415,7 +407,7 @@ def test_merge_info_metadata_preserves_unknown_endpoint_type_when_unknown_is_maj
     ]
 
     merged = merge_info_metadata(info_candidates, total_items=3, api_types=[ApiType.REST])
-    base_api_endpoints = merged["infoMetadata"]["baseApiEndpoint"]
+    base_api_endpoints = merged["infoMetadata"]["restAvailability"]["baseApiEndpoint"]
 
     assert len(base_api_endpoints) == 1
     assert base_api_endpoints[0]["uri"] == uri.lower()
@@ -430,7 +422,7 @@ def test_merge_info_metadata_uses_unknown_endpoint_type_when_constant_and_dynami
     ]
 
     merged = merge_info_metadata(info_candidates, total_items=2, api_types=[ApiType.REST])
-    base_api_endpoints = merged["infoMetadata"]["baseApiEndpoint"]
+    base_api_endpoints = merged["infoMetadata"]["restAvailability"]["baseApiEndpoint"]
 
     assert len(base_api_endpoints) == 1
     assert base_api_endpoints[0]["uri"] == uri.lower()
@@ -448,12 +440,126 @@ def test_merge_info_metadata_preserves_sql_api_type():
     assert merged["infoMetadata"]["apiType"] == [ApiType.SQL.value]
 
 
+def test_merge_info_metadata_buckets_endpoints_by_protocol():
+    # Each base endpoint is routed to its protocol-specific block by its api_type tag.
+    rest_uri = "https://api.example.com/v2"
+    scim_uri = "https://api.example.com/scim/v2"
+    endpoints = [
+        BaseAPIEndpoint(uri=rest_uri, type=EndpointType.CONSTANT, api_type=ApiType.REST),
+        BaseAPIEndpoint(uri=scim_uri, type=EndpointType.CONSTANT, api_type=ApiType.SCIM),
+    ]
+    info_candidates = [
+        InfoMetadataExtraction(base_api_endpoint=endpoints),
+        InfoMetadataExtraction(base_api_endpoint=endpoints),
+    ]
+
+    merged = merge_info_metadata(info_candidates, total_items=2, api_types=[ApiType.REST, ApiType.SCIM])
+    info = merged["infoMetadata"]
+
+    rest_block = info["restAvailability"]["baseApiEndpoint"]
+    scim_block = info["scimAvailability"]["baseApiEndpoint"]
+    assert [e["uri"] for e in rest_block] == [rest_uri.lower()]
+    assert [e["uri"] for e in scim_block] == [scim_uri.lower()]
+    # The block already implies the protocol, so the per-endpoint apiType is not serialized.
+    assert "apiType" not in rest_block[0]
+    assert "apiType" not in scim_block[0]
+
+
+def test_base_api_endpoint_leaves_missing_protocol_unclassified():
+    endpoint = BaseAPIEndpoint(uri="https://api.example.com/scim/v2")
+
+    assert endpoint.api_type is None
+
+
+def test_merge_info_metadata_routes_unclassified_endpoint_by_scim_session_api_type():
+    uri = "https://api.example.com/scim/v2"
+    info_candidates = [
+        InfoMetadataExtraction(base_api_endpoint=[BaseAPIEndpoint(uri=uri, type=EndpointType.CONSTANT)]),
+        InfoMetadataExtraction(base_api_endpoint=[BaseAPIEndpoint(uri=uri, type=EndpointType.CONSTANT)]),
+    ]
+
+    merged = merge_info_metadata(info_candidates, total_items=2, api_types=[ApiType.SCIM])
+    info = merged["infoMetadata"]
+
+    assert info["restAvailability"]["baseApiEndpoint"] == []
+    assert [endpoint["uri"] for endpoint in info["scimAvailability"]["baseApiEndpoint"]] == [uri.lower()]
+
+
+def test_merge_info_metadata_drops_endpoint_protocol_absent_from_session_api_type():
+    uri = "https://api.example.com/scim/v2"
+    info_candidates = [
+        InfoMetadataExtraction(
+            base_api_endpoint=[
+                BaseAPIEndpoint(uri=uri, type=EndpointType.CONSTANT, api_type=ApiType.SCIM),
+            ]
+        ),
+        InfoMetadataExtraction(
+            base_api_endpoint=[
+                BaseAPIEndpoint(uri=uri, type=EndpointType.CONSTANT, api_type=ApiType.SCIM),
+            ]
+        ),
+    ]
+
+    merged = merge_info_metadata(info_candidates, total_items=2, api_types=[ApiType.REST])
+    info = merged["infoMetadata"]
+
+    assert info["restAvailability"]["baseApiEndpoint"] == []
+    assert info["scimAvailability"]["baseApiEndpoint"] == []
+
+
+def test_merge_info_metadata_defaults_unclassified_endpoint_to_rest_without_session_api_type():
+    uri = "https://api.example.com/v1"
+    info_candidates = [
+        InfoMetadataExtraction(base_api_endpoint=[BaseAPIEndpoint(uri=uri, type=EndpointType.CONSTANT)]),
+        InfoMetadataExtraction(base_api_endpoint=[BaseAPIEndpoint(uri=uri, type=EndpointType.CONSTANT)]),
+    ]
+
+    merged = merge_info_metadata(info_candidates, total_items=2, api_types=[])
+    info = merged["infoMetadata"]
+
+    assert [endpoint["uri"] for endpoint in info["restAvailability"]["baseApiEndpoint"]] == [uri.lower()]
+    assert info["scimAvailability"]["baseApiEndpoint"] == []
+
+
+def test_merge_info_metadata_places_database_name_in_sql_block():
+    info_candidates = [
+        InfoMetadataExtraction(database_name="hr"),
+        InfoMetadataExtraction(database_name="hr"),
+    ]
+
+    merged = merge_info_metadata(info_candidates, total_items=2, api_types=[ApiType.SQL])
+
+    assert merged["infoMetadata"]["sqlAvailability"]["databaseName"] == "hr"
+
+
+# ==================== EXTRACTION EMPTINESS ====================
+def test_extraction_is_empty_for_blank_chunk():
+    assert InfoMetadataExtraction().is_empty()
+
+
+def test_extraction_not_empty_with_only_base_url():
+    # A chunk documenting just the HTTP base URL must survive extraction (regression: the
+    # flat extraction shape was wrongly checked against the grouped final blocks and dropped).
+    info = InfoMetadataExtraction(
+        base_api_endpoint=[BaseAPIEndpoint(uri="https://api.example.com/v1/", type=EndpointType.CONSTANT)]
+    )
+    assert not info.is_empty()
+
+
+def test_extraction_not_empty_with_only_database_name():
+    assert not InfoMetadataExtraction(database_name="hr").is_empty()
+
+
+def test_extraction_not_empty_with_only_name():
+    assert not InfoMetadataExtraction(name="Acme").is_empty()
+
+
 # ==================== SCIM AVAILABILITY ====================
 def test_info_metadata_serializes_scim_availability_for_scim():
     metadata = InfoMetadata(
         api_type=[ApiType.SCIM],
         scim_availability=ScimAvailabilityInfo(
-            status=ScimAvailability.PAID, required_plan="Enterprise", sources=["web_search"]
+            status=ScimAvailability.PAID, required_plan="Enterprise", sources=[ScimSource.WEB_SEARCH]
         ),
     )
     dumped = metadata.model_dump(by_alias=True)
@@ -464,12 +570,19 @@ def test_info_metadata_serializes_scim_availability_for_scim():
     assert dumped["scimAvailability"]["confidence"] == 1.0
 
 
-def test_info_metadata_drops_scim_availability_when_not_scim():
-    metadata = InfoMetadata(
-        api_type=[ApiType.REST],
-        scim_availability=ScimAvailabilityInfo(status=ScimAvailability.PAID),
-    )
-    assert "scimAvailability" not in metadata.model_dump(by_alias=True)
+def test_info_metadata_keeps_all_availability_blocks_when_not_scim():
+    # Blocks are never dropped: all three availability blocks are always serialized, empty
+    # when the corresponding protocol is not detected.
+    metadata = InfoMetadata(api_type=[ApiType.REST])
+    dumped = metadata.model_dump(by_alias=True)
+
+    assert dumped["restAvailability"] == {"baseApiEndpoint": []}
+    assert dumped["sqlAvailability"] == {"databaseName": ""}
+    assert dumped["scimAvailability"]["status"] == ScimAvailability.UNKNOWN.value
+    assert dumped["scimAvailability"]["baseApiEndpoint"] == []
+    # Flat fields no longer live at the top level; they moved into the availability blocks.
+    assert "baseApiEndpoint" not in dumped
+    assert "databaseName" not in dumped
 
 
 def test_merge_info_metadata_includes_scim_availability_for_scim():
@@ -478,7 +591,7 @@ def test_merge_info_metadata_includes_scim_availability_for_scim():
         total_items=1,
         api_types=[ApiType.SCIM],
         scim_availability=ScimAvailabilityInfo(
-            status=ScimAvailability.PAID, required_plan="Enterprise", sources=["scim_cloud"]
+            status=ScimAvailability.PAID, required_plan="Enterprise", sources=[ScimSource.SCIM_CLOUD]
         ),
     )
 
@@ -487,7 +600,8 @@ def test_merge_info_metadata_includes_scim_availability_for_scim():
     assert availability["sources"] == ["scim_cloud"]
 
 
-def test_merge_info_metadata_omits_scim_availability_without_scim():
+def test_merge_info_metadata_empties_scim_availability_without_scim():
+    # The SCIM advisory must not leak into a non-SCIM result; the block stays present but empty.
     merged = merge_info_metadata(
         [InfoMetadataExtraction(name="Acme")],
         total_items=1,
@@ -495,7 +609,9 @@ def test_merge_info_metadata_omits_scim_availability_without_scim():
         scim_availability=ScimAvailabilityInfo(status=ScimAvailability.PAID),
     )
 
-    assert "scimAvailability" not in merged["infoMetadata"]
+    scim = merged["infoMetadata"]["scimAvailability"]
+    assert scim["status"] == ScimAvailability.UNKNOWN.value
+    assert scim["baseApiEndpoint"] == []
 
 
 def test_merge_info_metadata_keeps_signal_scim_without_documents():
@@ -506,7 +622,7 @@ def test_merge_info_metadata_keeps_signal_scim_without_documents():
         total_items=0,
         api_types=[ApiType.SCIM],
         scim_availability=ScimAvailabilityInfo(
-            status=ScimAvailability.PAID, required_plan="Enterprise", sources=["web_search"]
+            status=ScimAvailability.PAID, required_plan="Enterprise", sources=[ScimSource.WEB_SEARCH]
         ),
     )
 

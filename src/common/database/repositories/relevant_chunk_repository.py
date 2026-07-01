@@ -11,6 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.models import RelevantChunk
+from src.common.utils.coerce import as_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +40,7 @@ class RelevantChunkRepository:
 
     @staticmethod
     def _normalize_sequence_payload(value: Any) -> Dict[str, str]:
-        if not isinstance(value, Mapping):
-            return {}
+        value = as_mapping(value)
 
         start_sequence = value.get("start_sequence") or value.get("startSequence")
         end_sequence = value.get("end_sequence") or value.get("endSequence")

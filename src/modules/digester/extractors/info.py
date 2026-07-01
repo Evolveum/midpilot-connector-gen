@@ -6,7 +6,6 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from src.modules.digester.aggregation.merges import is_empty_info_result_payload
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk
 from src.modules.digester.prompts.info_prompts import get_info_system_prompt, get_info_user_prompt
 from src.modules.digester.schemas import InfoExtractionResponse, InfoMetadataExtraction
@@ -31,10 +30,10 @@ async def extract_info_metadata(
     """
 
     def parse_fn(result: InfoExtractionResponse) -> List[InfoMetadataExtraction]:
-        payload = result.model_dump(by_alias=True)
-        if is_empty_info_result_payload(payload) or result.info_metadata is None:
+        info = result.info_metadata
+        if info is None or info.is_empty():
             return []
-        return [result.info_metadata]
+        return [info]
 
     extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,

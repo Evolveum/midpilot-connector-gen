@@ -11,6 +11,7 @@ from uuid import UUID
 from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.enums import ApiType, JobStage, ScimSource
 from src.common.jobs import update_job_progress
+from src.common.utils.coerce import as_list, as_str
 from src.common.utils.normalize import normalize_endpoint_key
 from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.modules.digester.aggregation.merges import (
@@ -534,7 +535,7 @@ async def extract_info_metadata(doc_items: List[dict], application_name: str, jo
         message="Processing chunks",
     )
 
-    application_name = application_name.strip() if isinstance(application_name, str) else ""
+    application_name = as_str(application_name).strip()
 
     info_results, api_type_results, scim_cloud_match, knowledge_result, web_search_result = await asyncio.gather(
         run_doc_extractors_concurrently(
@@ -758,7 +759,7 @@ async def _extract_connectivity_endpoint_from_doc_items(
         chunk_id_str = str(chunk_id)
         doc_id = chunk_id_to_doc_id.get(chunk_id_str)
 
-        candidates_for_chunk = candidates if isinstance(candidates, list) else []
+        candidates_for_chunk = as_list(candidates)
         all_candidates.extend(candidates_for_chunk)
 
         if not has_relevant_data:

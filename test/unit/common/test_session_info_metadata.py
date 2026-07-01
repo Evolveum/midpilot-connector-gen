@@ -9,10 +9,24 @@ import pytest
 
 from src.common.enums import ApiType
 from src.common.utils.session_info_metadata import (
+    extract_base_api_url,
+    extract_database_name,
     is_sql_api,
     resolve_effective_api_type,
     resolve_session_api_type,
 )
+from src.modules.digester.schemas import (
+    BaseAPIEndpoint,
+    InfoMetadata,
+    RestAvailabilityInfo,
+    ScimAvailabilityInfo,
+    SqlAvailabilityInfo,
+)
+
+
+def _stored(metadata: InfoMetadata) -> dict:
+    """Wrap an InfoMetadata payload the way it is persisted under a session."""
+    return {"infoMetadata": metadata.model_dump(by_alias=True)}
 
 
 def test_resolve_session_api_type_defaults_to_rest():
@@ -29,6 +43,73 @@ def test_resolve_session_api_type_detects_scim_case_insensitively():
 
 def test_is_sql_api_detects_sql_case_insensitively():
     assert is_sql_api([" sql "])
+
+
+def test_extract_base_api_url_reads_rest_block_for_rest_session():
+    stored = _stored(
+        InfoMetadata(
+            api_type=[ApiType.REST],
+            rest_availability=RestAvailabilityInfo(base_api_endpoint=[BaseAPIEndpoint(uri="https://h/api/v2/")]),
+        )
+    )
+    assert extract_base_api_url(stored) == "https://h/api/v2/"
+
+
+def test_extract_base_api_url_prefers_scim_block_for_scim_session():
+    stored = _stored(
+        InfoMetadata(
+            api_type=[ApiType.REST, ApiType.SCIM],
+            rest_availability=RestAvailabilityInfo(
+                base_api_endpoint=[BaseAPIEndpoint(uri="https://h/api/v2/", api_type=ApiType.REST)]
+            ),
+            scim_availability=ScimAvailabilityInfo(
+                base_api_endpoint=[BaseAPIEndpoint(uri="https://h/scim/v2/", api_type=ApiType.SCIM)]
+            ),
+        )
+    )
+    # SCIM is the resolved protocol when both REST and SCIM are present, so its block wins.
+    assert extract_base_api_url(stored) == "https://h/scim/v2/"
+
+
+def test_extract_base_api_url_falls_back_to_other_http_block():
+    # SCIM session but the SCIM block has no endpoint -> fall back to the REST block.
+    stored = _stored(
+        InfoMetadata(
+            api_type=[ApiType.SCIM],
+            rest_availability=RestAvailabilityInfo(base_api_endpoint=[BaseAPIEndpoint(uri="https://h/api/v2/")]),
+        )
+    )
+    assert extract_base_api_url(stored) == "https://h/api/v2/"
+
+
+def test_extract_base_api_url_empty_when_no_endpoints():
+    assert extract_base_api_url(_stored(InfoMetadata(api_type=[ApiType.SQL]))) == ""
+    assert extract_base_api_url(None) == ""
+
+
+def test_extract_database_name_reads_sql_block():
+    stored = _stored(InfoMetadata(api_type=[ApiType.SQL], sql_availability=SqlAvailabilityInfo(database_name="hr_db")))
+    assert extract_database_name(stored) == "hr_db"
+
+
+def test_extract_database_name_empty_for_non_sql():
+    assert extract_database_name(_stored(InfoMetadata(api_type=[ApiType.REST]))) == ""
+    assert extract_database_name(None) == ""
+
+
+def _both_blocks_session() -> dict:
+    """Stored metadata exposing both a REST and a SCIM base endpoint."""
+    return _stored(
+        InfoMetadata(
+            api_type=[ApiType.REST, ApiType.SCIM],
+            rest_availability=RestAvailabilityInfo(
+                base_api_endpoint=[BaseAPIEndpoint(uri="https://h/api/v2/", api_type=ApiType.REST)]
+            ),
+            scim_availability=ScimAvailabilityInfo(
+                base_api_endpoint=[BaseAPIEndpoint(uri="https://h/scim/v2/", api_type=ApiType.SCIM)]
+            ),
+        )
+    )
 
 
 @pytest.mark.asyncio
