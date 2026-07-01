@@ -71,7 +71,7 @@ async def test_generate_relation():
 
         relations_model = RelationsResponse.model_validate(test_relations_payload)
 
-        result = await service.create_relation(
+        result = await service.generate_relation_code(
             relations=relations_model,
             relation_name="project_to_membership",
             session_id=uuid4(),

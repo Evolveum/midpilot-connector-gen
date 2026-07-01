@@ -49,7 +49,7 @@ async def test_generate_create():
         mock_generator_instance = mock_create_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked create code")
 
-        result = await service.create_create(
+        result = await service.generate_create_code(
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,
@@ -89,7 +89,7 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
         mock_generator_instance = mock_create_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked sql create code")
 
-        result = await service.create_create(
+        result = await service.generate_create_code(
             attributes=test_attributes,
             endpoints=test_tables,
             session_id=uuid4(),
@@ -139,7 +139,7 @@ async def test_generate_update():
         mock_generator_instance = mock_update_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked update code")
 
-        result = await service.create_update(
+        result = await service.generate_update_code(
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,
@@ -191,7 +191,7 @@ async def test_generate_delete():
         mock_generator_instance = mock_delete_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked delete code")
 
-        result = await service.create_delete(
+        result = await service.generate_delete_code(
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,

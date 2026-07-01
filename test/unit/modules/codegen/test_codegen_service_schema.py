@@ -26,7 +26,7 @@ async def test_generate_native_schema():
     ):
         mock_generate_groovy.return_value = "mocked groovy code"
 
-        result = await service.create_native_schema(
+        result = await service.generate_native_schema_code(
             test_attributes,
             "User",
             session_id=uuid4(),
@@ -52,7 +52,7 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
     ):
         mock_generate_groovy.return_value = "mocked sql schema code"
 
-        result = await service.create_native_schema(
+        result = await service.generate_native_schema_code(
             test_attributes,
             "User",
             session_id=uuid4(),
@@ -76,7 +76,7 @@ async def test_generate_conn_id():
     with patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy:
         mock_generate_groovy.return_value = "mocked connid code"
 
-        result = await service.create_conn_id(
+        result = await service.generate_conn_id_code(
             test_attributes,
             "User",
             job_id=uuid4(),

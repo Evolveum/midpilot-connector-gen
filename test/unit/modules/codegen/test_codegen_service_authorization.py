@@ -18,7 +18,7 @@ from src.modules.codegen.selection.authorization import (
 
 
 @pytest.mark.asyncio
-async def test_create_authorization_uses_preferred_authorizations_and_auth_relevant_chunks():
+async def test_generate_authorization_code_uses_preferred_authorizations_and_auth_relevant_chunks():
     session_id = uuid4()
     job_id = uuid4()
     auth_payload = {
@@ -69,7 +69,7 @@ async def test_create_authorization_uses_preferred_authorizations_and_auth_relev
         mock_generator_instance = mock_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked authorization code")
 
-        result = await service.create_authorization(
+        result = await service.generate_authorization_code(
             auth_payload=auth_payload,
             preferred_authorizations=preferred_authorizations,
             session_id=session_id,
@@ -89,7 +89,7 @@ async def test_create_authorization_uses_preferred_authorizations_and_auth_relev
 
 
 @pytest.mark.asyncio
-async def test_create_authorization_returns_static_scaffold_for_other_authorization():
+async def test_generate_authorization_code_returns_static_scaffold_for_other_authorization():
     session_id = uuid4()
     job_id = uuid4()
     auth_payload = {
@@ -107,7 +107,7 @@ async def test_create_authorization_returns_static_scaffold_for_other_authorizat
         patch("src.modules.codegen.service.AuthorizationGenerator") as mock_generator_class,
         patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
     ):
-        result = await service.create_authorization(
+        result = await service.generate_authorization_code(
             auth_payload=auth_payload,
             preferred_authorizations=[{"name": "other", "type": "other"}],
             session_id=session_id,
@@ -133,7 +133,7 @@ async def test_create_authorization_returns_static_scaffold_for_other_authorizat
 
 
 @pytest.mark.asyncio
-async def test_create_authorization_marks_unmatched_midpoint_authorization_and_uses_no_chunks():
+async def test_generate_authorization_code_marks_unmatched_midpoint_authorization_and_uses_no_chunks():
     session_id = uuid4()
     job_id = uuid4()
     auth_payload = {
@@ -165,7 +165,7 @@ async def test_create_authorization_marks_unmatched_midpoint_authorization_and_u
         mock_generator_instance = mock_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked authorization code")
 
-        result = await service.create_authorization(
+        result = await service.generate_authorization_code(
             auth_payload=auth_payload,
             preferred_authorizations=preferred_authorizations,
             session_id=session_id,

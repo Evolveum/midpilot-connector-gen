@@ -65,7 +65,7 @@ docker compose up
 ## Local Development
 
 ### Prerequisites
-- [Python 3.12+](https://www.python.org/downloads/)
+- [Python 3.13+](https://www.python.org/downloads/)
 - [UV dependency manager](https://github.com/astral-sh/uv)
 - [PostgreSQL 15](https://www.postgresql.org/download/)
 
@@ -89,7 +89,8 @@ docker compose up db
 
 The database service uses the following environment variables from `.env`:
 - `DATABASE__HOST` - Database host (default: localhost)
-- `DATABASE__PORT` - Database port (default: 5432)
+- `DATABASE__INT_PORT` - Internal database port used inside Docker/networked deployments (default: 5432)
+- `DATABASE__EXT_PORT` - External database port exposed to the host (default: 5433)
 - `DATABASE__USER` - Database user
 - `DATABASE__PASSWORD` - Database password
 - `DATABASE__NAME` - Database name
@@ -113,13 +114,14 @@ Ensure your `.env` file has the correct database configuration:
 
 ```bash
 DATABASE__HOST=localhost
-DATABASE__PORT=5432
+DATABASE__INT_PORT=5432
+DATABASE__EXT_PORT=5433
 DATABASE__USER=user
 DATABASE__PASSWORD=password
 DATABASE__NAME=db
 
 # Full connection string for Alembic and SQLAlchemy
-DATABASE_URL=postgresql+asyncpg://${DATABASE__USER}:${DATABASE__PASSWORD}@${DATABASE__HOST}:${DATABASE__INT_PORT}/${DATABASE__NAME}
+DATABASE__URL=postgresql+asyncpg://${DATABASE__USER}:${DATABASE__PASSWORD}@${DATABASE__HOST}:${DATABASE__EXT_PORT}/${DATABASE__NAME}
 ```
 
 #### 4. Run Database Migrations

@@ -43,7 +43,7 @@ async def test_generate_search():
         mock_generator_instance = mock_search_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked search code")
 
-        result = await service.create_search(
+        result = await service.generate_search_code(
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,

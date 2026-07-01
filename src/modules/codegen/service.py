@@ -248,7 +248,7 @@ async def _collect_authorization_relevant_chunks(
     return relevant_indices, auth_pairs
 
 
-async def create_native_schema(
+async def generate_native_schema_code(
     attributes_payload: AttributesPayload,
     object_class: str,
     *,
@@ -280,7 +280,7 @@ async def create_native_schema(
     return {"code": code}
 
 
-async def create_authorization(
+async def generate_authorization_code(
     *,
     auth_payload: AuthPayload,
     preferred_authorizations: Optional[List[Dict[str, Any]]] = None,
@@ -336,7 +336,7 @@ async def create_authorization(
     return {"code": code}
 
 
-async def create_conn_id(
+async def generate_conn_id_code(
     attributes_payload: AttributesPayload,
     object_class: str,
     *,
@@ -366,7 +366,7 @@ async def create_conn_id(
     return {"code": code}
 
 
-async def create_search(
+async def generate_search_code(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
@@ -414,8 +414,7 @@ async def create_search(
     return {"code": code}
 
 
-# Maybe we need better name for this def
-async def create_create(
+async def generate_create_code(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
@@ -461,7 +460,7 @@ async def create_create(
     return {"code": code}
 
 
-async def create_update(
+async def generate_update_code(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
@@ -507,7 +506,7 @@ async def create_update(
     return {"code": code}
 
 
-async def create_delete(
+async def generate_delete_code(
     *,
     attributes: AttributesPayload,
     endpoints: Optional[EndpointsPayload] = None,
@@ -553,7 +552,7 @@ async def create_delete(
     return {"code": code}
 
 
-async def create_relation(
+async def generate_relation_code(
     *,
     relations: RelationsResponse,
     relation_name: str,

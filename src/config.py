@@ -449,7 +449,8 @@ class DatabaseSettings(BaseModel):
 
     :param url: Full database connection URL (used by SQLAlchemy)
     :param host: Database host address
-    :param port: Database port
+    :param int_port: Internal database port used inside Docker/networked deployments
+    :param ext_port: External database port exposed to the host
     :param name: Database name
     :param user: Database username
     :param password: Database password
@@ -463,7 +464,8 @@ class DatabaseSettings(BaseModel):
         description="Database URL",
     )
     host: str = ""
-    port: int = 5432
+    int_port: int = 5432
+    ext_port: int = 5433
     name: str = ""
     user: str = ""
     password: str = ""
@@ -475,7 +477,7 @@ class DatabaseSettings(BaseModel):
     def assemble_db_url(self) -> "DatabaseSettings":
         """Construct the database URL from components if not provided or contains placeholders."""
         if not self.url or "${" in self.url:
-            self.url = f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+            self.url = f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.ext_port}/{self.name}"
         return self
 
 
@@ -530,7 +532,7 @@ class Settings(BaseSettings):
 
     Example: LOGGING__LEVEL=error
              DATABASE__HOST=localhost
-             DATABASE__PORT=5433
+             DATABASE__EXT_PORT=5433
     """
 
     model_config = SettingsConfigDict(

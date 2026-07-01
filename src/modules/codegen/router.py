@@ -161,7 +161,7 @@ async def generate_authorization(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getAuthorization",
         input_payload=job_input,
-        worker=service.create_authorization,
+        worker=service.generate_authorization_code,
         worker_args=(),
         worker_kwargs=worker_kwargs,
         initial_stage="preparing",
@@ -283,7 +283,7 @@ async def generate_native_schema(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getNativeSchema",
         input_payload=job_input,
-        worker=service.create_native_schema,
+        worker=service.generate_native_schema_code,
         worker_args=(attrs, object_class),
         worker_kwargs=worker_kwargs,
         initial_stage="queue",
@@ -404,7 +404,7 @@ async def generate_connid(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getConnID",
         input_payload=job_input,
-        worker=service.create_conn_id,
+        worker=service.generate_conn_id_code,
         worker_args=(attrs, object_class),
         worker_kwargs=worker_kwargs,
         initial_stage="queue",
@@ -555,7 +555,7 @@ async def generate_search(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getSearch",
         input_payload=job_input,
-        worker=service.create_search,
+        worker=service.generate_search_code,
         worker_args=(),
         worker_kwargs=worker_kwargs,
         initial_stage="preparing",
@@ -708,7 +708,7 @@ async def generate_create(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getCreate",
         input_payload=job_input,
-        worker=service.create_create,
+        worker=service.generate_create_code,
         worker_args=(),
         worker_kwargs=worker_kwargs,
         initial_stage="preparing",
@@ -855,7 +855,7 @@ async def generate_update(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getUpdate",
         input_payload=job_input,
-        worker=service.create_update,
+        worker=service.generate_update_code,
         worker_args=(),
         worker_kwargs=worker_kwargs,
         initial_stage="preparing",
@@ -1002,7 +1002,7 @@ async def generate_delete(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getDelete",
         input_payload=job_input,
-        worker=service.create_delete,
+        worker=service.generate_delete_code,
         worker_args=(),
         worker_kwargs=worker_kwargs,
         initial_stage="preparing",
@@ -1136,7 +1136,7 @@ async def generate_relation_code(
             "sessionId": session_id,
             "skipCache": skip_cache,
         },
-        worker=service.create_relation,
+        worker=service.generate_relation_code,
         worker_kwargs={
             "relations": selected_relations_model,
             "relation_name": relation_name,
