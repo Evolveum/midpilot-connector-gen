@@ -37,11 +37,6 @@ def to_jsonable(obj: Any) -> Any:
     return obj
 
 
-def _now_iso() -> str:
-    """Return current UTC time as an ISO-8601 string."""
-    return datetime.now(timezone.utc).isoformat()
-
-
 class JobRepository:
     """Repository for job data access operations."""
 

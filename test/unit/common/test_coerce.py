@@ -6,7 +6,7 @@
 
 from collections import OrderedDict
 
-from src.common.utils.coerce import as_list, as_mapping, as_str, as_str_list
+from src.common.utils.coerce import as_dict_list, as_list, as_mapping, as_str, as_str_list
 
 
 def test_as_mapping_passes_through_mappings():
@@ -37,3 +37,10 @@ def test_as_str_list_keeps_only_strings():
     # a bare string is not a list of strings
     assert as_str_list("scim") == []
     assert as_str_list(None) == []
+
+
+def test_as_dict_list_keeps_only_dicts():
+    assert as_dict_list([{"a": 1}, 2, None, {"b": 3}]) == [{"a": 1}, {"b": 3}]
+    # not a list -> empty; a bare dict is not a list of dicts
+    assert as_dict_list({"a": 1}) == []
+    assert as_dict_list(None) == []

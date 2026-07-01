@@ -37,3 +37,12 @@ def as_str(value: Any) -> str:
 def as_str_list(value: Any) -> list[str]:
     """Return the string items of ``value`` when it is a list, otherwise an empty list."""
     return [item for item in as_list(value) if isinstance(item, str)]
+
+
+def as_dict_list(value: Any) -> list[dict[str, Any]]:
+    """Return the dict items of ``value`` when it is a list, otherwise an empty list.
+
+    Handy for the common "iterate a list, keep only the object entries" pattern over
+    untrusted payloads (replaces a list guard plus a per-item ``isinstance(x, dict)`` skip).
+    """
+    return [item for item in as_list(value) if isinstance(item, dict)]

@@ -15,11 +15,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from src.common.jobs import update_job_progress
+from src.common.utils.coerce import as_dict_list
 from src.modules.digester.entities.object_classes import confidence_order_key
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extraction.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
 from src.modules.digester.extraction.llm_execution import run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
+from src.modules.digester.extractors.scim.baseline import get_base_scim_object_classes, load_session_scim_schemas
 from src.modules.digester.prompts.scim.object_class_prompts import (
     scim_object_class_system_prompt,
     scim_object_class_user_prompt,
@@ -30,7 +32,6 @@ from src.modules.digester.schemas import (
     ObjectClassesExtendedResponse,
     ObjectClassesResponse,
 )
-from src.modules.digester.scim_baseline.loader import get_base_scim_object_classes, load_scim_base_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ def _merge_scim_final_object_classes(object_classes: List[FinalObjectClass]) -> 
 async def extract_scim_object_classes(
     doc_items: List[dict],
     job_id: UUID,
+    session_id: UUID,
 ) -> Dict[str, Any]:
     """
     Extract SCIM object classes using guided approach:
@@ -110,9 +112,9 @@ async def extract_scim_object_classes(
         job_id, total_processing=total_docs, processing_completed=0, message="Processing SCIM documents"
     )
 
-    # Step 1: Load SCIM base object classes
-    scim_schemas = load_scim_base_schemas()
-    base_classes_data = get_base_scim_object_classes()
+    # Step 1: Load SCIM base object classes from the session's conndev schema documents
+    scim_schemas = await load_session_scim_schemas(session_id)
+    base_classes_data = get_base_scim_object_classes(scim_schemas)
     base_classes = [
         FinalObjectClass(
             name=cls["name"],
@@ -386,9 +388,9 @@ async def extract_custom_scim_classes(
         extraction_chain=extraction_chain,
     )
 
-    # Filter out any standard SCIM classes that LLM might have mistakenly extracted
+    # Filter out any baseline SCIM classes that the LLM might have mistakenly re-extracted.
     custom_only: List[ExtendedObjectClass] = []
-    standard_classes = {"user", "group", "enterpriseuser"}
+    standard_classes = {name.strip().lower() for name in (scim_base_schemas or {})}
 
     for obj_class in extracted:
         class_name_lower = obj_class.name.strip().lower()
@@ -436,13 +438,7 @@ def get_embedded_object_classes_from_scim_schema(
     embedded_classes: List[Dict[str, Any]] = []
     seen_names: set[str] = set()
 
-    attributes = schema.get("attributes", [])
-    if not isinstance(attributes, list):
-        return embedded_classes
-
-    for attr in attributes:
-        if not isinstance(attr, dict):
-            continue
+    for attr in as_dict_list(schema.get("attributes")):
         if attr.get("type") != "complex":
             continue
 

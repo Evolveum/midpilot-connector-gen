@@ -128,7 +128,7 @@ async def extract_object_classes(
         return await extract_sql_object_classes(doc_items, job_id)
 
     if protocol == ApiType.SCIM:
-        return await extract_scim_object_classes(doc_items, job_id)
+        return await extract_scim_object_classes(doc_items, job_id, session_id)
 
     return await _extract_rest_object_classes(doc_items, job_id)
 
@@ -397,6 +397,7 @@ async def _retry_attributes_with_default_criteria(
             fallback_selected_content,
             object_class,
             job_id,
+            session_id,
             fallback_chunk_ids,
             chunk_metadata_map,
             chunk_id_to_doc_id,
@@ -942,6 +943,7 @@ async def extract_attributes(
             selected_content,
             object_class,
             job_id,
+            session_id,
             chunk_ids,
             chunk_metadata_map,
             chunk_id_to_doc_id,
@@ -1053,7 +1055,6 @@ async def extract_endpoints(
         result = await pregenerate_scim_endpoints(
             session_id=session_id,
             object_class=object_class,
-            base_api_url=base_api_url,
             job_id=job_id,
             relevant_chunks=relevant_chunks,
         )

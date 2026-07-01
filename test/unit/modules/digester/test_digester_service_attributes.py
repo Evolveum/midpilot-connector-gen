@@ -180,19 +180,21 @@ async def test_extract_attributes_scim_preserves_doc_maps_when_relevance_is_empt
 
     first_call_args = mock_extract_scim_attributes.await_args_list[0].args
     assert first_call_args[0] == []
-    assert first_call_args[3] == []
-    assert first_call_args[5] == {chunk_id: doc_id}
+    assert first_call_args[3] == session_id
+    assert first_call_args[4] == []
+    assert first_call_args[6] == {chunk_id: doc_id}
 
     retry_call_args = mock_extract_scim_attributes.await_args_list[1].args
     assert retry_call_args[0] == ["Slack maps primary email to emails[0].value."]
-    assert retry_call_args[3] == [chunk_id]
-    assert retry_call_args[4] == {
+    assert retry_call_args[3] == session_id
+    assert retry_call_args[4] == [chunk_id]
+    assert retry_call_args[5] == {
         chunk_id: {
             "summary": "SCIM user email mappings",
             "@metadata": {"tags": ["scim", "attributes"]},
         }
     }
-    assert retry_call_args[5] == {chunk_id: doc_id}
+    assert retry_call_args[6] == {chunk_id: doc_id}
     mock_update_object_class.assert_awaited_once()
 
 

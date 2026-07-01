@@ -2,6 +2,8 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -12,6 +14,20 @@ from src.modules.digester.extractors.scim.object_class import (
     extract_scim_object_classes,
     get_embedded_object_classes_from_scim_schema,
 )
+
+_SCHEMA_DIR = Path(__file__).parent / "scim_schemas"
+
+
+def _baseline_schemas() -> dict:
+    """Load the SCIM baseline schemas that stand in for a session's conndev documents."""
+    schemas: dict = {}
+    for path in sorted(_SCHEMA_DIR.glob("*.json")):
+        schema = json.loads(path.read_text())
+        schemas[schema["name"]] = schema
+    return schemas
+
+
+BASELINE_SCHEMAS = _baseline_schemas()
 
 
 def test_build_embedded_object_class_name_preserves_schema_attribute_plurality():
@@ -61,10 +77,15 @@ async def test_extract_scim_object_classes_includes_standard_embedded_classes():
         patch(
             "src.modules.digester.extractors.scim.object_class.run_chunks_concurrently", new_callable=AsyncMock
         ) as run_chunks,
+        patch(
+            "src.modules.digester.extractors.scim.object_class.load_session_scim_schemas",
+            new_callable=AsyncMock,
+            return_value=BASELINE_SCHEMAS,
+        ),
     ):
         run_chunks.return_value = []
 
-        result = await extract_scim_object_classes([], uuid4())
+        result = await extract_scim_object_classes([], uuid4(), uuid4())
 
     object_classes = result["result"]["objectClasses"]
     by_name = {item["name"]: item for item in object_classes}
