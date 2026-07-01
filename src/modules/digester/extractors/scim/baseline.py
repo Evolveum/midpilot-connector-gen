@@ -102,6 +102,22 @@ def is_scim_standard_class(schemas: Dict[str, Any], class_name: str) -> bool:
     return get_scim_schema(schemas, class_name) is not None
 
 
+def get_scim_canonical_class_name(schemas: Dict[str, Any], class_name: str) -> Optional[str]:
+    """
+    Return the schema-declared, canonically cased name for ``class_name``, or None when the class is
+    not backed by a session schema.
+
+    ``class_name`` reaches the extractors already lower-cased for case-insensitive matching, so this
+    recovers the original casing (e.g. ``"user"`` -> ``"User"``) from the matching baseline schema.
+    Callers use it to build SCIM resource paths and descriptions that follow the schema's casing
+    (``/Users``) instead of the lower-cased request value (``/users``).
+    """
+    schema = get_scim_schema(schemas, class_name)
+    if schema is None:
+        return None
+    return _schema_name(schema) or None
+
+
 def is_scim_extension_schema(schemas: Dict[str, Any], class_name: str) -> bool:
     """
     True when ``class_name`` maps to a SCIM *extension* schema rather than a standalone resource.

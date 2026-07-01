@@ -20,6 +20,7 @@ from src.common.utils.normalize import normalize_chunk_pair
 from src.modules.digester.entities.scim_resource import extract_scim_resource_path, infer_scim_resource_path
 from src.modules.digester.extractors.scim.baseline import (
     generate_scim_crud_endpoints,
+    get_scim_canonical_class_name,
     is_scim_extension_schema,
     load_session_scim_schemas,
 )
@@ -67,8 +68,11 @@ async def pregenerate_scim_endpoints(
         logger.info("[SCIM:Endpoints] %s is a SCIM extension schema; skipping standalone endpoints", object_class)
         endpoints = []
     else:
-        resource_path = extract_scim_resource_path(object_class_data) or infer_scim_resource_path(object_class)
-        endpoints = generate_scim_crud_endpoints(resource_path, object_class)
+        # object_class arrives lower-cased for case-insensitive matching; prefer the schema's canonical
+        # name so schema-backed resources keep their proper casing (User -> /Users, not /users).
+        canonical_class = get_scim_canonical_class_name(scim_schemas, object_class) or object_class
+        resource_path = extract_scim_resource_path(object_class_data) or infer_scim_resource_path(canonical_class)
+        endpoints = generate_scim_crud_endpoints(resource_path, canonical_class)
 
     await increment_processed_documents(job_id, delta=1)
 
