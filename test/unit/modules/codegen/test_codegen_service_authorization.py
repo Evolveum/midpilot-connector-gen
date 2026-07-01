@@ -56,7 +56,11 @@ async def test_generate_authorization_code_uses_preferred_authorizations_and_aut
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
-        patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
+        patch(
+            "src.modules.codegen.service.get_session_base_api_url",
+            new_callable=AsyncMock,
+            return_value="",
+        ) as mock_get_base_api_url,
         patch("src.modules.codegen.service.AuthorizationGenerator") as mock_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -81,6 +85,7 @@ async def test_generate_authorization_code_uses_preferred_authorizations_and_aut
     mock_generator_class.assert_called_once()
     _, generator_kwargs = mock_generator_class.call_args
     assert generator_kwargs["preferred_authorizations"] == enriched_preferred_authorizations
+    mock_get_base_api_url.assert_awaited_once_with(session_id, protocol=ApiType.REST)
 
     mock_generator_instance.generate.assert_awaited_once()
     _, generate_kwargs = mock_generator_instance.generate.call_args

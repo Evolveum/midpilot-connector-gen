@@ -28,12 +28,15 @@ async def test_generate_search():
         {"method": "GET", "path": "/users/{id}"},
     ]
 
+    session_id = uuid4()
+    job_id = uuid4()
+
     with (
         patch(
             "src.modules.codegen.service.get_session_connection_target",
             new_callable=AsyncMock,
             return_value=("", ""),
-        ),
+        ) as mock_get_connection_target,
         patch(
             "src.modules.codegen.service._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
         ),
@@ -47,10 +50,10 @@ async def test_generate_search():
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,
-            session_id=uuid4(),
+            session_id=session_id,
             object_class="User",
             intent=SearchIntent.FILTER,
-            job_id=uuid4(),
+            job_id=job_id,
             protocol=ApiType.REST,
         )
 
@@ -63,4 +66,5 @@ async def test_generate_search():
         _, kwargs = mock_search_generator_class.call_args
         assert kwargs["intent"] == SearchIntent.FILTER
         assert kwargs["preferred_endpoints"] == test_preferred_endpoints
+        mock_get_connection_target.assert_awaited_once_with(session_id, protocol=ApiType.REST)
         mock_generator_instance.generate.assert_called_once()

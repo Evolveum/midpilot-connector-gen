@@ -76,8 +76,10 @@ def extract_base_api_url(metadata: Mapping[str, Any] | None, protocol: ApiType |
     return ""
 
 
-def extract_database_name(metadata: Mapping[str, Any] | None) -> str:
+def extract_database_name(metadata: Mapping[str, Any] | None, protocol: ApiType | None = None) -> str:
     """Return the documented databaseName, if present (SQL integrations only)."""
+    if protocol is not None and protocol != ApiType.SQL:
+        return ""
     sql_block = as_mapping(_collect_info_metadata(metadata).get("sqlAvailability"))
     return as_str(sql_block.get("databaseName"))
 
@@ -138,7 +140,7 @@ async def get_session_base_api_url(session_id: UUID, protocol: ApiType | None = 
     Pass ``protocol`` (e.g. the effective/overridden apiType) to read that protocol's base URL
     strictly; omit it to derive from the stored apiType. See ``extract_base_api_url``.
     """
-    return extract_base_api_url(await load_session_metadata(session_id), protocol)
+    return extract_base_api_url(await load_session_metadata(session_id), protocol=protocol)
 
 
 async def get_discovery_application_name(session_id: UUID) -> str:
@@ -154,8 +156,8 @@ async def get_session_connection_target(session_id: UUID, protocol: ApiType | No
     Yields (base_api_url, database_name). Only one is populated for a given session
     (HTTP base URL for REST/SCIM, database name for SQL); the other is an empty string.
 
-    Pass ``protocol`` (e.g. the effective/overridden apiType) so the HTTP base URL is read
-    strictly from that protocol's block; omit it to derive from the stored apiType.
+    Pass ``protocol`` (e.g. the effective/overridden apiType) so the target is read
+    strictly from that protocol's block; omit it to derive the HTTP base URL from the stored apiType.
     """
     metadata = await load_session_metadata(session_id)
-    return extract_base_api_url(metadata, protocol), extract_database_name(metadata)
+    return extract_base_api_url(metadata, protocol=protocol), extract_database_name(metadata, protocol=protocol)

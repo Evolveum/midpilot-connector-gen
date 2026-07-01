@@ -477,7 +477,7 @@ class DatabaseSettings(BaseModel):
     def assemble_db_url(self) -> "DatabaseSettings":
         """Construct the database URL from components if not provided or contains placeholders."""
         if not self.url or "${" in self.url:
-            self.url = f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.ext_port}/{self.name}"
+            self.url = f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.int_port}/{self.name}"
         return self
 
 

@@ -303,7 +303,7 @@ async def generate_authorization_code(
 
     assets = get_operation_assets("authorization", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url = await get_session_base_api_url(session_id, protocol)
+    base_api_url = await get_session_base_api_url(session_id, protocol=protocol)
 
     generator_preferred_authorizations = prepare_preferred_authorizations_for_generation(
         auth_payload,
@@ -384,7 +384,7 @@ async def generate_search_code(
     """
     assets = get_search_operation_assets(protocol, intent)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url, database_name = await get_session_connection_target(session_id, protocol)
+    base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = SearchGenerator(
         object_class=object_class,
@@ -431,7 +431,7 @@ async def generate_create_code(
     """
     assets = get_operation_assets("create", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url, database_name = await get_session_connection_target(session_id, protocol)
+    base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = CreateGenerator(
         object_class=object_class,
@@ -477,7 +477,7 @@ async def generate_update_code(
     """
     assets = get_operation_assets("update", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url, database_name = await get_session_connection_target(session_id, protocol)
+    base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = UpdateGenerator(
         object_class=object_class,
@@ -523,7 +523,7 @@ async def generate_delete_code(
     """
     assets = get_operation_assets("delete", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
-    base_api_url, database_name = await get_session_connection_target(session_id, protocol)
+    base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = DeleteGenerator(
         object_class=object_class,

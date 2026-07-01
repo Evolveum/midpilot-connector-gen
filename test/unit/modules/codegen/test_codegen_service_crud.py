@@ -28,6 +28,9 @@ async def test_generate_create():
         {"method": "POST", "path": "/users/create"},
     ]
 
+    session_id = uuid4()
+    job_id = uuid4()
+
     with (
         patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
@@ -35,7 +38,7 @@ async def test_generate_create():
             "src.modules.codegen.service.get_session_connection_target",
             new_callable=AsyncMock,
             return_value=("", ""),
-        ),
+        ) as mock_get_connection_target,
         patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
@@ -53,9 +56,9 @@ async def test_generate_create():
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,
-            session_id=uuid4(),
+            session_id=session_id,
             object_class="User",
-            job_id=uuid4(),
+            job_id=job_id,
             protocol=ApiType.REST,
         )
 
@@ -67,6 +70,7 @@ async def test_generate_create():
         mock_create_generator_class.assert_called_once()
         _, kwargs = mock_create_generator_class.call_args
         assert kwargs["preferred_endpoints"] == test_preferred_endpoints
+        mock_get_connection_target.assert_awaited_once_with(session_id, protocol=ApiType.REST)
         mock_generator_instance.generate.assert_called_once()
 
 
@@ -75,12 +79,15 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
     test_attributes = {"username": {"type": "varchar", "description": "User login"}}
     test_tables = {"endpoints": [{"table": "users", "columns": [{"name": "username", "type": "varchar"}]}]}
 
+    session_id = uuid4()
+    job_id = uuid4()
+
     with (
         patch(
             "src.modules.codegen.service.get_session_connection_target",
             new_callable=AsyncMock,
             return_value=("", ""),
-        ),
+        ) as mock_get_connection_target,
         patch(
             "src.modules.codegen.service._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
         ),
@@ -92,13 +99,14 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
         result = await service.generate_create_code(
             attributes=test_attributes,
             endpoints=test_tables,
-            session_id=uuid4(),
+            session_id=session_id,
             object_class="User",
-            job_id=uuid4(),
+            job_id=job_id,
             protocol=ApiType.SQL,
         )
 
     assert result == {"code": "mocked sql create code"}
+    mock_get_connection_target.assert_awaited_once_with(session_id, protocol=ApiType.SQL)
     _, kwargs = mock_create_generator_class.call_args
     assert kwargs["system_prompt"] == get_sql_create_system_prompt
     assert kwargs["protocol_label"] == "sql"

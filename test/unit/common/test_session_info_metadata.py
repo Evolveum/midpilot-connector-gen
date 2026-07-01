@@ -11,6 +11,7 @@ from src.common.enums import ApiType
 from src.common.utils.session_info_metadata import (
     extract_base_api_url,
     extract_database_name,
+    get_session_connection_target,
     is_sql_api,
     resolve_effective_api_type,
     resolve_session_api_type,
@@ -71,6 +72,24 @@ def test_extract_base_api_url_prefers_scim_block_for_scim_session():
     assert extract_base_api_url(stored) == "https://h/scim/v2/"
 
 
+def test_extract_base_api_url_honors_explicit_protocol():
+    stored = _both_blocks_session()
+
+    assert extract_base_api_url(stored, ApiType.REST) == "https://h/api/v2/"
+    assert extract_base_api_url(stored, ApiType.SCIM) == "https://h/scim/v2/"
+
+
+def test_extract_base_api_url_with_explicit_protocol_does_not_fallback():
+    stored = _stored(
+        InfoMetadata(
+            api_type=[ApiType.SCIM],
+            rest_availability=RestAvailabilityInfo(base_api_endpoint=[BaseAPIEndpoint(uri="https://h/api/v2/")]),
+        )
+    )
+
+    assert extract_base_api_url(stored, ApiType.SCIM) == ""
+
+
 def test_extract_base_api_url_falls_back_to_other_http_block():
     # SCIM session but the SCIM block has no endpoint -> fall back to the REST block.
     stored = _stored(
@@ -90,6 +109,20 @@ def test_extract_base_api_url_empty_when_no_endpoints():
 def test_extract_database_name_reads_sql_block():
     stored = _stored(InfoMetadata(api_type=[ApiType.SQL], sql_availability=SqlAvailabilityInfo(database_name="hr_db")))
     assert extract_database_name(stored) == "hr_db"
+
+
+def test_extract_database_name_honors_explicit_protocol():
+    stored = _stored(
+        InfoMetadata(
+            api_type=[ApiType.REST, ApiType.SQL],
+            rest_availability=RestAvailabilityInfo(base_api_endpoint=[BaseAPIEndpoint(uri="https://h/api/v2/")]),
+            sql_availability=SqlAvailabilityInfo(database_name="hr_db"),
+        )
+    )
+
+    assert extract_database_name(stored, ApiType.REST) == ""
+    assert extract_database_name(stored, ApiType.SCIM) == ""
+    assert extract_database_name(stored, ApiType.SQL) == "hr_db"
 
 
 def test_extract_database_name_empty_for_non_sql():
@@ -136,3 +169,33 @@ async def test_resolve_effective_api_type_falls_back_to_session_metadata():
 
     assert result == ApiType.SQL
     mock_get_api_types.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_session_connection_target_honors_explicit_protocol():
+    session_id = uuid4()
+    stored = _stored(
+        InfoMetadata(
+            api_type=[ApiType.REST, ApiType.SCIM, ApiType.SQL],
+            rest_availability=RestAvailabilityInfo(
+                base_api_endpoint=[BaseAPIEndpoint(uri="https://h/api/v2/", api_type=ApiType.REST)]
+            ),
+            scim_availability=ScimAvailabilityInfo(
+                base_api_endpoint=[BaseAPIEndpoint(uri="https://h/scim/v2/", api_type=ApiType.SCIM)]
+            ),
+            sql_availability=SqlAvailabilityInfo(database_name="hr_db"),
+        )
+    )
+
+    with patch(
+        "src.common.utils.session_info_metadata.load_session_metadata",
+        new_callable=AsyncMock,
+        return_value=stored,
+    ):
+        rest_target = await get_session_connection_target(session_id, protocol=ApiType.REST)
+        scim_target = await get_session_connection_target(session_id, protocol=ApiType.SCIM)
+        sql_target = await get_session_connection_target(session_id, protocol=ApiType.SQL)
+
+    assert rest_target == ("https://h/api/v2/", "")
+    assert scim_target == ("https://h/scim/v2/", "")
+    assert sql_target == ("", "hr_db")
