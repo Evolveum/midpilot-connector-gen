@@ -1055,7 +1055,6 @@ async def extract_endpoints(
         result = await pregenerate_scim_endpoints(
             session_id=session_id,
             object_class=object_class,
-            base_api_url=base_api_url,
             job_id=job_id,
             relevant_chunks=relevant_chunks,
         )

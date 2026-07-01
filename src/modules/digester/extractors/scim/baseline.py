@@ -102,6 +102,23 @@ def is_scim_standard_class(schemas: Dict[str, Any], class_name: str) -> bool:
     return get_scim_schema(schemas, class_name) is not None
 
 
+def is_scim_extension_schema(schemas: Dict[str, Any], class_name: str) -> bool:
+    """
+    True when ``class_name`` maps to a SCIM *extension* schema rather than a standalone resource.
+
+    Extension schemas (e.g. EnterpriseUser, whose URN is
+    ``urn:ietf:params:scim:schemas:extension:enterprise:2.0:User``) augment another resource and are
+    not exposed under their own endpoint, so no CRUD endpoints should be generated for them.
+    Detection is based on the schema URN (``id``) rather than a hardcoded class name, so it applies to
+    any extension schema the session provides.
+    """
+    schema = get_scim_schema(schemas, class_name)
+    if not schema:
+        return False
+    schema_id = schema.get("id")
+    return isinstance(schema_id, str) and ":extension:" in schema_id.lower()
+
+
 def get_base_scim_object_classes(schemas: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Return the baseline schemas as digester object-class definitions."""
     object_classes: List[Dict[str, Any]] = []
@@ -174,28 +191,6 @@ def get_base_scim_attributes(schemas: Dict[str, Any], class_name: str) -> Dict[s
 
     logger.info("[SCIM:Baseline] Loaded %d attributes for %s", len(attributes), class_name)
     return attributes
-
-
-def get_base_scim_endpoints(class_name: str, base_url: str = "") -> List[Dict[str, Any]]:
-    """Return standard SCIM CRUD endpoints for a resource class (User/Group)."""
-    if class_name == "EnterpriseUser":
-        return []
-
-    resource_path_map = {
-        "user": "/Users",
-        "User": "/Users",
-        "group": "/Groups",
-        "Group": "/Groups",
-    }
-
-    resource_path = resource_path_map.get(class_name)
-    if not resource_path:
-        logger.warning("[SCIM:Baseline] No standard endpoints for class: %s", class_name)
-        return []
-
-    endpoints = generate_scim_crud_endpoints(resource_path, class_name)
-    logger.info("[SCIM:Baseline] Generated %d base endpoints for %s", len(endpoints), class_name)
-    return endpoints
 
 
 def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Dict[str, Any]]:

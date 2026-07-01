@@ -20,8 +20,7 @@ from src.common.utils.normalize import normalize_chunk_pair
 from src.modules.digester.entities.scim_resource import extract_scim_resource_path, infer_scim_resource_path
 from src.modules.digester.extractors.scim.baseline import (
     generate_scim_crud_endpoints,
-    get_base_scim_endpoints,
-    is_scim_standard_class,
+    is_scim_extension_schema,
     load_session_scim_schemas,
 )
 
@@ -32,7 +31,6 @@ async def pregenerate_scim_endpoints(
     *,
     session_id: UUID,
     object_class: str,
-    base_api_url: str,
     job_id: UUID,
     relevant_chunks: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -65,8 +63,9 @@ async def pregenerate_scim_endpoints(
     scim_schemas = await load_session_scim_schemas(session_id)
 
     endpoints: List[Dict[str, Any]]
-    if is_scim_standard_class(scim_schemas, object_class):
-        endpoints = get_base_scim_endpoints(object_class, base_api_url)
+    if is_scim_extension_schema(scim_schemas, object_class):
+        logger.info("[SCIM:Endpoints] %s is a SCIM extension schema; skipping standalone endpoints", object_class)
+        endpoints = []
     else:
         resource_path = extract_scim_resource_path(object_class_data) or infer_scim_resource_path(object_class)
         endpoints = generate_scim_crud_endpoints(resource_path, object_class)
