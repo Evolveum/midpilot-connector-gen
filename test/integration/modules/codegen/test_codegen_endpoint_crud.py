@@ -71,9 +71,11 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
 
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
-            "src.modules.codegen.router.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+            "src.modules.codegen.orchestration.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
         ),
     ):
         job_id = uuid4()
@@ -123,9 +125,11 @@ async def test_generate_update_includes_repair_context_in_job_and_session_input(
 
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
-            "src.modules.codegen.router.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+            "src.modules.codegen.orchestration.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
         ),
     ):
         job_id = uuid4()
@@ -175,7 +179,9 @@ async def test_generate_create_sql_missing_table_metadata_uses_sql_error_detail(
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.codegen.router.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.SQL
+            "src.modules.codegen.orchestration.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SQL,
         ),
     ):
         session_id = uuid4()

@@ -19,7 +19,6 @@ from src.common.database.repositories.session_repository import SessionRepositor
 from src.common.enums import ApiType
 from src.common.errors import (
     AttributesNotFoundError,
-    OperationSurfaceNotFoundError,
     RelationNotFoundError,
     RelationsNotFoundError,
 )
@@ -36,6 +35,11 @@ from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
 from src.modules.codegen import service
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
+from src.modules.codegen.orchestration import (
+    context_payload_from_input,
+    repair_context_from_input,
+    schedule_operation_job,
+)
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
     CodegenOperationInput,
@@ -48,48 +52,12 @@ from src.modules.digester.schemas import RelationsResponse
 router = APIRouter()
 
 
-def _preferred_endpoints_from_input(codegen_input: Optional[CodegenOperationInput]) -> Optional[list[dict]]:
-    if codegen_input is None or not codegen_input.preferred_endpoints:
-        return None
-    return [endpoint.model_dump() for endpoint in codegen_input.preferred_endpoints]
-
-
-def _repair_context_from_input(codegen_input: Optional[CodegenRepairContext]) -> Optional[CodegenRepairContext]:
-    if codegen_input is None or not codegen_input.is_repair:
-        return None
-    return CodegenRepairContext(
-        current_script=codegen_input.current_script,
-        midpoint_errors=codegen_input.midpoint_errors,
-    )
-
-
-def _context_payload_from_input(codegen_input: Optional[CodegenRepairContext]) -> dict:
-    if codegen_input is None or not codegen_input.is_repair:
-        return {}
-    return CodegenRepairContext(
-        current_script=codegen_input.current_script,
-        midpoint_errors=codegen_input.midpoint_errors,
-    ).to_payload()
-
-
 def _preferred_authorizations_from_input(
     codegen_input: Optional[AuthorizationCodegenInput],
 ) -> Optional[list[dict]]:
     if codegen_input is None or not codegen_input.preferred_authorizations:
         return None
     return [authorization.model_dump(exclude_none=True) for authorization in codegen_input.preferred_authorizations]
-
-
-def _missing_operation_surface_detail(protocol: ApiType, object_class: str, session_id: UUID) -> str:
-    if protocol == ApiType.SQL:
-        return (
-            f"No SQL table metadata found for {object_class} in session {session_id}. "
-            "Please run the table/schema extraction step for this object class first."
-        )
-    return (
-        f"No endpoints found for {object_class} in session {session_id}. "
-        f"Please run /classes/{object_class}/endpoints endpoint first."
-    )
 
 
 # Codegen Operations - Authorization
@@ -268,14 +236,15 @@ async def generate_native_schema(
         raise AttributesNotFoundError(object_class, session_id)
 
     protocol = await resolve_effective_api_type(session_id, api_type)
-    repair_context = _repair_context_from_input(codegen_input)
+    repair_context = repair_context_from_input(codegen_input)
+    context_payload = context_payload_from_input(codegen_input)
     job_input = {
         "attributes": attrs,
         "objectClass": object_class,
         "skipCache": skip_cache,
         "apiType": protocol.value,
     }
-    job_input.update(_context_payload_from_input(codegen_input))
+    job_input.update(context_payload)
     worker_kwargs: dict[str, Any] = {"session_id": session_id, "protocol": protocol}
     if repair_context is not None:
         worker_kwargs["repair_context"] = repair_context
@@ -299,7 +268,7 @@ async def generate_native_schema(
             f"{object_class}NativeSchemaInput": {
                 "attributes": attrs,
                 "objectClass": object_class,
-                **_context_payload_from_input(codegen_input),
+                **context_payload,
             },
         },
     )
@@ -390,13 +359,14 @@ async def generate_connid(
     if not attrs:
         raise AttributesNotFoundError(object_class, session_id)
 
-    repair_context = _repair_context_from_input(codegen_input)
+    repair_context = repair_context_from_input(codegen_input)
+    context_payload = context_payload_from_input(codegen_input)
     job_input = {
         "attributes": attrs,
         "objectClass": object_class,
         "skipCache": skip_cache,
     }
-    job_input.update(_context_payload_from_input(codegen_input))
+    job_input.update(context_payload)
     worker_kwargs: dict[str, Any] = {}
     if repair_context is not None:
         worker_kwargs["repair_context"] = repair_context
@@ -420,7 +390,7 @@ async def generate_connid(
             f"{object_class}ConnidInput": {
                 "attributes": attrs,
                 "objectClass": object_class,
-                **_context_payload_from_input(codegen_input),
+                **context_payload,
             },
         },
     )
@@ -512,70 +482,20 @@ async def generate_search(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Load attributes from session
-    attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
-    if not attrs:
-        raise AttributesNotFoundError(object_class, session_id)
-
-    protocol = await resolve_effective_api_type(session_id, api_type)
-    preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
-    repair_context = _repair_context_from_input(codegen_input)
-
-    eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and protocol != ApiType.SCIM:
-        raise OperationSurfaceNotFoundError(_missing_operation_surface_detail(protocol, object_class, session_id))
-
-    job_input = {
-        "sessionId": session_id,
-        "attributes": attrs,
-        "object_class": object_class,
-        "intent": intent,
-        "skipCache": skip_cache,
-        "apiType": protocol.value,
-    }
-    job_input.update(_context_payload_from_input(codegen_input))
-    if preferred_endpoints is not None:
-        job_input["preferredEndpoints"] = preferred_endpoints
-    worker_kwargs = {
-        "attributes": attrs,
-        "session_id": session_id,
-        "object_class": object_class,
-        "intent": intent,
-        "preferred_endpoints": preferred_endpoints,
-        "protocol": protocol,
-    }
-    if repair_context is not None:
-        worker_kwargs["repair_context"] = repair_context
-    if eps is not None:
-        job_input["endpoints"] = eps
-        worker_kwargs["endpoints"] = eps
-
     operation_key = build_search_operation_key(object_class, intent)
-
-    job_id = await schedule_coroutine_job(
-        job_type="codegen.getSearch",
-        input_payload=job_input,
-        worker=service.generate_search_code,
-        worker_args=(),
-        worker_kwargs=worker_kwargs,
-        initial_stage="preparing",
-        initial_message="Preparing code generation from relevant chunks",
+    job_id = await schedule_operation_job(
+        repo=repo,
         session_id=session_id,
-        session_result_key=f"{operation_key}Output",
-    )
-
-    session_input = {"objectClass": object_class, "attributes": attrs, "intent": intent}
-    session_input.update(_context_payload_from_input(codegen_input))
-    if eps is not None:
-        session_input["endpoints"] = eps
-    if preferred_endpoints is not None:
-        session_input["preferredEndpoints"] = preferred_endpoints
-    await repo.update_session(
-        session_id,
-        {
-            f"{operation_key}JobId": str(job_id),
-            f"{operation_key}Input": session_input,
-        },
+        object_class=object_class,
+        skip_cache=skip_cache,
+        api_type=api_type,
+        codegen_input=codegen_input,
+        key_prefix=operation_key,
+        job_type="codegen.getSearch",
+        worker=service.generate_search_code,
+        extra_job_input={"intent": intent},
+        extra_worker_kwargs={"intent": intent},
+        extra_session_input={"intent": intent},
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -669,66 +589,16 @@ async def generate_create(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Load attributes from session
-    attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
-    if not attrs:
-        raise AttributesNotFoundError(object_class, session_id)
-
-    protocol = await resolve_effective_api_type(session_id, api_type)
-    preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
-    repair_context = _repair_context_from_input(codegen_input)
-
-    eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and protocol != ApiType.SCIM:
-        raise OperationSurfaceNotFoundError(_missing_operation_surface_detail(protocol, object_class, session_id))
-
-    job_input = {
-        "sessionId": session_id,
-        "attributes": attrs,
-        "object_class": object_class,
-        "skipCache": skip_cache,
-        "apiType": protocol.value,
-    }
-    job_input.update(_context_payload_from_input(codegen_input))
-    if preferred_endpoints is not None:
-        job_input["preferredEndpoints"] = preferred_endpoints
-    worker_kwargs = {
-        "attributes": attrs,
-        "session_id": session_id,
-        "object_class": object_class,
-        "preferred_endpoints": preferred_endpoints,
-        "protocol": protocol,
-    }
-    if repair_context is not None:
-        worker_kwargs["repair_context"] = repair_context
-    if eps is not None:
-        job_input["endpoints"] = eps
-        worker_kwargs["endpoints"] = eps
-
-    job_id = await schedule_coroutine_job(
-        job_type="codegen.getCreate",
-        input_payload=job_input,
-        worker=service.generate_create_code,
-        worker_args=(),
-        worker_kwargs=worker_kwargs,
-        initial_stage="preparing",
-        initial_message="Preparing code generation from relevant chunks",
+    job_id = await schedule_operation_job(
+        repo=repo,
         session_id=session_id,
-        session_result_key=f"{object_class}CreateOutput",
-    )
-
-    session_input = {"objectClass": object_class, "attributes": attrs}
-    session_input.update(_context_payload_from_input(codegen_input))
-    if eps is not None:
-        session_input["endpoints"] = eps
-    if preferred_endpoints is not None:
-        session_input["preferredEndpoints"] = preferred_endpoints
-    await repo.update_session(
-        session_id,
-        {
-            f"{object_class}CreateJobId": str(job_id),
-            f"{object_class}CreateInput": session_input,
-        },
+        object_class=object_class,
+        skip_cache=skip_cache,
+        api_type=api_type,
+        codegen_input=codegen_input,
+        key_prefix=f"{object_class}Create",
+        job_type="codegen.getCreate",
+        worker=service.generate_create_code,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -816,66 +686,16 @@ async def generate_update(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Load attributes from session
-    attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
-    if not attrs:
-        raise AttributesNotFoundError(object_class, session_id)
-
-    protocol = await resolve_effective_api_type(session_id, api_type)
-    preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
-    repair_context = _repair_context_from_input(codegen_input)
-
-    eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and protocol != ApiType.SCIM:
-        raise OperationSurfaceNotFoundError(_missing_operation_surface_detail(protocol, object_class, session_id))
-
-    job_input = {
-        "sessionId": session_id,
-        "attributes": attrs,
-        "object_class": object_class,
-        "skipCache": skip_cache,
-        "apiType": protocol.value,
-    }
-    job_input.update(_context_payload_from_input(codegen_input))
-    if preferred_endpoints is not None:
-        job_input["preferredEndpoints"] = preferred_endpoints
-    worker_kwargs = {
-        "attributes": attrs,
-        "session_id": session_id,
-        "object_class": object_class,
-        "preferred_endpoints": preferred_endpoints,
-        "protocol": protocol,
-    }
-    if repair_context is not None:
-        worker_kwargs["repair_context"] = repair_context
-    if eps is not None:
-        job_input["endpoints"] = eps
-        worker_kwargs["endpoints"] = eps
-
-    job_id = await schedule_coroutine_job(
-        job_type="codegen.getUpdate",
-        input_payload=job_input,
-        worker=service.generate_update_code,
-        worker_args=(),
-        worker_kwargs=worker_kwargs,
-        initial_stage="preparing",
-        initial_message="Preparing code generation from relevant chunks",
+    job_id = await schedule_operation_job(
+        repo=repo,
         session_id=session_id,
-        session_result_key=f"{object_class}UpdateOutput",
-    )
-
-    session_input = {"objectClass": object_class, "attributes": attrs}
-    session_input.update(_context_payload_from_input(codegen_input))
-    if eps is not None:
-        session_input["endpoints"] = eps
-    if preferred_endpoints is not None:
-        session_input["preferredEndpoints"] = preferred_endpoints
-    await repo.update_session(
-        session_id,
-        {
-            f"{object_class}UpdateJobId": str(job_id),
-            f"{object_class}UpdateInput": session_input,
-        },
+        object_class=object_class,
+        skip_cache=skip_cache,
+        api_type=api_type,
+        codegen_input=codegen_input,
+        key_prefix=f"{object_class}Update",
+        job_type="codegen.getUpdate",
+        worker=service.generate_update_code,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -963,66 +783,16 @@ async def generate_delete(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Load attributes from session
-    attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
-    if not attrs:
-        raise AttributesNotFoundError(object_class, session_id)
-
-    protocol = await resolve_effective_api_type(session_id, api_type)
-    preferred_endpoints = _preferred_endpoints_from_input(codegen_input)
-    repair_context = _repair_context_from_input(codegen_input)
-
-    eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and protocol != ApiType.SCIM:
-        raise OperationSurfaceNotFoundError(_missing_operation_surface_detail(protocol, object_class, session_id))
-
-    job_input = {
-        "sessionId": session_id,
-        "attributes": attrs,
-        "object_class": object_class,
-        "skipCache": skip_cache,
-        "apiType": protocol.value,
-    }
-    job_input.update(_context_payload_from_input(codegen_input))
-    if preferred_endpoints is not None:
-        job_input["preferredEndpoints"] = preferred_endpoints
-    worker_kwargs = {
-        "attributes": attrs,
-        "session_id": session_id,
-        "object_class": object_class,
-        "preferred_endpoints": preferred_endpoints,
-        "protocol": protocol,
-    }
-    if repair_context is not None:
-        worker_kwargs["repair_context"] = repair_context
-    if eps is not None:
-        job_input["endpoints"] = eps
-        worker_kwargs["endpoints"] = eps
-
-    job_id = await schedule_coroutine_job(
-        job_type="codegen.getDelete",
-        input_payload=job_input,
-        worker=service.generate_delete_code,
-        worker_args=(),
-        worker_kwargs=worker_kwargs,
-        initial_stage="preparing",
-        initial_message="Preparing code generation from relevant chunks",
+    job_id = await schedule_operation_job(
+        repo=repo,
         session_id=session_id,
-        session_result_key=f"{object_class}DeleteOutput",
-    )
-
-    session_input = {"objectClass": object_class, "attributes": attrs}
-    session_input.update(_context_payload_from_input(codegen_input))
-    if eps is not None:
-        session_input["endpoints"] = eps
-    if preferred_endpoints is not None:
-        session_input["preferredEndpoints"] = preferred_endpoints
-    await repo.update_session(
-        session_id,
-        {
-            f"{object_class}DeleteJobId": str(job_id),
-            f"{object_class}DeleteInput": session_input,
-        },
+        object_class=object_class,
+        skip_cache=skip_cache,
+        api_type=api_type,
+        codegen_input=codegen_input,
+        key_prefix=f"{object_class}Delete",
+        job_type="codegen.getDelete",
+        worker=service.generate_delete_code,
     )
 
     return JobCreateResponse(jobId=job_id)

@@ -36,9 +36,11 @@ async def test_generate_search_success():
 
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
-            "src.modules.codegen.router.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+            "src.modules.codegen.orchestration.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
         ),
     ):
         job_id = uuid4()
@@ -74,9 +76,11 @@ async def test_generate_search_scim_allows_missing_endpoints():
 
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
-            "src.modules.codegen.router.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.SCIM
+            "src.modules.codegen.orchestration.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SCIM,
         ),
     ):
         job_id = uuid4()
