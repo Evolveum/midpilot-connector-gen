@@ -8,7 +8,7 @@ import ssl
 from typing import Callable
 
 import httpx
-from fastapi import APIRouter, Request, Response
+from fastapi import Request, Response
 from fastapi.routing import APIRoute
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
@@ -101,11 +101,3 @@ class ObservedRoute(APIRoute):
                 return response
 
         return custom_route_handler
-
-
-def ObservableAPIRouter():
-    """
-    Custom API router that automtatically start observing every route with langfuse.
-    """
-
-    return APIRouter(route_class=ObservedRoute)

@@ -7,22 +7,15 @@ Codegen endpoints for V2 API (session-centric).
 All codegen operations are nested under sessions.
 """
 
-from typing import Any, Mapping, Optional, cast
+from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
-from pydantic import ValidationError
+from fastapi import APIRouter, Body, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.config import get_db
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import ApiType
-from src.common.errors import (
-    AttributesNotFoundError,
-    RelationNotFoundError,
-    RelationsNotFoundError,
-)
-from src.common.jobs import schedule_coroutine_job
 from src.common.schema import (
     JobCreateResponse,
     JobStatusMultiDocResponse,
@@ -30,15 +23,15 @@ from src.common.schema import (
 )
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
 from src.common.utils.normalize import normalize_object_class_name
-from src.common.utils.relevance import hydrate_auth_sequences_from_relevance as _hydrate_auth_sequences_from_relevance
-from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.common.utils.status_response import build_multi_doc_status_response, build_stage_status_response
 from src.modules.codegen import service
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.orchestration import (
-    context_payload_from_input,
-    repair_context_from_input,
+    schedule_authorization_job,
+    schedule_connid_job,
+    schedule_native_schema_job,
     schedule_operation_job,
+    schedule_relation_job,
 )
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
@@ -46,18 +39,8 @@ from src.modules.codegen.schema import (
     CodegenRepairContext,
     GroovyCodePayload,
 )
-from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
-from src.modules.digester.schemas import RelationsResponse
 
 router = APIRouter()
-
-
-def _preferred_authorizations_from_input(
-    codegen_input: Optional[AuthorizationCodegenInput],
-) -> Optional[list[dict]]:
-    if codegen_input is None or not codegen_input.preferred_authorizations:
-        return None
-    return [authorization.model_dump(exclude_none=True) for authorization in codegen_input.preferred_authorizations]
 
 
 # Codegen Operations - Authorization
@@ -83,71 +66,13 @@ async def generate_authorization(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    protocol = await resolve_effective_api_type(session_id, api_type)
-
-    input_preferred_authorizations = _preferred_authorizations_from_input(codegen_input)
-
-    auth_output_raw = await repo.get_session_data(session_id, "authOutput")
-    if not isinstance(auth_output_raw, Mapping) or not auth_output_raw:
-        auth_output: Mapping[str, Any] = {"auth": []}
-    else:
-        auth_output = cast(Mapping[str, Any], auth_output_raw)
-        try:
-            auth_output = cast(
-                Mapping[str, Any],
-                await _hydrate_auth_sequences_from_relevance(db, session_id, auth_output),
-            )
-        except Exception:
-            pass
-
-    preferred_authorizations = enrich_preferred_authorizations(
-        auth_output,
-        input_preferred_authorizations,
-    )
-    repair_context = codegen_input.repair_context() if codegen_input else None
-    context_payload = codegen_input.context_payload() if codegen_input else {}
-
-    job_input: dict[str, Any] = {
-        "sessionId": session_id,
-        "auth": auth_output,
-        "skipCache": skip_cache,
-        "apiType": protocol.value,
-    }
-    job_input.update(context_payload)
-    if preferred_authorizations is not None:
-        job_input["preferredAuthorizations"] = preferred_authorizations
-
-    worker_kwargs: dict[str, Any] = {
-        "auth_payload": auth_output,
-        "preferred_authorizations": preferred_authorizations,
-        "session_id": session_id,
-        "protocol": protocol,
-    }
-    if repair_context is not None:
-        worker_kwargs["repair_context"] = repair_context
-
-    job_id = await schedule_coroutine_job(
-        job_type="codegen.getAuthorization",
-        input_payload=job_input,
-        worker=service.generate_authorization_code,
-        worker_args=(),
-        worker_kwargs=worker_kwargs,
-        initial_stage="preparing",
-        initial_message="Preparing authorization code generation from relevant chunks",
+    job_id = await schedule_authorization_job(
+        db=db,
+        repo=repo,
         session_id=session_id,
-        session_result_key="authorizationOutput",
-    )
-
-    session_input: dict[str, Any] = {}
-    session_input.update(context_payload)
-    if preferred_authorizations is not None:
-        session_input["preferredAuthorizations"] = preferred_authorizations
-    await repo.update_session(
-        session_id,
-        {
-            "authorizationJobId": str(job_id),
-            "authorizationInput": session_input,
-        },
+        api_type=api_type,
+        skip_cache=skip_cache,
+        codegen_input=codegen_input,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -230,47 +155,13 @@ async def generate_native_schema(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Load attributes from session
-    attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
-    if not attrs:
-        raise AttributesNotFoundError(object_class, session_id)
-
-    protocol = await resolve_effective_api_type(session_id, api_type)
-    repair_context = repair_context_from_input(codegen_input)
-    context_payload = context_payload_from_input(codegen_input)
-    job_input = {
-        "attributes": attrs,
-        "objectClass": object_class,
-        "skipCache": skip_cache,
-        "apiType": protocol.value,
-    }
-    job_input.update(context_payload)
-    worker_kwargs: dict[str, Any] = {"session_id": session_id, "protocol": protocol}
-    if repair_context is not None:
-        worker_kwargs["repair_context"] = repair_context
-
-    job_id = await schedule_coroutine_job(
-        job_type="codegen.getNativeSchema",
-        input_payload=job_input,
-        worker=service.generate_native_schema_code,
-        worker_args=(attrs, object_class),
-        worker_kwargs=worker_kwargs,
-        initial_stage="queue",
-        initial_message="Queued code generation",
+    job_id = await schedule_native_schema_job(
+        repo=repo,
         session_id=session_id,
-        session_result_key=f"{object_class}NativeSchemaOutput",
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            f"{object_class}NativeSchemaJobId": str(job_id),
-            f"{object_class}NativeSchemaInput": {
-                "attributes": attrs,
-                "objectClass": object_class,
-                **context_payload,
-            },
-        },
+        object_class=object_class,
+        api_type=api_type,
+        skip_cache=skip_cache,
+        codegen_input=codegen_input,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -354,45 +245,12 @@ async def generate_connid(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Load attributes from session
-    attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
-    if not attrs:
-        raise AttributesNotFoundError(object_class, session_id)
-
-    repair_context = repair_context_from_input(codegen_input)
-    context_payload = context_payload_from_input(codegen_input)
-    job_input = {
-        "attributes": attrs,
-        "objectClass": object_class,
-        "skipCache": skip_cache,
-    }
-    job_input.update(context_payload)
-    worker_kwargs: dict[str, Any] = {}
-    if repair_context is not None:
-        worker_kwargs["repair_context"] = repair_context
-
-    job_id = await schedule_coroutine_job(
-        job_type="codegen.getConnID",
-        input_payload=job_input,
-        worker=service.generate_conn_id_code,
-        worker_args=(attrs, object_class),
-        worker_kwargs=worker_kwargs,
-        initial_stage="queue",
-        initial_message="Queued code generation",
+    job_id = await schedule_connid_job(
+        repo=repo,
         session_id=session_id,
-        session_result_key=f"{object_class}ConnidOutput",
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            f"{object_class}ConnidJobId": str(job_id),
-            f"{object_class}ConnidInput": {
-                "attributes": attrs,
-                "objectClass": object_class,
-                **context_payload,
-            },
-        },
+        object_class=object_class,
+        skip_cache=skip_cache,
+        codegen_input=codegen_input,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -873,57 +731,11 @@ async def generate_relation_code(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    # Load relations from session
-    relations_json = await repo.get_session_data(session_id, "relationsOutput")
-    if not relations_json:
-        raise RelationsNotFoundError(session_id)
-
-    try:
-        relations_model = RelationsResponse.model_validate(relations_json)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={
-                "message": "Stored relationsOutput is invalid. Re-run relations extraction or override the relations payload.",
-                "errors": exc.errors(include_input=False),
-            },
-        ) from exc
-
-    selected_relation = next(
-        (relation for relation in relations_model.relations if relation.name == relation_name), None
-    )
-    if selected_relation is None:
-        raise RelationNotFoundError(relation_name, session_id)
-
-    selected_relations_model = RelationsResponse(relations=[selected_relation])
-    relations_payload = selected_relations_model.model_dump(by_alias=True, mode="json")
-
-    job_id = await schedule_coroutine_job(
-        job_type="codegen.getRelation",
-        input_payload={
-            "relations": relations_payload,
-            "relationName": relation_name,
-            "sessionId": session_id,
-            "skipCache": skip_cache,
-        },
-        worker=service.generate_relation_code,
-        worker_kwargs={
-            "relations": selected_relations_model,
-            "relation_name": relation_name,
-            "session_id": session_id,
-        },
-        initial_stage="preparing",
-        initial_message="Queued code generation from relevant chunks",
+    job_id = await schedule_relation_job(
+        repo=repo,
         session_id=session_id,
-        session_result_key=f"{relation_name}CodeOutput",
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            f"{relation_name}CodeJobId": str(job_id),
-            f"{relation_name}CodeInput": {"relations": relations_payload},
-        },
+        relation_name=relation_name,
+        skip_cache=skip_cache,
     )
 
     return JobCreateResponse(jobId=job_id)

@@ -30,9 +30,9 @@ async def test_generate_native_schema_success():
 
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
-            "src.modules.codegen.router.resolve_effective_api_type",
+            "src.modules.codegen.orchestration.resolve_effective_api_type",
             new_callable=AsyncMock,
             return_value=ApiType.REST,
         ),
@@ -79,9 +79,9 @@ async def test_generate_native_schema_uses_repair_context_only():
 
     with (
         patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
-            "src.modules.codegen.router.resolve_effective_api_type",
+            "src.modules.codegen.orchestration.resolve_effective_api_type",
             new_callable=AsyncMock,
             return_value=ApiType.REST,
         ),

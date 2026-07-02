@@ -173,3 +173,16 @@ class RelationNotFoundError(AppError):
 
     def __init__(self, relation_name: str, session_id: UUID):
         super().__init__(f"Relation {relation_name} not found in session {session_id}.")
+
+
+class InvalidRelationsOutputError(AppError):
+    """Raised when stored relationsOutput exists but does not match the expected contract."""
+
+    status_code = 422
+    code = "invalid_relations_output"
+
+    def __init__(self, session_id: UUID):
+        super().__init__(
+            f"Stored relationsOutput is invalid in session {session_id}. "
+            "Re-run relations extraction or override the relations payload."
+        )
