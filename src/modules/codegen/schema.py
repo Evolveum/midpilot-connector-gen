@@ -1,6 +1,8 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, TypeAlias, Union
 
@@ -182,8 +184,6 @@ class CodegenRepairContext(BaseModel):
     def to_payload(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, mode="json", exclude_none=True)
 
-
-class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
     def repair_context(self) -> CodegenRepairContext | None:
         if not self.is_repair:
             return None
@@ -195,20 +195,22 @@ class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
     def context_payload(self) -> dict[str, Any]:
         if not self.is_repair:
             return {}
-        return CodegenRepairContext(
-            current_script=self.current_script,
-            midpoint_errors=self.midpoint_errors,
-        ).to_payload()
+        repair_context = self.repair_context()
+        return repair_context.to_payload() if repair_context is not None else {}
+
+
+class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
+    def preferred_endpoints_payload(self) -> list[dict[str, Any]] | None:
+        if not self.preferred_endpoints:
+            return None
+        return [endpoint.model_dump() for endpoint in self.preferred_endpoints]
 
 
 class AuthorizationCodegenInput(PreferredAuthorizationsInput, CodegenRepairContext):
-    def repair_context(self) -> CodegenRepairContext | None:
-        if not self.is_repair:
+    def preferred_authorizations_payload(self) -> list[dict[str, Any]] | None:
+        if not self.preferred_authorizations:
             return None
-        return CodegenRepairContext(
-            current_script=self.current_script,
-            midpoint_errors=self.midpoint_errors,
-        )
+        return [authorization.model_dump(exclude_none=True) for authorization in self.preferred_authorizations]
 
     def context_payload(self) -> dict[str, Any]:
         payload = self.model_dump(
@@ -218,10 +220,5 @@ class AuthorizationCodegenInput(PreferredAuthorizationsInput, CodegenRepairConte
             exclude={"current_script", "midpoint_errors"},
         )
         if self.is_repair:
-            payload.update(
-                CodegenRepairContext(
-                    current_script=self.current_script,
-                    midpoint_errors=self.midpoint_errors,
-                ).to_payload()
-            )
+            payload.update(super().context_payload())
         return payload

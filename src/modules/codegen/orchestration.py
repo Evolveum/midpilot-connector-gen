@@ -36,10 +36,12 @@ from src.common.jobs import schedule_coroutine_job
 from src.common.utils.relevance import hydrate_auth_sequences_from_relevance
 from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.modules.codegen import service
+from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
     CodegenOperationInput,
     CodegenRepairContext,
+    GroovyCodePayload,
 )
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
 from src.modules.digester.schemas import RelationsResponse
@@ -47,42 +49,6 @@ from src.modules.digester.schemas import RelationsResponse
 # Shared preparing-stage metadata for the search/create/update/delete jobs.
 _INITIAL_STAGE = "preparing"
 _INITIAL_MESSAGE = "Preparing code generation from relevant chunks"
-
-
-def preferred_endpoints_from_input(
-    codegen_input: Optional[CodegenOperationInput],
-) -> Optional[list[dict]]:
-    if codegen_input is None or not codegen_input.preferred_endpoints:
-        return None
-    return [endpoint.model_dump() for endpoint in codegen_input.preferred_endpoints]
-
-
-def repair_context_from_input(
-    codegen_input: Optional[CodegenRepairContext],
-) -> Optional[CodegenRepairContext]:
-    if codegen_input is None or not codegen_input.is_repair:
-        return None
-    return CodegenRepairContext(
-        current_script=codegen_input.current_script,
-        midpoint_errors=codegen_input.midpoint_errors,
-    )
-
-
-def context_payload_from_input(codegen_input: Optional[CodegenRepairContext]) -> dict:
-    if codegen_input is None or not codegen_input.is_repair:
-        return {}
-    return CodegenRepairContext(
-        current_script=codegen_input.current_script,
-        midpoint_errors=codegen_input.midpoint_errors,
-    ).to_payload()
-
-
-def preferred_authorizations_from_input(
-    codegen_input: Optional[AuthorizationCodegenInput],
-) -> Optional[list[dict]]:
-    if codegen_input is None or not codegen_input.preferred_authorizations:
-        return None
-    return [authorization.model_dump(exclude_none=True) for authorization in codegen_input.preferred_authorizations]
 
 
 def missing_operation_surface_detail(protocol: ApiType, object_class: str, session_id: UUID) -> str:
@@ -132,9 +98,9 @@ async def schedule_operation_job(
         raise AttributesNotFoundError(object_class, session_id)
 
     protocol = await resolve_effective_api_type(session_id, api_type)
-    preferred_endpoints = preferred_endpoints_from_input(codegen_input)
-    repair_context = repair_context_from_input(codegen_input)
-    context_payload = context_payload_from_input(codegen_input)
+    preferred_endpoints = codegen_input.preferred_endpoints_payload() if codegen_input is not None else None
+    repair_context = codegen_input.repair_context() if codegen_input is not None else None
+    context_payload = codegen_input.context_payload() if codegen_input is not None else {}
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
     if eps is None and protocol != ApiType.SCIM:
@@ -215,7 +181,9 @@ async def schedule_authorization_job(
     """
     protocol = await resolve_effective_api_type(session_id, api_type)
 
-    input_preferred_authorizations = preferred_authorizations_from_input(codegen_input)
+    input_preferred_authorizations = (
+        codegen_input.preferred_authorizations_payload() if codegen_input is not None else None
+    )
 
     auth_output_raw = await repo.get_session_data(session_id, "authOutput")
     if not isinstance(auth_output_raw, Mapping) or not auth_output_raw:
@@ -300,8 +268,8 @@ async def schedule_native_schema_job(
         raise AttributesNotFoundError(object_class, session_id)
 
     protocol = await resolve_effective_api_type(session_id, api_type)
-    repair_context = repair_context_from_input(codegen_input)
-    context_payload = context_payload_from_input(codegen_input)
+    repair_context = codegen_input.repair_context() if codegen_input is not None else None
+    context_payload = codegen_input.context_payload() if codegen_input is not None else {}
     job_input = {
         "attributes": attrs,
         "objectClass": object_class,
@@ -358,8 +326,8 @@ async def schedule_connid_job(
     if not attrs:
         raise AttributesNotFoundError(object_class, session_id)
 
-    repair_context = repair_context_from_input(codegen_input)
-    context_payload = context_payload_from_input(codegen_input)
+    repair_context = codegen_input.repair_context() if codegen_input is not None else None
+    context_payload = codegen_input.context_payload() if codegen_input is not None else {}
     job_input = {
         "attributes": attrs,
         "objectClass": object_class,
@@ -395,6 +363,44 @@ async def schedule_connid_job(
     )
 
     return job_id
+
+
+async def store_authorization_override(
+    repo: SessionRepository,
+    session_id: UUID,
+    code: GroovyCodePayload,
+) -> None:
+    await repo.update_session(session_id, {"authorizationOutput": code.model_dump()})
+
+
+async def store_object_class_output_override(
+    repo: SessionRepository,
+    session_id: UUID,
+    object_class: str,
+    operation_name: str,
+    code: GroovyCodePayload,
+) -> None:
+    await repo.update_session(session_id, {f"{object_class}{operation_name}Output": code.model_dump()})
+
+
+async def store_search_override(
+    repo: SessionRepository,
+    session_id: UUID,
+    object_class: str,
+    intent: SearchIntent,
+    code: GroovyCodePayload,
+) -> None:
+    operation_key = build_search_operation_key(object_class, intent)
+    await repo.update_session(session_id, {f"{operation_key}Output": code.model_dump()})
+
+
+async def store_relation_override(
+    repo: SessionRepository,
+    session_id: UUID,
+    relation_name: str,
+    code: GroovyCodePayload,
+) -> None:
+    await repo.update_session(session_id, {f"{relation_name}CodeOutput": code.model_dump()})
 
 
 async def schedule_relation_job(

@@ -32,6 +32,10 @@ from src.modules.codegen.orchestration import (
     schedule_native_schema_job,
     schedule_operation_job,
     schedule_relation_job,
+    store_authorization_override,
+    store_object_class_output_override,
+    store_relation_override,
+    store_search_override,
 )
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
@@ -120,8 +124,7 @@ async def override_authorization(
     """
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-
-    await repo.update_session(session_id, {"authorizationOutput": authorization_code.model_dump()})
+    await store_authorization_override(repo, session_id, authorization_code)
 
     return {
         "message": "Authorization code overridden successfully",
@@ -214,8 +217,7 @@ async def override_native_schema(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-
-    await repo.update_session(session_id, {f"{object_class}NativeSchemaOutput": native_schema.model_dump()})
+    await store_object_class_output_override(repo, session_id, object_class, "NativeSchema", native_schema)
 
     return {
         "message": f"Native schema for {object_class} overridden successfully",
@@ -303,8 +305,7 @@ async def override_connid(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-
-    await repo.update_session(session_id, {f"{object_class}ConnidOutput": connid.model_dump()})
+    await store_object_class_output_override(repo, session_id, object_class, "Connid", connid)
 
     return {
         "message": f"ConnID for {object_class} overridden successfully",
@@ -410,9 +411,7 @@ async def override_search(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-
-    operation_key = build_search_operation_key(object_class, intent)
-    await repo.update_session(session_id, {f"{operation_key}Output": search_code.model_dump()})
+    await store_search_override(repo, session_id, object_class, intent, search_code)
 
     return {
         "message": f"Search code for {object_class} overridden successfully",
@@ -508,8 +507,7 @@ async def override_create(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-
-    await repo.update_session(session_id, {f"{object_class}CreateOutput": create_code.model_dump()})
+    await store_object_class_output_override(repo, session_id, object_class, "Create", create_code)
 
     return {
         "message": f"Create code for {object_class} overridden successfully",
@@ -605,8 +603,7 @@ async def override_update(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-
-    await repo.update_session(session_id, {f"{object_class}UpdateOutput": update_code.model_dump()})
+    await store_object_class_output_override(repo, session_id, object_class, "Update", update_code)
 
     return {
         "message": f"Update code for {object_class} overridden successfully",
@@ -702,8 +699,7 @@ async def override_delete(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-
-    await repo.update_session(session_id, {f"{object_class}DeleteOutput": delete_code.model_dump()})
+    await store_object_class_output_override(repo, session_id, object_class, "Delete", delete_code)
 
     return {
         "message": f"Delete code for {object_class} overridden successfully",
@@ -785,8 +781,7 @@ async def override_relation_code(
     """
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-
-    await repo.update_session(session_id, {f"{relation_name}CodeOutput": relation_code.model_dump()})
+    await store_relation_override(repo, session_id, relation_name, relation_code)
 
     return {
         "message": f"Relation code for {relation_name} overridden successfully",
