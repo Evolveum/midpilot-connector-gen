@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, cast
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
 from src.common.database.config import async_session_maker
@@ -40,26 +40,10 @@ from src.modules.codegen.selection.authorization import (
 )
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
-from src.modules.codegen.utils.map_to_record import attributes_to_records_for_codegen
-from src.modules.digester.schemas import AttributeResponse, RelationsResponse
+from src.modules.codegen.utils.prompt_records import build_attribute_mapping_records
+from src.modules.digester.schemas import RelationsResponse
 
 logger = logging.getLogger(__name__)
-
-
-def _attrs_map_from_payload(payload: AttributesPayload) -> Dict[str, Dict[str, Any]]:
-    """
-    Normalize attributes payload (pydantic model or mapping) into a dict[name] -> dict(info).
-    """
-    if isinstance(payload, AttributeResponse):
-        attrs = payload.attributes or {}
-        return {k: v.model_dump() for k, v in attrs.items()}
-
-    if isinstance(payload, Mapping):
-        if "attributes" in payload and isinstance(payload["attributes"], Mapping):
-            return dict(cast(Mapping[str, Dict[str, Any]], payload["attributes"]))
-        return dict(payload)  # already a flat map
-
-    return {}
 
 
 def _collect_pairs(val: Any) -> List[Tuple[int, Optional[str]]]:
@@ -264,8 +248,7 @@ async def generate_native_schema_code(
     assets = get_operation_assets("native_schema", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
 
-    attrs_map = _attrs_map_from_payload(attributes_payload)
-    records = attributes_to_records_for_codegen(attrs_map)
+    records = build_attribute_mapping_records(attributes_payload)
 
     code = await generate_groovy(
         records=records,
@@ -350,8 +333,7 @@ async def generate_conn_id_code(
         __package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc"
     )
 
-    attrs_map = _attrs_map_from_payload(attributes_payload)
-    records = attributes_to_records_for_codegen(attrs_map)
+    records = build_attribute_mapping_records(attributes_payload)
 
     code = await generate_groovy(
         records=records,

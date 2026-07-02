@@ -9,13 +9,13 @@ from typing import Any, Dict, Optional
 from src.common.enums import ApiType
 from src.modules.codegen.core.base import (
     BaseGroovyGenerator,
-    attributes_to_records,
     endpoints_to_records,
 )
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, OperationConfig
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
+from src.modules.codegen.utils.prompt_records import build_attribute_context_records
 from src.modules.digester.schemas import RelationsResponse
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class SearchGenerator(BaseGroovyGenerator):
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
         endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
         return {
-            "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
+            "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
             "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
         }
 
@@ -101,7 +101,7 @@ class CreateGenerator(BaseGroovyGenerator):
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
         endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
         return {
-            "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
+            "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
             "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
         }
 
@@ -144,7 +144,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
         endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
         return {
-            "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
+            "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
             "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
         }
 
@@ -187,7 +187,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
         endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
         return {
-            "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
+            "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
             "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
         }
 

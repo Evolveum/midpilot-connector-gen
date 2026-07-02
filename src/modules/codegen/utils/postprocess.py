@@ -32,7 +32,7 @@ def strip_markdown_fences(text: str) -> str:
     return t
 
 
-def _coerce_llm_text(output: Any) -> str:
+def coerce_llm_text(output: Any) -> str:
     """Normalize different LLM return shapes to plain text."""
     if output is None:
         return ""

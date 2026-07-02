@@ -18,7 +18,7 @@ from src.common.llm import get_default_llm, make_basic_chain
 from src.modules.codegen.repair import build_repair_prompt_vars
 from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
-from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
+from src.modules.codegen.utils.postprocess import coerce_llm_text, strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ async def generate_groovy(
         await update_job_progress(job_id, stage=JobStage.generating, message=f"{action} {logger_prefix or 'code'}")
         logger.info("[Codegen:%s] %s Groovy for %s", logger_prefix, action, object_class)
         resp = await chain.ainvoke(vars_payload, config=RunnableConfig(callbacks=[langfuse_handler]))
-        text = _coerce_llm_text(resp).strip()
+        text = coerce_llm_text(resp).strip()
         if not text:
             logger.warning("[Codegen:%s] Empty LLM response for %s", logger_prefix, object_class)
             return f'objectClass("{object_class}") {{}}'

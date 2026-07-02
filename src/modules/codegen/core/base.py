@@ -27,11 +27,11 @@ from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_user_prompt,
 )
 from src.modules.codegen.repair import build_repair_prompt_vars, get_repair_initial_result
-from src.modules.codegen.schema import AttributesPayload, CodegenRepairContext, EndpointsPayload, OperationConfig
+from src.modules.codegen.schema import CodegenRepairContext, EndpointsPayload, OperationConfig
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
-from src.modules.codegen.utils.map_to_record import _without_relevant_documentations
-from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
-from src.modules.digester.schemas import AttributeResponse, EndpointResponse
+from src.modules.codegen.utils.postprocess import coerce_llm_text, strip_markdown_fences
+from src.modules.codegen.utils.prompt_records import strip_relevant_documentation_refs
+from src.modules.digester.schemas import EndpointResponse
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +238,7 @@ class BaseGroovyGenerator(ABC):
                 {"groovy_code": code},
                 config=RunnableConfig(callbacks=[langfuse_handler]),
             )
-            candidate = strip_markdown_fences(_coerce_llm_text(response).strip())
+            candidate = strip_markdown_fences(coerce_llm_text(response).strip())
             if not candidate:
                 logger.warning(
                     "%s Cleanup pass returned empty output; keeping previous code", self.config.logger_prefix
@@ -369,7 +369,7 @@ class BaseGroovyGenerator(ABC):
                 prompt_vars.update(input_data)
 
                 response = await chain.ainvoke(prompt_vars, config=RunnableConfig(callbacks=[langfuse_handler]))
-                code = _coerce_llm_text(response).strip()
+                code = coerce_llm_text(response).strip()
 
                 if code:
                     candidate = strip_markdown_fences(code)
@@ -403,46 +403,20 @@ class BaseGroovyGenerator(ABC):
         return result
 
 
-def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
-    """Convert attributes payload to list of records."""
-    if isinstance(payload, AttributeResponse):
-        records: List[Dict[str, Any]] = []
-        for name, info in (payload.attributes or {}).items():
-            item = {"name": name}
-            item.update(_without_relevant_documentations(info.model_dump()))
-            records.append(item)
-        return records
-
-    if isinstance(payload, Mapping):
-        if "attributes" in payload and isinstance(payload["attributes"], Mapping):
-            attrs_map: Mapping[str, Any] = cast(Mapping[str, Any], payload["attributes"])
-        else:
-            attrs_map = payload
-
-        records_alt: List[Dict[str, Any]] = []
-        for name, info in attrs_map.items():
-            item_alt: Dict[str, Any] = {"name": name}
-            if isinstance(info, Mapping):
-                item_alt.update(_without_relevant_documentations(info))
-            records_alt.append(item_alt)
-        return records_alt
-    return []
-
-
 def endpoints_to_records(payload: EndpointsPayload) -> List[Dict[str, Any]]:
     """Convert endpoints payload to list of records."""
     if isinstance(payload, EndpointResponse):
         return [
-            _without_relevant_documentations(cast(Dict[str, Any], ep.model_dump())) for ep in (payload.endpoints or [])
+            strip_relevant_documentation_refs(cast(Dict[str, Any], ep.model_dump())) for ep in (payload.endpoints or [])
         ]
 
     if isinstance(payload, Mapping):
         if "endpoints" in payload and isinstance(payload["endpoints"], list):
             return [
-                _without_relevant_documentations(cast(Mapping[str, Any], endpoint))
+                strip_relevant_documentation_refs(cast(Mapping[str, Any], endpoint))
                 for endpoint in payload["endpoints"]
                 if isinstance(endpoint, Mapping)
             ]
         if all(k in payload for k in ("path", "method", "description")):
-            return [_without_relevant_documentations(payload)]
+            return [strip_relevant_documentation_refs(payload)]
     return []
