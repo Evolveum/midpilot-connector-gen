@@ -148,7 +148,7 @@ async def _sort_bucket_by_importance(
             await invoke_llm(
                 sort_chain,
                 {"items_json": items_json, "confidence_level": confidence_level},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:SortObjectClasses"),
             ),
         )
         logger.debug("[Digester:ObjectClasses] Bucket sorting LLM raw (%s): %r", confidence_level, (sort_result or ""))
@@ -287,7 +287,7 @@ async def deduplicate_and_sort_object_classes(
             await invoke_llm(
                 confidence_chain,
                 {},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:ObjectClassConfidence"),
             ),
         )
         logger.info("[Digester:ObjectClasses] Confidence LLM raw: %r", (confidence_result or ""))

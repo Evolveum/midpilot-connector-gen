@@ -197,7 +197,9 @@ async def rank_candidate_links(
     )
 
     try:
-        ranked = await chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler]))
+        ranked = await chain.ainvoke(
+            {}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Discovery:RankLinks")
+        )
     except Exception as exc:
         logger.error("[Discovery:Rank] LLM ranking call failed: %s", exc)
         ranked = None

@@ -132,7 +132,7 @@ async def lookup_api_type_web_search(application_name: str) -> ApiTypeSignalResu
             await invoke_llm(
                 chain,
                 {"application_name": application_name, "search_results": search_results},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:ApiTypeWebSearch"),
             ),
         )
     except Exception as exc:

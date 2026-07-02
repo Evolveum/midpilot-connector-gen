@@ -175,7 +175,7 @@ async def extract_endpoints(
                     await invoke_llm(
                         chain,
                         {"chunk": chunk, "summary": summary, "tags": tags},
-                        config=RunnableConfig(callbacks=[langfuse_handler]),
+                        config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:ExtractEndpoints"),
                     ),
                 )
 
@@ -233,7 +233,9 @@ async def extract_endpoints(
                                 "endpoint": endpoint.model_dump(by_alias=True, exclude={"relevant_documentations"}),
                                 "chunk": context_snippet,
                             },
-                            config=RunnableConfig(callbacks=[langfuse_handler]),
+                            config=RunnableConfig(
+                                callbacks=[langfuse_handler], run_name="Digester:CheckEndpointParams"
+                            ),
                         ),
                     )
                     if checked_result:

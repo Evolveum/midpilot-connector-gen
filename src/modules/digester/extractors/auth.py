@@ -152,7 +152,7 @@ async def build_auth_items(auth_info: List[AuthProcessingInfo], job_id: UUID) ->
             system_prompt=auth_build_system_prompt,
             user_prompt=auth_build_user_prompt,
             parse_fn=parse_fn,
-            logger_prefix="[Digester:Auth] [Build] ",
+            logger_prefix="[Digester:Auth:Build] ",
             job_id=job_id,
         )
 
@@ -294,7 +294,7 @@ async def deduplicate_auth(
             await invoke_llm(
                 chain,
                 {"auth_list": json.dumps([auth.model_dump() for auth in auth_list])},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:DedupAuth"),
             ),
         )
         logger.debug("[Digester:Auth] LLM result in deduplication: %r", (result or ""))
@@ -400,7 +400,7 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
             await invoke_llm(
                 chain,
                 {"items_json": items_json},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:SortAuth"),
             ),
         )
 

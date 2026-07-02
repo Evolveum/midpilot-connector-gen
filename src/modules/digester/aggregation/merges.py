@@ -284,7 +284,7 @@ async def merge_attribute_candidates(
                     "object_class": object_class,
                     "attributes_list": json.dumps([item.model_dump() for item in merged]),
                 },
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:DedupAttributes"),
             ),
         )
 

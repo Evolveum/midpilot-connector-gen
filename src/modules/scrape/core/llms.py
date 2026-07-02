@@ -54,7 +54,9 @@ async def get_relevant_links_from_text(prompts: Tuple[str, str]) -> RelevantLink
     )
 
     try:
-        result = await chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler]))
+        result = await chain.ainvoke(
+            {}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Scrape:RelevantLinks")
+        )
         logger.debug("[LLM] LLM call successful for relevant links extraction")
         return result
     except Exception as e:

@@ -236,7 +236,10 @@ class BaseGroovyGenerator(ABC):
             chain = make_basic_chain(prompt, llm, StrOutputParser())
             response = await chain.ainvoke(
                 {"groovy_code": code},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(
+                    callbacks=[langfuse_handler],
+                    run_name=f"{self.config.logger_prefix.strip('[]')}:cleanup",
+                ),
             )
             candidate = strip_markdown_fences(coerce_llm_text(response).strip())
             if not candidate:
@@ -368,7 +371,13 @@ class BaseGroovyGenerator(ABC):
                 prompt_vars = {"idx": idx, "chunk": chunk, "result": result}
                 prompt_vars.update(input_data)
 
-                response = await chain.ainvoke(prompt_vars, config=RunnableConfig(callbacks=[langfuse_handler]))
+                response = await chain.ainvoke(
+                    prompt_vars,
+                    config=RunnableConfig(
+                        callbacks=[langfuse_handler],
+                        run_name=self.config.logger_prefix.strip("[]"),
+                    ),
+                )
                 code = coerce_llm_text(response).strip()
 
                 if code:

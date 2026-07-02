@@ -46,7 +46,10 @@ async def _invoke_extraction_chain_with_retry(
             return await invoke_llm(
                 extraction_chain,
                 payload,
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(
+                    callbacks=[langfuse_handler],
+                    run_name=logger_prefix.strip("[] ") or "Digester:ChunkExtraction",
+                ),
             )
         except Exception as exc:
             if attempt >= max_attempts or not is_transient_llm_error(exc):
@@ -717,7 +720,10 @@ async def run_item_build_parallel(
             await invoke_llm(
                 chain,
                 {"item": item},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(
+                    callbacks=[langfuse_handler],
+                    run_name=logger_prefix.strip("[] ") or "Digester:BuildItem",
+                ),
             ),
         )
         logger.debug("%sLLM result: %r", logger_prefix, (result or ""))

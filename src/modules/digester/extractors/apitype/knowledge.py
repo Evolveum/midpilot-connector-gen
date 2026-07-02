@@ -62,7 +62,7 @@ async def lookup_api_type_knowledge(application_name: str) -> ApiTypeSignalResul
             await invoke_llm(
                 chain,
                 {"application_name": application_name},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:ApiTypeKnowledge"),
             ),
         )
     except Exception as exc:

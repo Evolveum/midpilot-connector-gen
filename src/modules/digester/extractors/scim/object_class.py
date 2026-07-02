@@ -380,7 +380,7 @@ async def extract_custom_scim_classes(
         system_prompt=scim_object_class_system_prompt,
         user_prompt=scim_object_class_user_prompt,
         parse_fn=parse_fn,
-        logger_prefix="[SCIM:ObjectClasses] ",
+        logger_prefix="[Digester:SCIM:ObjectClasses] ",
         job_id=job_id,
         chunk_id=chunk_id,
         track_chunk_per_item=True,

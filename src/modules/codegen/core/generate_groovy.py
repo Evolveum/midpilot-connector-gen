@@ -52,7 +52,13 @@ async def generate_groovy(
         action = "Repairing" if repair_context else "Generating"
         await update_job_progress(job_id, stage=JobStage.generating, message=f"{action} {logger_prefix or 'code'}")
         logger.info("[Codegen:%s] %s Groovy for %s", logger_prefix, action, object_class)
-        resp = await chain.ainvoke(vars_payload, config=RunnableConfig(callbacks=[langfuse_handler]))
+        resp = await chain.ainvoke(
+            vars_payload,
+            config=RunnableConfig(
+                callbacks=[langfuse_handler],
+                run_name=f"codegen.{(logger_prefix or 'groovy').lower()}",
+            ),
+        )
         text = coerce_llm_text(resp).strip()
         if not text:
             logger.warning("[Codegen:%s] Empty LLM response for %s", logger_prefix, object_class)

@@ -154,7 +154,7 @@ async def rank_connectivity_candidates(
         result = await invoke_llm(
             chain,
             {"candidates": candidates_json, "count": len(candidates)},
-            config=RunnableConfig(callbacks=[langfuse_handler]),
+            config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:RankConnectivityEndpoints"),
         )
         if not result or not result.ranked_endpoints:
             logger.warning("[Digester:ConnectivityEndpoint] Ranking LLM returned empty result, using original order")
