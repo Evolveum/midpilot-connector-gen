@@ -70,7 +70,7 @@ async def test_extract_class_attributes_success():
             new_callable=AsyncMock,
             return_value=[],
         ),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
 
@@ -139,7 +139,7 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
             "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new=AsyncMock(return_value=[{"docId": doc_id, "chunkId": chunk_id, "content": "User mapping docs"}]),
         ),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
 

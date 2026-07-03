@@ -28,7 +28,7 @@ async def test_extract_object_classes_success():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
 

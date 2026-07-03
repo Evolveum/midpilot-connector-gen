@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester import service
+from src.modules.digester.extractors.rest.relations import extract_relations
 from src.modules.digester.schemas import RelationRecord
 
 
@@ -31,9 +31,9 @@ async def test_extract_relations_success(mock_llm, mock_digester_update_job_prog
     relevant_object_class = "User"
 
     with (
-        patch("src.modules.digester.service._extract_relations"),
-        patch("src.modules.digester.service.merge_relations_results"),
-        patch("src.modules.digester.service.process_over_chunks") as mock_process,
+        patch("src.modules.digester.extractors.rest.relations.extract_relations_raw"),
+        patch("src.modules.digester.extractors.rest.relations.merge_relations_results"),
+        patch("src.modules.digester.extractors.rest.relations.process_over_chunks") as mock_process,
     ):
         mock_process.return_value = {
             "result": {
@@ -53,7 +53,7 @@ async def test_extract_relations_success(mock_llm, mock_digester_update_job_prog
         }
 
         job_id = uuid4()
-        result = await service.extract_relations(fake_doc_items, relevant_object_class, job_id)
+        result = await extract_relations(fake_doc_items, relevant_object_class, job_id)
 
         assert "result" in result
         assert "relevantDocumentations" in result
@@ -69,10 +69,10 @@ async def test_extract_relations_no_relations_found(mock_llm, mock_digester_upda
     """Test extract_relations when no relations are discovered."""
     fake_doc_items = [{"uuid": str(uuid4()), "content": "No relations", "summary": "", "@metadata": {}}]
 
-    with patch("src.modules.digester.service.process_over_chunks") as mock_process:
+    with patch("src.modules.digester.extractors.rest.relations.process_over_chunks") as mock_process:
         mock_process.return_value = {"result": {"relations": []}, "relevantDocumentations": []}
 
-        result = await service.extract_relations(fake_doc_items, "User", uuid4())
+        result = await extract_relations(fake_doc_items, "User", uuid4())
 
         assert result["result"]["relations"] == []
 
@@ -119,10 +119,12 @@ async def test_extract_relations_applies_final_sort_after_merge(mock_llm, mock_d
         return {"result": merged, "relevantDocumentations": []}
 
     with (
-        patch("src.modules.digester.service._extract_relations"),
-        patch("src.modules.digester.service.process_over_chunks", side_effect=fake_process_over_chunks),
+        patch("src.modules.digester.extractors.rest.relations.extract_relations_raw"),
+        patch(
+            "src.modules.digester.extractors.rest.relations.process_over_chunks", side_effect=fake_process_over_chunks
+        ),
     ):
-        result = await service.extract_relations(fake_doc_items, relevant_object_classes, uuid4())
+        result = await extract_relations(fake_doc_items, relevant_object_classes, uuid4())
 
     assert [(item["subject"], item["object"]) for item in result["result"]["relations"]] == [
         ("user", "group"),

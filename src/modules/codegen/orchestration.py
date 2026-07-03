@@ -36,12 +36,10 @@ from src.common.jobs import schedule_coroutine_job
 from src.common.utils.relevance import hydrate_auth_sequences_from_relevance
 from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.modules.codegen import service
-from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
     CodegenOperationInput,
     CodegenRepairContext,
-    GroovyCodePayload,
 )
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
 from src.modules.digester.schemas import RelationsResponse
@@ -363,44 +361,6 @@ async def schedule_connid_job(
     )
 
     return job_id
-
-
-async def store_authorization_override(
-    repo: SessionRepository,
-    session_id: UUID,
-    code: GroovyCodePayload,
-) -> None:
-    await repo.update_session(session_id, {"authorizationOutput": code.model_dump()})
-
-
-async def store_object_class_output_override(
-    repo: SessionRepository,
-    session_id: UUID,
-    object_class: str,
-    operation_name: str,
-    code: GroovyCodePayload,
-) -> None:
-    await repo.update_session(session_id, {f"{object_class}{operation_name}Output": code.model_dump()})
-
-
-async def store_search_override(
-    repo: SessionRepository,
-    session_id: UUID,
-    object_class: str,
-    intent: SearchIntent,
-    code: GroovyCodePayload,
-) -> None:
-    operation_key = build_search_operation_key(object_class, intent)
-    await repo.update_session(session_id, {f"{operation_key}Output": code.model_dump()})
-
-
-async def store_relation_override(
-    repo: SessionRepository,
-    session_id: UUID,
-    relation_name: str,
-    code: GroovyCodePayload,
-) -> None:
-    await repo.update_session(session_id, {f"{relation_name}CodeOutput": code.model_dump()})
 
 
 async def schedule_relation_job(

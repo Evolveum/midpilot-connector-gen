@@ -73,7 +73,7 @@ async def test_extract_class_endpoints_success():
             "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new=AsyncMock(return_value=fake_docs),
         ),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
 

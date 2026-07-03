@@ -9,18 +9,14 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.database.config import get_db
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import ApiType
-from src.common.errors import ObjectClassesNotFoundError, SessionNotFoundError
-from src.common.jobs import schedule_coroutine_job
 from src.common.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
 from src.common.utils.normalize import normalize_object_class_name
-from src.common.utils.session_info_metadata import get_session_base_api_url
 from src.common.utils.status_response import build_typed_job_status_response
-from src.modules.digester import results, service
+from src.modules.digester import orchestration, results
 from src.modules.digester.schemas import (
     AttributeResponse,
     AuthInfo,
@@ -30,14 +26,6 @@ from src.modules.digester.schemas import (
     InfoResponse,
     ObjectClassesResponse,
     RelationsResponse,
-)
-from src.modules.digester.selection import (
-    DEFAULT_CRITERIA,
-    DocumentationSelector,
-    auth_input,
-    build_object_class_extraction_input,
-    connectivity_endpoint_input,
-    metadata_input,
 )
 
 router = APIRouter()
@@ -69,34 +57,11 @@ async def extract_object_classes(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    input_payload: dict[str, Any] = {"skipCache": skip_cache}
-    if api_type is not None:
-        input_payload["apiType"] = api_type.value
-
-    job_id = await schedule_coroutine_job(
-        job_type="digester.getObjectClass",
-        input_payload=input_payload,
-        dynamic_input_enabled=True,
-        dynamic_input_provider=build_object_class_extraction_input,
-        worker=service.extract_object_classes,
-        worker_kwargs={
-            "session_id": session_id,
-            "api_type_override": api_type,
-        },
-        initial_stage="chunking",
-        initial_message="Preparing and splitting documentation",
+    job_id = await orchestration.schedule_object_class_extraction(
+        repo=repo,
         session_id=session_id,
-        session_result_key="objectClassesOutput",
-        await_documentation=True,
-        await_documentation_timeout=750,
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            "objectClassesJobId": str(job_id),
-            "objectClassesInput": dict(input_payload),
-        },
+        skip_cache=skip_cache,
+        api_type=api_type,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -231,40 +196,13 @@ async def extract_class_attributes(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    selection = await DocumentationSelector(db).build_attribute_plan(
+    job_id = await orchestration.schedule_attribute_extraction(
+        db=db,
         repo=repo,
         session_id=session_id,
         object_class=object_class,
-        api_type_override=api_type,
-    )
-
-    total_chunks = len(selection.relevant_chunks)
-    job_id = await schedule_coroutine_job(
-        job_type="digester.getObjectClassSchema",
-        input_payload={
-            "documentationItems": selection.doc_items,
-            "objectClass": object_class,
-            "relevantDocumentations": selection.relevant_chunks,
-            "skipCache": skip_cache,
-        },
-        worker=service.extract_attributes,
-        worker_args=(selection.doc_items, object_class, session_id, selection.relevant_chunks),
-        worker_kwargs={"api_type_override": api_type},
-        initial_stage="chunking",
-        initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
-        session_id=session_id,
-        session_result_key=f"{object_class}AttributesOutput",
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            f"{object_class}AttributesJobId": str(job_id),
-            f"{object_class}AttributesInput": {
-                "objectClass": object_class,
-                "relevantDocumentationsCount": total_chunks,
-            },
-        },
+        skip_cache=skip_cache,
+        api_type=api_type,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -358,42 +296,13 @@ async def extract_class_endpoints(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    selection = await DocumentationSelector(db).build_endpoint_plan(
+    job_id = await orchestration.schedule_endpoint_extraction(
+        db=db,
         repo=repo,
         session_id=session_id,
         object_class=object_class,
-        api_type_override=api_type,
-    )
-
-    total_chunks = len(selection.relevant_chunks)
-    job_id = await schedule_coroutine_job(
-        job_type="digester.getEndpoints",
-        input_payload={
-            "documentationItems": selection.doc_items,
-            "objectClass": object_class,
-            "baseApiUrl": selection.base_api_url,
-            "relevantDocumentations": selection.relevant_chunks,
-            "skipCache": skip_cache,
-        },
-        worker=service.extract_endpoints,
-        worker_args=(selection.doc_items, object_class, session_id, selection.relevant_chunks),
-        worker_kwargs={"base_api_url": selection.base_api_url, "api_type_override": api_type},
-        initial_stage="chunking",
-        initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
-        session_id=session_id,
-        session_result_key=f"{object_class}EndpointsOutput",
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            f"{object_class}EndpointsJobId": str(job_id),
-            f"{object_class}EndpointsInput": {
-                "objectClass": object_class,
-                "relevantDocumentationsCount": total_chunks,
-                "baseApiUrl": selection.base_api_url,
-            },
-        },
+        skip_cache=skip_cache,
+        api_type=api_type,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -476,40 +385,11 @@ async def extract_relations(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    try:
-        doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
-    except ValueError as e:
-        raise SessionNotFoundError(session_id) from e
-
-    # Load object_classes from session
-    relevant = await repo.get_session_data(session_id, "objectClassesOutput")
-    if not relevant:
-        raise ObjectClassesNotFoundError(session_id)
-
-    job_id = await schedule_coroutine_job(
-        job_type="digester.getRelations",
-        input_payload={
-            "documentationItems": doc_items,
-            "relevantObjectClasses": relevant,
-            "skipCache": skip_cache,
-        },
-        worker=service.extract_relations,
-        worker_args=(doc_items, relevant),
-        initial_stage="chunking",
-        initial_message="Preparing and splitting documentation",
+    job_id = await orchestration.schedule_relations_extraction(
+        db=db,
+        repo=repo,
         session_id=session_id,
-        session_result_key="relationsOutput",
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            "relationsJobId": str(job_id),
-            "relationsInput": {
-                "relevantObjectClasses": relevant,
-                "skipCache": skip_cache,
-            },
-        },
+        skip_cache=skip_cache,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -557,7 +437,7 @@ async def override_relations(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    await repo.update_session(session_id, {"relationsOutput": relations.model_dump(by_alias=True, mode="json")})
+    await results.store_relations_override(repo, session_id, relations.model_dump(by_alias=True, mode="json"))
 
     return {"message": "Relations overridden successfully", "sessionId": session_id}
 
@@ -579,37 +459,10 @@ async def extract_connectivity_endpoint(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    base_api_url = await get_session_base_api_url(session_id)
-    job_id = await schedule_coroutine_job(
-        job_type="digester.getConnectivityEndpoint",
-        input_payload={
-            "baseApiUrl": base_api_url,
-            "skipCache": skip_cache,
-        },
-        dynamic_input_enabled=True,
-        dynamic_input_provider=connectivity_endpoint_input,
-        worker=service.extract_connectivity_endpoint,
-        worker_kwargs={
-            "session_id": session_id,
-            "base_api_url": base_api_url,
-        },
-        initial_stage="chunking",
-        initial_message="Preparing documentation for connectivity endpoint extraction",
+    job_id = await orchestration.schedule_connectivity_endpoint_extraction(
+        repo=repo,
         session_id=session_id,
-        session_result_key="connectivityEndpointOutput",
-        await_documentation=True,
-        await_documentation_timeout=750,
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            "connectivityEndpointJobId": str(job_id),
-            "connectivityEndpointInput": {
-                "baseApiUrl": base_api_url,
-                "skipCache": skip_cache,
-            },
-        },
+        skip_cache=skip_cache,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -682,29 +535,10 @@ async def extract_auth(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    job_id = await schedule_coroutine_job(
-        job_type="digester.getAuth",
-        input_payload={"skipCache": skip_cache},
-        dynamic_input_enabled=True,
-        dynamic_input_provider=auth_input,
-        worker=service.extract_auth,
-        worker_kwargs={},
-        initial_stage="chunking",
-        initial_message="Preparing and splitting documentation",
+    job_id = await orchestration.schedule_auth_extraction(
+        repo=repo,
         session_id=session_id,
-        session_result_key="authOutput",
-        await_documentation=True,
-        await_documentation_timeout=750,
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            "authJobId": str(job_id),
-            "authInput": {
-                "skipCache": skip_cache,
-            },
-        },
+        skip_cache=skip_cache,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -753,29 +587,10 @@ async def extract_metadata(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    job_id = await schedule_coroutine_job(
-        job_type="digester.getInfoMetadata",
-        input_payload={"skipCache": skip_cache},
-        dynamic_input_enabled=True,
-        dynamic_input_provider=metadata_input,
-        worker=service.extract_info_metadata,
-        worker_kwargs={},
-        initial_stage="chunking",
-        initial_message="Preparing and splitting documentation",
+    job_id = await orchestration.schedule_metadata_extraction(
+        repo=repo,
         session_id=session_id,
-        session_result_key="metadataOutput",
-        await_documentation=True,
-        await_documentation_timeout=750,
-    )
-
-    await repo.update_session(
-        session_id,
-        {
-            "metadataJobId": str(job_id),
-            "metadataInput": {
-                "skipCache": skip_cache,
-            },
-        },
+        skip_cache=skip_cache,
     )
 
     return JobCreateResponse(jobId=job_id)
@@ -822,7 +637,6 @@ async def restore_metadata(
     """
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-
-    await repo.update_session(session_id, {"metadataOutput": metadata.model_dump(by_alias=True)})
+    await results.store_metadata_output(repo, session_id, metadata.model_dump(by_alias=True))
 
     return {"message": "Metadata updated successfully", "sessionId": session_id}

@@ -10,8 +10,10 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import JobStatus
-from src.modules.digester import service
 from src.modules.digester.enums import EndpointMethod
+from src.modules.digester.extractors.connectivity_endpoint import (
+    extract_connectivity_endpoint as extract_connectivity_endpoint_worker,
+)
 from src.modules.digester.router import (
     extract_connectivity_endpoint,
     get_connectivity_endpoint_status,
@@ -33,11 +35,11 @@ async def test_extract_connectivity_endpoint_success():
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.get_session_base_api_url",
+            "src.modules.digester.orchestration.get_session_base_api_url",
             new_callable=AsyncMock,
             return_value=base_api_url,
         ),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
 
@@ -57,7 +59,7 @@ async def test_extract_connectivity_endpoint_success():
         },
         dynamic_input_enabled=True,
         dynamic_input_provider=ANY,
-        worker=service.extract_connectivity_endpoint,
+        worker=extract_connectivity_endpoint_worker,
         worker_kwargs={
             "session_id": session_id,
             "base_api_url": base_api_url,

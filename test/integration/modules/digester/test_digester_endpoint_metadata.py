@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.common.enums import JobStatus
-from src.modules.digester import service
+from src.modules.digester.extractors.info import extract_info_metadata as extract_info_metadata_worker
 from src.modules.digester.router import extract_metadata, get_metadata_status, restore_metadata
 from src.modules.digester.schemas import InfoResponse
 
@@ -26,7 +26,7 @@ async def test_extract_metadata_success():
 
     with (
         patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
         mock_schedule.return_value = job_id
@@ -41,7 +41,7 @@ async def test_extract_metadata_success():
         input_payload={"skipCache": True},
         dynamic_input_enabled=True,
         dynamic_input_provider=ANY,
-        worker=service.extract_info_metadata,
+        worker=extract_info_metadata_worker,
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",

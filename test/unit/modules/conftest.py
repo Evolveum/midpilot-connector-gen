@@ -4,6 +4,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -49,10 +50,25 @@ def mock_search_web():
         yield mock
 
 
+# Digester workflows live in the extractor modules, so job-progress must be patched
+# in each module namespace that calls it. A single shared mock keeps assert_awaited()
+# working regardless of which module a workflow ended up in.
+_DIGESTER_UPDATE_JOB_PROGRESS_TARGETS = (
+    "src.modules.digester.extractors.auth.update_job_progress",
+    "src.modules.digester.extractors.connectivity_endpoint.update_job_progress",
+    "src.modules.digester.extractors.endpoints.update_job_progress",
+    "src.modules.digester.extractors.info.update_job_progress",
+    "src.modules.digester.extractors.rest.relations.update_job_progress",
+)
+
+
 @pytest.fixture
 def mock_digester_update_job_progress():
-    """Mock job progress update for digester module."""
-    with patch("src.modules.digester.service.update_job_progress", new_callable=AsyncMock) as mock:
+    """Mock job progress update across digester modules (workflows live in extractors/)."""
+    mock = AsyncMock()
+    with ExitStack() as stack:
+        for target in _DIGESTER_UPDATE_JOB_PROGRESS_TARGETS:
+            stack.enter_context(patch(target, mock))
         yield mock
 
 
