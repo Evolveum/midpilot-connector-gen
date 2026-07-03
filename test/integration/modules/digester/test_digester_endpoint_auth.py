@@ -10,9 +10,9 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import JobStatus
-from src.modules.digester import service
 from src.modules.digester.enums import AuthType
-from src.modules.digester.router import extract_auth, get_auth_status
+from src.modules.digester.extractors.auth import extract_auth as extract_auth_worker
+from src.modules.digester.routes.auth import extract_auth, get_auth_status
 from src.modules.digester.schemas import AuthInfo, AuthResponse
 
 
@@ -25,8 +25,8 @@ async def test_extract_auth_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.routes.auth.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
         mock_schedule.return_value = job_id
@@ -41,7 +41,7 @@ async def test_extract_auth_success():
         input_payload={"skipCache": True},
         dynamic_input_enabled=True,
         dynamic_input_provider=ANY,
-        worker=service.extract_auth,
+        worker=extract_auth_worker,
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
@@ -80,9 +80,9 @@ async def test_get_auth_status_found():
     )
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.auth.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.build_typed_job_status_response",
+            "src.modules.digester.routes.auth.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,

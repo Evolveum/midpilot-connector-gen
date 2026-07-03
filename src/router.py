@@ -19,8 +19,7 @@ Root API router that aggregates all sub-module routers under their respective pr
 # Session management
 root_router.include_router(session_router, prefix="/session", tags=["Session"])
 
-# Include each endpoint router with a prefix and optional tags
 root_router.include_router(discovery_router, prefix="/discovery", tags=["Discovery"])
 root_router.include_router(scrape_router, prefix="/scrape", tags=["Scrape"])
-root_router.include_router(digester_router, prefix="/digester", tags=["Digester"])
-root_router.include_router(codegen_router, prefix="/codegen", tags=["CodeGen"])
+root_router.include_router(digester_router, prefix="/digester")
+root_router.include_router(codegen_router, prefix="/codegen")

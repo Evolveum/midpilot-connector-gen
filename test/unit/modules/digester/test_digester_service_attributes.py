@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import ApiType
-from src.modules.digester import service
+from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.schemas import AttributeInfoRest
 
 
@@ -37,15 +37,17 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
     ]
 
     with (
-        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service._extract_rest_attributes") as mock_extract_attrs,
+        patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.extractors.attributes._extract_rest_attributes") as mock_extract_attrs,
         patch(
-            "src.modules.digester.service.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
         patch(
-            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
         ),
     ):
         mock_extract_chunks.return_value = (
@@ -83,7 +85,7 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
             "relevantDocumentations": relevant_chunks,
         }
 
-        result = await service.extract_attributes(fake_doc_items, "User", session_id, relevant_chunks, job_id)
+        result = await extract_attributes(fake_doc_items, "User", session_id, relevant_chunks, job_id)
 
         # Verify result structure
         assert "result" in result
@@ -106,12 +108,14 @@ async def test_extract_attributes_no_relevant_chunks(mock_llm, mock_digester_upd
     job_id = uuid4()
 
     with (
-        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_extract_chunks,
         patch(
-            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
         ) as mock_api_types,
     ):
-        result = await service.extract_attributes([], "User", session_id, [], job_id)
+        result = await extract_attributes([], "User", session_id, [], job_id)
 
         assert result["result"]["attributes"] == {}
         assert result["relevantDocumentations"] == []
@@ -154,13 +158,17 @@ async def test_extract_attributes_scim_preserves_doc_maps_when_relevance_is_empt
 
     with (
         patch(
-            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.SCIM
+            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SCIM,
         ),
         patch(
-            "src.modules.digester.service.filter_documentation_items", new_callable=AsyncMock, return_value=doc_items
+            "src.modules.digester.extractors.attributes.filter_documentation_items",
+            new_callable=AsyncMock,
+            return_value=doc_items,
         ),
         patch(
-            "src.modules.digester.service.extract_scim_attributes",
+            "src.modules.digester.extractors.attributes.extract_scim_attributes",
             new_callable=AsyncMock,
             side_effect=[
                 {"result": {"attributes": {}}, "relevantDocumentations": []},
@@ -168,12 +176,12 @@ async def test_extract_attributes_scim_preserves_doc_maps_when_relevance_is_empt
             ],
         ) as mock_extract_scim_attributes,
         patch(
-            "src.modules.digester.service.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
     ):
-        result = await service.extract_attributes(doc_items, "UserEmails", session_id, [], job_id)
+        result = await extract_attributes(doc_items, "UserEmails", session_id, [], job_id)
 
     assert result == retry_result
     assert mock_extract_scim_attributes.await_count == 2
@@ -209,21 +217,23 @@ async def test_extract_attributes_session_not_found(mock_llm, mock_digester_upda
     relevant_chunks = [{"doc_id": doc_uuid, "chunk_id": doc_uuid}]
 
     with (
-        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service._extract_rest_attributes") as mock_extract_attrs,
+        patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.extractors.attributes._extract_rest_attributes") as mock_extract_attrs,
         patch(
-            "src.modules.digester.service.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=False,
         ) as mock_update_object_class,
         patch(
-            "src.modules.digester.service.resolve_effective_api_type", new_callable=AsyncMock, return_value=ApiType.REST
+            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
         ),
     ):
         mock_extract_chunks.return_value = (["chunk text"], [(0, doc_uuid)])
         mock_extract_attrs.return_value = {"result": {"attributes": {"id": {}}}, "relevantDocumentations": []}
 
-        result = await service.extract_attributes(fake_doc_items, "User", session_id, relevant_chunks, job_id)
+        result = await extract_attributes(fake_doc_items, "User", session_id, relevant_chunks, job_id)
 
         # Should return result even if session update fails
         assert "result" in result

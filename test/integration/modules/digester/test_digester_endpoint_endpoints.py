@@ -11,7 +11,7 @@ import pytest
 
 from src.common.enums import JobStatus
 from src.modules.digester.enums import EndpointMethod
-from src.modules.digester.router import (
+from src.modules.digester.routes.endpoints import (
     extract_class_endpoints,
     get_class_endpoints_status,
     override_class_endpoints,
@@ -53,7 +53,7 @@ async def test_extract_class_endpoints_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.endpoints.SessionRepository", return_value=mock_repo),
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
@@ -73,7 +73,7 @@ async def test_extract_class_endpoints_success():
             "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new=AsyncMock(return_value=fake_docs),
         ),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
 
@@ -122,9 +122,9 @@ async def test_get_class_endpoints_status_found():
     )
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.endpoints.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.build_typed_job_status_response",
+            "src.modules.digester.routes.endpoints.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
@@ -160,7 +160,7 @@ async def test_override_class_endpoints_success():
     mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.endpoints.SessionRepository", return_value=mock_repo),
         patch("src.modules.digester.results.RelevantChunkRepository", return_value=mock_relevant_repo),
     ):
         session_id = uuid4()

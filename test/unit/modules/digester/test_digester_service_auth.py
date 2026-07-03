@@ -7,9 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester import service
 from src.modules.digester.enums import AuthType
-from src.modules.digester.extractors.auth import build_auth_items, deduplicate_auth
+from src.modules.digester.extractors.auth import build_auth_items, deduplicate_auth, extract_auth
 from src.modules.digester.schemas import (
     AuthDedupResponse,
     AuthInfo,
@@ -45,10 +44,12 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
     ]
 
     with (
-        patch("src.modules.digester.service.deduplicate_auth", new_callable=AsyncMock) as mock_deduplicate,
-        patch("src.modules.digester.service.build_auth_items", new_callable=AsyncMock) as mock_build,
-        patch("src.modules.digester.service.sort_auth_by_importance", new_callable=AsyncMock) as mock_sort,
-        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.extractors.auth.deduplicate_auth", new_callable=AsyncMock) as mock_deduplicate,
+        patch("src.modules.digester.extractors.auth.build_auth_items", new_callable=AsyncMock) as mock_build,
+        patch("src.modules.digester.extractors.auth.sort_auth_by_importance", new_callable=AsyncMock) as mock_sort,
+        patch(
+            "src.modules.digester.extractors.auth.run_doc_extractors_concurrently", new_callable=AsyncMock
+        ) as mock_parallel,
     ):
         oauth_doc_seq = DocSequenceItem(
             chunk_id=doc_uuid1,
@@ -166,7 +167,7 @@ async def test_extract_auth_success(mock_llm, mock_digester_update_job_progress)
         mock_sort.return_value = sorted_result
 
         job_id = uuid4()
-        result = await service.extract_auth(fake_doc_items, job_id)
+        result = await extract_auth(fake_doc_items, job_id)
 
         assert "result" in result
         assert "relevantDocumentations" in result
@@ -190,10 +191,12 @@ async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_prog
     ]
 
     with (
-        patch("src.modules.digester.service.deduplicate_auth", new_callable=AsyncMock) as mock_deduplicate,
-        patch("src.modules.digester.service.build_auth_items", new_callable=AsyncMock) as mock_build,
-        patch("src.modules.digester.service.sort_auth_by_importance", new_callable=AsyncMock) as mock_sort,
-        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_parallel,
+        patch("src.modules.digester.extractors.auth.deduplicate_auth", new_callable=AsyncMock) as mock_deduplicate,
+        patch("src.modules.digester.extractors.auth.build_auth_items", new_callable=AsyncMock) as mock_build,
+        patch("src.modules.digester.extractors.auth.sort_auth_by_importance", new_callable=AsyncMock) as mock_sort,
+        patch(
+            "src.modules.digester.extractors.auth.run_doc_extractors_concurrently", new_callable=AsyncMock
+        ) as mock_parallel,
     ):
         mock_parallel.return_value = [([], False, doc_uuid)]
 
@@ -202,7 +205,7 @@ async def test_extract_auth_empty_result(mock_llm, mock_digester_update_job_prog
         mock_sort.return_value = AuthResponse[AuthInfo](auth=[])
 
         job_id = uuid4()
-        result = await service.extract_auth(fake_doc_items, job_id)
+        result = await extract_auth(fake_doc_items, job_id)
 
         assert result["result"]["auth"] == []
         mock_parallel.assert_awaited_once()

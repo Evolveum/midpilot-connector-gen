@@ -9,13 +9,17 @@ from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.jobs import append_job_error
+from src.common.chunk_filter.filter import filter_documentation_items
+from src.common.enums import JobStage
+from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
+from src.common.utils.coerce import as_list
 from src.common.utils.normalize import normalize_endpoint_key
 from src.modules.digester.enums import EndpointMethod
-from src.modules.digester.extraction.chunk_extraction import extract_single_chunk
+from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_doc_extractors_concurrently
 from src.modules.digester.extraction.llm_execution import invoke_llm
+from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.prompts.connectivity_endpoint_prompts import (
     get_connectivity_endpoint_ranking_system_prompt,
     get_connectivity_endpoint_ranking_user_prompt,
@@ -28,6 +32,11 @@ from src.modules.digester.schemas import (
     ConnectivityEndpointResponse,
     ExtractedConnectivityEndpointInfo,
     ExtractedConnectivityEndpointResponse,
+)
+from src.modules.digester.selection import (
+    CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA,
+    build_chunk_id_to_doc_id,
+    exclude_doc_items_by_chunk_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -209,3 +218,130 @@ async def merge_and_rank_connectivity_endpoint_candidates(
 
     ranked = await rank_connectivity_candidates(deduped, job_id)
     return ConnectivityEndpointResponse(endpoints=ranked)
+
+
+def _connectivity_endpoint_result_has_item(extraction_result: Dict[str, Any]) -> bool:
+    result_data = extraction_result.get("result", extraction_result)
+    return isinstance(result_data, dict) and bool(result_data.get("endpoints"))
+
+
+async def _extract_connectivity_endpoint_from_doc_items(
+    doc_items: List[dict],
+    job_id: UUID,
+    base_api_url: str,
+) -> Dict[str, Any]:
+    if not doc_items:
+        return {"result": {"endpoints": []}, "relevantDocumentations": []}
+
+    all_candidates: List[ExtractedConnectivityEndpointInfo] = []
+    all_relevant_chunks: List[Dict[str, Any]] = []
+    endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]] = {}
+    chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
+
+    async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
+        return await extract_connectivity_endpoint_raw(
+            content,
+            job_id,
+            chunk_id,
+            chunk_metadata,
+            base_api_url=base_api_url,
+        )
+
+    results = await run_doc_extractors_concurrently(
+        chunk_items=doc_items,
+        job_id=job_id,
+        extractor=extractor_with_metadata,
+        logger_scope="Digester:ConnectivityEndpoint",
+    )
+
+    for candidates, has_relevant_data, chunk_id in results:
+        chunk_id_str = str(chunk_id)
+        doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+
+        candidates_for_chunk = as_list(candidates)
+        all_candidates.extend(candidates_for_chunk)
+
+        if not has_relevant_data:
+            continue
+
+        if not doc_id:
+            logger.warning(
+                "[Digester:ConnectivityEndpoint] Missing docId for chunk %s, skipping relevant chunk mapping",
+                chunk_id_str,
+            )
+            continue
+
+        chunk_ref = {"doc_id": doc_id, "chunk_id": chunk_id_str}
+        all_relevant_chunks.append(chunk_ref)
+        for candidate in candidates_for_chunk:
+            key = normalize_endpoint_key(candidate.path, candidate.method)
+            if key:
+                endpoint_chunk_pairs.setdefault(key, set()).add((doc_id, chunk_id_str))
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.deduplication,
+        message="Ranking connectivity endpoint candidates",
+    )
+    response = await merge_and_rank_connectivity_endpoint_candidates(all_candidates, endpoint_chunk_pairs, job_id)
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.schema_ready,
+        message="Connectivity endpoint extraction complete",
+    )
+    return {
+        "result": response.model_dump(by_alias=True, mode="json"),
+        "relevantDocumentations": all_relevant_chunks,
+    }
+
+
+async def extract_connectivity_endpoint(
+    doc_items: List[dict],
+    session_id: UUID,
+    job_id: UUID,
+    base_api_url: str = "",
+) -> Dict[str, Any]:
+    """
+    Extract and rank endpoints suitable for testing connectivity between midPoint connector generator and the target app.
+    Retries with broader documentation criteria when endpoint-focused chunks produce no candidates.
+    """
+    result = await _extract_connectivity_endpoint_from_doc_items(doc_items, job_id, base_api_url)
+    if _connectivity_endpoint_result_has_item(result):
+        return result
+
+    logger.info(
+        "[Digester:ConnectivityEndpoint] Primary documentation produced no connectivity endpoint for session %s; "
+        "retrying with fallback criteria",
+        session_id,
+    )
+    await update_job_progress(
+        job_id,
+        stage="chunking",
+        message="No connectivity endpoint found in primary chunks; retrying with broader filter",
+    )
+
+    fallback_doc_items = await filter_documentation_items(CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA, session_id)
+    if not fallback_doc_items:
+        logger.info(
+            "[Digester:ConnectivityEndpoint] Fallback criteria matched no documentation for session %s",
+            session_id,
+        )
+        return result
+
+    primary_chunk_ids = {str(item.get("chunkId") or "").strip() for item in doc_items if item.get("chunkId")}
+    fallback_doc_items = exclude_doc_items_by_chunk_id(fallback_doc_items, primary_chunk_ids)
+    if not fallback_doc_items:
+        logger.info(
+            "[Digester:ConnectivityEndpoint] Fallback criteria produced no new chunks for session %s",
+            session_id,
+        )
+        return result
+
+    fallback_result = await _extract_connectivity_endpoint_from_doc_items(fallback_doc_items, job_id, base_api_url)
+    if _connectivity_endpoint_result_has_item(fallback_result):
+        return fallback_result
+
+    return result

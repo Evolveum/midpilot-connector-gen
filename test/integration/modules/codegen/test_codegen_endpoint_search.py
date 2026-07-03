@@ -11,7 +11,7 @@ import pytest
 
 from src.common.enums import ApiType
 from src.modules.codegen.enums import SearchIntent
-from src.modules.codegen.router import generate_search
+from src.modules.codegen.routes.search import generate_search
 
 
 # SEARCH
@@ -35,7 +35,7 @@ async def test_generate_search_success():
     mock_repo.get_session_data = AsyncMock(side_effect=fake_get_session_data)
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.search.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
             "src.modules.codegen.orchestration.resolve_effective_api_type",
@@ -75,7 +75,7 @@ async def test_generate_search_scim_allows_missing_endpoints():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.search.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
             "src.modules.codegen.orchestration.resolve_effective_api_type",

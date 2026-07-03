@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import ApiType
-from src.modules.codegen import service
+from src.modules.codegen import generation
 
 
 @pytest.mark.asyncio
@@ -22,11 +22,11 @@ async def test_generate_native_schema():
     }
 
     with (
-        patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy,
+        patch("src.modules.codegen.generation.generate_groovy") as mock_generate_groovy,
     ):
         mock_generate_groovy.return_value = "mocked groovy code"
 
-        result = await service.generate_native_schema_code(
+        result = await generation.generate_native_schema_code(
             test_attributes,
             "User",
             session_id=uuid4(),
@@ -48,11 +48,11 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
     }
 
     with (
-        patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy,
+        patch("src.modules.codegen.generation.generate_groovy") as mock_generate_groovy,
     ):
         mock_generate_groovy.return_value = "mocked sql schema code"
 
-        result = await service.generate_native_schema_code(
+        result = await generation.generate_native_schema_code(
             test_attributes,
             "User",
             session_id=uuid4(),
@@ -73,10 +73,10 @@ async def test_generate_conn_id():
         "id": {"type": "string", "format": "uuid", "description": "Unique identifier"},
     }
 
-    with patch("src.modules.codegen.service.generate_groovy") as mock_generate_groovy:
+    with patch("src.modules.codegen.generation.generate_groovy") as mock_generate_groovy:
         mock_generate_groovy.return_value = "mocked connid code"
 
-        result = await service.generate_conn_id_code(
+        result = await generation.generate_conn_id_code(
             test_attributes,
             "User",
             job_id=uuid4(),

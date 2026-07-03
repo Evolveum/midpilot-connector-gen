@@ -4,7 +4,8 @@
 
 import json
 import logging
-from typing import Dict, List, Optional, Set, Tuple, cast
+from collections import Counter
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
@@ -16,8 +17,13 @@ from src.common.llm import build_structured_chain
 from src.config import config
 from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
 from src.modules.digester.enums import auth_match_key
-from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
+from src.modules.digester.extraction.chunk_extraction import (
+    extract_single_chunk,
+    run_all_items_build_parallel,
+    run_doc_extractors_concurrently,
+)
 from src.modules.digester.extraction.llm_execution import invoke_llm
+from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extraction.sequences import extract_sequence
 from src.modules.digester.prompts.auth_prompts import (
     auth_build_system_prompt,
@@ -38,6 +44,7 @@ from src.modules.digester.schemas import (
     DocProcessingSequenceItem,
     DocSequenceItem,
 )
+from src.modules.digester.selection import build_chunk_id_to_doc_id
 
 logger = logging.getLogger(__name__)
 
@@ -435,3 +442,105 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
         append_job_error(job_id, f"[Digester:Auth] Sorting failed: {e}")
 
         return AuthResponse[AuthInfo](auth=dedup_list)
+
+
+def _auth_type_counts(auth_items: Any) -> Dict[str, int]:
+    items = getattr(auth_items, "auth", auth_items)
+    if not items:
+        return {}
+
+    type_counts: Counter[str] = Counter()
+    for item in items:
+        raw_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+        type_value = getattr(raw_type, "value", raw_type)
+        type_counts[str(type_value or "unknown")] += 1
+    return dict(sorted(type_counts.items()))
+
+
+async def extract_auth(doc_items: List[dict], job_id: UUID):
+    """
+    Extract authentication info from multiple documentation items and return merged result with metadata.
+
+    Step 1: Extract raw auth info from each chunk (by chunkId) - processes chunks in parallel
+    Step 2: Merge, deduplicate and sort ALL auth info together
+    """
+    all_auth_info = []
+    all_relevant_chunks: List[Dict[str, Any]] = []
+    chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
+
+    async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
+        return await extract_auth_raw(content, job_id, chunk_id, chunk_metadata)
+
+    # Process all chunks in parallel using the generic function
+    discovery_results = await run_doc_extractors_concurrently(
+        chunk_items=doc_items,
+        job_id=job_id,
+        extractor=extractor_with_metadata,
+        logger_scope="Digester:Auth",
+    )
+
+    # Collect results from all chunks
+    for raw_auth, has_relevant_data, chunk_id in discovery_results:
+        logger.info(
+            "[Digester:Auth] Chunk %s: extracted %s auth items",
+            chunk_id,
+            len(raw_auth),
+        )
+        all_auth_info.extend(raw_auth)
+        if has_relevant_data:
+            chunk_id_str = str(chunk_id)
+            doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+            if doc_id:
+                all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
+            else:
+                logger.warning(
+                    "[Digester:Auth] Missing docId for chunk %s, skipping relevant chunk mapping",
+                    chunk_id_str,
+                )
+
+    logger.info(
+        "[Digester:Auth] Auth discovery complete. Total: %s auth items from %s documents. Starting deduplication",
+        len(all_auth_info),
+        len(doc_items),
+    )
+    await update_job_progress(job_id, stage=JobStage.discovery_finished, message="Auth discovery finished")
+    deduplicated_results = await deduplicate_auth(all_auth_info, job_id)
+
+    logger.info(
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Type counts: %s",
+        len(deduplicated_results),
+        _auth_type_counts(deduplicated_results),
+    )
+
+    built_auth_items = await build_auth_items(deduplicated_results, job_id)
+
+    logger.info(
+        "[Digester:Auth] Build complete. Total: %s built auth items. Type counts: %s",
+        len(built_auth_items),
+        _auth_type_counts(built_auth_items),
+    )
+
+    final_deduplicated_results = await deduplicate_auth(built_auth_items, job_id)
+
+    logger.info(
+        "[Digester:Auth] Deduplication complete. Total: %s unique auth items. Type counts: %s",
+        len(final_deduplicated_results),
+        _auth_type_counts(final_deduplicated_results),
+    )
+
+    sorted_auth_items = await sort_auth_by_importance(final_deduplicated_results, job_id)
+
+    logger.info(
+        "[Digester:Auth] Sorting complete. Total: %s sorted auth items. Type counts: %s",
+        len(sorted_auth_items.auth) if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth else 0,
+        _auth_type_counts(sorted_auth_items),
+    )
+
+    return {
+        "result": sorted_auth_items.model_dump(by_alias=True)
+        if hasattr(sorted_auth_items, "model_dump")
+        else sorted_auth_items,
+        "relevantDocumentations": all_relevant_chunks,
+    }

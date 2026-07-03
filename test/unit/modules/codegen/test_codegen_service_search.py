@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import ApiType
-from src.modules.codegen import service
+from src.modules.codegen import generation
 from src.modules.codegen.enums import SearchIntent
 
 
@@ -33,20 +33,20 @@ async def test_generate_search():
 
     with (
         patch(
-            "src.modules.codegen.service.get_session_connection_target",
+            "src.modules.codegen.generation.get_session_connection_target",
             new_callable=AsyncMock,
             return_value=("", ""),
         ) as mock_get_connection_target,
         patch(
-            "src.modules.codegen.service._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
+            "src.modules.codegen.generation._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
         ),
-        patch("src.modules.codegen.service.SearchGenerator") as mock_search_generator_class,
+        patch("src.modules.codegen.generation.SearchGenerator") as mock_search_generator_class,
     ):
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_search_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked search code")
 
-        result = await service.generate_search_code(
+        result = await generation.generate_search_code(
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,

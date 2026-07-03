@@ -4,6 +4,7 @@
 import asyncio
 import logging
 import ssl
+from functools import lru_cache
 from typing import Any, Awaitable, Callable, Final, Literal, Optional, TypeVar, cast
 
 import httpx
@@ -96,13 +97,54 @@ async def retry_on_transient_llm_error(
     raise RuntimeError("LLM retry loop exited unexpectedly")
 
 
-def _build_llm_verify_config(ca_cert_file: str | None) -> bool | ssl.SSLContext:
+@lru_cache(maxsize=1)
+def _llm_verify_config() -> bool | ssl.SSLContext:
+    """
+    Build the TLS verification config for the LLM HTTP client.
+
+    Cached so the CA certificate is read from disk and parsed only once instead
+    of on every LLM call.
+    """
+    ca_cert_file = config.llm.ca_cert_file
     if not ca_cert_file:
         return True
 
     ssl_context = httpx.create_ssl_context(verify=True)
     ssl_context.load_verify_locations(cafile=ca_cert_file)
     return ssl_context
+
+
+_llm_http_client: httpx.AsyncClient | None = None
+
+
+def get_llm_http_client() -> httpx.AsyncClient:
+    """
+    Return the shared async HTTP client for LLM calls, creating it on first use.
+
+    Created lazily and recreated if it was closed, which keeps it correct across
+    test event loops and after application shutdown.
+    """
+    global _llm_http_client
+    client = _llm_http_client
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
+            verify=_llm_verify_config(),
+            timeout=config.llm.request_timeout,
+            limits=httpx.Limits(
+                max_connections=config.llm.max_connections,
+                max_keepalive_connections=config.llm.max_keepalive_connections,
+            ),
+        )
+        _llm_http_client = client
+    return client
+
+
+async def aclose_llm_http_client() -> None:
+    """Close the shared LLM HTTP client. Call on application shutdown."""
+    global _llm_http_client
+    if _llm_http_client is not None and not _llm_http_client.is_closed:
+        await _llm_http_client.aclose()
+    _llm_http_client = None
 
 
 _DEFAULT_REASONING_EFFORT: Final = object()
@@ -121,7 +163,6 @@ def get_default_llm(
     :return: Configured ChatOpenAI instance.
     """
 
-    http_client = httpx.AsyncClient(verify=_build_llm_verify_config(config.llm.ca_cert_file))
     selected_reasoning_effort = (
         config.llm.reasoning_effort
         if reasoning_effort is _DEFAULT_REASONING_EFFORT
@@ -134,7 +175,7 @@ def get_default_llm(
         "timeout": config.llm.request_timeout,
         "temperature": temperature,
         "extra_body": {"provider": {"order": config.llm.provider_order}},
-        "http_async_client": http_client,
+        "http_async_client": get_llm_http_client(),
         "max_retries": 0,
     }
     if selected_reasoning_effort is not None:

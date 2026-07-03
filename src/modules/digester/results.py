@@ -57,6 +57,8 @@ logger = logging.getLogger(__name__)
 # Result keys
 OBJECT_CLASSES_RESULT_KEY = "objectClassesOutput"
 CONNECTIVITY_ENDPOINT_RESULT_KEY = "connectivityEndpointOutput"
+RELATIONS_RESULT_KEY = "relationsOutput"
+METADATA_RESULT_KEY = "metadataOutput"
 
 
 def attributes_result_key(object_class: str) -> str:
@@ -288,6 +290,22 @@ async def store_connectivity_endpoint_override(
     await _store_result_with_relevance(
         db, repo, session_id, CONNECTIVITY_ENDPOINT_RESULT_KEY, stripped_payload, relevance_rows
     )
+
+
+async def store_relations_override(
+    repo: SessionRepository,
+    session_id: UUID,
+    payload: Dict[str, Any],
+) -> None:
+    await repo.update_session(session_id, {RELATIONS_RESULT_KEY: payload})
+
+
+async def store_metadata_output(
+    repo: SessionRepository,
+    session_id: UUID,
+    payload: Dict[str, Any],
+) -> None:
+    await repo.update_session(session_id, {METADATA_RESULT_KEY: payload})
 
 
 async def build_object_class_detail(
