@@ -10,11 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.config import get_db
 from src.common.database.repositories.session_repository import SessionRepository
-from src.common.jobs import schedule_coroutine_job
 from src.common.schema import JobCreateResponse, JobStatusStageResponse
 from src.common.session.session import ensure_session_exists, resolve_session_job_id
 from src.common.utils.status_response import build_stage_status_response
-from src.modules.discovery import service
+from src.modules.discovery import orchestration
 from src.modules.discovery.schema import CandidateLinksInput
 
 router = APIRouter()
@@ -38,19 +37,10 @@ async def discover_candidate_links(
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
-    job_id = await schedule_coroutine_job(
-        job_type="discovery.getCandidateLinks",
-        input_payload=req.model_dump(by_alias=True),
-        worker=service.discover_candidate_links,
-        worker_args=(req, session_id),
-        initial_stage="queue",
-        initial_message="Queued candidate links discovery",
+    job_id = await orchestration.schedule_candidate_link_discovery(
+        repo=repo,
         session_id=session_id,
-        session_result_key="discoveryOutput",
-    )
-
-    await repo.update_session(
-        session_id, {"discoveryJobId": str(job_id), "discoveryInput": req.model_dump(by_alias=True)}
+        request=req,
     )
 
     return JobCreateResponse(jobId=job_id)
