@@ -21,7 +21,7 @@ async def test_discover_candidate_links_success():
 
     with (
         patch("src.modules.discovery.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.discovery.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.discovery.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
         session_id = uuid4()

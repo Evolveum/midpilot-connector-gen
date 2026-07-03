@@ -20,7 +20,7 @@ async def test_scrape_documentation_uses_explicit_application_version():
 
     with (
         patch("src.modules.scrape.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.scrape.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.scrape.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
         session_id = uuid4()
