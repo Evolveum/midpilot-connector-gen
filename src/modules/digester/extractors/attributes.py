@@ -19,14 +19,12 @@ from uuid import UUID
 from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.enums import ApiType
 from src.common.utils.session_info_metadata import resolve_effective_api_type
-from src.modules.digester.entities.object_classes import (
-    extract_attributes_from_result,
-    update_object_class_field_in_session,
-)
+from src.modules.digester.entities.object_classes import extract_attributes_from_result
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest.attributes import extract_attributes as _extract_rest_attributes
 from src.modules.digester.extractors.scim.attributes import extract_scim_attributes
 from src.modules.digester.extractors.sql.attributes import extract_sql_attributes
+from src.modules.digester.persistence import persist_object_class_field
 from src.modules.digester.selection import (
     DEFAULT_CRITERIA,
     build_chunk_id_to_doc_id,
@@ -137,22 +135,9 @@ async def extract_attributes(
     protocol = await resolve_effective_api_type(session_id, api_type_override)
     if protocol == ApiType.SQL:
         result = await extract_sql_attributes(doc_items, object_class, job_id)
-        try:
-            attributes_dict = extract_attributes_from_result(result)
-            logger.info("[Digester:Attributes] Extracted %d SQL attributes for %s", len(attributes_dict), object_class)
-            updated = await update_object_class_field_in_session(
-                session_id=session_id,
-                object_class=object_class,
-                field_name="attributes",
-                field_value=attributes_dict,
-            )
-            if not updated:
-                logger.warning("[Digester:Attributes] Failed to update objectClassesOutput for %s", object_class)
-        except Exception:
-            logger.exception(
-                "[Digester:Attributes] Exception while updating object class with SQL attributes for %s",
-                object_class,
-            )
+        attributes_dict = extract_attributes_from_result(result)
+        logger.info("[Digester:Attributes] Extracted %d SQL attributes for %s", len(attributes_dict), object_class)
+        await persist_object_class_field(session_id, object_class, "attributes", attributes_dict, "Digester:Attributes")
         return result
 
     is_scim = protocol == ApiType.SCIM
@@ -221,14 +206,14 @@ async def extract_attributes(
             chunk_id_to_doc_id,
         )
 
-    try:
-        attributes_dict = extract_attributes_from_result(result)
-        logger.info("[Digester:Attributes] Extracted %d attributes for %s", len(attributes_dict), object_class)
+    attributes_dict = extract_attributes_from_result(result)
+    logger.info("[Digester:Attributes] Extracted %d attributes for %s", len(attributes_dict), object_class)
 
-        if len(attributes_dict) == 0:
-            logger.warning(
-                f"[Digester:Attributes] No attributes extracted for {object_class} from relevant chunks, retrying with default criteria"
-            )
+    if len(attributes_dict) == 0:
+        logger.warning(
+            f"[Digester:Attributes] No attributes extracted for {object_class} from relevant chunks, retrying with default criteria"
+        )
+        try:
             # Retry with default criteria
             result_retry = await _retry_attributes_with_default_criteria(
                 doc_items,
@@ -240,29 +225,22 @@ async def extract_attributes(
                 chunk_id_to_doc_id,
                 is_scim=is_scim,
             )
-            attributes_dict_retry = extract_attributes_from_result(result_retry)
+        except Exception:
+            logger.exception(
+                "[Digester:Attributes] Exception while updating object class with attributes for %s", object_class
+            )
+            return result
 
-            if attributes_dict_retry and result_retry is not None:
-                logger.info(
-                    "[Digester:Attributes] Extracted %d attributes for %s on retry with default criteria",
-                    len(attributes_dict_retry),
-                    object_class,
-                )
-                attributes_dict = attributes_dict_retry
-                result = result_retry
+        attributes_dict_retry = extract_attributes_from_result(result_retry)
+        if attributes_dict_retry and result_retry is not None:
+            logger.info(
+                "[Digester:Attributes] Extracted %d attributes for %s on retry with default criteria",
+                len(attributes_dict_retry),
+                object_class,
+            )
+            attributes_dict = attributes_dict_retry
+            result = result_retry
 
-        updated = await update_object_class_field_in_session(
-            session_id=session_id,
-            object_class=object_class,
-            field_name="attributes",
-            field_value=attributes_dict,
-        )
-        if not updated:
-            logger.warning("[Digester:Attributes] Failed to update objectClassesOutput for %s", object_class)
-
-    except Exception:
-        logger.exception(
-            "[Digester:Attributes] Exception while updating object class with attributes for %s", object_class
-        )
+    await persist_object_class_field(session_id, object_class, "attributes", attributes_dict, "Digester:Attributes")
 
     return result

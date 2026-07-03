@@ -11,7 +11,7 @@ import pytest
 
 from src.common.enums import JobStatus
 from src.common.errors import ObjectClassesNotFoundError
-from src.modules.digester.router import extract_relations, get_relations_status, override_relations
+from src.modules.digester.routes.relations import extract_relations, get_relations_status, override_relations
 from src.modules.digester.schemas import RelationsResponse
 
 
@@ -30,7 +30,7 @@ async def test_extract_relations_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.relations.SessionRepository", return_value=mock_repo),
         patch(
             "src.modules.digester.orchestration.filter_documentation_items",
             new_callable=AsyncMock,
@@ -60,7 +60,7 @@ async def test_extract_relations_no_classes():
     mock_repo.get_session_data = AsyncMock(return_value=None)
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.relations.SessionRepository", return_value=mock_repo),
         patch("src.modules.digester.orchestration.filter_documentation_items", new_callable=AsyncMock, return_value=[]),
     ):
         session_id = uuid4()
@@ -87,9 +87,9 @@ async def test_get_relations_status_found():
     )
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.relations.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.build_typed_job_status_response",
+            "src.modules.digester.routes.relations.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
@@ -131,7 +131,7 @@ async def test_override_relations_success():
         }
     )
 
-    with patch("src.modules.digester.router.SessionRepository", return_value=mock_repo):
+    with patch("src.modules.digester.routes.relations.SessionRepository", return_value=mock_repo):
         session_id = uuid4()
         response = await override_relations(
             session_id=session_id,

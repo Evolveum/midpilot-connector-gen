@@ -14,7 +14,7 @@ from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.extractors.connectivity_endpoint import (
     extract_connectivity_endpoint as extract_connectivity_endpoint_worker,
 )
-from src.modules.digester.router import (
+from src.modules.digester.routes.connectivity_endpoint import (
     extract_connectivity_endpoint,
     get_connectivity_endpoint_status,
     override_connectivity_endpoint,
@@ -33,7 +33,7 @@ async def test_extract_connectivity_endpoint_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.connectivity_endpoint.SessionRepository", return_value=mock_repo),
         patch(
             "src.modules.digester.orchestration.get_session_base_api_url",
             new_callable=AsyncMock,
@@ -118,10 +118,10 @@ async def test_get_connectivity_endpoint_status_uses_session_output_when_finishe
     fake_status = MagicMock(jobId=job_id, status=JobStatus.finished, result=ConnectivityEndpointResponse())
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.connectivity_endpoint.SessionRepository", return_value=mock_repo),
         patch("src.common.utils.relevance.RelevantChunkRepository", return_value=mock_relevant_repo),
         patch(
-            "src.modules.digester.router.build_typed_job_status_response",
+            "src.modules.digester.routes.connectivity_endpoint.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
@@ -170,7 +170,7 @@ async def test_override_connectivity_endpoint_success():
     mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.connectivity_endpoint.SessionRepository", return_value=mock_repo),
         patch("src.modules.digester.results.RelevantChunkRepository", return_value=mock_relevant_repo),
     ):
         response = await override_connectivity_endpoint(

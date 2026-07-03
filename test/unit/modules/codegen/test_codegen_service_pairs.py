@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.codegen import service
+from src.modules.codegen.selection import relevant_chunks
 from src.modules.digester.schemas import RelationsResponse
 
 
@@ -21,7 +21,7 @@ def test_collect_pairs_new_format():
         {"chunk_id": "uuid3"},
     ]
 
-    result = service._collect_pairs(input_data)
+    result = relevant_chunks._collect_pairs(input_data)
 
     expected = [(0, "uuid1"), (1, "uuid2"), (2, "uuid3")]
     assert result == expected
@@ -32,7 +32,7 @@ def test_collect_pairs_legacy_format():
     # Legacy format: list of integers
     input_data = [1, 2, 3, 4]
 
-    result = service._collect_pairs(input_data)
+    result = relevant_chunks._collect_pairs(input_data)
 
     expected = [(1, None), (2, None), (3, None), (4, None)]
     assert result == expected
@@ -40,9 +40,9 @@ def test_collect_pairs_legacy_format():
 
 def test_collect_pairs_empty_input():
     """Test _collect_pairs with empty or None input."""
-    assert service._collect_pairs(None) == []
-    assert service._collect_pairs([]) == []
-    assert service._collect_pairs("") == []
+    assert relevant_chunks._collect_pairs(None) == []
+    assert relevant_chunks._collect_pairs([]) == []
+    assert relevant_chunks._collect_pairs("") == []
 
 
 @pytest.mark.asyncio
@@ -63,8 +63,8 @@ async def test_collect_relation_object_class_pairs_uses_subject_and_object_chunk
         }
     )
     with (
-        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_repository,
+        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository") as mock_relevant_repository,
     ):
         mock_db_cm = mock_session_maker.return_value
         mock_db = AsyncMock()
@@ -85,7 +85,7 @@ async def test_collect_relation_object_class_pairs_uses_subject_and_object_chunk
             }
         )
 
-        result = await service._collect_relation_object_class_pairs(relations, uuid4())
+        result = await relevant_chunks._collect_relation_object_class_pairs(relations, uuid4())
 
         assert result == [
             {"doc_id": "doc-1", "chunk_id": "principal-1"},

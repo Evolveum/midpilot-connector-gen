@@ -11,7 +11,7 @@ import pytest
 
 from src.common.enums import JobStatus
 from src.common.errors import InvalidRelationsOutputError, RelationNotFoundError
-from src.modules.codegen.router import generate_relation_code, get_relation_code_status
+from src.modules.codegen.routes.relations import generate_relation_code, get_relation_code_status
 
 
 # RELATION
@@ -37,7 +37,7 @@ async def test_generate_relation_code_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.relations.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
@@ -91,7 +91,7 @@ async def test_generate_relation_code_selects_relation_by_name():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.relations.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
@@ -140,7 +140,7 @@ async def test_generate_relation_code_rejects_missing_display_name():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.relations.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         session_id = uuid4()
@@ -175,7 +175,7 @@ async def test_generate_relation_code_rejects_unknown_relation_name():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.relations.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         session_id = uuid4()
@@ -203,9 +203,9 @@ async def test_get_relation_code_status_found():
     )
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.relations.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.codegen.router.build_multi_doc_status_response",
+            "src.modules.codegen.routes.relations.build_multi_doc_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_builder,

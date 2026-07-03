@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import ApiType
-from src.modules.codegen import service
+from src.modules.codegen import generation
 from src.modules.codegen.core.operations import build_authorization_scaffold, build_other_authorization_scaffold
 from src.modules.codegen.selection.authorization import (
     ANALYSIS_SUPPORT_FIELD,
@@ -54,14 +54,16 @@ async def test_generate_authorization_code_uses_preferred_authorizations_and_aut
     }
 
     with (
-        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
+        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
         patch(
-            "src.modules.codegen.service.get_session_base_api_url",
+            "src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository"
+        ) as mock_relevant_chunk_repository,
+        patch(
+            "src.modules.codegen.generation.get_session_base_api_url",
             new_callable=AsyncMock,
             return_value="",
         ) as mock_get_base_api_url,
-        patch("src.modules.codegen.service.AuthorizationGenerator") as mock_generator_class,
+        patch("src.modules.codegen.generation.AuthorizationGenerator") as mock_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
         mock_db = AsyncMock()
@@ -73,7 +75,7 @@ async def test_generate_authorization_code_uses_preferred_authorizations_and_aut
         mock_generator_instance = mock_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked authorization code")
 
-        result = await service.generate_authorization_code(
+        result = await generation.generate_authorization_code(
             auth_payload=auth_payload,
             preferred_authorizations=preferred_authorizations,
             session_id=session_id,
@@ -109,10 +111,12 @@ async def test_generate_authorization_code_returns_static_scaffold_for_other_aut
     }
 
     with (
-        patch("src.modules.codegen.service.AuthorizationGenerator") as mock_generator_class,
-        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
+        patch("src.modules.codegen.generation.AuthorizationGenerator") as mock_generator_class,
+        patch(
+            "src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository"
+        ) as mock_relevant_chunk_repository,
     ):
-        result = await service.generate_authorization_code(
+        result = await generation.generate_authorization_code(
             auth_payload=auth_payload,
             preferred_authorizations=[{"name": "other", "type": "other"}],
             session_id=session_id,
@@ -155,10 +159,12 @@ async def test_generate_authorization_code_marks_unmatched_midpoint_authorizatio
     relevant_map = {"authOutput": [{"docId": "doc-1", "chunkId": "chunk-bearer"}]}
 
     with (
-        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
-        patch("src.modules.codegen.service.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
-        patch("src.modules.codegen.service.AuthorizationGenerator") as mock_generator_class,
+        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
+        patch(
+            "src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository"
+        ) as mock_relevant_chunk_repository,
+        patch("src.modules.codegen.generation.get_session_base_api_url", new_callable=AsyncMock, return_value=""),
+        patch("src.modules.codegen.generation.AuthorizationGenerator") as mock_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
         mock_db = AsyncMock()
@@ -170,7 +176,7 @@ async def test_generate_authorization_code_marks_unmatched_midpoint_authorizatio
         mock_generator_instance = mock_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked authorization code")
 
-        result = await service.generate_authorization_code(
+        result = await generation.generate_authorization_code(
             auth_payload=auth_payload,
             preferred_authorizations=preferred_authorizations,
             session_id=session_id,

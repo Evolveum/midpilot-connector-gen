@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.codegen import service
+from src.modules.codegen import generation
 from src.modules.digester.schemas import RelationsResponse
 
 
@@ -40,9 +40,9 @@ async def test_generate_relation():
     }
 
     with (
-        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_repository,
-        patch("src.modules.codegen.service.RelationGenerator") as mock_relation_generator_class,
+        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository") as mock_relevant_repository,
+        patch("src.modules.codegen.generation.RelationGenerator") as mock_relation_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
         mock_db = AsyncMock()
@@ -71,7 +71,7 @@ async def test_generate_relation():
 
         relations_model = RelationsResponse.model_validate(test_relations_payload)
 
-        result = await service.generate_relation_code(
+        result = await generation.generate_relation_code(
             relations=relations_model,
             relation_name="project_to_membership",
             session_id=uuid4(),

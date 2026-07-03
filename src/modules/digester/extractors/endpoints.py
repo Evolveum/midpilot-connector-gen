@@ -20,14 +20,12 @@ from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.enums import ApiType
 from src.common.jobs import update_job_progress
 from src.common.utils.session_info_metadata import resolve_effective_api_type
-from src.modules.digester.entities.object_classes import (
-    extract_endpoints_from_result,
-    update_object_class_field_in_session,
-)
+from src.modules.digester.entities.object_classes import extract_endpoints_from_result
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest.endpoints import extract_endpoints as _extract_rest_endpoints
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
 from src.modules.digester.extractors.sql.tables import extract_sql_tables
+from src.modules.digester.persistence import persist_object_class_field
 from src.modules.digester.selection import (
     DEFAULT_CRITERIA,
     build_chunk_id_to_doc_id,
@@ -175,19 +173,9 @@ async def extract_endpoints(
     protocol = await resolve_effective_api_type(session_id, api_type_override)
     if protocol == ApiType.SQL:
         result = await extract_sql_tables(doc_items, object_class, job_id)
-        try:
-            tables_list = extract_endpoints_from_result(result)
-            logger.info("[Digester:Endpoints] Selected %d SQL tables for %s", len(tables_list), object_class)
-            updated = await update_object_class_field_in_session(
-                session_id=session_id,
-                object_class=object_class,
-                field_name="endpoints",
-                field_value=tables_list,
-            )
-            if not updated:
-                logger.warning("[Digester:Endpoints] Failed to update objectClassesOutput for %s", object_class)
-        except Exception:
-            logger.exception("[Digester:Endpoints] Failed to update object class with SQL tables for %s", object_class)
+        tables_list = extract_endpoints_from_result(result)
+        logger.info("[Digester:Endpoints] Selected %d SQL tables for %s", len(tables_list), object_class)
+        await persist_object_class_field(session_id, object_class, "endpoints", tables_list, "Digester:Endpoints")
         return result
 
     is_scim = protocol == ApiType.SCIM
@@ -222,19 +210,8 @@ async def extract_endpoints(
             base_api_url,
         )
 
-    try:
-        endpoints_list = extract_endpoints_from_result(result)
-        logger.info("[Digester:Endpoints] Extracted %d endpoints for %s", len(endpoints_list), object_class)
-
-        updated = await update_object_class_field_in_session(
-            session_id=session_id,
-            object_class=object_class,
-            field_name="endpoints",
-            field_value=endpoints_list,
-        )
-        if not updated:
-            logger.warning("[Digester:Endpoints] Failed to update objectClassesOutput for %s", object_class)
-    except Exception:
-        logger.exception("[Digester:Endpoints] Failed to update object class with endpoints for %s", object_class)
+    endpoints_list = extract_endpoints_from_result(result)
+    logger.info("[Digester:Endpoints] Extracted %d endpoints for %s", len(endpoints_list), object_class)
+    await persist_object_class_field(session_id, object_class, "endpoints", endpoints_list, "Digester:Endpoints")
 
     return result

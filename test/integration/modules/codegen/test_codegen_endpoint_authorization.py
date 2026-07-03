@@ -10,7 +10,11 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import ApiType
-from src.modules.codegen.router import generate_authorization, get_authorization_status, override_authorization
+from src.modules.codegen.routes.authorization import (
+    generate_authorization,
+    get_authorization_status,
+    override_authorization,
+)
 from src.modules.codegen.schema import AuthorizationCodegenInput, GroovyCodePayload
 
 
@@ -56,7 +60,7 @@ async def test_generate_authorization_includes_preferred_authorizations_in_job_a
     mock_repo.get_session_data = AsyncMock(return_value=auth_payload)
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.authorization.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
             "src.modules.codegen.orchestration.resolve_effective_api_type",
@@ -115,7 +119,7 @@ async def test_generate_authorization_allows_midpoint_authorization_when_auth_ou
     ]
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.authorization.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
             "src.modules.codegen.orchestration.resolve_effective_api_type",
@@ -153,9 +157,9 @@ async def test_get_authorization_status_found():
     fake_status = MagicMock(jobId=job_id)
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.authorization.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.codegen.router.build_multi_doc_status_response",
+            "src.modules.codegen.routes.authorization.build_multi_doc_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
@@ -177,7 +181,7 @@ async def test_override_authorization_success():
 
     code = GroovyCodePayload(code='connector { authorization { header "Authorization" } }')
 
-    with patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo):
+    with patch("src.modules.codegen.routes.authorization.SessionRepository", return_value=mock_repo):
         session_id = uuid4()
         response = await override_authorization(
             session_id=session_id,

@@ -24,7 +24,7 @@ from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.enums import ApiType
 from src.common.errors import ObjectClassesNotFoundError, SessionNotFoundError
-from src.common.jobs import schedule_coroutine_job
+from src.common.jobs import persist_job_pointer, schedule_coroutine_job
 from src.common.utils.session_info_metadata import get_session_base_api_url
 from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.extractors.auth import extract_auth
@@ -78,13 +78,7 @@ async def schedule_object_class_extraction(
         await_documentation_timeout=_DOCUMENTATION_WAIT_TIMEOUT_SECONDS,
     )
 
-    await repo.update_session(
-        session_id,
-        {
-            "objectClassesJobId": str(job_id),
-            "objectClassesInput": dict(input_payload),
-        },
-    )
+    await persist_job_pointer(repo, session_id, "objectClasses", dict(input_payload), job_id)
     return job_id
 
 
@@ -126,15 +120,12 @@ async def schedule_attribute_extraction(
         session_result_key=f"{object_class}AttributesOutput",
     )
 
-    await repo.update_session(
+    await persist_job_pointer(
+        repo,
         session_id,
-        {
-            f"{object_class}AttributesJobId": str(job_id),
-            f"{object_class}AttributesInput": {
-                "objectClass": object_class,
-                "relevantDocumentationsCount": total_chunks,
-            },
-        },
+        f"{object_class}Attributes",
+        {"objectClass": object_class, "relevantDocumentationsCount": total_chunks},
+        job_id,
     )
     return job_id
 
@@ -178,16 +169,16 @@ async def schedule_endpoint_extraction(
         session_result_key=f"{object_class}EndpointsOutput",
     )
 
-    await repo.update_session(
+    await persist_job_pointer(
+        repo,
         session_id,
+        f"{object_class}Endpoints",
         {
-            f"{object_class}EndpointsJobId": str(job_id),
-            f"{object_class}EndpointsInput": {
-                "objectClass": object_class,
-                "relevantDocumentationsCount": total_chunks,
-                "baseApiUrl": selection.base_api_url,
-            },
+            "objectClass": object_class,
+            "relevantDocumentationsCount": total_chunks,
+            "baseApiUrl": selection.base_api_url,
         },
+        job_id,
     )
     return job_id
 
@@ -227,15 +218,12 @@ async def schedule_relations_extraction(
         session_result_key="relationsOutput",
     )
 
-    await repo.update_session(
+    await persist_job_pointer(
+        repo,
         session_id,
-        {
-            "relationsJobId": str(job_id),
-            "relationsInput": {
-                "relevantObjectClasses": relevant,
-                "skipCache": skip_cache,
-            },
-        },
+        "relations",
+        {"relevantObjectClasses": relevant, "skipCache": skip_cache},
+        job_id,
     )
     return job_id
 
@@ -272,15 +260,12 @@ async def schedule_connectivity_endpoint_extraction(
         await_documentation_timeout=_DOCUMENTATION_WAIT_TIMEOUT_SECONDS,
     )
 
-    await repo.update_session(
+    await persist_job_pointer(
+        repo,
         session_id,
-        {
-            "connectivityEndpointJobId": str(job_id),
-            "connectivityEndpointInput": {
-                "baseApiUrl": base_api_url,
-                "skipCache": skip_cache,
-            },
-        },
+        "connectivityEndpoint",
+        {"baseApiUrl": base_api_url, "skipCache": skip_cache},
+        job_id,
     )
     return job_id
 
@@ -307,15 +292,7 @@ async def schedule_auth_extraction(
         await_documentation_timeout=_DOCUMENTATION_WAIT_TIMEOUT_SECONDS,
     )
 
-    await repo.update_session(
-        session_id,
-        {
-            "authJobId": str(job_id),
-            "authInput": {
-                "skipCache": skip_cache,
-            },
-        },
-    )
+    await persist_job_pointer(repo, session_id, "auth", {"skipCache": skip_cache}, job_id)
     return job_id
 
 
@@ -341,13 +318,5 @@ async def schedule_metadata_extraction(
         await_documentation_timeout=_DOCUMENTATION_WAIT_TIMEOUT_SECONDS,
     )
 
-    await repo.update_session(
-        session_id,
-        {
-            "metadataJobId": str(job_id),
-            "metadataInput": {
-                "skipCache": skip_cache,
-            },
-        },
-    )
+    await persist_job_pointer(repo, session_id, "metadata", {"skipCache": skip_cache}, job_id)
     return job_id

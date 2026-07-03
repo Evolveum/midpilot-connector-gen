@@ -11,7 +11,7 @@ import pytest
 
 from src.common.enums import ApiType, JobStatus
 from src.common.errors import AttributesNotFoundError
-from src.modules.codegen.router import (
+from src.modules.codegen.routes.native_schema import (
     generate_native_schema,
     get_native_schema_status,
     override_native_schema,
@@ -29,7 +29,7 @@ async def test_generate_native_schema_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.native_schema.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
             "src.modules.codegen.orchestration.resolve_effective_api_type",
@@ -78,7 +78,7 @@ async def test_generate_native_schema_uses_repair_context_only():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.native_schema.SessionRepository", return_value=mock_repo),
         patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
         patch(
             "src.modules.codegen.orchestration.resolve_effective_api_type",
@@ -132,9 +132,11 @@ async def test_get_native_schema_status_found():
     )
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.routes.native_schema.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.codegen.router.build_stage_status_response", new_callable=AsyncMock, return_value=fake_status
+            "src.modules.codegen.routes.native_schema.build_stage_status_response",
+            new_callable=AsyncMock,
+            return_value=fake_status,
         ) as mock_builder,
     ):
         job_id = uuid4()
@@ -155,7 +157,7 @@ async def test_override_native_schema_success():
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.update_session = AsyncMock()
 
-    with patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo):
+    with patch("src.modules.codegen.routes.native_schema.SessionRepository", return_value=mock_repo):
         session_id = uuid4()
         response = await override_native_schema(
             session_id,
@@ -181,7 +183,7 @@ async def test_generate_native_schema_missing_class():
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.get_session_data = AsyncMock(return_value=None)
 
-    with patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo):
+    with patch("src.modules.codegen.routes.native_schema.SessionRepository", return_value=mock_repo):
         with pytest.raises(AttributesNotFoundError) as exc_info:
             await generate_native_schema(uuid4(), "NonExistentClass", db=MagicMock())
 

@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from src import pool
 from src.common.exception_handlers import register_exception_handlers
 from src.common.jobs import recover_stale_running_jobs
+from src.common.llm import aclose_llm_http_client
 from src.config import config
 from src.router import root_router
 
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await aclose_llm_http_client()
         if pool.process_pool:
             pool.process_pool.shutdown(wait=True)
 

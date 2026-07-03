@@ -40,7 +40,7 @@ async def test_extract_attributes_updates_session_success(mock_llm, mock_digeste
         patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.extractors.attributes._extract_rest_attributes") as mock_extract_attrs,
         patch(
-            "src.modules.digester.extractors.attributes.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
@@ -176,7 +176,7 @@ async def test_extract_attributes_scim_preserves_doc_maps_when_relevance_is_empt
             ],
         ) as mock_extract_scim_attributes,
         patch(
-            "src.modules.digester.extractors.attributes.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
@@ -220,7 +220,7 @@ async def test_extract_attributes_session_not_found(mock_llm, mock_digester_upda
         patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.extractors.attributes._extract_rest_attributes") as mock_extract_attrs,
         patch(
-            "src.modules.digester.extractors.attributes.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=False,
         ) as mock_update_object_class,

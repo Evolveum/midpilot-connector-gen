@@ -5,14 +5,14 @@
 """
 Request/job orchestration for codegen operations.
 
-Sits between the thin HTTP router and the codegen worker functions in
-``service``. It owns the request-scoped flow behind every ``generate_*``
+Sits between the thin HTTP router and the codegen generation workers in
+``generation``. It owns the request-scoped flow behind every ``generate_*``
 endpoint: loading inputs from the session, resolving the effective protocol,
 assembling job/worker/session payloads, scheduling the coroutine job, and
 persisting the resulting job id.
 
 This module may depend on the session repository and the job scheduler and may
-reference ``service`` workers; the deeper ``core`` LLM engine must not. It
+reference ``generation`` workers; the deeper ``core`` LLM engine must not. It
 raises domain errors (``AppError`` subclasses) rather than HTTP exceptions so
 the HTTP layer stays in the router / exception handlers.
 """
@@ -32,10 +32,10 @@ from src.common.errors import (
     RelationNotFoundError,
     RelationsNotFoundError,
 )
-from src.common.jobs import schedule_coroutine_job
+from src.common.jobs import persist_job_pointer, schedule_coroutine_job
 from src.common.utils.relevance import hydrate_auth_sequences_from_relevance
 from src.common.utils.session_info_metadata import resolve_effective_api_type
-from src.modules.codegen import service
+from src.modules.codegen import generation
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
     CodegenOperationInput,
@@ -150,13 +150,7 @@ async def schedule_operation_job(
     if preferred_endpoints is not None:
         session_input["preferredEndpoints"] = preferred_endpoints
 
-    await repo.update_session(
-        session_id,
-        {
-            f"{key_prefix}JobId": str(job_id),
-            f"{key_prefix}Input": session_input,
-        },
-    )
+    await persist_job_pointer(repo, session_id, key_prefix, session_input, job_id)
 
     return job_id
 
@@ -222,7 +216,7 @@ async def schedule_authorization_job(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getAuthorization",
         input_payload=job_input,
-        worker=service.generate_authorization_code,
+        worker=generation.generate_authorization_code,
         worker_args=(),
         worker_kwargs=worker_kwargs,
         initial_stage="preparing",
@@ -235,13 +229,7 @@ async def schedule_authorization_job(
     session_input.update(context_payload)
     if preferred_authorizations is not None:
         session_input["preferredAuthorizations"] = preferred_authorizations
-    await repo.update_session(
-        session_id,
-        {
-            "authorizationJobId": str(job_id),
-            "authorizationInput": session_input,
-        },
-    )
+    await persist_job_pointer(repo, session_id, "authorization", session_input, job_id)
 
     return job_id
 
@@ -282,7 +270,7 @@ async def schedule_native_schema_job(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getNativeSchema",
         input_payload=job_input,
-        worker=service.generate_native_schema_code,
+        worker=generation.generate_native_schema_code,
         worker_args=(attrs, object_class),
         worker_kwargs=worker_kwargs,
         initial_stage="queue",
@@ -291,16 +279,12 @@ async def schedule_native_schema_job(
         session_result_key=f"{object_class}NativeSchemaOutput",
     )
 
-    await repo.update_session(
+    await persist_job_pointer(
+        repo,
         session_id,
-        {
-            f"{object_class}NativeSchemaJobId": str(job_id),
-            f"{object_class}NativeSchemaInput": {
-                "attributes": attrs,
-                "objectClass": object_class,
-                **context_payload,
-            },
-        },
+        f"{object_class}NativeSchema",
+        {"attributes": attrs, "objectClass": object_class, **context_payload},
+        job_id,
     )
 
     return job_id
@@ -339,7 +323,7 @@ async def schedule_connid_job(
     job_id = await schedule_coroutine_job(
         job_type="codegen.getConnID",
         input_payload=job_input,
-        worker=service.generate_conn_id_code,
+        worker=generation.generate_conn_id_code,
         worker_args=(attrs, object_class),
         worker_kwargs=worker_kwargs,
         initial_stage="queue",
@@ -348,16 +332,12 @@ async def schedule_connid_job(
         session_result_key=f"{object_class}ConnidOutput",
     )
 
-    await repo.update_session(
+    await persist_job_pointer(
+        repo,
         session_id,
-        {
-            f"{object_class}ConnidJobId": str(job_id),
-            f"{object_class}ConnidInput": {
-                "attributes": attrs,
-                "objectClass": object_class,
-                **context_payload,
-            },
-        },
+        f"{object_class}Connid",
+        {"attributes": attrs, "objectClass": object_class, **context_payload},
+        job_id,
     )
 
     return job_id
@@ -403,7 +383,7 @@ async def schedule_relation_job(
             "sessionId": session_id,
             "skipCache": skip_cache,
         },
-        worker=service.generate_relation_code,
+        worker=generation.generate_relation_code,
         worker_kwargs={
             "relations": selected_relations_model,
             "relation_name": relation_name,
@@ -415,12 +395,6 @@ async def schedule_relation_job(
         session_result_key=f"{relation_name}CodeOutput",
     )
 
-    await repo.update_session(
-        session_id,
-        {
-            f"{relation_name}CodeJobId": str(job_id),
-            f"{relation_name}CodeInput": {"relations": relations_payload},
-        },
-    )
+    await persist_job_pointer(repo, session_id, f"{relation_name}Code", {"relations": relations_payload}, job_id)
 
     return job_id

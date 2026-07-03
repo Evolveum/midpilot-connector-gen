@@ -92,7 +92,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
         patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_chunks,
         patch("src.modules.digester.extractors.attributes._extract_rest_attributes") as mock_attrs,
         patch(
-            "src.modules.digester.extractors.attributes.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
@@ -119,7 +119,7 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
         patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_chunks,
         patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints") as mock_endpoints,
         patch(
-            "src.modules.digester.extractors.endpoints.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,

@@ -34,6 +34,29 @@ from src.common.utils.relevance import (
 logger = logging.getLogger(__name__)
 
 
+async def persist_job_pointer(
+    repo: SessionRepository,
+    session_id: UUID,
+    key_prefix: str,
+    session_input: Dict[str, Any],
+    job_id: UUID,
+) -> None:
+    """
+    Persist a scheduled job's pointer onto the session using the shared naming
+    convention: ``{key_prefix}JobId`` (stringified job id) and ``{key_prefix}Input``.
+
+    Centralizes the schedule-then-track pattern shared by the codegen and digester
+    orchestration layers so the key naming stays defined in one place.
+    """
+    await repo.update_session(
+        session_id,
+        {
+            f"{key_prefix}JobId": str(job_id),
+            f"{key_prefix}Input": session_input,
+        },
+    )
+
+
 async def persist_result_to_session(
     *,
     job_id: UUID,

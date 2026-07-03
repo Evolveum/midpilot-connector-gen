@@ -17,12 +17,14 @@ from src.common.jobs.lifecycle import (
     update_job_progress,
 )
 from src.common.jobs.runner import schedule_coroutine_job
+from src.common.jobs.session_persistence import persist_job_pointer
 
 __all__ = [
     "append_job_error",
     "create_job",
     "get_job_status",
     "increment_processed_documents",
+    "persist_job_pointer",
     "recover_stale_running_jobs",
     "schedule_coroutine_job",
     "set_failed",

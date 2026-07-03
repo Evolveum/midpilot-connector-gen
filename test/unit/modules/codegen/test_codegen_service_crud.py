@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import ApiType
-from src.modules.codegen import service
+from src.modules.codegen import generation
 from src.modules.codegen.prompts.sql.create_prompts import get_sql_create_system_prompt
 
 
@@ -32,14 +32,16 @@ async def test_generate_create():
     job_id = uuid4()
 
     with (
-        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
+        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
         patch(
-            "src.modules.codegen.service.get_session_connection_target",
+            "src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository"
+        ) as mock_relevant_chunk_repository,
+        patch(
+            "src.modules.codegen.generation.get_session_connection_target",
             new_callable=AsyncMock,
             return_value=("", ""),
         ) as mock_get_connection_target,
-        patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
+        patch("src.modules.codegen.generation.CreateGenerator") as mock_create_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
         mock_db = AsyncMock()
@@ -52,7 +54,7 @@ async def test_generate_create():
         mock_generator_instance = mock_create_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked create code")
 
-        result = await service.generate_create_code(
+        result = await generation.generate_create_code(
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,
@@ -84,19 +86,19 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
 
     with (
         patch(
-            "src.modules.codegen.service.get_session_connection_target",
+            "src.modules.codegen.generation.get_session_connection_target",
             new_callable=AsyncMock,
             return_value=("", ""),
         ) as mock_get_connection_target,
         patch(
-            "src.modules.codegen.service._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
+            "src.modules.codegen.generation._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
         ),
-        patch("src.modules.codegen.service.CreateGenerator") as mock_create_generator_class,
+        patch("src.modules.codegen.generation.CreateGenerator") as mock_create_generator_class,
     ):
         mock_generator_instance = mock_create_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked sql create code")
 
-        result = await service.generate_create_code(
+        result = await generation.generate_create_code(
             attributes=test_attributes,
             endpoints=test_tables,
             session_id=session_id,
@@ -127,14 +129,16 @@ async def test_generate_update():
     ]
 
     with (
-        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
+        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
         patch(
-            "src.modules.codegen.service.get_session_connection_target",
+            "src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository"
+        ) as mock_relevant_chunk_repository,
+        patch(
+            "src.modules.codegen.generation.get_session_connection_target",
             new_callable=AsyncMock,
             return_value=("", ""),
         ),
-        patch("src.modules.codegen.service.UpdateGenerator") as mock_update_generator_class,
+        patch("src.modules.codegen.generation.UpdateGenerator") as mock_update_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
         mock_db = AsyncMock()
@@ -147,7 +151,7 @@ async def test_generate_update():
         mock_generator_instance = mock_update_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked update code")
 
-        result = await service.generate_update_code(
+        result = await generation.generate_update_code(
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,
@@ -179,14 +183,16 @@ async def test_generate_delete():
     test_preferred_endpoints = [{"method": "DELETE", "path": "/users/{id}"}]
 
     with (
-        patch("src.modules.codegen.service.async_session_maker") as mock_session_maker,
-        patch("src.modules.codegen.service.RelevantChunkRepository") as mock_relevant_chunk_repository,
+        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
         patch(
-            "src.modules.codegen.service.get_session_connection_target",
+            "src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository"
+        ) as mock_relevant_chunk_repository,
+        patch(
+            "src.modules.codegen.generation.get_session_connection_target",
             new_callable=AsyncMock,
             return_value=("", ""),
         ),
-        patch("src.modules.codegen.service.DeleteGenerator") as mock_delete_generator_class,
+        patch("src.modules.codegen.generation.DeleteGenerator") as mock_delete_generator_class,
     ):
         mock_db_cm = mock_session_maker.return_value
         mock_db = AsyncMock()
@@ -199,7 +205,7 @@ async def test_generate_delete():
         mock_generator_instance = mock_delete_generator_class.return_value
         mock_generator_instance.generate = AsyncMock(return_value="mocked delete code")
 
-        result = await service.generate_delete_code(
+        result = await generation.generate_delete_code(
             attributes=test_attributes,
             endpoints=test_endpoints,
             preferred_endpoints=test_preferred_endpoints,

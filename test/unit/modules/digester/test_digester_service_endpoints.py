@@ -41,7 +41,7 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
         patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints") as mock_extract_endpoints,
         patch(
-            "src.modules.digester.extractors.endpoints.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
@@ -135,7 +135,7 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
         patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_extract_chunks,
         patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints") as mock_extract_endpoints,
         patch(
-            "src.modules.digester.extractors.endpoints.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
@@ -209,7 +209,7 @@ async def test_extract_endpoints_retries_with_default_criteria_when_primary_is_e
             "src.modules.digester.extractors.endpoints.filter_documentation_items", new_callable=AsyncMock
         ) as mock_filter,
         patch(
-            "src.modules.digester.extractors.endpoints.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
@@ -263,7 +263,7 @@ async def test_extract_endpoints_does_not_retry_when_default_criteria_matches_sa
             "src.modules.digester.extractors.endpoints.filter_documentation_items", new_callable=AsyncMock
         ) as mock_filter,
         patch(
-            "src.modules.digester.extractors.endpoints.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,

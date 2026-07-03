@@ -50,9 +50,6 @@ def mock_search_web():
         yield mock
 
 
-# Digester workflows live in the extractor modules, so job-progress must be patched
-# in each module namespace that calls it. A single shared mock keeps assert_awaited()
-# working regardless of which module a workflow ended up in.
 _DIGESTER_UPDATE_JOB_PROGRESS_TARGETS = (
     "src.modules.digester.extractors.auth.update_job_progress",
     "src.modules.digester.extractors.connectivity_endpoint.update_job_progress",

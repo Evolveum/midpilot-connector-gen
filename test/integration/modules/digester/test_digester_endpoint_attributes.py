@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import JobStatus
-from src.modules.digester.router import (
+from src.modules.digester.routes.attributes import (
     extract_class_attributes,
     get_class_attributes_status,
     override_class_attributes,
@@ -56,7 +56,7 @@ async def test_extract_class_attributes_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
         patch(
             "src.modules.digester.selection.documentation_selector.filter_documentation_items",
             new=AsyncMock(return_value=[{"docId": doc_id, "chunkId": chunk_id}]),
@@ -121,7 +121,7 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
     )
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
         patch(
             "src.modules.digester.selection.documentation_selector.RelevantChunkRepository",
             return_value=mock_relevance_repo,
@@ -185,9 +185,9 @@ async def test_get_class_attributes_status_found():
     )
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.build_typed_job_status_response",
+            "src.modules.digester.routes.attributes.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=MagicMock(jobId=job_id, status=JobStatus.finished, result=None),
         ) as mock_status_builder,
@@ -225,7 +225,7 @@ async def test_override_class_attributes_success():
     doc_id = str(uuid4())
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
         patch("src.modules.digester.results.RelevantChunkRepository", return_value=mock_relevant_repo),
         patch(
             "src.modules.digester.results.get_session_documentation",

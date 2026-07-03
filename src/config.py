@@ -55,6 +55,8 @@ class LLMSettings(BaseModel):
     :param model_name: Default model identifier to use.
     :param request_timeout: Timeout for API requests in seconds.
     :param ca_cert_file: Optional CA certificate file for internal TLS.
+    :param max_connections: Max total connections in the shared LLM HTTP pool.
+    :param max_keepalive_connections: Max idle keep-alive connections retained in the pool.
     """
 
     openai_api_key: str = ""
@@ -70,6 +72,14 @@ class LLMSettings(BaseModel):
         description="Optional reasoning effort for models that support it.",
     )
     ca_cert_file: Optional[str] = None
+    max_connections: int = Field(
+        100,
+        description="Maximum total connections in the shared LLM HTTP connection pool.",
+    )
+    max_keepalive_connections: int = Field(
+        30,
+        description="Maximum idle keep-alive connections retained in the shared LLM HTTP pool.",
+    )
 
 
 class LangfuseSettings(BaseModel):
