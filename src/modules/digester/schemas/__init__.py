@@ -61,6 +61,7 @@ from src.modules.digester.schemas.metadata import (
     InfoMetadataExtraction,
     InfoResponse,
     RestAvailabilityInfo,
+    RestSignalResult,
     ScimAvailabilityInfo,
     SqlAvailabilityInfo,
 )
@@ -143,5 +144,6 @@ __all__ = [
     "RankedObjectClass",
     "RelationRecord",
     "RelationsResponse",
+    "RestSignalResult",
     "ScimAvailabilityInfo",
 ]

@@ -320,30 +320,33 @@ class DigesterSettings(BaseModel):
             "scim.cloud registry, matched against both product name and developer."
         ),
     )
-    apitype_knowledge_enabled: bool = Field(
+    apitype_scim_knowledge_enabled: bool = Field(
         True,
         description=(
-            "Enable the documentation-free, LLM-knowledge apiType signal that asks the model whether the "
+            "Enable the documentation-free, LLM-knowledge SCIM signal that asks the model whether the "
             "named application is known to support SCIM provisioning."
         ),
     )
-    apitype_web_search_enabled: bool = Field(
+    apitype_scim_web_search_enabled: bool = Field(
         True,
         description=(
-            "Enable the web-search apiType signal (Brave/ddgs via the shared search backend) that looks up "
+            "Enable the web-search SCIM signal (Brave/ddgs via the shared search backend) that looks up "
             "SCIM support and availability for the application name. Enabled by default but it performs "
             "an external web search on every metadata extraction."
+        ),
+    )
+    apitype_scim_web_search_query_template: str = Field(
+        "{application_name} SCIM provisioning support plan",
+        description=(
+            "Query template for the web-search SCIM signal. Must contain the '{application_name}' placeholder."
         ),
     )
     apitype_web_search_max_results: int = Field(
         5,
         ge=1,
-        description="Maximum number of web search results fed into the web-search apiType signal LLM call.",
-    )
-    apitype_web_search_query_template: str = Field(
-        "{application_name} SCIM provisioning support plan",
         description=(
-            "Query template for the web-search apiType signal. Must contain the '{application_name}' placeholder."
+            "Maximum number of web search results fed into a web-search apiType signal LLM call. "
+            "Shared by the SCIM and REST web-search signals."
         ),
     )
     apitype_web_search_fetch_pages: bool = Field(
@@ -351,13 +354,38 @@ class DigesterSettings(BaseModel):
         description=(
             "Open every web search result page (via the shared crawl4ai scraper) and feed its full content to the "
             "web-search apiType signal LLM instead of only the search snippets. Falls back to the snippet for any "
-            "page that cannot be fetched. The number of pages opened equals 'apitype_web_search_max_results'."
+            "page that cannot be fetched. The number of pages opened equals 'apitype_web_search_max_results'. "
+            "Shared by the SCIM and REST web-search signals."
         ),
     )
     apitype_web_search_page_max_chars: int = Field(
         6000,
         ge=0,
-        description="Maximum characters of each fetched page fed into the web-search apiType signal LLM call.",
+        description=(
+            "Maximum characters of each fetched page fed into a web-search apiType signal LLM call. "
+            "Shared by the SCIM and REST web-search signals."
+        ),
+    )
+    apitype_rest_knowledge_enabled: bool = Field(
+        True,
+        description=(
+            "Enable the documentation-free, LLM-knowledge REST signal that asks the model whether the named "
+            "application is known to expose a REST/OpenAPI provisioning API."
+        ),
+    )
+    apitype_rest_web_search_enabled: bool = Field(
+        True,
+        description=(
+            "Enable the web-search REST signal that looks up REST/OpenAPI support and availability for the "
+            "application name. Shares the web-search page-fetch settings (max results, fetch pages, page max "
+            "chars) with the SCIM web-search signal; only the query template and enable flag are REST-specific."
+        ),
+    )
+    apitype_rest_web_search_query_template: str = Field(
+        "{application_name} REST API OpenAPI Swagger documentation",
+        description=(
+            "Query template for the web-search REST signal. Must contain the '{application_name}' placeholder."
+        ),
     )
     fuzzy_start_marker_error_ratio: float = Field(
         0.05,
@@ -447,9 +475,11 @@ class DigesterSettings(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_apitype_web_search_query_template(self) -> "DigesterSettings":
-        if "{application_name}" not in self.apitype_web_search_query_template:
-            raise ValueError("apitype_web_search_query_template must contain the '{application_name}' placeholder")
+    def _validate_apitype_web_search_query_templates(self) -> "DigesterSettings":
+        if "{application_name}" not in self.apitype_scim_web_search_query_template:
+            raise ValueError("apitype_scim_web_search_query_template must contain the '{application_name}' placeholder")
+        if "{application_name}" not in self.apitype_rest_web_search_query_template:
+            raise ValueError("apitype_rest_web_search_query_template must contain the '{application_name}' placeholder")
         return self
 
 

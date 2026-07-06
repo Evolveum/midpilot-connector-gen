@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.common.enums import ApiType, ScimAvailability, ScimSource
+from src.common.enums import ApiType, DetectionSource, ProtocolAvailability
 from src.modules.digester.aggregation.merges import merge_api_type, merge_info_metadata
 from src.modules.digester.enums import EndpointType
 from src.modules.digester.extractors.apitype.scim_cloud import ScimCloudMatch
@@ -18,8 +18,33 @@ from src.modules.digester.schemas import (
     BaseAPIEndpoint,
     InfoMetadata,
     InfoMetadataExtraction,
+    RestAvailabilityInfo,
+    RestSignalResult,
     ScimAvailabilityInfo,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_rest_signals():
+    """Stub the documentation-free REST signals to non-supporting by default.
+
+    Keeps the extract-info tests offline (the web-search signal would otherwise hit the
+    network) and focused on the SCIM/merge behavior they assert. Tests that exercise REST
+    signal detection re-patch these targets explicitly.
+    """
+    with (
+        patch(
+            "src.modules.digester.extractors.info.lookup_rest_knowledge",
+            new_callable=AsyncMock,
+            return_value=RestSignalResult(supports_rest=False),
+        ),
+        patch(
+            "src.modules.digester.extractors.info.lookup_rest_web_search",
+            new_callable=AsyncMock,
+            return_value=RestSignalResult(supports_rest=False),
+        ),
+    ):
+        yield
 
 
 # ==================== EXTRACT INFO METADATA ====================
@@ -219,6 +244,57 @@ async def test_extract_info_metadata_web_search_adds_scim(mock_llm, mock_digeste
 
 
 @pytest.mark.asyncio
+async def test_extract_info_metadata_rest_signal_adds_rest_and_exposes_availability(
+    mock_llm, mock_digester_update_job_progress
+):
+    """A REST signal unions REST into apiType and exposes the aggregated restAvailability advisory."""
+    doc_uuid = uuid4()
+    fake_doc_items = [{"uuid": str(doc_uuid), "content": "Acme"}]
+
+    # Docs detect only SCIM; the documentation-free REST signals establish REST.
+    info_results = [([InfoMetadataExtraction(name="Acme")], True, doc_uuid)]
+    api_type_results = [([ApiTypeResponse(api_type=[ApiType.SCIM])], True, doc_uuid)]
+
+    with (
+        patch(
+            "src.modules.digester.extractors.info.run_doc_extractors_concurrently", new_callable=AsyncMock
+        ) as mock_parallel,
+        patch(
+            "src.modules.digester.extractors.info.lookup_scim_support",
+            new_callable=AsyncMock,
+            return_value=ScimCloudMatch(matched=False),
+        ),
+        patch(
+            "src.modules.digester.extractors.info.lookup_api_type_knowledge",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=True, api_type=[ApiType.SCIM]),
+        ),
+        patch(
+            "src.modules.digester.extractors.info.lookup_api_type_web_search",
+            new_callable=AsyncMock,
+            return_value=ApiTypeSignalResult(supports_scim=False),
+        ),
+        patch(
+            "src.modules.digester.extractors.info.lookup_rest_web_search",
+            new_callable=AsyncMock,
+            return_value=RestSignalResult(
+                supports_rest=True, availability=ProtocolAvailability.PAID, required_plan="Enterprise"
+            ),
+        ),
+    ):
+        mock_parallel.side_effect = [info_results, api_type_results]
+        result = await extract_info_metadata(fake_doc_items, "Acme", uuid4())
+
+    metadata = result["result"]["infoMetadata"]
+    assert metadata["apiType"] == [ApiType.REST.value, ApiType.SCIM.value]
+    rest = metadata["restAvailability"]
+    assert rest["status"] == ProtocolAvailability.PAID.value
+    assert rest["requiredPlan"] == "Enterprise"
+    assert rest["sources"] == ["web_search"]
+    assert rest["confidence"] == 1.0
+
+
+@pytest.mark.asyncio
 async def test_extract_info_metadata_exposes_scim_availability(mock_llm, mock_digester_update_job_progress):
     """When SCIM is detected, the response carries the aggregated scimAvailability advisory."""
     doc_uuid = uuid4()
@@ -249,7 +325,7 @@ async def test_extract_info_metadata_exposes_scim_availability(mock_llm, mock_di
             return_value=ApiTypeSignalResult(
                 supports_scim=True,
                 api_type=[ApiType.SCIM],
-                scim_availability=ScimAvailability.PAID,
+                scim_availability=ProtocolAvailability.PAID,
                 required_plan="Enterprise",
             ),
         ),
@@ -260,7 +336,7 @@ async def test_extract_info_metadata_exposes_scim_availability(mock_llm, mock_di
     metadata = result["result"]["infoMetadata"]
     assert ApiType.SCIM.value in metadata["apiType"]
     availability = metadata["scimAvailability"]
-    assert availability["status"] == ScimAvailability.PAID.value
+    assert availability["status"] == ProtocolAvailability.PAID.value
     assert availability["requiredPlan"] == "Enterprise"
     assert availability["sources"] == ["scim_cloud", "web_search"]
     assert availability["confidence"] == 1.0
@@ -315,7 +391,7 @@ async def test_extract_info_metadata_no_docs_keeps_signal_scim(mock_llm, mock_di
             return_value=ApiTypeSignalResult(
                 supports_scim=True,
                 api_type=[ApiType.SCIM],
-                scim_availability=ScimAvailability.PAID,
+                scim_availability=ProtocolAvailability.PAID,
                 required_plan="Enterprise",
             ),
         ),
@@ -325,7 +401,7 @@ async def test_extract_info_metadata_no_docs_keeps_signal_scim(mock_llm, mock_di
     metadata = result["result"]["infoMetadata"]
     assert metadata is not None
     assert metadata["apiType"] == [ApiType.SCIM.value]
-    assert metadata["scimAvailability"]["status"] == ScimAvailability.PAID.value
+    assert metadata["scimAvailability"]["status"] == ProtocolAvailability.PAID.value
     assert metadata["scimAvailability"]["requiredPlan"] == "Enterprise"
     assert metadata["scimAvailability"]["sources"] == ["web_search"]
 
@@ -575,12 +651,12 @@ def test_info_metadata_serializes_scim_availability_for_scim():
     metadata = InfoMetadata(
         api_type=[ApiType.SCIM],
         scim_availability=ScimAvailabilityInfo(
-            status=ScimAvailability.PAID, required_plan="Enterprise", sources=[ScimSource.WEB_SEARCH]
+            status=ProtocolAvailability.PAID, required_plan="Enterprise", sources=[DetectionSource.WEB_SEARCH]
         ),
     )
     dumped = metadata.model_dump(by_alias=True)
 
-    assert dumped["scimAvailability"]["status"] == ScimAvailability.PAID.value
+    assert dumped["scimAvailability"]["status"] == ProtocolAvailability.PAID.value
     assert dumped["scimAvailability"]["requiredPlan"] == "Enterprise"
     assert dumped["scimAvailability"]["sources"] == ["web_search"]
     assert dumped["scimAvailability"]["confidence"] == 1.0
@@ -592,13 +668,68 @@ def test_info_metadata_keeps_all_availability_blocks_when_not_scim():
     metadata = InfoMetadata(api_type=[ApiType.REST])
     dumped = metadata.model_dump(by_alias=True)
 
-    assert dumped["restAvailability"] == {"baseApiEndpoint": []}
+    # REST carries the same availability advisory shape as SCIM (default/unknown when the
+    # advisory was not populated).
+    assert dumped["restAvailability"]["baseApiEndpoint"] == []
+    assert dumped["restAvailability"]["status"] == ProtocolAvailability.UNKNOWN.value
+    assert dumped["restAvailability"]["requiredPlan"] == ""
+    assert dumped["restAvailability"]["sources"] == []
+    assert dumped["restAvailability"]["confidence"] == 1.0
     assert dumped["sqlAvailability"] == {"databaseName": ""}
-    assert dumped["scimAvailability"]["status"] == ScimAvailability.UNKNOWN.value
+    assert dumped["scimAvailability"]["status"] == ProtocolAvailability.UNKNOWN.value
     assert dumped["scimAvailability"]["baseApiEndpoint"] == []
     # Flat fields no longer live at the top level; they moved into the availability blocks.
     assert "baseApiEndpoint" not in dumped
     assert "databaseName" not in dumped
+
+
+def test_info_metadata_serializes_rest_availability_for_rest():
+    metadata = InfoMetadata(
+        api_type=[ApiType.REST],
+        rest_availability=RestAvailabilityInfo(
+            status=ProtocolAvailability.PAID,
+            required_plan="Enterprise",
+            sources=[DetectionSource.DOCUMENTATION, DetectionSource.WEB_SEARCH],
+        ),
+    )
+    dumped = metadata.model_dump(by_alias=True)
+
+    assert dumped["restAvailability"]["status"] == ProtocolAvailability.PAID.value
+    assert dumped["restAvailability"]["requiredPlan"] == "Enterprise"
+    assert dumped["restAvailability"]["sources"] == ["documentation", "web_search"]
+    assert dumped["restAvailability"]["confidence"] == 1.0
+
+
+def test_merge_info_metadata_includes_rest_availability_for_rest():
+    merged = merge_info_metadata(
+        [InfoMetadataExtraction(name="Acme")],
+        total_items=1,
+        api_types=[ApiType.REST],
+        rest_availability=RestAvailabilityInfo(
+            status=ProtocolAvailability.PAID,
+            required_plan="Enterprise",
+            sources=[DetectionSource.WEB_SEARCH],
+        ),
+    )
+
+    availability = merged["infoMetadata"]["restAvailability"]
+    assert availability["status"] == ProtocolAvailability.PAID.value
+    assert availability["requiredPlan"] == "Enterprise"
+    assert availability["sources"] == ["web_search"]
+
+
+def test_merge_info_metadata_empties_rest_availability_without_rest():
+    # The REST advisory must not leak into a result where REST was not detected.
+    merged = merge_info_metadata(
+        [InfoMetadataExtraction(name="Acme")],
+        total_items=1,
+        api_types=[ApiType.SCIM],
+        rest_availability=RestAvailabilityInfo(status=ProtocolAvailability.PAID),
+    )
+
+    rest = merged["infoMetadata"]["restAvailability"]
+    assert rest["status"] == ProtocolAvailability.UNKNOWN.value
+    assert rest["baseApiEndpoint"] == []
 
 
 def test_merge_info_metadata_includes_scim_availability_for_scim():
@@ -607,12 +738,12 @@ def test_merge_info_metadata_includes_scim_availability_for_scim():
         total_items=1,
         api_types=[ApiType.SCIM],
         scim_availability=ScimAvailabilityInfo(
-            status=ScimAvailability.PAID, required_plan="Enterprise", sources=[ScimSource.SCIM_CLOUD]
+            status=ProtocolAvailability.PAID, required_plan="Enterprise", sources=[DetectionSource.SCIM_CLOUD]
         ),
     )
 
     availability = merged["infoMetadata"]["scimAvailability"]
-    assert availability["status"] == ScimAvailability.PAID.value
+    assert availability["status"] == ProtocolAvailability.PAID.value
     assert availability["sources"] == ["scim_cloud"]
 
 
@@ -622,11 +753,11 @@ def test_merge_info_metadata_empties_scim_availability_without_scim():
         [InfoMetadataExtraction(name="Acme")],
         total_items=1,
         api_types=[ApiType.REST],
-        scim_availability=ScimAvailabilityInfo(status=ScimAvailability.PAID),
+        scim_availability=ScimAvailabilityInfo(status=ProtocolAvailability.PAID),
     )
 
     scim = merged["infoMetadata"]["scimAvailability"]
-    assert scim["status"] == ScimAvailability.UNKNOWN.value
+    assert scim["status"] == ProtocolAvailability.UNKNOWN.value
     assert scim["baseApiEndpoint"] == []
 
 
@@ -638,12 +769,12 @@ def test_merge_info_metadata_keeps_signal_scim_without_documents():
         total_items=0,
         api_types=[ApiType.SCIM],
         scim_availability=ScimAvailabilityInfo(
-            status=ScimAvailability.PAID, required_plan="Enterprise", sources=[ScimSource.WEB_SEARCH]
+            status=ProtocolAvailability.PAID, required_plan="Enterprise", sources=[DetectionSource.WEB_SEARCH]
         ),
     )
 
     assert merged["infoMetadata"]["apiType"] == [ApiType.SCIM.value]
-    assert merged["infoMetadata"]["scimAvailability"]["status"] == ScimAvailability.PAID.value
+    assert merged["infoMetadata"]["scimAvailability"]["status"] == ProtocolAvailability.PAID.value
     assert merged["infoMetadata"]["scimAvailability"]["sources"] == ["web_search"]
 
 

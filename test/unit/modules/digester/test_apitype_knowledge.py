@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.common.enums import ApiType, ScimAvailability
+from src.common.enums import ApiType, ProtocolAvailability
 from src.modules.digester.extractors.apitype.knowledge import lookup_api_type_knowledge
 from src.modules.digester.schemas import ApiTypeSignalResult
 
@@ -46,19 +46,19 @@ async def test_lookup_surfaces_paid_availability():
         result = await lookup_api_type_knowledge("Slack")
 
     # "enterprise" is normalized to the paid availability state.
-    assert result.scim_availability is ScimAvailability.PAID
+    assert result.scim_availability is ProtocolAvailability.PAID
     assert result.required_plan == "Enterprise Grid"
 
 
 def test_knowledge_response_defaults_availability_unknown():
     response = ApiTypeSignalResult(supports_scim=False)
-    assert response.scim_availability is ScimAvailability.UNKNOWN
+    assert response.scim_availability is ProtocolAvailability.UNKNOWN
     assert response.required_plan == ""
 
 
 def test_knowledge_response_unrecognized_availability_falls_back_to_unknown():
     response = ApiTypeSignalResult.model_validate({"scimAvailability": "something-weird"})
-    assert response.scim_availability is ScimAvailability.UNKNOWN
+    assert response.scim_availability is ProtocolAvailability.UNKNOWN
 
 
 @pytest.mark.asyncio
@@ -76,7 +76,7 @@ async def test_lookup_disabled_skips_llm():
         patch("src.modules.digester.extractors.apitype.knowledge.config") as mock_config,
         patch("src.modules.digester.extractors.apitype.knowledge.invoke_llm", new_callable=AsyncMock) as mock_invoke,
     ):
-        mock_config.digester.apitype_knowledge_enabled = False
+        mock_config.digester.apitype_scim_knowledge_enabled = False
         result = await lookup_api_type_knowledge("Slack")
 
     assert result.supports_scim is False
