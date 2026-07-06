@@ -113,6 +113,22 @@ def extract_attributes_from_result(result: Dict[str, Any] | None) -> Dict[str, A
     return attributes if isinstance(attributes, dict) else {}
 
 
+def build_attribute_result(
+    attributes: Dict[str, Any] | None = None,
+    relevant_documentations: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """
+    Build the standard attribute-extraction result payload.
+
+    Counterpart to :func:`extract_attributes_from_result`. Called with no arguments it
+    returns the empty result used when there is no usable documentation to extract from.
+    """
+    return {
+        "result": {"attributes": {} if attributes is None else attributes},
+        "relevantDocumentations": [] if relevant_documentations is None else relevant_documentations,
+    }
+
+
 def extract_endpoints_from_result(result: Dict[str, Any] | None) -> List[Dict[str, Any]]:
     """Extract normalized endpoint dicts from extraction result payload."""
     if not isinstance(result, dict):
@@ -128,6 +144,22 @@ def extract_endpoints_from_result(result: Dict[str, Any] | None) -> List[Dict[st
         elif isinstance(endpoint, dict):
             endpoints.append(endpoint)
     return endpoints
+
+
+def build_endpoint_result(
+    endpoints: List[Dict[str, Any]] | None = None,
+    relevant_documentations: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """
+    Build the standard endpoint-extraction result payload.
+
+    Counterpart to :func:`extract_endpoints_from_result`. Called with no arguments it
+    returns the empty result used when there is no usable documentation to extract from.
+    """
+    return {
+        "result": {"endpoints": [] if endpoints is None else endpoints},
+        "relevantDocumentations": [] if relevant_documentations is None else relevant_documentations,
+    }
 
 
 async def update_object_class_field_in_session(

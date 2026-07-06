@@ -20,7 +20,7 @@ from src.common.chunk_filter.filter import filter_documentation_items
 from src.common.enums import ApiType
 from src.common.jobs import update_job_progress
 from src.common.utils.session_info_metadata import resolve_effective_api_type
-from src.modules.digester.entities.object_classes import extract_endpoints_from_result
+from src.modules.digester.entities.object_classes import build_endpoint_result, extract_endpoints_from_result
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest.endpoints import extract_endpoints as _extract_rest_endpoints
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
@@ -198,8 +198,8 @@ async def extract_endpoints(
         if rest_result is None:
             if not relevant_chunks:
                 logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
-                return {"result": {"endpoints": []}, "relevantDocumentations": []}
-            rest_result = {"result": {"endpoints": []}, "relevantDocumentations": []}
+                return build_endpoint_result()
+            rest_result = build_endpoint_result()
 
         result = await _retry_rest_endpoints_with_default_criteria(
             rest_result,

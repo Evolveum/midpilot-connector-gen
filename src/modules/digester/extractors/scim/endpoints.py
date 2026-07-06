@@ -17,6 +17,7 @@ from src.common.database.config import async_session_maker
 from src.common.database.repositories.session_repository import SessionRepository
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.utils.normalize import normalize_chunk_pair
+from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.entities.scim_resource import extract_scim_resource_path, infer_scim_resource_path
 from src.modules.digester.extractors.scim.baseline import (
     generate_scim_crud_endpoints,
@@ -87,7 +88,4 @@ async def pregenerate_scim_endpoints(
     endpoint_relevant = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in valid_pairs]
     endpoints_with_references = [dict(endpoint, relevantDocumentations=endpoint_relevant) for endpoint in endpoints]
 
-    return {
-        "result": {"endpoints": endpoints_with_references},
-        "relevantDocumentations": relevant_chunks,
-    }
+    return build_endpoint_result(endpoints_with_references, relevant_chunks)

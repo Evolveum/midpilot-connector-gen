@@ -23,6 +23,7 @@ from src.modules.digester.entities.attribute_filters import (
     filter_ignored_attributes,
     normalize_readability_flags,
 )
+from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk
 from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
 from src.modules.digester.prompts.rest.attributes_prompts import (
@@ -469,7 +470,7 @@ async def extract_attributes(
         await update_job_progress(
             job_id, stage=JobStage.failed, message="No chunk details provided, cannot extract attributes"
         )
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
+        return build_attribute_result()
 
     if len(chunks) != len(chunk_details):
         logger.error(
@@ -480,14 +481,14 @@ async def extract_attributes(
         await update_job_progress(
             job_id, stage=JobStage.failed, message="Chunk length mismatch, cannot extract attributes"
         )
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
+        return build_attribute_result()
 
     if len(chunk_details) != len(set(chunk_details)):
         logger.error("[Digester:Attributes] Duplicate chunk IDs found in chunk_details")
         await update_job_progress(
             job_id, stage=JobStage.failed, message="Duplicate chunk IDs found, cannot extract attributes"
         )
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
+        return build_attribute_result()
 
     logger.info(
         "[Digester:Attributes] Processing %d pre-selected chunks for %s (chunk IDs: %s)",
@@ -658,7 +659,7 @@ async def extract_attributes(
         await update_job_progress(
             job_id, stage=JobStage.failed, message="Attribute extraction complete with no attributes found"
         )
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
+        return build_attribute_result()
 
     consolidated_attributes = await consolidate_attributes(enriched_attributes, object_class)
 
@@ -689,4 +690,4 @@ async def extract_attributes(
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
-    return {"result": {"attributes": normalized_attributes}, "relevantDocumentations": relevant_chunks}
+    return build_attribute_result(normalized_attributes, relevant_chunks)

@@ -8,6 +8,7 @@ from uuid import UUID
 
 from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
+from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extractors.sql.schema import (
     collect_sql_tables,
     sql_type_to_attribute_type,
@@ -88,4 +89,4 @@ async def extract_sql_attributes(
         processing_completed=len(doc_items) or 1,
         message=f"SQL attribute extraction complete: {len(attributes)} attributes",
     )
-    return {"result": {"attributes": attributes}, "relevantDocumentations": relevant_chunks}
+    return build_attribute_result(attributes, relevant_chunks)
