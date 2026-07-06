@@ -55,13 +55,12 @@ class ApiType(StrEnum):
     SQL = "sql"
 
 
-class ScimAvailability(StrEnum):
+class ProtocolAvailability(StrEnum):
     """
-    Whether a detected SCIM capability is generally usable by the customer or paid.
+    Whether a detected integration protocol is generally usable by the customer or gated.
 
-    Used as an advisory signal only (currently logged, not part of the API response):
-    SCIM may exist for a product yet require a paid/enterprise plan that the customer
-    might not have.
+    Shared advisory signal for any detected protocol (SCIM, REST): a product may expose a
+    protocol yet gate it behind a paid/enterprise/partner plan the customer might not have.
     """
 
     AVAILABLE = "available"
@@ -69,12 +68,14 @@ class ScimAvailability(StrEnum):
     UNKNOWN = "unknown"
 
 
-class ScimSource(StrEnum):
+class DetectionSource(StrEnum):
     """
-    Where a SCIM confirmation came from.
+    Where a protocol confirmation came from.
 
-    Used as provenance for the SCIM availability advisory (which signals confirmed SCIM).
-    Declaration order is the order sources are reported in.
+    Shared provenance for the per-protocol availability advisories (which signals confirmed a
+    protocol). Declaration order is the order sources are reported in. Python StrEnums cannot be
+    extended with extra members via subclassing, so this single enum carries every source and
+    ``SCIM_CLOUD`` is a SCIM-only member (no other protocol has a dedicated registry signal).
     """
 
     SCIM_CLOUD = "scim_cloud"

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pydantic
 import pytest
 
-from src.common.enums import ApiType, ScimAvailability
+from src.common.enums import ApiType, ProtocolAvailability
 from src.common.web import SearchResult
 from src.config import DigesterSettings
 from src.modules.digester.extractors.apitype import web_search
@@ -16,9 +16,9 @@ from src.modules.digester.schemas import ApiTypeSignalResult
 
 
 def _enable_web_search(mock_config: MagicMock, *, fetch_pages: bool = False) -> None:
-    mock_config.digester.apitype_web_search_enabled = True
+    mock_config.digester.apitype_scim_web_search_enabled = True
     mock_config.digester.apitype_web_search_max_results = 5
-    mock_config.digester.apitype_web_search_query_template = "{application_name} SCIM provisioning support plan"
+    mock_config.digester.apitype_scim_web_search_query_template = "{application_name} SCIM provisioning support plan"
     mock_config.digester.apitype_web_search_fetch_pages = fetch_pages
     mock_config.digester.apitype_web_search_page_max_chars = 6000
 
@@ -41,7 +41,7 @@ async def test_disabled_skips_search_and_llm():
         patch("src.modules.digester.extractors.apitype.web_search.search_web") as mock_search,
         patch("src.modules.digester.extractors.apitype.web_search.invoke_llm", new_callable=AsyncMock) as mock_invoke,
     ):
-        mock_config.digester.apitype_web_search_enabled = False
+        mock_config.digester.apitype_scim_web_search_enabled = False
         result = await lookup_api_type_web_search("Slack")
 
     assert result.supports_scim is False
@@ -82,7 +82,7 @@ async def test_returns_classified_scim_from_results():
     response = ApiTypeSignalResult(
         supports_scim=True,
         api_type=[ApiType.SCIM],
-        scim_availability=ScimAvailability.PAID,
+        scim_availability=ProtocolAvailability.PAID,
         required_plan="Enterprise Grid",
     )
     with (
@@ -98,7 +98,7 @@ async def test_returns_classified_scim_from_results():
         result = await lookup_api_type_web_search("Slack")
 
     assert result.supports_scim is True
-    assert result.scim_availability is ScimAvailability.PAID
+    assert result.scim_availability is ProtocolAvailability.PAID
     assert result.required_plan == "Enterprise Grid"
     # The blocking search backend must be reused and the LLM invoked with the results.
     mock_search.assert_called_once()
@@ -139,7 +139,7 @@ async def test_llm_failure_is_graceful():
 def test_query_template_without_placeholder_is_rejected():
     # A misconfigured template must fail fast at config load, not at request time.
     with pytest.raises(pydantic.ValidationError):
-        DigesterSettings(apitype_web_search_query_template="no placeholder here")
+        DigesterSettings(apitype_scim_web_search_query_template="no placeholder here")
 
 
 @pytest.mark.asyncio
@@ -149,7 +149,7 @@ async def test_malformed_query_template_degrades_gracefully():
         patch("src.modules.digester.extractors.apitype.web_search.search_web") as mock_search,
     ):
         _enable_web_search(mock_config)
-        mock_config.digester.apitype_web_search_query_template = "{application_name} {unexpected}"
+        mock_config.digester.apitype_scim_web_search_query_template = "{application_name} {unexpected}"
         result = await lookup_api_type_web_search("Slack")
 
     assert result.supports_scim is False

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from src.common.enums import ApiType, ScimAvailability, ScimSource
+from src.common.enums import ApiType, DetectionSource, ProtocolAvailability
 from src.modules.digester.enums import EndpointType
 
 # Shared alias table for canonicalizing API technology types from upstream sources.
@@ -240,16 +240,69 @@ class InfoMetadataExtraction(_EndpointCarrier, InfoMetadataBase):
 
 
 # TODO
-# In the future, this will be calculated from signal agreement
+# In the future, both of these will be calculated from signal agreement
 DEFAULT_SCIM_AVAILABILITY_CONFIDENCE: float = 1.0
+DEFAULT_REST_AVAILABILITY_CONFIDENCE: float = 1.0
+
+# Maps free-form availability wording (from the documentation-free REST signals) to the
+# canonical protocol availability. Shared by the signal schema and any future consumer so
+# the vocabulary stays in one place.
+_PROTOCOL_AVAILABILITY_ALIASES: Dict[str, ProtocolAvailability] = {
+    "available": ProtocolAvailability.AVAILABLE,
+    "free": ProtocolAvailability.AVAILABLE,
+    "included": ProtocolAvailability.AVAILABLE,
+    "standard": ProtocolAvailability.AVAILABLE,
+    "public": ProtocolAvailability.AVAILABLE,
+    "paid": ProtocolAvailability.PAID,
+    "gated": ProtocolAvailability.PAID,
+    "premium": ProtocolAvailability.PAID,
+    "enterprise": ProtocolAvailability.PAID,
+    "business": ProtocolAvailability.PAID,
+    "partner": ProtocolAvailability.PAID,
+    "unknown": ProtocolAvailability.UNKNOWN,
+}
+
+
+def normalize_protocol_availability(value: Any) -> ProtocolAvailability:
+    """Canonicalize a protocol-availability value, defaulting to UNKNOWN when unsure."""
+    if isinstance(value, ProtocolAvailability):
+        return value
+    if not isinstance(value, str):
+        return ProtocolAvailability.UNKNOWN
+    return _PROTOCOL_AVAILABILITY_ALIASES.get(value.strip().lower(), ProtocolAvailability.UNKNOWN)
 
 
 class RestAvailabilityInfo(_EndpointCarrier):
     """
-    REST-specific connectivity info: the base endpoint(s) classified as REST.
+    REST-specific connectivity info and availability advisory.
 
-    Always present on the final payload (empty when no REST endpoints were detected).
+    Carries the base endpoint(s) classified as REST plus an advisory about whether the REST
+    API is generally usable: a product may expose a REST/OpenAPI API yet gate it behind a
+    paid/enterprise/partner plan. Aggregated from the documentation-free REST signals (LLM
+    knowledge, web search) and the per-chunk documentation apiType. Always present on the
+    final payload (empty/unknown when REST was not detected).
     """
+
+    status: ProtocolAvailability = Field(
+        default=ProtocolAvailability.UNKNOWN,
+        description="REST availability: 'available', 'paid', or 'unknown'.",
+    )
+    required_plan: str = Field(
+        default="",
+        validation_alias="requiredPlan",
+        serialization_alias="requiredPlan",
+        description="Plan/tier required when status is 'paid' (e.g. 'Enterprise'); empty when unknown.",
+    )
+    sources: List[DetectionSource] = Field(
+        default_factory=list,
+        description="Signals that confirmed REST: documentation, knowledge_of_llm, web_search.",
+    )
+    confidence: float = Field(
+        default=DEFAULT_REST_AVAILABILITY_CONFIDENCE,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in [0, 1]. Placeholder default until derived from signal agreement.",
+    )
 
 
 class ScimAvailabilityInfo(_EndpointCarrier):
@@ -262,8 +315,8 @@ class ScimAvailabilityInfo(_EndpointCarrier):
     the final payload (empty/unknown when SCIM was not detected).
     """
 
-    status: ScimAvailability = Field(
-        default=ScimAvailability.UNKNOWN,
+    status: ProtocolAvailability = Field(
+        default=ProtocolAvailability.UNKNOWN,
         description="SCIM availability: 'available', 'paid', or 'unknown'.",
     )
     required_plan: str = Field(
@@ -272,7 +325,7 @@ class ScimAvailabilityInfo(_EndpointCarrier):
         serialization_alias="requiredPlan",
         description="Plan/tier required when status is 'paid' (e.g. 'Enterprise'); empty when unknown.",
     )
-    sources: List[ScimSource] = Field(
+    sources: List[DetectionSource] = Field(
         default_factory=list,
         description="Signals that confirmed SCIM: scim_cloud, documentation, knowledge, web_search.",
     )
@@ -392,8 +445,8 @@ class ApiTypeSignalResult(BaseModel):
         serialization_alias="apiType",
         description="Integration protocol types the application is known to support. Allowed values: REST, SCIM, SQL.",
     )
-    scim_availability: ScimAvailability = Field(
-        default=ScimAvailability.UNKNOWN,
+    scim_availability: ProtocolAvailability = Field(
+        default=ProtocolAvailability.UNKNOWN,
         validation_alias="scimAvailability",
         serialization_alias="scimAvailability",
         description=(
@@ -417,24 +470,64 @@ class ApiTypeSignalResult(BaseModel):
 
     @field_validator("scim_availability", mode="before")
     @classmethod
-    def _normalize_scim_availability(cls, value: Any) -> ScimAvailability:
-        if isinstance(value, ScimAvailability):
+    def _normalize_scim_availability(cls, value: Any) -> ProtocolAvailability:
+        if isinstance(value, ProtocolAvailability):
             return value
         if not isinstance(value, str):
-            return ScimAvailability.UNKNOWN
+            return ProtocolAvailability.UNKNOWN
         mapping = {
-            "available": ScimAvailability.AVAILABLE,
-            "free": ScimAvailability.AVAILABLE,
-            "included": ScimAvailability.AVAILABLE,
-            "standard": ScimAvailability.AVAILABLE,
-            "paid": ScimAvailability.PAID,
-            "gated": ScimAvailability.PAID,
-            "premium": ScimAvailability.PAID,
-            "enterprise": ScimAvailability.PAID,
-            "business": ScimAvailability.PAID,
-            "unknown": ScimAvailability.UNKNOWN,
+            "available": ProtocolAvailability.AVAILABLE,
+            "free": ProtocolAvailability.AVAILABLE,
+            "included": ProtocolAvailability.AVAILABLE,
+            "standard": ProtocolAvailability.AVAILABLE,
+            "paid": ProtocolAvailability.PAID,
+            "gated": ProtocolAvailability.PAID,
+            "premium": ProtocolAvailability.PAID,
+            "enterprise": ProtocolAvailability.PAID,
+            "business": ProtocolAvailability.PAID,
+            "unknown": ProtocolAvailability.UNKNOWN,
         }
-        return mapping.get(value.strip().lower(), ScimAvailability.UNKNOWN)
+        return mapping.get(value.strip().lower(), ProtocolAvailability.UNKNOWN)
+
+
+class RestSignalResult(BaseModel):
+    """
+    Structured output shared by the documentation-free REST apiType signals
+    (knowledge-based and web-search-based).
+
+    Both signals answer the same questions about a single application name: whether it
+    exposes a REST/OpenAPI HTTP API usable for provisioning, and whether that API is
+    generally available or restricted to a paid/enterprise/partner plan. This mirrors
+    ``ApiTypeSignalResult`` for SCIM but is intentionally kept separate so the REST signal
+    can evolve without touching SCIM detection.
+    """
+
+    supports_rest: bool = Field(
+        default=False,
+        validation_alias="supportsRest",
+        serialization_alias="supportsRest",
+        description="True only when the named application is known to expose a REST/OpenAPI provisioning API.",
+    )
+    availability: ProtocolAvailability = Field(
+        default=ProtocolAvailability.UNKNOWN,
+        description=(
+            "Whether the REST API is generally available ('available'), restricted to a paid/enterprise/partner "
+            "tier ('paid'), or not determinable ('unknown'). Use 'unknown' when unsure."
+        ),
+    )
+    required_plan: str = Field(
+        default="",
+        validation_alias="requiredPlan",
+        serialization_alias="requiredPlan",
+        description="Plan/tier required for REST when it is paid (e.g. 'Enterprise'); empty otherwise.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("availability", mode="before")
+    @classmethod
+    def _normalize_availability(cls, value: Any) -> ProtocolAvailability:
+        return normalize_protocol_availability(value)
 
 
 class InfoExtractionResponse(BaseModel):

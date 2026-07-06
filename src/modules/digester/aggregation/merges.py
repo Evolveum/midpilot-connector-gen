@@ -465,18 +465,28 @@ def _build_info_metadata_payload(
     scim_endpoints: List[BaseAPIEndpoint],
     database_name: str,
     scim_availability: Optional[ScimAvailabilityInfo],
+    rest_availability: Optional[RestAvailabilityInfo],
 ) -> Dict[str, Any]:
     """
     Assemble the final InfoResponse payload from already-selected fields.
 
     Connectivity is grouped into protocol-specific availability blocks; all three blocks are
-    always present (empty when the protocol was not detected). ``api_types`` and
-    ``scim_availability`` may originate from the documentation-free SCIM signals (scim.cloud /
-    LLM knowledge / web search), which do not need documentation, so this can yield a
-    non-empty payload even when no documentation-derived fields were found. Collapses to
-    ``infoMetadata=null`` only when nothing was found from either source.
+    always present (empty when the protocol was not detected). ``api_types``,
+    ``scim_availability`` and ``rest_availability`` may originate from the documentation-free
+    signals (scim.cloud / LLM knowledge / web search), which do not need documentation, so this
+    can yield a non-empty payload even when no documentation-derived fields were found. Collapses
+    to ``infoMetadata=null`` only when nothing was found from either source.
+
+    The availability advisory for a protocol is only kept when that protocol is present in
+    ``api_types``; otherwise the block is reset to its empty default, mirroring the
+    apiType/availability invariant enforced on ``InfoMetadata`` itself.
     """
     found_api_types = sorted(api_types, key=lambda api_type: api_type.value)
+
+    if rest_availability is not None and ApiType.REST in found_api_types:
+        rest_block = rest_availability.model_copy(update={"base_api_endpoint": rest_endpoints})
+    else:
+        rest_block = RestAvailabilityInfo(base_api_endpoint=rest_endpoints)
 
     if scim_availability is not None and ApiType.SCIM in found_api_types:
         scim_block = scim_availability.model_copy(update={"base_api_endpoint": scim_endpoints})
@@ -489,7 +499,7 @@ def _build_info_metadata_payload(
             application_version=application_version,
             api_version=api_version,
             api_type=found_api_types,
-            rest_availability=RestAvailabilityInfo(base_api_endpoint=rest_endpoints),
+            rest_availability=rest_block,
             scim_availability=scim_block,
             sql_availability=SqlAvailabilityInfo(database_name=database_name),
         )
@@ -566,6 +576,7 @@ def merge_info_metadata(
     total_items: int,
     api_types: List[ApiType],
     scim_availability: Optional[ScimAvailabilityInfo] = None,
+    rest_availability: Optional[RestAvailabilityInfo] = None,
 ) -> Dict[str, Any]:
     """
     Merge per-document InfoMetadata candidates into a single payload using frequency heuristics.
@@ -589,6 +600,7 @@ def merge_info_metadata(
             scim_endpoints=[],
             database_name="",
             scim_availability=scim_availability,
+            rest_availability=rest_availability,
         )
 
     threshold = total_items * config.digester.info_metadata_uncertainty_threshold
@@ -735,4 +747,5 @@ def merge_info_metadata(
         scim_endpoints=scim_endpoints,
         database_name=found_database_name,
         scim_availability=scim_availability,
+        rest_availability=rest_availability,
     )

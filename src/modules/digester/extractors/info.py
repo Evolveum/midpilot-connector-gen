@@ -7,22 +7,26 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from src.common.enums import ApiType, ScimSource
+from src.common.enums import ApiType, DetectionSource
 from src.common.jobs import update_job_progress
 from src.common.utils.coerce import as_str
 from src.modules.digester.aggregation.merges import merge_api_type, merge_info_metadata
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_doc_extractors_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
-from src.modules.digester.extractors.apitype.availability import summarize_scim_availability
+from src.modules.digester.extractors.apitype.availability import (
+    summarize_rest_availability,
+    summarize_scim_availability,
+)
 from src.modules.digester.extractors.apitype.documentation import extract_api_type as _extract_api_type
-from src.modules.digester.extractors.apitype.knowledge import lookup_api_type_knowledge
+from src.modules.digester.extractors.apitype.knowledge import lookup_api_type_knowledge, lookup_rest_knowledge
 from src.modules.digester.extractors.apitype.scim_cloud import lookup_scim_support
-from src.modules.digester.extractors.apitype.web_search import lookup_api_type_web_search
+from src.modules.digester.extractors.apitype.web_search import lookup_api_type_web_search, lookup_rest_web_search
 from src.modules.digester.prompts.info_prompts import get_info_system_prompt, get_info_user_prompt
 from src.modules.digester.schemas import (
     ApiTypeResponse,
     InfoExtractionResponse,
     InfoMetadataExtraction,
+    RestAvailabilityInfo,
     ScimAvailabilityInfo,
 )
 from src.modules.digester.selection import build_chunk_id_to_doc_id
@@ -120,7 +124,15 @@ async def extract_info_metadata(doc_items: List[dict], application_name: str, jo
 
     application_name = as_str(application_name).strip()
 
-    info_results, api_type_results, scim_cloud_match, knowledge_result, web_search_result = await asyncio.gather(
+    (
+        info_results,
+        api_type_results,
+        scim_cloud_match,
+        knowledge_result,
+        web_search_result,
+        rest_knowledge_result,
+        rest_web_search_result,
+    ) = await asyncio.gather(
         run_doc_extractors_concurrently(
             chunk_items=doc_items,
             job_id=job_id,
@@ -138,6 +150,8 @@ async def extract_info_metadata(doc_items: List[dict], application_name: str, jo
         lookup_scim_support(application_name),
         lookup_api_type_knowledge(application_name),
         lookup_api_type_web_search(application_name),
+        lookup_rest_knowledge(application_name),
+        lookup_rest_web_search(application_name),
     )
 
     for raw_infos, has_relevant_data, chunk_id in info_results:
@@ -239,6 +253,7 @@ async def extract_info_metadata(doc_items: List[dict], application_name: str, jo
 
     api_types = merge_api_type(all_api_type_candidates, total_items=len(doc_items))
     scim_detected_in_docs = ApiType.SCIM in api_types
+    rest_detected_in_docs = ApiType.REST in api_types
     if ApiType.SCIM not in api_types and (
         scim_cloud_match.matched or knowledge_result.supports_scim or web_search_result.supports_scim
     ):
@@ -260,21 +275,34 @@ async def extract_info_metadata(doc_items: List[dict], application_name: str, jo
             )
         api_types = sorted([*api_types, ApiType.SCIM], key=lambda api_type: api_type.value)
 
+    if ApiType.REST not in api_types and (rest_knowledge_result.supports_rest or rest_web_search_result.supports_rest):
+        if rest_knowledge_result.supports_rest:
+            logger.info(
+                "[Digester:ApiType] LLM knowledge signal reports REST support for '%s'; adding REST to detected apiType",
+                application_name,
+            )
+        if rest_web_search_result.supports_rest:
+            logger.info(
+                "[Digester:ApiType] Web search signal reports REST support for '%s'; adding REST to detected apiType",
+                application_name,
+            )
+        api_types = sorted([*api_types, ApiType.REST], key=lambda api_type: api_type.value)
+
     scim_availability_info: ScimAvailabilityInfo | None = None
     if ApiType.SCIM in api_types:
         availability = summarize_scim_availability(
             {
-                ScimSource.KNOWLEDGE: knowledge_result,
-                ScimSource.WEB_SEARCH: web_search_result,
+                DetectionSource.KNOWLEDGE: knowledge_result,
+                DetectionSource.WEB_SEARCH: web_search_result,
             }
         )
         contributing = set(availability.sources)
         if scim_detected_in_docs:
-            contributing.add(ScimSource.DOCUMENTATION)
+            contributing.add(DetectionSource.DOCUMENTATION)
         if scim_cloud_match.matched:
-            contributing.add(ScimSource.SCIM_CLOUD)
+            contributing.add(DetectionSource.SCIM_CLOUD)
         # Report sources in a stable order (the enum's declaration order).
-        sources = [source for source in ScimSource if source in contributing]
+        sources = [source for source in DetectionSource if source in contributing]
         scim_availability_info = ScimAvailabilityInfo(
             status=availability.status,
             required_plan=availability.required_plan,
@@ -288,11 +316,37 @@ async def extract_info_metadata(doc_items: List[dict], application_name: str, jo
             ",".join(source.value for source in sources) or "-",
         )
 
+    rest_availability_info: RestAvailabilityInfo | None = None
+    if ApiType.REST in api_types:
+        rest_availability = summarize_rest_availability(
+            {
+                DetectionSource.KNOWLEDGE: rest_knowledge_result,
+                DetectionSource.WEB_SEARCH: rest_web_search_result,
+            }
+        )
+        rest_contributing = set(rest_availability.sources)
+        if rest_detected_in_docs:
+            rest_contributing.add(DetectionSource.DOCUMENTATION)
+        rest_sources = [source for source in DetectionSource if source in rest_contributing]
+        rest_availability_info = RestAvailabilityInfo(
+            status=rest_availability.status,
+            required_plan=rest_availability.required_plan,
+            sources=rest_sources,
+        )
+        logger.info(
+            "[Digester:ApiType] REST availability for '%s': status=%s, required_plan=%s, sources=%s",
+            application_name,
+            rest_availability.status.value,
+            rest_availability.required_plan or "-",
+            ",".join(source.value for source in rest_sources) or "-",
+        )
+
     merged_result = merge_info_metadata(
         all_info_candidates,
         total_items=len(doc_items),
         api_types=api_types,
         scim_availability=scim_availability_info,
+        rest_availability=rest_availability_info,
     )
     await update_job_progress(job_id, stage="aggregation_finished", message="Extraction complete; finalizing")
 
