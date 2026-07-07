@@ -20,6 +20,7 @@ from src.common.llm import build_structured_chain
 from src.common.utils.coerce import as_dict_list, as_list
 from src.common.utils.normalize import normalize_chunk_pair
 from src.modules.digester.entities.attribute_filters import normalize_readability_flags
+from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.extractors.scim.baseline import (
@@ -307,10 +308,7 @@ async def extract_scim_attributes(
             len(schema_attributes),
             object_class,
         )
-        return {
-            "result": {"attributes": schema_attributes},
-            "relevantDocumentations": [],
-        }
+        return build_attribute_result(schema_attributes)
 
     # Step 1: Load base SCIM attributes for LLM context when schema heuristics are unavailable.
     base_attributes = schema_attributes or {}
@@ -431,10 +429,7 @@ async def extract_scim_attributes(
         len(merged_custom),
     )
 
-    return {
-        "result": {"attributes": merged_custom_with_references},
-        "relevantDocumentations": relevant_chunks,
-    }
+    return build_attribute_result(merged_custom_with_references, relevant_chunks)
 
 
 async def extract_custom_scim_attributes(

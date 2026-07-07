@@ -20,6 +20,7 @@ from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain, get_default_llm
 from src.common.utils.normalize import normalize_chunk_pair, normalize_endpoint_key
 from src.modules.digester.aggregation.merges import merge_endpoint_candidates
+from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunk_groups_concurrently
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.prompts.rest.endpoints_prompts import (
@@ -302,4 +303,4 @@ async def extract_endpoints(
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Endpoint extraction complete")
 
-    return {"result": {"endpoints": merged_with_references}, "relevantDocumentations": relevant_chunk_info}
+    return build_endpoint_result(merged_with_references, relevant_chunk_info)

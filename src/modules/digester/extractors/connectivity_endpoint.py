@@ -16,6 +16,7 @@ from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.common.utils.coerce import as_list
 from src.common.utils.normalize import normalize_endpoint_key
+from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_doc_extractors_concurrently
 from src.modules.digester.extraction.llm_execution import invoke_llm
@@ -231,7 +232,7 @@ async def _extract_connectivity_endpoint_from_doc_items(
     base_api_url: str,
 ) -> Dict[str, Any]:
     if not doc_items:
-        return {"result": {"endpoints": []}, "relevantDocumentations": []}
+        return build_endpoint_result()
 
     all_candidates: List[ExtractedConnectivityEndpointInfo] = []
     all_relevant_chunks: List[Dict[str, Any]] = []

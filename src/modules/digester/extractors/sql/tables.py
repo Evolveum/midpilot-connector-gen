@@ -7,6 +7,7 @@ from uuid import UUID
 
 from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
+from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, tables_for_object_class
 
 
@@ -45,4 +46,4 @@ async def extract_sql_tables(
         processing_completed=len(doc_items) or 1,
         message=f"SQL table selection complete: {len(tables)} tables",
     )
-    return {"result": {"endpoints": tables}, "relevantDocumentations": relevant_chunks}
+    return build_endpoint_result(tables, relevant_chunks)
