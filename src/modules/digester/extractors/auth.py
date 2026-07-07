@@ -252,20 +252,24 @@ async def _to_processing_info(auth: DiscoveryAuth | AuthProcessingInfo) -> AuthP
     if isinstance(auth, AuthProcessingInfo):
         relevant_seq = auth.relevant_sequences
     else:
-        relevant_seq = [
-            DocProcessingSequenceItem(
-                chunk_id=seq.chunk_id,
-                start_sequence=seq.start_sequence,
-                end_sequence=seq.end_sequence,
-                text=await extract_sequence(
+        relevant_seq = []
+        for seq in auth.relevant_sequences:
+            sequence_text = getattr(seq, "text", None)
+            if not isinstance(sequence_text, str):
+                sequence_text = await extract_sequence(
                     seq.chunk_id,
                     seq.start_sequence,
                     seq.end_sequence,
                     logger_prefix="[Digester:Auth] [Deduplication] ",
-                ),
+                )
+            relevant_seq.append(
+                DocProcessingSequenceItem(
+                    chunk_id=seq.chunk_id,
+                    start_sequence=seq.start_sequence,
+                    end_sequence=seq.end_sequence,
+                    text=sequence_text,
+                )
             )
-            for seq in auth.relevant_sequences
-        ]
 
     return AuthProcessingInfo(
         name=auth.name,

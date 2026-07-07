@@ -16,6 +16,19 @@ class _RetryResponse(BaseModel):
     items: list[str]
 
 
+class _SequenceMarker(BaseModel):
+    start_sequence: str
+    end_sequence: str
+
+
+class _SequenceItem(BaseModel):
+    relevant_sequences: list[_SequenceMarker]
+
+
+class _SequenceResponse(BaseModel):
+    items: list[_SequenceItem]
+
+
 @pytest.mark.asyncio
 async def test_extract_single_chunk_retries_transient_gateway_error(monkeypatch):
     monkeypatch.setattr(config.digester, "chunk_llm_retry_attempts", 2)
@@ -73,6 +86,49 @@ async def test_extract_single_chunk_does_not_retry_non_transient_error(monkeypat
     assert has_relevant_data is False
     assert chain.ainvoke.await_count == 1
     append_job_error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_extract_single_chunk_validated_sequences_keep_matched_text():
+    chunk_id = uuid4()
+    chain = Mock()
+    chain.ainvoke = AsyncMock(
+        return_value=_SequenceResponse(
+            items=[
+                _SequenceItem(
+                    relevant_sequences=[
+                        _SequenceMarker(
+                            start_sequence="User object",
+                            end_sequence="email string",
+                        )
+                    ]
+                )
+            ]
+        )
+    )
+
+    with (
+        patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extraction.chunk_extraction.append_job_error") as append_job_error,
+    ):
+        items, has_relevant_data = await extract_single_chunk(
+            schema="Prefix. User object includes id string and email string. Suffix.",
+            pydantic_model=_SequenceResponse,
+            system_prompt="system",
+            user_prompt="user",
+            parse_fn=lambda result: result.items,
+            job_id=uuid4(),
+            chunk_id=chunk_id,
+            enabled_sequence_checking=True,
+            extraction_chain=chain,
+        )
+
+    assert has_relevant_data is True
+    assert len(items) == 1
+    sequence = items[0].relevant_sequences[0]
+    assert sequence.chunk_id == str(chunk_id)
+    assert sequence.text == "User object includes id string and email string"
+    append_job_error.assert_not_called()
 
 
 @pytest.mark.asyncio

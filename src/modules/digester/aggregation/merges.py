@@ -184,19 +184,22 @@ async def merge_attribute_candidates(
         relevant_sequences: List[DocProcessingSequenceItem] = []
         for raw_seq in attr.relevant_sequences:
             seq = DocSequenceItem.model_validate(raw_seq.model_dump(by_alias=True))
+            sequence_text = getattr(raw_seq, "text", None)
+            if not isinstance(sequence_text, str):
+                sequence_text = await extract_sequence(
+                    seq.chunk_id,
+                    seq.start_sequence,
+                    seq.end_sequence,
+                    enable_marker_blending=True,
+                    logger_prefix="[Digester:Attributes] [Merge] ",
+                )
 
             relevant_sequences.append(
                 DocProcessingSequenceItem(
                     chunk_id=seq.chunk_id,
                     start_sequence=seq.start_sequence,
                     end_sequence=seq.end_sequence,
-                    text=await extract_sequence(
-                        seq.chunk_id,
-                        seq.start_sequence,
-                        seq.end_sequence,
-                        enable_marker_blending=True,
-                        logger_prefix="[Digester:Attributes] [Merge] ",
-                    ),
+                    text=sequence_text,
                 )
             )
 

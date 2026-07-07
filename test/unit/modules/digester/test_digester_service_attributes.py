@@ -8,11 +8,58 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import ApiType
+from src.modules.digester.aggregation.merges import merge_attribute_candidates
 from src.modules.digester.extractors.attributes import extract_attributes
-from src.modules.digester.schemas import AttributeInfoRest
+from src.modules.digester.schemas import (
+    AttributeInfoRest,
+    DiscoveryAttribute,
+    DocProcessingSequenceItem,
+    DocSequenceMarker,
+)
 
 
 # ==================== EXTRACT ATTRIBUTES ====================
+@pytest.mark.asyncio
+async def test_merge_attribute_candidates_reuses_validated_sequence_text(mock_digester_update_job_progress):
+    chunk_id = str(uuid4())
+    doc_id = str(uuid4())
+    attribute = DiscoveryAttribute(
+        name="email",
+        description="User email address",
+        relevant_sequences=[
+            DocSequenceMarker(
+                start_sequence="email",
+                end_sequence="string",
+            )
+        ],
+    )
+    attribute.relevant_sequences = [
+        DocProcessingSequenceItem(
+            chunk_id=chunk_id,
+            start_sequence="email",
+            end_sequence="string",
+            text="email is a string identifier for the user",
+        )
+    ]
+
+    with patch(
+        "src.modules.digester.aggregation.merges.extract_sequence",
+        new_callable=AsyncMock,
+    ) as mock_extract_sequence:
+        result = await merge_attribute_candidates(
+            object_class="User",
+            attribute_objects=[attribute],
+            job_id=uuid4(),
+            build_dedup_chain=lambda: None,
+            chunk_id_doc_id_map={chunk_id: doc_id},
+        )
+
+    assert len(result) == 1
+    assert result[0].relevant_sequences[0].text == "email is a string identifier for the user"
+    assert result[0].relevant_documentations == [{"chunk_id": chunk_id, "doc_id": doc_id}]
+    mock_extract_sequence.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_extract_attributes_updates_session_success(mock_llm, mock_digester_update_job_progress):
     """

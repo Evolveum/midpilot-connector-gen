@@ -24,7 +24,7 @@ from src.config import config
 from src.modules.digester.extraction.fuzzysearch_worker import fuzzy_search_worker
 from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
-from src.modules.digester.schemas import DocMarkerMatch, DocSequenceItem
+from src.modules.digester.schemas import DocMarkerMatch, DocProcessingSequenceItem
 from src.modules.digester.selection import build_chunk_id_to_doc_id
 
 logger = logging.getLogger(__name__)
@@ -349,8 +349,12 @@ async def _validate_relevant_sequence(
     start_sequence = getattr(seq, "start_sequence", None)
     end_sequence = getattr(seq, "end_sequence", None)
 
-    if not start_sequence or not end_sequence:
+    if not isinstance(start_sequence, str) or not isinstance(end_sequence, str):
         logger.info("%sSequence has invalid data: %s, discarding", logger_prefix, seq)
+        return None
+
+    if not start_sequence.strip() or not end_sequence.strip():
+        logger.info("%sSequence has empty start or end data: %s, discarding", logger_prefix, seq)
         return None
 
     if len(start_sequence) < min_start_sequence_length or len(end_sequence) < min_end_sequence_length:
@@ -415,10 +419,11 @@ async def _validate_relevant_sequence(
         logger.warning("%sNo doc_id provided, skipping sequence: %s", logger_prefix, item)
         return None
 
-    validated_seq = DocSequenceItem(
+    validated_seq = DocProcessingSequenceItem(
         chunk_id=str(doc_id),
         start_sequence=text[start_match.start_position : start_match.end_position],
         end_sequence=text[end_match.start_position : end_match.end_position],
+        text=matched_text,
     )
 
     logger.debug(
