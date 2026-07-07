@@ -177,45 +177,35 @@ async def build_auth_items(auth_info: List[AuthProcessingInfo], job_id: UUID) ->
         return []
 
 
-async def deduplicate_auth(
+def _merge_quirks(target: AuthProcessingInfo, source: AuthProcessingInfo) -> None:
+    """Append the source quirks onto the target unless they are already contained."""
+    target_quirks = target.quirks.strip() if target.quirks else ""
+    source_quirks = source.quirks.strip() if source.quirks else ""
+
+    if not source_quirks:
+        return
+    if not target_quirks:
+        target.quirks = source_quirks
+        return
+
+    target_quirks_norm = target_quirks.lower()
+    source_quirks_norm = source_quirks.lower()
+    if source_quirks_norm in target_quirks_norm or target_quirks_norm in source_quirks_norm:
+        return
+
+    target.quirks = f"{target_quirks}\n\n{source_quirks}"
+
+
+def _heuristic_dedup(
     auth_info: List[DiscoveryAuth] | List[AuthProcessingInfo],
-    job_id: UUID,
-) -> List[AuthProcessingInfo]:
+) -> List[DiscoveryAuth | AuthProcessingInfo]:
+    """Collapse name/type duplicates, merging their relevant sequences (and quirks).
+
+    Matches an entry against every already-seen key three ways: exact match, the seen
+    name being a substring of the new one (the seen entry is superseded and dropped),
+    or the new name being a substring of a seen one (the new entry is folded in).
     """
-    Deduplicate auth info.
-    First pass is heurestic deduplication based on name/type similarity and merging relevant sequences for exact duplicates.
-    Second pass is LLM-based deduplication.
-
-    Args:
-        auth_info: List of DiscoveryAuth instances from all documents
-        job_id: Job ID for progress tracking
-
-    Returns:
-        List of unique AuthProcessingInfo instances
-    """
-    await update_job_progress(job_id, stage=JobStage.deduplication, message="Deduplicating auth items")
-
-    logger.info("[Digester:Auth] Starting deduplication and sorting. Total count: %d", len(auth_info))
-
-    # Dedup + merge relevant sequences for exact duplicates.
     seen: Dict[Tuple[str, str], DiscoveryAuth | AuthProcessingInfo] = {}
-
-    def _merge_quirks(target: AuthProcessingInfo, source: AuthProcessingInfo) -> None:
-        target_quirks = target.quirks.strip() if target.quirks else ""
-        source_quirks = source.quirks.strip() if source.quirks else ""
-
-        if not source_quirks:
-            return
-        if not target_quirks:
-            target.quirks = source_quirks
-            return
-
-        target_quirks_norm = target_quirks.lower()
-        source_quirks_norm = source_quirks.lower()
-        if source_quirks_norm in target_quirks_norm or target_quirks_norm in source_quirks_norm:
-            return
-
-        target.quirks = f"{target_quirks}\n\n{source_quirks}"
 
     for auth in auth_info:
         if not auth or not auth.name:
@@ -224,7 +214,7 @@ async def deduplicate_auth(
         key = (name_norm, type_norm)
 
         is_duplicate = False
-        delete_from_seen: Optional[tuple[str, str]] = None
+        delete_from_seen: Optional[Tuple[str, str]] = None
         for seen_key in seen:
             seen_name, seen_type = seen_key
             if seen_name == name_norm and seen_type == type_norm:
@@ -254,8 +244,111 @@ async def deduplicate_auth(
         if not is_duplicate:
             seen[key] = auth
 
-    dedup_list: List[DiscoveryAuth | AuthProcessingInfo] = [auth for auth in seen.values()]
+    return list(seen.values())
+
+
+async def _to_processing_info(auth: DiscoveryAuth | AuthProcessingInfo) -> AuthProcessingInfo:
+    """Normalize a deduped entry to AuthProcessingInfo, resolving raw sequence text when needed."""
+    if isinstance(auth, AuthProcessingInfo):
+        relevant_seq = auth.relevant_sequences
+    else:
+        relevant_seq = [
+            DocProcessingSequenceItem(
+                chunk_id=seq.chunk_id,
+                start_sequence=seq.start_sequence,
+                end_sequence=seq.end_sequence,
+                text=await extract_sequence(
+                    seq.chunk_id,
+                    seq.start_sequence,
+                    seq.end_sequence,
+                    logger_prefix="[Digester:Auth] [Deduplication] ",
+                ),
+            )
+            for seq in auth.relevant_sequences
+        ]
+
+    return AuthProcessingInfo(
+        name=auth.name,
+        type=auth.type,
+        quirks=getattr(auth, "quirks", ""),
+        relevant_sequences=relevant_seq,
+    )
+
+
+def _apply_dedup_plan(auth_list: List[AuthProcessingInfo], result: AuthDedupResponse) -> List[AuthProcessingInfo]:
+    """Apply the LLM merge plan: fold each (keep, delete) pair together, then drop deletions."""
+    to_dedup = _order_dedup_pairs(result.duplicates or [])
+    logger.debug("[Digester:Auth] Pairs to deduplicate (keep, delete): %s", to_dedup)
+    logger.debug("[Digester:Auth] Current auth list before deduplication: %s", auth_list)
+
+    mark_for_deletion: List[Tuple[str, str]] = []
+    for (keep_name, keep_type), (delete_name, delete_type) in to_dedup:
+        keep_key = auth_match_key(keep_name, keep_type)
+        delete_key = auth_match_key(delete_name, delete_type)
+        old_auth: AuthProcessingInfo | None = None
+        new_auth: AuthProcessingInfo | None = None
+        for auth in auth_list:
+            auth_key = auth_match_key(auth.name, auth.type)
+            if auth_key == delete_key:
+                old_auth = auth
+            elif auth_key == keep_key:
+                new_auth = auth
+
+        if old_auth and new_auth:
+            if old_auth in auth_list:
+                mark_for_deletion.append(auth_match_key(old_auth.name, old_auth.type))
+            if new_auth not in auth_list:
+                auth_list.append(new_auth)
+            merge_relevant_sequences(new_auth, old_auth)
+            _merge_quirks(new_auth, old_auth)
+        else:
+            logger.warning(
+                "[Digester:Auth] Could not find auth to deduplicate. Keep: (%s, %s), Delete: (%s, %s)",
+                keep_name,
+                keep_type,
+                delete_name,
+                delete_type,
+            )
+
+    for target_key in mark_for_deletion:
+        for auth in auth_list:
+            if auth_match_key(auth.name, auth.type) == target_key:
+                auth_list.remove(auth)
+                break
+
+    for delete_name, delete_type in result.to_be_deleted or []:
+        delete_key = auth_match_key(delete_name, delete_type)
+        for potential_auth in auth_list:
+            if auth_match_key(potential_auth.name, potential_auth.type) == delete_key:
+                auth_list.remove(potential_auth)
+                break
+
+    return auth_list
+
+
+async def deduplicate_auth(
+    auth_info: List[DiscoveryAuth] | List[AuthProcessingInfo],
+    job_id: UUID,
+) -> List[AuthProcessingInfo]:
+    """
+    Deduplicate auth info.
+    First pass is heurestic deduplication based on name/type similarity and merging relevant sequences for exact duplicates.
+    Second pass is LLM-based deduplication.
+
+    Args:
+        auth_info: List of DiscoveryAuth instances from all documents
+        job_id: Job ID for progress tracking
+
+    Returns:
+        List of unique AuthProcessingInfo instances
+    """
+    await update_job_progress(job_id, stage=JobStage.deduplication, message="Deduplicating auth items")
+    logger.info("[Digester:Auth] Starting deduplication and sorting. Total count: %d", len(auth_info))
+
+    dedup_list = _heuristic_dedup(auth_info)
     logger.info("[Digester:Auth] Heurestic deduplication complete. Unique count: %d", len(dedup_list))
+
+    auth_list: List[AuthProcessingInfo] = [await _to_processing_info(auth) for auth in dedup_list]
 
     chain = build_structured_chain(
         auth_deduplication_system_prompt,
@@ -263,37 +356,6 @@ async def deduplicate_auth(
         AuthDedupResponse,
         user_role="human",
     )
-
-    auth_list: List[AuthProcessingInfo] = []
-
-    # TODO: More effective and nicer solution needed here
-    for auth in dedup_list:
-        relevant_seq: List[DocProcessingSequenceItem] = []
-        if isinstance(auth, AuthProcessingInfo):
-            relevant_seq = auth.relevant_sequences
-        elif isinstance(auth, DiscoveryAuth):
-            for seq in auth.relevant_sequences:
-                relevant_seq.append(
-                    DocProcessingSequenceItem(
-                        chunk_id=seq.chunk_id,
-                        start_sequence=seq.start_sequence,
-                        end_sequence=seq.end_sequence,
-                        text=await extract_sequence(
-                            seq.chunk_id,
-                            seq.start_sequence,
-                            seq.end_sequence,
-                            logger_prefix="[Digester:Auth] [Deduplication] ",
-                        ),
-                    )
-                )
-        auth_list.append(
-            AuthProcessingInfo(
-                name=auth.name,
-                type=auth.type,
-                quirks=getattr(auth, "quirks", ""),
-                relevant_sequences=relevant_seq,
-            )
-        )
 
     try:
         result = cast(
@@ -315,54 +377,7 @@ async def deduplicate_auth(
             )
             return auth_list
 
-        mark_for_deletion: List[Tuple[str, str]] = []
-        to_dedup: List[Tuple[Tuple[str, str], Tuple[str, str]]] = result.duplicates or []
-        to_dedup = _order_dedup_pairs(to_dedup)
-        logger.debug("[Digester:Auth] Pairs to deduplicate (keep, delete): %s", to_dedup)
-        logger.debug("[Digester:Auth] Current auth list before deduplication: %s", auth_list)
-
-        for (keep_name, keep_type), (delete_name, delete_type) in to_dedup:
-            keep_key = auth_match_key(keep_name, keep_type)
-            delete_key = auth_match_key(delete_name, delete_type)
-            old_auth: AuthProcessingInfo | None = None
-            new_auth: AuthProcessingInfo | None = None
-            for auth in auth_list:
-                auth_key = auth_match_key(auth.name, auth.type)
-                if auth_key == delete_key:
-                    old_auth = auth
-                elif auth_key == keep_key:
-                    new_auth = auth
-
-            if old_auth and new_auth:
-                if old_auth in auth_list:
-                    mark_for_deletion.append(auth_match_key(old_auth.name, old_auth.type))
-                if new_auth not in auth_list:
-                    auth_list.append(new_auth)
-                merge_relevant_sequences(new_auth, old_auth)
-                _merge_quirks(new_auth, old_auth)
-            else:
-                logger.warning(
-                    "[Digester:Auth] Could not find auth to deduplicate. Keep: (%s, %s), Delete: (%s, %s)",
-                    keep_name,
-                    keep_type,
-                    delete_name,
-                    delete_type,
-                )
-
-        for target_key in mark_for_deletion:
-            for auth in auth_list:
-                if auth_match_key(auth.name, auth.type) == target_key:
-                    auth_list.remove(auth)
-                    break
-
-        to_delete: List[Tuple[str, str]] = result.to_be_deleted or []
-        for del_auth in to_delete:
-            delete_name, delete_type = del_auth
-            delete_key = auth_match_key(delete_name, delete_type)
-            for potential_auth in auth_list:
-                if auth_match_key(potential_auth.name, potential_auth.type) == delete_key:
-                    auth_list.remove(potential_auth)
-                    break
+        auth_list = _apply_dedup_plan(auth_list, result)
 
         await update_job_progress(job_id, stage=JobStage.deduplication_finished, message="Auth deduplication finished")
         return auth_list
