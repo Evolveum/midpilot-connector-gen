@@ -29,7 +29,7 @@ from src.modules.digester.schemas import (
     RestAvailabilityInfo,
     ScimAvailabilityInfo,
 )
-from src.modules.digester.selection import build_chunk_id_to_doc_id
+from src.modules.digester.selection import build_chunk_id_to_doc_id, resolve_relevant_chunk_ref
 
 logger = logging.getLogger(__name__)
 
@@ -107,14 +107,9 @@ async def extract_info_metadata(doc_items: List[dict], application_name: str, jo
         chunk_id_str = str(chunk_id)
         if chunk_id_str in relevant_chunks_by_id:
             return
-        doc_id = chunk_id_to_doc_id.get(chunk_id_str)
-        if doc_id:
-            relevant_chunks_by_id[chunk_id_str] = {"doc_id": doc_id, "chunk_id": chunk_id_str}
-        else:
-            logger.warning(
-                "[Digester:InfoMetadata] Missing docId for chunk %s, skipping relevant chunk mapping",
-                chunk_id_str,
-            )
+        chunk_ref = resolve_relevant_chunk_ref(chunk_id, chunk_id_to_doc_id, "Digester:InfoMetadata")
+        if chunk_ref is not None:
+            relevant_chunks_by_id[chunk_id_str] = chunk_ref
 
     await update_job_progress(
         job_id,

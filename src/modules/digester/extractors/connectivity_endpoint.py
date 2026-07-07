@@ -38,6 +38,7 @@ from src.modules.digester.selection import (
     CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA,
     build_chunk_id_to_doc_id,
     exclude_doc_items_by_chunk_id,
+    resolve_relevant_chunk_ref,
 )
 
 logger = logging.getLogger(__name__)
@@ -258,24 +259,18 @@ async def _extract_connectivity_endpoint_from_doc_items(
     )
 
     for candidates, has_relevant_data, chunk_id in results:
-        chunk_id_str = str(chunk_id)
-        doc_id = chunk_id_to_doc_id.get(chunk_id_str)
-
         candidates_for_chunk = as_list(candidates)
         all_candidates.extend(candidates_for_chunk)
 
         if not has_relevant_data:
             continue
 
-        if not doc_id:
-            logger.warning(
-                "[Digester:ConnectivityEndpoint] Missing docId for chunk %s, skipping relevant chunk mapping",
-                chunk_id_str,
-            )
+        chunk_ref = resolve_relevant_chunk_ref(chunk_id, chunk_id_to_doc_id, "Digester:ConnectivityEndpoint")
+        if chunk_ref is None:
             continue
 
-        chunk_ref = {"doc_id": doc_id, "chunk_id": chunk_id_str}
         all_relevant_chunks.append(chunk_ref)
+        doc_id, chunk_id_str = chunk_ref["doc_id"], chunk_ref["chunk_id"]
         for candidate in candidates_for_chunk:
             key = normalize_endpoint_key(candidate.path, candidate.method)
             if key:
