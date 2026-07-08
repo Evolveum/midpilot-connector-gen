@@ -25,7 +25,7 @@ from src.modules.digester.extraction.fuzzysearch_worker import fuzzy_search_work
 from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.schemas import DocMarkerMatch, DocProcessingSequenceItem
-from src.modules.digester.selection import build_chunk_id_to_doc_id
+from src.modules.digester.selection import build_chunk_id_to_doc_id, collect_relevant_chunks
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
@@ -102,7 +102,6 @@ async def process_over_chunks(
     Process chunks in parallel, collect relevant chunk references, merge results, and return a digester payload.
     """
     all_results: List[Dict[str, Any]] = []
-    all_relevant_chunks: List[Dict[str, Any]] = []
     chunk_id_to_doc_id = build_chunk_id_to_doc_id(chunk_items)
 
     results = await run_doc_extractors_concurrently(
@@ -112,7 +111,7 @@ async def process_over_chunks(
         logger_scope=logger_scope,
     )
 
-    for raw_result, has_relevant_data, chunk_id in results:
+    for raw_result, _has_relevant_data, chunk_id in results:
         if hasattr(raw_result, "model_dump"):
             result_data = cast(Dict[str, Any], raw_result.model_dump(by_alias=True))
         else:
@@ -127,17 +126,8 @@ async def process_over_chunks(
 
         if result_data:
             all_results.append(result_data)
-        if has_relevant_data:
-            chunk_id_str = str(chunk_id)
-            doc_id = chunk_id_to_doc_id.get(chunk_id_str)
-            if doc_id:
-                all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
-            else:
-                logger.warning(
-                    "[%s] Missing docId for chunk %s, skipping relevant chunk mapping",
-                    logger_scope,
-                    chunk_id_str,
-                )
+
+    all_relevant_chunks = collect_relevant_chunks(results, chunk_id_to_doc_id, logger_scope)
 
     merged_result: Dict[str, Any] = merger(all_results)
 

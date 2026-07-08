@@ -44,7 +44,7 @@ from src.modules.digester.schemas import (
     DocProcessingSequenceItem,
     DocSequenceItem,
 )
-from src.modules.digester.selection import build_chunk_id_to_doc_id
+from src.modules.digester.selection import build_chunk_id_to_doc_id, collect_relevant_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -484,7 +484,6 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     Step 2: Merge, deduplicate and sort ALL auth info together
     """
     all_auth_info = []
-    all_relevant_chunks: List[Dict[str, Any]] = []
     chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
     chunk_metadata_map = build_doc_metadata_map(doc_items)
 
@@ -501,23 +500,15 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
     )
 
     # Collect results from all chunks
-    for raw_auth, has_relevant_data, chunk_id in discovery_results:
+    for raw_auth, _has_relevant_data, chunk_id in discovery_results:
         logger.info(
             "[Digester:Auth] Chunk %s: extracted %s auth items",
             chunk_id,
             len(raw_auth),
         )
         all_auth_info.extend(raw_auth)
-        if has_relevant_data:
-            chunk_id_str = str(chunk_id)
-            doc_id = chunk_id_to_doc_id.get(chunk_id_str)
-            if doc_id:
-                all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id_str})
-            else:
-                logger.warning(
-                    "[Digester:Auth] Missing docId for chunk %s, skipping relevant chunk mapping",
-                    chunk_id_str,
-                )
+
+    all_relevant_chunks = collect_relevant_chunks(discovery_results, chunk_id_to_doc_id, "Digester:Auth")
 
     logger.info(
         "[Digester:Auth] Auth discovery complete. Total: %s auth items from %s documents. Starting deduplication",

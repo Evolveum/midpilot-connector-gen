@@ -3,7 +3,8 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
+from uuid import UUID
 
 from src.common.chunking import normalize_to_text
 from src.modules.digester.schemas.common import ChunkReference
@@ -11,15 +12,47 @@ from src.modules.digester.schemas.common import ChunkReference
 logger = logging.getLogger(__name__)
 
 
+def resolve_relevant_chunk_ref(
+    chunk_id: Any,
+    chunk_id_to_doc_id: Mapping[str, str],
+    logger_scope: str,
+) -> Optional[Dict[str, str]]:
+    """Resolve a chunk id to a ``{"doc_id", "chunk_id"}`` reference.
+
+    Returns ``None`` (and logs a warning) when no ``docId`` is known for the chunk, so
+    callers can skip the mapping without repeating the lookup-and-warn boilerplate.
+    """
+    chunk_id_str = str(chunk_id)
+    doc_id = chunk_id_to_doc_id.get(chunk_id_str)
+    if not doc_id:
+        logger.warning("[%s] Missing docId for chunk %s, skipping relevant chunk mapping", logger_scope, chunk_id_str)
+        return None
+    return {"doc_id": doc_id, "chunk_id": chunk_id_str}
+
+
+def collect_relevant_chunks(
+    results: Iterable[Tuple[Any, bool, UUID]],
+    chunk_id_to_doc_id: Mapping[str, str],
+    logger_scope: str,
+) -> List[Dict[str, str]]:
+    """Map ``(result, has_relevant_data, chunk_id)`` extractor tuples to relevant chunk refs.
+
+    Keeps only chunks flagged relevant and resolvable to a ``docId`` (see
+    :func:`resolve_relevant_chunk_ref`).
+    """
+    relevant_chunks: List[Dict[str, str]] = []
+    for _result, has_relevant_data, chunk_id in results:
+        if not has_relevant_data:
+            continue
+        chunk_ref = resolve_relevant_chunk_ref(chunk_id, chunk_id_to_doc_id, logger_scope)
+        if chunk_ref is not None:
+            relevant_chunks.append(chunk_ref)
+    return relevant_chunks
+
+
 def build_chunk_id_to_doc_id(chunk_items: List[dict]) -> Dict[str, str]:
     """Build chunk_id -> doc_id mapping from documentation items."""
-    mapping: Dict[str, str] = {}
-    for item in chunk_items:
-        raw_chunk_id = item.get("chunkId")
-        raw_doc_id = item.get("docId")
-        if raw_chunk_id and raw_doc_id:
-            mapping[str(raw_chunk_id).strip()] = str(raw_doc_id).strip()
-    return mapping
+    return {ref.chunk_id: ref.doc_id for ref in build_chunk_references_from_doc_items(chunk_items)}
 
 
 def build_relevant_chunks_from_doc_items(chunk_items: List[dict]) -> List[Dict[str, Any]]:
@@ -88,9 +121,7 @@ def select_doc_chunks(
         - selected_chunks_content: Normalized text content of matched chunks.
         - selected_chunk_ids: `chunkId` values for the matched chunks, in iteration order.
     """
-    wanted_chunk_ids: Set[str] = {
-        chunk_id for rc in relevant_chunks if (chunk_id := str(rc.get("chunk_id") or rc.get("chunkId") or "").strip())
-    }
+    wanted_chunk_ids: Set[str] = chunk_ids_from_relevant_chunks(relevant_chunks)
 
     if not wanted_chunk_ids:
         logger.info("[%s] No chunk_id found in relevant_documentations", log_prefix)
