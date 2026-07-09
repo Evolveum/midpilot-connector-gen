@@ -101,11 +101,13 @@ def relative_paths_to_absolute(reference_list: List[str], current_url: str) -> T
     map_of_links = {}
 
     for link in reference_list:
-        if not ("http" in link or "www" in link):
-            map_of_links[link] = urljoin(current_url, urlparse(link).path)
-            new_reference_list.append(urljoin(current_url, urlparse(link).path))
-        else:
+        parsed = urlparse(link)
+        if parsed.scheme or parsed.netloc or link.startswith("www."):
             new_reference_list.append(link)
+        else:
+            absolute = urljoin(current_url, link)
+            map_of_links[link] = absolute
+            new_reference_list.append(absolute)
 
     return new_reference_list, map_of_links
 
