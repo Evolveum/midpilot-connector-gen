@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 @dataclass(frozen=True)
@@ -130,7 +130,15 @@ class DocumentationChunk(BaseModel):
 
 
 class Documentation(BaseModel):
-    """API model for one logical document containing all its chunks."""
+    """API model for one logical document containing all its chunks.
+
+    ``extra="allow"`` keeps any unexpected top-level keys accessible via
+    ``model_extra`` instead of silently dropping them, so the import endpoint can
+    log when a caller sends a payload that does not match this schema (e.g. a
+    conndev object-class/schema document rather than a ``chunks`` bundle).
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     doc_id: Optional[UUID] = Field(
         None,

@@ -434,11 +434,39 @@ async def import_documentation_by_id(
         }
         flat_items.append(flat_chunk)
 
+    if not flat_items:
+        # The payload parsed into an empty document. This is almost always a
+        # schema mismatch (e.g. a conndev object-class/schema document) rather
+        # than an intentional empty import, and would otherwise return 200 while
+        # storing nothing. Make that outcome visible instead of silent.
+        if "chunks" in document.model_fields_set:
+            logger.warning(
+                "Documentation import for doc %s (session %s) stored 0 chunks: 'chunks' was empty.",
+                documentation_id,
+                session_id,
+            )
+        else:
+            unexpected_keys = sorted((document.model_extra or {}).keys())
+            logger.warning(
+                "Documentation import for doc %s (session %s) stored 0 chunks: request body has no "
+                "'chunks' field, so it does not match the expected Documentation schema "
+                "(expected {docId?, chunks:[...]}). Unexpected top-level keys: %s",
+                documentation_id,
+                session_id,
+                unexpected_keys or "none",
+            )
+
     await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
 
     try:
         if flat_items:
             await doc_repo.import_documentation_items_for_session(session_id, flat_items)
+            logger.info(
+                "Imported %d documentation chunk(s) for doc %s (session %s)",
+                len(flat_items),
+                documentation_id,
+                session_id,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except IntegrityError as exc:
