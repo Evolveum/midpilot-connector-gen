@@ -255,7 +255,6 @@ async def _extract_connectivity_endpoint_from_doc_items(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
-        logger_scope="Digester:ConnectivityEndpoint",
     )
 
     for candidates, has_relevant_data, chunk_id in results:

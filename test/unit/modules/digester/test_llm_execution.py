@@ -52,7 +52,6 @@ async def test_run_chunks_concurrently_respects_configured_limit(monkeypatch):
             chunk_items=chunk_items,
             job_id=uuid4(),
             extractor=extractor,
-            logger_scope="test",
         )
 
     assert len(results) == len(chunk_items)
@@ -94,7 +93,6 @@ async def test_nested_digester_llm_limit_does_not_deadlock(monkeypatch):
                 chunk_items=chunk_items,
                 job_id=uuid4(),
                 extractor=extractor,
-                logger_scope="test",
             ),
             timeout=1,
         )

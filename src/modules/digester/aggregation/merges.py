@@ -12,7 +12,7 @@ from langchain_core.runnables.config import RunnableConfig
 from src.common.enums import ApiType, JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.utils.normalize import normalize_endpoint_key
+from src.common.utils.normalize import canonical_object_class_key, normalize_endpoint_key
 from src.config import config
 from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
 from src.modules.digester.enums import EndpointMethod, EndpointType
@@ -78,20 +78,21 @@ def merge_relations_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def merge_object_classes(
     all_object_classes: List[ExtendedObjectClass],
-    class_to_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> List[ExtendedObjectClass]:
     """
     Deduplicate and merge object classes across documents.
 
-    - Merges class metadata (superclass/abstract/embedded/description).
-    - Removes duplicates that differ only by whitespace.
+    - Groups on a whitespace-insensitive key so name variants that differ only by
+      whitespace (e.g. "Service Account" vs "ServiceAccount") are merged together.
+    - Merges class metadata (superclass/abstract/embedded/description) into the
+      surviving entry so no structural metadata is lost.
     """
     by_name: Dict[str, ExtendedObjectClass] = {}
 
     for obj_class in all_object_classes:
         if not obj_class or not obj_class.name:
             continue
-        key = obj_class.name.strip().lower()
+        key = canonical_object_class_key(obj_class.name)
         if key not in by_name:
             by_name[key] = obj_class
             continue
@@ -106,12 +107,6 @@ def merge_object_classes(
         # Prefer longer, non-empty description
         if obj_class.description and len(obj_class.description) > len(current.description or ""):
             current.description = obj_class.description
-
-    # Remove duplicates with whitespace-only differences (preferring no-space versions)
-    for key in list(by_name.keys()):
-        key_no_space = key.replace(" ", "")
-        if key != key_no_space and key_no_space in by_name:
-            by_name.pop(key)
 
     return list(by_name.values())
 
@@ -414,12 +409,6 @@ async def merge_endpoint_candidates(
     merged_dicts = [ep.model_dump(by_alias=True, exclude={"relevant_documentations"}) for ep in merged]
 
     logger.info("[Digester:Endpoints] Merged %d endpoints for %s", len(merged_dicts), object_class)
-
-    await update_job_progress(
-        job_id,
-        stage=JobStage.finished,
-        message="complete",
-    )
 
     return merged_dicts
 

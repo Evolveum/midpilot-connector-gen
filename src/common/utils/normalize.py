@@ -4,10 +4,10 @@
 
 import copy
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
-from src.common.utils.coerce import as_dict_list, as_list
+from src.common.utils.coerce import as_dict_list, as_list, as_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,16 @@ def normalize_object_class_name(object_class: str) -> str:
     return object_class.strip().lower()
 
 
+def canonical_object_class_key(name: str) -> str:
+    """Whitespace-insensitive key for grouping object-class name variants.
+
+    Unlike :func:`normalize_object_class_name` (used for result-key matching, where
+    whitespace must be preserved), this also removes all internal whitespace so that
+    e.g. ``"Service Account"`` and ``"ServiceAccount"`` collapse to the same dedup key.
+    """
+    return "".join(normalize_object_class_name(name).split())
+
+
 def normalize_chunk_pair(chunk: Mapping[str, Any]) -> tuple[str, str] | None:
     """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
     if not isinstance(chunk, Mapping):
@@ -32,6 +42,30 @@ def normalize_chunk_pair(chunk: Mapping[str, Any]) -> tuple[str, str] | None:
     if not doc_id or not chunk_id:
         return None
     return str(doc_id), str(chunk_id)
+
+
+def normalize_relevant_sequence(value: Any) -> dict[str, str]:
+    """Normalize a relevant-sequence payload to camelCase ``{startSequence, endSequence}``.
+
+    Accepts snake_case or camelCase keys. Returns ``{}`` when either boundary is missing.
+    """
+    value = as_mapping(value)
+    start_sequence = value.get("start_sequence") or value.get("startSequence")
+    end_sequence = value.get("end_sequence") or value.get("endSequence")
+    if not start_sequence or not end_sequence:
+        return {}
+    return {
+        "startSequence": str(start_sequence),
+        "endSequence": str(end_sequence),
+    }
+
+
+def build_relevant_documentations(pairs: Iterable[tuple[str, str]]) -> list[dict[str, str]]:
+    """Build a sorted, deduplicated camelCase ``relevantDocumentations`` list from ``(doc_id, chunk_id)`` pairs."""
+    return [
+        {"docId": doc_id, "chunkId": chunk_id}
+        for doc_id, chunk_id in sorted(set(pairs), key=lambda pair: (pair[0], pair[1]))
+    ]
 
 
 def normalize_relevant_documentation_refs(value: Any) -> list[dict[str, str]]:

@@ -3,16 +3,24 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import json
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Tuple, TypeVar
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 from uuid import UUID
 
+from langchain_core.callbacks.base import Callbacks
+from langchain_core.runnables.config import RunnableConfig
+from pydantic import BaseModel
+
 from src.common.jobs import increment_processed_documents, update_job_progress
+from src.common.langfuse import langfuse_handler
 from src.config import config
+from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+ModelT = TypeVar("ModelT", bound=BaseModel)
 _digester_llm_semaphore: asyncio.Semaphore | None = None
 _digester_llm_semaphore_limit: int | None = None
 
@@ -53,12 +61,54 @@ async def invoke_llm(chain: Any, input: Any, **kwargs: Any) -> Any:
     return await run_with_digester_llm_limit(_invoke)
 
 
+def parse_structured_result(result: Any, model: type[ModelT]) -> ModelT | None:
+    """Coerce a structured-output invocation result into a validated pydantic model.
+
+    Accepts the model instance directly, a dict, or an object carrying a non-empty string
+    ``content`` (raw LLM message). Returns ``None`` when none of those apply; the caller
+    decides what ``None`` means (skip, empty, keep). ``ValidationError`` / ``JSONDecodeError``
+    propagate to the caller, matching the previous inline parsing behavior.
+    """
+    if isinstance(result, model):
+        return result
+    if isinstance(result, dict):
+        return model.model_validate(result)
+    content = getattr(result, "content", None)
+    if isinstance(content, str) and content.strip():
+        return model.model_validate(json.loads(content))
+    return None
+
+
+async def invoke_chunk_chain(
+    chain: Any,
+    chunk: str,
+    chunk_metadata: Optional[Dict[str, Any]],
+    *,
+    run_name: Optional[str] = None,
+) -> Any:
+    """Invoke a per-chunk extraction chain with the standard summary/tags context and tracing.
+
+    Centralizes the ``extract_summary_and_tags`` + langfuse callback + input assembly that the
+    per-chunk extractors previously duplicated (and had drifted on).
+    """
+    summary, tags = extract_summary_and_tags(chunk_metadata)
+    callbacks = cast(Callbacks, [langfuse_handler] if langfuse_handler else [])
+    if run_name:
+        llm_config = RunnableConfig(callbacks=callbacks, run_name=run_name)
+    else:
+        llm_config = RunnableConfig(callbacks=callbacks)
+    return await invoke_llm(
+        chain,
+        {"chunk": chunk, "summary": summary, "tags": tags},
+        config=llm_config,
+    )
+
+
 async def run_chunks_concurrently(
     *,
     chunk_items: List[dict],
     job_id: UUID,
     extractor: Callable[[str, UUID, UUID], Awaitable[Tuple[T, bool]]],
-    logger_scope: str,
     set_total: bool = True,
 ) -> List[Tuple[T, bool, UUID]]:
     """
@@ -72,7 +122,6 @@ async def run_chunks_concurrently(
         chunk_items: List of chunk dictionaries containing 'chunkId' and 'content' keys
         job_id: UUID for job tracking and progress updates
         extractor: Async function that processes chunk content and returns (result, has_relevant_data)
-        logger_scope: String prefix for logging messages
         set_total: Whether to set the job's total document count to this run's chunk count. Set to
             False when several extractors run over the same chunks concurrently and the caller has
             already set the combined total; each run still increments completed counts so the total
@@ -105,7 +154,6 @@ async def run_chunk_groups_concurrently(
     chunks_by_id: Dict[str, List[str]],
     job_id: UUID,
     extractor: Callable[[UUID, List[str]], Awaitable[Tuple[T, List[Dict[str, Any]]]]],
-    logger_scope: str,
     total_groups: int,
 ) -> List[Tuple[T, List[Dict[str, Any]]]]:
     """
@@ -119,7 +167,6 @@ async def run_chunk_groups_concurrently(
         chunks_by_id: Dictionary mapping chunk ID strings to lists of chunk texts
         job_id: UUID for job tracking and progress updates
         extractor: Async function that processes chunk-id groups and returns (result, relevant_chunks)
-        logger_scope: String prefix for logging messages
         total_groups: Total number of chunk-id groups for progress tracking
 
     Returns:

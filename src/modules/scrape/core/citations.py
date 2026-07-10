@@ -11,6 +11,11 @@ from src.common.documentation import DocumentationReferences, ReferenceItem
 logger = logging.getLogger(__name__)
 
 
+def _urls_match(a: str, b: str) -> bool:
+    """Compare two reference URLs tolerating differences in trailing slashes."""
+    return a.rstrip("/") == b.rstrip("/")
+
+
 def process_citations_markdown(
     markdown_references: str, text_with_citations: str, documentation_url: str
 ) -> DocumentationReferences:
@@ -28,7 +33,7 @@ def process_citations_markdown(
     references_markdown = ref_section_match.group(0).strip() if ref_section_match else markdown_references.strip()
     ref_block = ref_section_match.group(1) if ref_section_match else markdown_references
 
-    pattern = re.compile(r"⟨(\d+)⟩\s+(https?://\S+?):[^\S\r\n]?(.+)?")
+    pattern = re.compile(r"⟨(\d+)⟩\s+(https?://\S+):(?:[^\S\r\n]+(.*))?")
     references: list[ReferenceItem] = []
     for match in pattern.finditer(ref_block):
         number, url = int(match.group(1)), match.group(2)
@@ -56,9 +61,7 @@ def remove_citations(documentation: DocumentationReferences, urls: List[str]) ->
     updated_markdown = documentation.text_with_citations
     updated_citations_markdown = documentation.references_markdown
     for url in urls:
-        matching = [
-            r.number for r in documentation.references if r.url == url or r.url == url + "/" or r.url + "/" == url
-        ]
+        matching = [r.number for r in documentation.references if _urls_match(r.url, url)]
         if not matching:
             logger.warning("[Scrape:Citations] URL %s not found in references, skipping citation removal", url)
             continue
@@ -71,7 +74,7 @@ def remove_citations(documentation: DocumentationReferences, urls: List[str]) ->
         url_no = matching[0]
         updated_citations_markdown = re.sub(rf"⟨{url_no}⟩.*(?:\n|$)", "", updated_citations_markdown)
         updated_markdown = re.sub(rf"\⟨{url_no}\⟩", "", updated_markdown)
-        documentation.references = [ref for ref in documentation.references if ref.url != url]
+        documentation.references = [ref for ref in documentation.references if not _urls_match(ref.url, url)]
 
     return DocumentationReferences(
         documentation_url=documentation.documentation_url,
@@ -134,7 +137,7 @@ def deduplicate_links(documentation_references: DocumentationReferences):
                 rf"⟨{num}⟩.*(?:\n|$)", "", documentation_references.references_markdown
             )
             documentation_references.text_with_citations = re.sub(
-                rf"⟨{num}⟩", f"<{min_number}>", documentation_references.text_with_citations
+                rf"⟨{num}⟩", f"⟨{min_number}⟩", documentation_references.text_with_citations
             )
             documentation_references.references = [
                 ref for ref in documentation_references.references if ref.number != num

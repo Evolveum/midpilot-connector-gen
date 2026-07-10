@@ -2,12 +2,16 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field
 
-from src.common.utils.normalize import normalize_relevant_documentation_refs
-from src.modules.digester.schemas.common import DocProcessingSequenceItem, DocSequenceItem, DocSequenceMarker
+from src.modules.digester.schemas.common import (
+    DocProcessingSequenceItem,
+    DocSequenceItem,
+    DocSequenceMarker,
+    RelevantDocumentationsMixin,
+)
 
 # --- Attributes ---
 
@@ -91,42 +95,7 @@ class AttributeBooleanFlagsBase(AttributeTypeFormatBase):
     )
 
 
-class AttributeRelevantDocumentationsMixin(BaseModel):
-    """
-    Shared relevant-documentation field for persisted/API attribute metadata.
-    """
-
-    relevant_documentations: List[Dict[str, str]] = Field(
-        default_factory=list,
-        validation_alias="relevantDocumentations",
-        serialization_alias="relevantDocumentations",
-        description=(
-            "List of chunks that contain evidence for this specific attribute. "
-            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
-            "This field is populated automatically by the system and should NOT be filled by the LLM."
-        ),
-    )
-
-    model_config = {"validate_by_name": True}
-
-    @field_validator("relevant_documentations", mode="before")
-    @classmethod
-    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
-        return normalize_relevant_documentation_refs(v)
-
-    @field_serializer("relevant_documentations", when_used="always")
-    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        serialized: List[Dict[str, str]] = []
-        for chunk in value or []:
-            doc_id = chunk.get("doc_id") or chunk.get("docId")
-            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-            if not doc_id or not chunk_id:
-                continue
-            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
-        return serialized
-
-
-class AttributeInfoBase(AttributeBooleanFlagsBase, AttributeRelevantDocumentationsMixin):
+class AttributeInfoBase(AttributeBooleanFlagsBase, RelevantDocumentationsMixin):
     """
     Attribute metadata stored under an attribute-name map key.
 
@@ -265,7 +234,7 @@ class AttributeInfoScim(AttributeInfoBase):
     )
 
 
-class AttributeProcessingInfo(AttributeBooleanFlagsBase, AttributeRelevantDocumentationsMixin):
+class AttributeProcessingInfo(AttributeBooleanFlagsBase, RelevantDocumentationsMixin):
     relevant_sequences: List[DocProcessingSequenceItem] = Field(
         description=("List of document sequences that support the presence of this attribute, includes full text")
     )

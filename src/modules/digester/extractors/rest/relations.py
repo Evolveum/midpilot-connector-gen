@@ -9,15 +9,14 @@ from uuid import UUID
 
 from src.common.chunking import normalize_to_text
 from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.common.utils.normalize import normalize_object_class_name
 from src.modules.digester.aggregation.merges import merge_relations_results
 from src.modules.digester.entities.relations import deduplicate_semantic_relations
 from src.modules.digester.enums import ConfidenceLevel
 from src.modules.digester.extraction.chunk_extraction import process_over_chunks
-from src.modules.digester.extraction.llm_execution import invoke_llm
-from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map, extract_summary_and_tags
+from src.modules.digester.extraction.llm_execution import invoke_chunk_chain
+from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.prompts.rest.relations_prompts import (
     get_relations_system_prompt,
     get_relations_user_prompt,
@@ -231,11 +230,7 @@ async def _extract_from_chunk(
     chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[RelationRecord]:
     try:
-        summary, tags = extract_summary_and_tags(chunk_metadata)
-
-        result = await invoke_llm(
-            chain, {"chunk": chunk, "summary": summary, "tags": tags}, config={"callbacks": [langfuse_handler]}
-        )
+        result = await invoke_chunk_chain(chain, chunk, chunk_metadata)
         return _parse_relations_result(
             result,
             job_id=job_id,

@@ -308,6 +308,26 @@ async def store_metadata_output(
     await repo.update_session(session_id, {METADATA_RESULT_KEY: payload})
 
 
+def _select_attributes_payload(hydrated_attributes: Dict[str, Any]) -> Dict[str, Any]:
+    """Pick the attribute map from a hydrated attributes payload.
+
+    Two legitimate shapes reach this point:
+    - the wrapped shape ``{"attributes": {...}, "relevantDocumentations": [...]}``
+      produced by the extraction pipeline, and
+    - the direct attribute map ``{attr_name: {...}}`` produced by a PUT override.
+
+    A wrapped payload whose ``attributes`` field is malformed (present but not a
+    dict) yields ``{}`` rather than leaking wrapper keys (e.g. ``relevantDocumentations``)
+    into the attribute map.
+    """
+    attributes = hydrated_attributes.get("attributes")
+    if isinstance(attributes, dict):
+        return attributes
+    if "attributes" in hydrated_attributes:
+        return {}
+    return hydrated_attributes
+
+
 async def build_object_class_detail(
     db: AsyncSession,
     repo: SessionRepository,
@@ -354,10 +374,7 @@ async def build_object_class_detail(
             f"{normalized_name}AttributesOutput",
             attributes_output,
         )
-        if isinstance(hydrated_attributes.get("attributes"), dict):
-            result["attributes"] = hydrated_attributes.get("attributes", {})
-        else:
-            result["attributes"] = hydrated_attributes
+        result["attributes"] = _select_attributes_payload(hydrated_attributes)
 
     endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
     if endpoints_output and isinstance(endpoints_output, dict):

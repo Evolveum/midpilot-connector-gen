@@ -466,7 +466,7 @@ async def test_extract_info_metadata_passes_doc_metadata_to_extractor(mock_llm, 
             ),
         ]
 
-        async def run_extractor_for_docs(*, chunk_items, job_id, extractor, logger_scope, set_total=True):
+        async def run_extractor_for_docs(*, chunk_items, job_id, extractor, set_total=True):
             out = []
             for item in chunk_items:
                 result, has_relevant = await extractor(item["content"], job_id, UUID(item["chunkId"]))

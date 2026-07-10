@@ -18,11 +18,14 @@ from src.common.jobs import (
 )
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain, get_default_llm
-from src.common.utils.normalize import normalize_chunk_pair, normalize_endpoint_key
+from src.common.utils.normalize import build_relevant_documentations, normalize_chunk_pair, normalize_endpoint_key
 from src.modules.digester.aggregation.merges import merge_endpoint_candidates
 from src.modules.digester.entities.object_classes import build_endpoint_result
-from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunk_groups_concurrently
-from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
+from src.modules.digester.extraction.llm_execution import (
+    invoke_chunk_chain,
+    invoke_llm,
+    run_chunk_groups_concurrently,
+)
 from src.modules.digester.prompts.rest.endpoints_prompts import (
     check_endpoint_params_system_prompt,
     check_endpoint_params_user_prompt,
@@ -44,8 +47,8 @@ def _attach_relevant_documentations_per_endpoint(
     for endpoint in endpoints:
         endpoint_copy = dict(endpoint)
         key = normalize_endpoint_key(endpoint_copy.get("path"), endpoint_copy.get("method"))
-        pairs = sorted(endpoint_chunk_pairs.get(key, set()), key=lambda pair: (pair[0], pair[1])) if key else []
-        endpoint_copy["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in pairs]
+        pairs = endpoint_chunk_pairs.get(key, set()) if key else set()
+        endpoint_copy["relevantDocumentations"] = build_relevant_documentations(pairs)
         enriched.append(endpoint_copy)
 
     return enriched
@@ -168,16 +171,9 @@ async def extract_endpoints(
             try:
                 logger.info("[Digester:Endpoints] LLM call for chunk %s", chunk_id)
 
-                # Extract summary and tags from chunk metadata
-                summary, tags = extract_summary_and_tags(chunk_metadata)
-
                 result = cast(
                     ExtractedEndpointResponse,
-                    await invoke_llm(
-                        chain,
-                        {"chunk": chunk, "summary": summary, "tags": tags},
-                        config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:ExtractEndpoints"),
-                    ),
+                    await invoke_chunk_chain(chain, chunk, chunk_metadata, run_name="Digester:ExtractEndpoints"),
                 )
 
                 if not result or not result.endpoints:
@@ -267,7 +263,6 @@ async def extract_endpoints(
         chunks_by_id=chunks_by_id,
         job_id=job_id,
         extractor=_extract_for_chunk_id,
-        logger_scope="Digester:Endpoints",
         total_groups=total_chunk_ids,
     )
 

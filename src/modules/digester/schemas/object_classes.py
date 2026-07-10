@@ -4,10 +4,10 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field
 
-from src.common.utils.normalize import normalize_relevant_documentation_refs
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
+from src.modules.digester.schemas.common import RelevantDocumentationsMixin
 
 # --- Object Classes ---
 
@@ -109,21 +109,12 @@ class RankedObjectClass(ExtendedObjectClass):
     )
 
 
-class FinalObjectClass(RankedObjectClass):
+class FinalObjectClass(RankedObjectClass, RelevantDocumentationsMixin):
     """
     Final user-facing object class model.
     Adds system-populated fields not used in LLM ranking prompts.
     """
 
-    relevant_documentations: List[Dict[str, str]] = Field(
-        default_factory=list,
-        validation_alias="relevantDocumentations",
-        serialization_alias="relevantDocumentations",
-        description=(
-            "List of chunks that contain relevant information about this object class. "
-            "Each entry is serialized as 'docId' and 'chunkId' UUID strings."
-        ),
-    )
     endpoints: Optional[List[Any]] = Field(
         default=None,
         exclude=True,
@@ -134,23 +125,6 @@ class FinalObjectClass(RankedObjectClass):
         exclude=True,
         description="Dictionary of attributes for this object class. Only present when explicitly extracted.",
     )
-
-    @field_validator("relevant_documentations", mode="before")
-    @classmethod
-    def validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
-        return normalize_relevant_documentation_refs(v)
-
-    @field_serializer("relevant_documentations", when_used="always")
-    def serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        """Expose relevantDocumentations in camelCase while keeping internal snake_case."""
-        serialized: List[Dict[str, str]] = []
-        for chunk in value or []:
-            doc_id = chunk.get("doc_id") or chunk.get("docId")
-            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-            if not doc_id or not chunk_id:
-                continue
-            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
-        return serialized
 
 
 class ObjectClassesResponse(BaseModel):

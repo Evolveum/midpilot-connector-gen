@@ -17,6 +17,7 @@ from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain, get_default_llm, make_basic_chain
+from src.common.utils.normalize import canonical_object_class_key
 from src.modules.digester.aggregation.merges import merge_object_classes
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extraction.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
@@ -247,7 +248,7 @@ async def deduplicate_and_sort_object_classes(
     3. If sorting fails: alphabetical fallback within that bucket
     """
     logger.info("[Digester:ObjectClasses] Starting deduplication. Total count: %d", len(all_object_classes))
-    dedup_list = cast(List[ExtendedObjectClass], merge_object_classes(all_object_classes, class_to_chunks))
+    dedup_list = cast(List[ExtendedObjectClass], merge_object_classes(all_object_classes))
     dedup_list.sort(key=_alpha_sort_key)
     logger.info("[Digester:ObjectClasses] Deduplication complete. Unique count: %d", len(dedup_list))
 
@@ -348,7 +349,9 @@ async def deduplicate_and_sort_object_classes(
         final_sorted = [
             _to_final_object_class(
                 ranked=item,
-                chunk_refs=_normalize_chunk_refs((class_to_chunks or {}).get(item.name.strip().lower(), [])),
+                chunk_refs=_normalize_chunk_refs(
+                    (class_to_chunks or {}).get(canonical_object_class_key(item.name), [])
+                ),
             )
             for item in sorted_ranked
         ]

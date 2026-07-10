@@ -14,6 +14,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
+from src.common.chunking.tokens import normalize_to_text
 from src.common.jobs import update_job_progress
 from src.common.utils.coerce import as_dict_list
 from src.modules.digester.entities.object_classes import confidence_order_key
@@ -191,7 +192,6 @@ async def extract_scim_object_classes(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_scim_schemas,
-        logger_scope="SCIM:ObjectClasses",
     )
 
     # Collect results from all chunks
@@ -312,7 +312,7 @@ async def _find_relevant_chunks_for_base_classes(
 
         # Check each chunk for mentions
         for doc_item in doc_items:
-            chunk_content = doc_item.get("content", "").lower()
+            chunk_content = normalize_to_text(doc_item.get("content") or "").lower()
             chunk_id = doc_item.get("chunkId")
             doc_id = doc_item.get("docId")
 

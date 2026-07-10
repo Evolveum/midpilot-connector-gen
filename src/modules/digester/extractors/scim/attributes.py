@@ -15,14 +15,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 from src.common.jobs import increment_processed_documents, update_job_progress
-from src.common.langfuse import langfuse_handler
 from src.common.llm import build_structured_chain
 from src.common.utils.coerce import as_dict_list, as_list
-from src.common.utils.normalize import normalize_chunk_pair
+from src.common.utils.normalize import build_relevant_documentations, normalize_chunk_pair
 from src.modules.digester.entities.attribute_filters import normalize_readability_flags
 from src.modules.digester.entities.object_classes import build_attribute_result
-from src.modules.digester.extraction.llm_execution import invoke_llm
-from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
+from src.modules.digester.extraction.llm_execution import invoke_chunk_chain, parse_structured_result
 from src.modules.digester.extractors.scim.baseline import (
     get_base_scim_attributes,
     is_scim_standard_class,
@@ -58,11 +56,10 @@ def _attach_relevant_documentations_per_attribute(
         info = dict(attr_info)
         direct_pairs = attribute_chunk_pairs.get(attr_name, set())
         if direct_pairs:
-            sorted_pairs = sorted(direct_pairs, key=lambda pair: (pair[0], pair[1]))
+            pairs = direct_pairs
         else:
-            fallback_pairs = normalized_pairs.get(str(attr_name).strip().lower(), set())
-            sorted_pairs = sorted(fallback_pairs, key=lambda pair: (pair[0], pair[1]))
-        info["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in sorted_pairs]
+            pairs = normalized_pairs.get(str(attr_name).strip().lower(), set())
+        info["relevantDocumentations"] = build_relevant_documentations(pairs)
         enriched[attr_name] = info
 
     return enriched
@@ -451,26 +448,13 @@ async def extract_custom_scim_attributes(
         Dictionary of mapped attributes (application name -> AttributeInfo)
     """
     try:
-        summary, tags = extract_summary_and_tags(chunk_metadata)
+        result = await invoke_chunk_chain(chain, chunk, chunk_metadata)
 
-        result = await invoke_llm(
-            chain,
-            {
-                "chunk": chunk,
-                "summary": summary,
-                "tags": tags,
-            },
-            config={"callbacks": [langfuse_handler] if langfuse_handler else []},
-        )
-
-        if isinstance(result, ExtractedAttributeResponseSCIM):
-            attributes = result.attributes or {}
-        elif isinstance(result, dict):
-            parsed = ExtractedAttributeResponseSCIM.model_validate(result)
-            attributes = parsed.attributes or {}
-        else:
+        parsed = parse_structured_result(result, ExtractedAttributeResponseSCIM)
+        if parsed is None:
             logger.warning("[SCIM:Attributes] Unexpected result type: %s", type(result))
             return {}
+        attributes = parsed.attributes or {}
 
         if attributes:
             logger.info(

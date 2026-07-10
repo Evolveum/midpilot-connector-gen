@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 from uuid import UUID
 
 from src.common.enums import ApiType
+from src.common.utils.normalize import canonical_object_class_key
 from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.modules.digester.extraction.chunk_extraction import run_doc_extractors_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
@@ -96,7 +97,6 @@ async def _extract_rest_object_classes(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
-        logger_scope="Digester:ObjectClasses",
     )
 
     # Collect results from all chunks
@@ -112,7 +112,7 @@ async def _extract_rest_object_classes(
         # For each object class, track which document chunks it appears in
         # Only add chunks that are specifically relevant to this object class
         for obj_class in raw_classes:
-            class_name = obj_class.name.strip().lower()
+            class_name = canonical_object_class_key(obj_class.name)
             if class_name not in class_to_chunks:
                 class_to_chunks[class_name] = []
 

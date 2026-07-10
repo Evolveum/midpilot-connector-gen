@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from src.common.utils.coerce import as_dict_list, as_list, as_mapping
-from src.common.utils.normalize import normalize_endpoint_key, normalize_object_class_name, normalize_url
+from src.common.utils.normalize import (
+    normalize_endpoint_key,
+    normalize_object_class_name,
+    normalize_relevant_sequence,
+    normalize_url,
+)
 
 
 def build_auth_entity_key(name: Any, auth_type: Any) -> str:
@@ -187,18 +192,6 @@ def remap_reused_output_relevance(
         return remapped
 
     return _remap_node(payload, is_root=True)
-
-
-def normalize_relevant_sequence(value: Any) -> Dict[str, str]:
-    value = as_mapping(value)
-    start_sequence = value.get("start_sequence") or value.get("startSequence")
-    end_sequence = value.get("end_sequence") or value.get("endSequence")
-    if not start_sequence or not end_sequence:
-        return {}
-    return {
-        "startSequence": str(start_sequence),
-        "endSequence": str(end_sequence),
-    }
 
 
 def normalize_chunk_refs_for_storage(
