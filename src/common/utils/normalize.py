@@ -22,6 +22,16 @@ def normalize_object_class_name(object_class: str) -> str:
     return object_class.strip().lower()
 
 
+def canonical_object_class_key(name: str) -> str:
+    """Whitespace-insensitive key for grouping object-class name variants.
+
+    Unlike :func:`normalize_object_class_name` (used for result-key matching, where
+    whitespace must be preserved), this also removes all internal whitespace so that
+    e.g. ``"Service Account"`` and ``"ServiceAccount"`` collapse to the same dedup key.
+    """
+    return "".join(normalize_object_class_name(name).split())
+
+
 def normalize_chunk_pair(chunk: Mapping[str, Any]) -> tuple[str, str] | None:
     """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
     if not isinstance(chunk, Mapping):

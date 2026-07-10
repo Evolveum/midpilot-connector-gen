@@ -274,7 +274,15 @@ async def _build_attr_from_sequences(
                 if isinstance(content, str) and content.strip():
                     parsed = response_model.model_validate(json.loads(content))
                 else:
-                    return None
+                    logger.warning(
+                        "[Digester:Attributes] %s returned an unparseable result for attribute %s; "
+                        "skipping this sequence batch (%s-%s)",
+                        log_stage,
+                        attr.name,
+                        begin,
+                        end,
+                    )
+                    continue
 
             for param in fields_to_update:
                 value = getattr(parsed, param, None)
