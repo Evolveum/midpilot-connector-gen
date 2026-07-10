@@ -11,7 +11,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import get_default_llm, make_basic_chain, raise_if_llm_unavailable, retry_on_transient_llm_error
+from src.config import config
 from src.modules.scrape.schema import RelevantLinks
 
 logger = logging.getLogger(__name__)
@@ -54,11 +55,18 @@ async def get_relevant_links_from_text(prompts: Tuple[str, str]) -> RelevantLink
     )
 
     try:
-        result = await chain.ainvoke(
-            {}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Scrape:RelevantLinks")
+        result = await retry_on_transient_llm_error(
+            lambda: chain.ainvoke(
+                {}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Scrape:RelevantLinks")
+            ),
+            max_attempts=config.scrape_and_process.chunk_llm_retry_attempts,
+            base_delay=config.scrape_and_process.chunk_llm_retry_base_delay_seconds,
+            logger_prefix="[LLM] ",
+            context="relevant-link extraction",
         )
         logger.debug("[LLM] LLM call successful for relevant links extraction")
         return result
     except Exception as e:
+        raise_if_llm_unavailable(e, context="extracting relevant links")
         logger.error("[LLM] Error invoking LLM for relevant links extraction: %s", e)
         return None

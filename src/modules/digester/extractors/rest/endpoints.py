@@ -17,7 +17,7 @@ from src.common.jobs import (
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain, get_default_llm
+from src.common.llm import build_structured_chain, get_default_llm, raise_if_llm_unavailable
 from src.common.utils.normalize import build_relevant_documentations, normalize_chunk_pair, normalize_endpoint_key
 from src.modules.digester.aggregation.merges import merge_endpoint_candidates
 from src.modules.digester.entities.object_classes import build_endpoint_result
@@ -242,6 +242,7 @@ async def extract_endpoints(
                 return valid_endpoints
 
             except Exception as exc:
+                raise_if_llm_unavailable(exc, context="extracting endpoints")
                 error_message = f"[Digester:Endpoints] Failed to process chunk {chunk_id}: {exc}"
                 logger.exception(error_message)
                 append_job_error(job_id, error_message)

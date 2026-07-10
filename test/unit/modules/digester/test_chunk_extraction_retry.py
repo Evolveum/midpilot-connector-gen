@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
+from src.common.errors import LLMUnavailableError
 from src.config import config
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
 
@@ -86,6 +87,36 @@ async def test_extract_single_chunk_does_not_retry_non_transient_error(monkeypat
     assert has_relevant_data is False
     assert chain.ainvoke.await_count == 1
     append_job_error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_extract_single_chunk_raises_when_llm_unreachable(monkeypatch):
+    """A connection error surviving retries must fail the job, not be swallowed per-chunk."""
+    monkeypatch.setattr(config.digester, "chunk_llm_retry_attempts", 2)
+    monkeypatch.setattr(config.digester, "chunk_llm_retry_base_delay_seconds", 0)
+
+    chain = AsyncMock()
+    chain.ainvoke.side_effect = Exception("Connection error.")
+
+    with (
+        patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extraction.chunk_extraction.append_job_error", Mock()) as append_job_error,
+    ):
+        with pytest.raises(LLMUnavailableError):
+            await extract_single_chunk(
+                schema="User resource documentation",
+                pydantic_model=_RetryResponse,
+                system_prompt="system",
+                user_prompt="user",
+                parse_fn=lambda result: result.items,
+                job_id=uuid4(),
+                chunk_id=uuid4(),
+                extraction_chain=chain,
+            )
+
+    # Retried before giving up, and the outage was not buried as a non-fatal chunk error.
+    assert chain.ainvoke.await_count == 2
+    append_job_error.assert_not_called()
 
 
 @pytest.mark.asyncio

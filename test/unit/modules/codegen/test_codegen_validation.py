@@ -8,9 +8,22 @@ from uuid import uuid4
 
 import pytest
 
+from src.common.errors import LLMUnavailableError
+from src.config import config
 from src.modules.codegen.core.base import BaseGroovyGenerator, OperationConfig
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.schema import CodegenRepairContext
+
+
+class _UnreachableChain:
+    """Chain that always fails as if the model backend is unreachable."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke(self, *args, **kwargs):
+        self.calls += 1
+        raise Exception("Connection error.")
 
 
 class _DummyChain:
@@ -103,6 +116,64 @@ async def test_base_generator_keeps_previous_result_when_chunk_validation_fails(
 
     assert result == 'objectClass("User") { search {} }'
     mock_append_job_error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_base_generator_fails_fast_when_llm_unreachable(monkeypatch) -> None:
+    """An unreachable model backend must raise LLMUnavailableError, not be swallowed per-chunk."""
+    monkeypatch.setattr(config.llm, "transient_retry_attempts", 2)
+    monkeypatch.setattr(config.llm, "transient_retry_base_delay_seconds", 0)
+
+    generator = _DummyGenerator()
+    chain = _UnreachableChain()
+
+    with (
+        patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
+        patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
+    ):
+        with pytest.raises(LLMUnavailableError):
+            await generator._process_chunks(
+                chunks=["chunk-1", "chunk-2"],
+                provenance_chunk_ids=[None, None],
+                per_chunk_counts={},
+                chunk_ids_included=[],
+                input_data={},
+                chain=chain,
+                job_id=uuid4(),
+                initial_result='objectClass("User") {}',
+            )
+
+    # Retries the transient failure before giving up, and does not bury it as a non-fatal error.
+    assert chain.calls == 2
+    mock_append_job_error.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_generate_groovy_raises_when_llm_unreachable(monkeypatch) -> None:
+    """generate_groovy must surface an outage as LLMUnavailableError instead of a scaffold."""
+    monkeypatch.setattr(config.llm, "transient_retry_attempts", 2)
+    monkeypatch.setattr(config.llm, "transient_retry_base_delay_seconds", 0)
+
+    chain = _UnreachableChain()
+
+    with (
+        patch("src.modules.codegen.core.generate_groovy.get_default_llm"),
+        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=chain),
+        patch("src.modules.codegen.core.generate_groovy.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.generate_groovy.append_job_error") as mock_append_job_error,
+    ):
+        with pytest.raises(LLMUnavailableError):
+            await generate_groovy(
+                records=[{"name": "uid"}],
+                object_class="User",
+                system_prompt="system",
+                user_prompt="user",
+                job_id=uuid4(),
+                logger_prefix="NativeSchema",
+            )
+
+    assert chain.calls == 2
+    mock_append_job_error.assert_not_called()
 
 
 @pytest.mark.asyncio

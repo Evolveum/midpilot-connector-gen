@@ -43,3 +43,13 @@ class LLMSettings(BaseModel):
         30,
         description="Maximum idle keep-alive connections retained in the shared LLM HTTP pool.",
     )
+    transient_retry_attempts: int = Field(
+        2,
+        ge=1,
+        description="Maximum attempts for transient (connectivity/timeout) LLM failures before failing the job.",
+    )
+    transient_retry_base_delay_seconds: float = Field(
+        1.0,
+        ge=0,
+        description="Initial backoff delay for transient LLM retries; doubles on each subsequent attempt.",
+    )

@@ -9,7 +9,7 @@ from uuid import UUID
 
 from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
-from src.common.llm import build_structured_chain
+from src.common.llm import build_structured_chain, raise_if_llm_unavailable
 from src.common.utils.coerce import as_list
 from src.modules.digester.entities.object_classes import confidence_order_key
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
@@ -194,6 +194,7 @@ async def extract_sql_object_classes(doc_items: list[dict], job_id: UUID) -> dic
         try:
             llm_classes = await _detect_domain_classes_with_llm(tables=tables, doc_items=doc_items)
         except Exception as exc:
+            raise_if_llm_unavailable(exc, context="detecting SQL object classes")
             logger.warning(
                 "[SQL:ObjectClasses] Domain object-class LLM detection failed; using deterministic table heuristics. error=%s",
                 type(exc).__name__,

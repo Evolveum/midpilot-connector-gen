@@ -19,7 +19,7 @@ from src.common.chunking import normalize_to_text
 from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain, is_transient_llm_error
+from src.common.llm import build_structured_chain, is_transient_llm_error, raise_if_llm_unavailable
 from src.config import config
 from src.modules.digester.extraction.fuzzysearch_worker import fuzzy_search_worker
 from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
@@ -677,6 +677,7 @@ async def extract_single_chunk(
         return items, has_relevant_data
 
     except Exception as exc:
+        raise_if_llm_unavailable(exc, context="extracting documentation")
         error_message = f"{logger_prefix}Failed to process chunk: {exc}"
         if chunk_id:
             error_message = f"{error_message} (chunk_id: {chunk_id})"
@@ -738,6 +739,7 @@ async def run_item_build_parallel(
 
         return new_item
     except Exception as e:
+        raise_if_llm_unavailable(e, context="building extracted items")
         logger.error("%sItem building failed. Error: %s", logger_prefix, e)
         error_msg = f"{logger_prefix}Item building call failed: {e}"
         append_job_error(job_id, error_msg)

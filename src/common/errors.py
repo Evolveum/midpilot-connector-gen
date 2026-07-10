@@ -186,3 +186,25 @@ class InvalidRelationsOutputError(AppError):
             f"Stored relationsOutput is invalid in session {session_id}. "
             "Re-run relations extraction or override the relations payload."
         )
+
+
+class LLMUnavailableError(AppError):
+    """
+    Raised when the language-model backend is unreachable (connection/timeout failure).
+
+    Distinguishes an infrastructure outage (the model server being down, e.g. VPN not
+    connected or the GPU host not responding) from a per-item content failure. This lets a
+    background job fail explicitly with a clear, machine-readable signal the GUI can render,
+    instead of silently degrading to an empty/scaffold result reported as a finished job.
+    """
+
+    status_code = 503
+    code = "llm_unavailable"
+
+    def __init__(self, context: str = ""):
+        detail = f" while {context}" if context else ""
+        super().__init__(
+            f"The language model service is currently unreachable{detail}. "
+            "This is usually a temporary connectivity problem with the server "
+            "Please verify the connection and try again."
+        )
