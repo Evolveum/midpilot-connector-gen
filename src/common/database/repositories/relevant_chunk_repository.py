@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.models import RelevantChunk
-from src.common.utils.coerce import as_mapping
+from src.common.utils.normalize import normalize_relevant_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +37,6 @@ class RelevantChunkRepository:
             return None
         normalized = str(value).strip()
         return normalized or None
-
-    @staticmethod
-    def _normalize_sequence_payload(value: Any) -> Dict[str, str]:
-        value = as_mapping(value)
-
-        start_sequence = value.get("start_sequence") or value.get("startSequence")
-        end_sequence = value.get("end_sequence") or value.get("endSequence")
-        if not start_sequence or not end_sequence:
-            return {}
-
-        return {
-            "startSequence": str(start_sequence),
-            "endSequence": str(end_sequence),
-        }
 
     def _normalize_chunk(
         self,
@@ -83,7 +69,7 @@ class RelevantChunkRepository:
                     "startSequence": start_sequence,
                     "endSequence": end_sequence,
                 }
-        relevant_sequence = self._normalize_sequence_payload(raw_sequence)
+        relevant_sequence = normalize_relevant_sequence(raw_sequence)
 
         return {
             "result_key": result_key,
@@ -124,7 +110,7 @@ class RelevantChunkRepository:
     ) -> bool:
         """Add a single relevant chunk. Returns False for duplicates."""
         normalized_entity_key = self._normalize_entity_key(entity_key)
-        normalized_sequence = self._normalize_sequence_payload(relevant_sequence or {})
+        normalized_sequence = normalize_relevant_sequence(relevant_sequence or {})
 
         stmt = select(RelevantChunk).where(
             RelevantChunk.session_id == session_id,

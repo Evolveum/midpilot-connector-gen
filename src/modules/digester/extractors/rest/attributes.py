@@ -25,7 +25,11 @@ from src.modules.digester.entities.attribute_filters import (
 )
 from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk
-from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
+from src.modules.digester.extraction.llm_execution import (
+    invoke_llm,
+    parse_structured_result,
+    run_chunks_concurrently,
+)
 from src.modules.digester.prompts.rest.attributes_prompts import (
     attribute_deduplication_system_prompt,
     attribute_deduplication_user_prompt,
@@ -265,24 +269,17 @@ async def _build_attr_from_sequences(
                 config={"callbacks": [langfuse_handler]},
             )
 
-            if isinstance(result, response_model):
-                parsed = result
-            elif isinstance(result, dict):
-                parsed = response_model.model_validate(result)
-            else:
-                content = getattr(result, "content", None)
-                if isinstance(content, str) and content.strip():
-                    parsed = response_model.model_validate(json.loads(content))
-                else:
-                    logger.warning(
-                        "[Digester:Attributes] %s returned an unparseable result for attribute %s; "
-                        "skipping this sequence batch (%s-%s)",
-                        log_stage,
-                        attr.name,
-                        begin,
-                        end,
-                    )
-                    continue
+            parsed = parse_structured_result(result, response_model)
+            if parsed is None:
+                logger.warning(
+                    "[Digester:Attributes] %s returned an unparseable result for attribute %s; "
+                    "skipping this sequence batch (%s-%s)",
+                    log_stage,
+                    attr.name,
+                    begin,
+                    end,
+                )
+                continue
 
             for param in fields_to_update:
                 value = getattr(parsed, param, None)
@@ -564,7 +561,6 @@ async def extract_attributes(
         chunk_items=chunks_by_id,
         job_id=job_id,
         extractor=_extract_for_chunk_id,
-        logger_scope="Digester:Attributes",
     )
 
     for chunk_results, relevant_data, chunk_id_debug in results:

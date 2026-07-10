@@ -106,7 +106,7 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
             return_value=BASELINE_SCHEMAS,
         ),
         patch(
-            "src.modules.digester.extractors.scim.attributes.invoke_llm",
+            "src.modules.digester.extractors.scim.attributes.invoke_chunk_chain",
             new_callable=AsyncMock,
             return_value={
                 "attributes": {
@@ -201,7 +201,7 @@ async def test_extract_scim_embedded_attributes_match_indexed_documented_paths_t
             return_value=BASELINE_SCHEMAS,
         ),
         patch(
-            "src.modules.digester.extractors.scim.attributes.invoke_llm",
+            "src.modules.digester.extractors.scim.attributes.invoke_chunk_chain",
             new_callable=AsyncMock,
             return_value={
                 "attributes": {
@@ -270,7 +270,7 @@ async def test_extract_scim_embedded_attributes_discards_unmatched_documented_ma
             return_value=BASELINE_SCHEMAS,
         ),
         patch(
-            "src.modules.digester.extractors.scim.attributes.invoke_llm",
+            "src.modules.digester.extractors.scim.attributes.invoke_chunk_chain",
             new_callable=AsyncMock,
             return_value={
                 "attributes": {

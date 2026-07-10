@@ -76,7 +76,6 @@ async def run_doc_extractors_concurrently(
     chunk_items: List[dict],
     job_id: UUID,
     extractor: Callable[[str, UUID, UUID], Any],
-    logger_scope: str,
     set_total: bool = True,
 ):
     """Run a digester extractor over stored documentation chunks."""
@@ -84,7 +83,6 @@ async def run_doc_extractors_concurrently(
         chunk_items=chunk_items,
         job_id=job_id,
         extractor=extractor,
-        logger_scope=logger_scope,
         set_total=set_total,
     )
 
@@ -108,7 +106,6 @@ async def process_over_chunks(
         chunk_items=chunk_items,
         job_id=job_id,
         extractor=extractor,
-        logger_scope=logger_scope,
     )
 
     for raw_result, _has_relevant_data, chunk_id in results:

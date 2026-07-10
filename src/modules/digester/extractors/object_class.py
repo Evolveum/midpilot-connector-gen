@@ -97,7 +97,6 @@ async def _extract_rest_object_classes(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
-        logger_scope="Digester:ObjectClasses",
     )
 
     # Collect results from all chunks

@@ -192,7 +192,6 @@ async def extract_scim_object_classes(
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_scim_schemas,
-        logger_scope="SCIM:ObjectClasses",
     )
 
     # Collect results from all chunks

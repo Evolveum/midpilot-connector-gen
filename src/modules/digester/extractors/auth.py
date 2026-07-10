@@ -496,7 +496,6 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
         chunk_items=doc_items,
         job_id=job_id,
         extractor=extractor_with_metadata,
-        logger_scope="Digester:Auth",
     )
 
     # Collect results from all chunks

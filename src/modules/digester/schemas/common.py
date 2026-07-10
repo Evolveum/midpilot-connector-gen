@@ -2,7 +2,11 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from typing import Any, Dict, List
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, field_validator
+
+from src.common.utils.normalize import normalize_relevant_documentation_refs
 
 
 class ChunkReference(BaseModel):
@@ -91,6 +95,45 @@ class DocProcessingSequenceItem(DocSequenceItem):
     text: str = Field(
         ..., description="Full text of the document chunk from start_sequence to end_sequence for processing."
     )
+
+
+class RelevantDocumentationsMixin(BaseModel):
+    """
+    Shared ``relevant_documentations`` field for persisted/API metadata models.
+
+    The field is system-populated (never filled by the LLM). It accepts loose
+    snake_case/camelCase chunk references on input and always serializes to a list
+    of ``{"docId", "chunkId"}`` UUID strings.
+    """
+
+    relevant_documentations: List[Dict[str, str]] = Field(
+        default_factory=list,
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
+        description=(
+            "List of chunks that contain evidence for this entity. "
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
+            "This field is populated automatically by the system and should NOT be filled by the LLM."
+        ),
+    )
+
+    model_config = {"validate_by_name": True}
+
+    @field_validator("relevant_documentations", mode="before")
+    @classmethod
+    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
+        return normalize_relevant_documentation_refs(v)
+
+    @field_serializer("relevant_documentations", when_used="always")
+    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        serialized: List[Dict[str, str]] = []
+        for chunk in value or []:
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            if not doc_id or not chunk_id:
+                continue
+            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+        return serialized
 
 
 class DocMarkerMatch(BaseModel):

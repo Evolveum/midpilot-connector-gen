@@ -13,7 +13,6 @@ from src.modules.digester.schemas.attributes import (
     AttributeInfoRest,
     AttributeInfoScim,
     AttributeProcessingInfo,
-    AttributeRelevantDocumentationsMixin,
     AttributeResponse,
     AttributeTypeFormatBase,
     AttributeTypeFormatBuildResponse,
@@ -36,6 +35,7 @@ from src.modules.digester.schemas.common import (
     DocProcessingSequenceItem,
     DocSequenceItem,
     DocSequenceMarker,
+    RelevantDocumentationsMixin,
 )
 from src.modules.digester.schemas.endpoints import (
     ConnectivityEndpointInfo,
@@ -94,7 +94,7 @@ __all__ = [
     "AttributeInfoRest",
     "AttributeInfoScim",
     "AttributeProcessingInfo",
-    "AttributeRelevantDocumentationsMixin",
+    "RelevantDocumentationsMixin",
     "AttributeResponse",
     "AttributeTypeFormatBase",
     "AttributeTypeFormatBuildResponse",

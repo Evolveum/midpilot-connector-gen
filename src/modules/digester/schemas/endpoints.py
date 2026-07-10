@@ -2,12 +2,12 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field, field_validator
 
-from src.common.utils.normalize import normalize_relevant_documentation_refs
 from src.modules.digester.enums import EndpointMethod
+from src.modules.digester.schemas.common import RelevantDocumentationsMixin
 
 EndpointSuggestedUse = Literal[
     "create",
@@ -73,38 +73,11 @@ class ExtractedEndpointInfo(BaseModel):
         return value
 
 
-class EndpointInfo(ExtractedEndpointInfo):
+class EndpointInfo(ExtractedEndpointInfo, RelevantDocumentationsMixin):
     """
     Final API/session endpoint metadata.
     Adds system-populated fields not used in LLM extraction prompts.
     """
-
-    relevant_documentations: List[Dict[str, str]] = Field(
-        default_factory=list,
-        validation_alias="relevantDocumentations",
-        serialization_alias="relevantDocumentations",
-        description=(
-            "List of chunks that contain evidence for this specific endpoint. "
-            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
-            "This field is populated automatically by the system and should NOT be filled by the LLM."
-        ),
-    )
-
-    @field_validator("relevant_documentations", mode="before")
-    @classmethod
-    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
-        return normalize_relevant_documentation_refs(v)
-
-    @field_serializer("relevant_documentations", when_used="always")
-    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        serialized: List[Dict[str, str]] = []
-        for chunk in value or []:
-            doc_id = chunk.get("doc_id") or chunk.get("docId")
-            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-            if not doc_id or not chunk_id:
-                continue
-            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
-        return serialized
 
 
 class EndpointParamInfo(BaseModel):
@@ -216,37 +189,11 @@ class ExtractedConnectivityEndpointInfo(BaseModel):
         return value
 
 
-class ConnectivityEndpointInfo(ExtractedConnectivityEndpointInfo):
+class ConnectivityEndpointInfo(ExtractedConnectivityEndpointInfo, RelevantDocumentationsMixin):
     """
     Final API/session metadata for the endpoint selected for connectivity testing.
     Adds system-populated evidence chunk references.
     """
-
-    relevant_documentations: List[Dict[str, str]] = Field(
-        default_factory=list,
-        validation_alias="relevantDocumentations",
-        serialization_alias="relevantDocumentations",
-        description=(
-            "List of chunks that contain evidence for this connectivity endpoint. "
-            "Each entry is serialized as 'docId' and 'chunkId' UUID strings."
-        ),
-    )
-
-    @field_validator("relevant_documentations", mode="before")
-    @classmethod
-    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
-        return normalize_relevant_documentation_refs(v)
-
-    @field_serializer("relevant_documentations", when_used="always")
-    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        serialized: List[Dict[str, str]] = []
-        for chunk in value or []:
-            doc_id = chunk.get("doc_id") or chunk.get("docId")
-            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-            if not doc_id or not chunk_id:
-                continue
-            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
-        return serialized
 
 
 class RankedEndpointKey(BaseModel):
