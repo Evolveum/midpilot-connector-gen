@@ -21,7 +21,13 @@ from src.common.jobs import (
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import (
+    get_default_llm,
+    make_basic_chain,
+    raise_if_llm_unavailable,
+    retry_on_transient_llm_error,
+)
+from src.config import config
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
     get_groovy_cleanup_user_prompt,
@@ -371,12 +377,18 @@ class BaseGroovyGenerator(ABC):
                 prompt_vars = {"idx": idx, "chunk": chunk, "result": result}
                 prompt_vars.update(input_data)
 
-                response = await chain.ainvoke(
-                    prompt_vars,
-                    config=RunnableConfig(
-                        callbacks=[langfuse_handler],
-                        run_name=self.config.logger_prefix.strip("[]"),
+                response = await retry_on_transient_llm_error(
+                    lambda: chain.ainvoke(
+                        prompt_vars,
+                        config=RunnableConfig(
+                            callbacks=[langfuse_handler],
+                            run_name=self.config.logger_prefix.strip("[]"),
+                        ),
                     ),
+                    max_attempts=config.llm.transient_retry_attempts,
+                    base_delay=config.llm.transient_retry_base_delay_seconds,
+                    logger_prefix=f"{self.config.logger_prefix} ",
+                    context=f"chunk {idx}/{total_chunks}",
                 )
                 code = coerce_llm_text(response).strip()
 
@@ -394,6 +406,7 @@ class BaseGroovyGenerator(ABC):
                         append_job_error(job_id, error_message)
 
             except Exception as exc:
+                raise_if_llm_unavailable(exc, context="generating connector code")
                 error_message = f"[{self.config.logger_prefix}] Failed to process chunk {idx}/{total_chunks}: {exc}"
                 logger.exception(error_message)
                 append_job_error(job_id, error_message)

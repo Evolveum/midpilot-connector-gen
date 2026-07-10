@@ -14,7 +14,13 @@ from langchain_core.runnables.config import RunnableConfig
 from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import (
+    get_default_llm,
+    make_basic_chain,
+    raise_if_llm_unavailable,
+    retry_on_transient_llm_error,
+)
+from src.config import config
 from src.modules.codegen.repair import build_repair_prompt_vars
 from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
@@ -52,12 +58,18 @@ async def generate_groovy(
         action = "Repairing" if repair_context else "Generating"
         await update_job_progress(job_id, stage=JobStage.generating, message=f"{action} {logger_prefix or 'code'}")
         logger.info("[Codegen:%s] %s Groovy for %s", logger_prefix, action, object_class)
-        resp = await chain.ainvoke(
-            vars_payload,
-            config=RunnableConfig(
-                callbacks=[langfuse_handler],
-                run_name=f"codegen.{(logger_prefix or 'groovy').lower()}",
+        resp = await retry_on_transient_llm_error(
+            lambda: chain.ainvoke(
+                vars_payload,
+                config=RunnableConfig(
+                    callbacks=[langfuse_handler],
+                    run_name=f"codegen.{(logger_prefix or 'groovy').lower()}",
+                ),
             ),
+            max_attempts=config.llm.transient_retry_attempts,
+            base_delay=config.llm.transient_retry_base_delay_seconds,
+            logger_prefix=f"[Codegen:{logger_prefix}] ",
+            context=f"generating Groovy for {object_class}",
         )
         text = coerce_llm_text(resp).strip()
         if not text:
@@ -73,6 +85,7 @@ async def generate_groovy(
         return code
 
     except Exception as exc:
+        raise_if_llm_unavailable(exc, context=f"generating code for {object_class}")
         error_message = f"[Codegen:{logger_prefix}] Generation failed: {exc}"
         logger.exception(error_message)
         append_job_error(job_id, error_message)

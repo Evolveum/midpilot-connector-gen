@@ -9,7 +9,7 @@ from uuid import UUID
 
 from src.common.chunking import normalize_to_text
 from src.common.jobs import append_job_error, update_job_progress
-from src.common.llm import build_structured_chain
+from src.common.llm import build_structured_chain, raise_if_llm_unavailable
 from src.common.utils.normalize import normalize_object_class_name
 from src.modules.digester.aggregation.merges import merge_relations_results
 from src.modules.digester.entities.relations import deduplicate_semantic_relations
@@ -239,6 +239,7 @@ async def _extract_from_chunk(
             chunk_id=chunk_id,
         )
     except Exception as exc:
+        raise_if_llm_unavailable(exc, context="extracting relations")
         total = total_chunks or 0
         error_message = f"[Digester:Relations] Failed to process chunk {idx + 1}/{total if total else '?'}: {exc}"
         if chunk_id:

@@ -16,6 +16,7 @@ from langchain_openai import ChatOpenAI
 from openai import APIConnectionError, APITimeoutError
 from pydantic import BaseModel
 
+from src.common.errors import LLMUnavailableError
 from src.config import ReasoningEffort, config
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,19 @@ def is_transient_llm_error(exc: BaseException) -> bool:
 
     message = str(exc).lower()
     return any(marker in message for marker in _TRANSIENT_LLM_MESSAGE_MARKERS)
+
+
+def raise_if_llm_unavailable(exc: BaseException, *, context: str = "") -> None:
+    """
+    Re-raise a transient connectivity/timeout failure as :class:`LLMUnavailableError`.
+
+    Lets callers convert an infrastructure outage (the model endpoint being unreachable)
+    into an explicit, GUI-visible job failure instead of silently degrading output. When the
+    exception is not a transient connectivity error this is a no-op, so the caller keeps its
+    existing handling for genuine content/validation failures.
+    """
+    if is_transient_llm_error(exc):
+        raise LLMUnavailableError(context) from exc
 
 
 async def retry_on_transient_llm_error(

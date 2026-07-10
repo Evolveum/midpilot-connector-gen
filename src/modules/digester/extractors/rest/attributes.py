@@ -16,7 +16,7 @@ from src.common.jobs import (
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain
+from src.common.llm import build_structured_chain, raise_if_llm_unavailable
 from src.config import config
 from src.modules.digester.aggregation.merges import merge_attribute_candidates
 from src.modules.digester.entities.attribute_filters import (
@@ -287,6 +287,7 @@ async def _build_attr_from_sequences(
                     setattr(attr, param, value)
 
         except Exception as exc:
+            raise_if_llm_unavailable(exc, context="extracting attribute details")
             logger.warning(
                 "[Digester:Attributes] %s from sequences failed for attribute %s: %s, sequences number: %s - %s",
                 log_stage,

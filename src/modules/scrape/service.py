@@ -18,6 +18,7 @@ from src.common.database.repositories.job_repository import JobRepository
 from src.common.documentation import SavedDocumentation
 from src.common.enums import JobStage
 from src.common.jobs import append_job_error, update_job_progress
+from src.common.llm import raise_if_llm_unavailable
 from src.common.session.schema import DocumentationItem
 from src.common.utils.normalize import normalize_url
 from src.common.utils.status_response import build_group_documentation_response
@@ -331,6 +332,7 @@ async def _run_scrape_async(
         processed_batches = await asyncio.gather(*(task for _, task in processing_tasks), return_exceptions=True)
         for (documentation, _), batch in zip(processing_tasks, processed_batches):
             if isinstance(batch, BaseException):
+                raise_if_llm_unavailable(batch, context="processing scraped documentation")
                 logger.exception(
                     "[Scrape] Job %s: Documentation processing failed for %s",
                     job_id,
