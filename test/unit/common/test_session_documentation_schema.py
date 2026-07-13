@@ -4,8 +4,8 @@
 
 """Regression tests for the ``Documentation`` API model behaviour that the
 ``PUT /session/{id}/documentation/{doc_id}`` import endpoint relies on to
-distinguish a schema mismatch from an intentionally empty import (and to log it
-instead of silently returning 200 with nothing stored)."""
+distinguish a schema mismatch from an explicitly empty import before replacing
+stored chunks."""
 
 from src.common.session.schema import Documentation
 
@@ -13,7 +13,7 @@ from src.common.session.schema import Documentation
 def test_mismatched_payload_yields_no_chunks_and_captures_unexpected_keys() -> None:
     """A conndev object-class document has none of the expected fields; it must
     parse into an empty document while preserving the unexpected keys so the
-    import endpoint can report why 0 chunks were stored."""
+    import endpoint can report why the payload was rejected."""
     conndev_payload = {
         "namespace": "urn:ietf:params:scim:schemas:core:2.0:Group",
         "attributes": [{"name": "displayName", "type": "string"}],
@@ -37,7 +37,7 @@ def test_mismatched_payload_yields_no_chunks_and_captures_unexpected_keys() -> N
 
 def test_explicit_empty_chunks_is_distinguishable_from_mismatch() -> None:
     """An intentional empty import sets ``chunks`` explicitly, which lets the
-    endpoint log a different (less alarming) message than a schema mismatch."""
+    endpoint report a different message than a schema mismatch."""
     document = Documentation.model_validate({"chunks": []})
 
     assert document.chunks == []

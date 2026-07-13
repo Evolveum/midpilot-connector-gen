@@ -16,7 +16,7 @@ from uuid import UUID
 
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.job_repository import JobRepository
-from src.common.errors import DocumentationItemNotFoundError
+from src.common.errors import DocumentationItemNotFoundError, InvalidDocumentationImportError
 from src.common.session.schema import Documentation
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,82 @@ async def get_documentation_document(
         ],
     }
     return Documentation.model_validate(document_payload)
+
+
+async def import_documentation_document(
+    doc_repo: DocumentationRepository,
+    session_id: UUID,
+    documentation_id: UUID,
+    document: Documentation,
+) -> int:
+    """
+    Replace all chunks for one document (``documentation_id``) with the provided
+    payload, leaving other documents in the session untouched. Returns the number
+    of imported chunks.
+
+    Raises ``InvalidDocumentationImportError`` for a body/path docId mismatch,
+    a duplicate chunkId, or an empty/schema-mismatched payload. A DB conflict
+    surfaces as ``IntegrityError`` for the router to map to 409.
+    """
+    if document.doc_id is not None and str(document.doc_id) != str(documentation_id):
+        raise InvalidDocumentationImportError(
+            f"Body docId ({document.doc_id}) must match path documentation_id ({documentation_id})"
+        )
+
+    flat_items: List[Dict[str, Any]] = []
+    seen_chunk_ids: set[str] = set()
+    for chunk in document.chunks:
+        chunk_id = str(chunk.chunk_id)
+        if chunk_id in seen_chunk_ids:
+            raise InvalidDocumentationImportError(f"Duplicate chunkId in import payload: {chunk_id}")
+        seen_chunk_ids.add(chunk_id)
+
+        flat_items.append(
+            {
+                "chunkId": chunk_id,
+                "docId": str(documentation_id),
+                "source": chunk.source,
+                "url": chunk.url,
+                "summary": chunk.summary,
+                "content": chunk.content,
+                "metadata": chunk.metadata,
+                "createdAt": chunk.created_at,
+                "scrapeJobIds": [str(job_id) for job_id in chunk.scrape_job_ids],
+            }
+        )
+
+    if not flat_items:
+        if "chunks" in document.model_fields_set:
+            logger.warning(
+                "Documentation import for doc %s (session %s) rejected: 'chunks' was empty.",
+                documentation_id,
+                session_id,
+            )
+            raise InvalidDocumentationImportError("Import payload must include at least one documentation chunk.")
+
+        unexpected_keys = sorted((document.model_extra or {}).keys())
+        logger.warning(
+            "Documentation import for doc %s (session %s) rejected: request body has no "
+            "'chunks' field, so it does not match the expected Documentation schema "
+            "(expected {docId?, chunks:[...]}). Unexpected top-level keys: %s",
+            documentation_id,
+            session_id,
+            unexpected_keys or "none",
+        )
+        raise InvalidDocumentationImportError(
+            "Import payload must include a non-empty 'chunks' field matching the Documentation schema. "
+            f"Unexpected top-level keys: {unexpected_keys or 'none'}"
+        )
+
+    await doc_repo.remove_documentation_items_by_doc_id(session_id, documentation_id)
+    await doc_repo.import_documentation_items_for_session(session_id, flat_items)
+    logger.info(
+        "Imported %d documentation chunk(s) for doc %s (session %s)",
+        len(flat_items),
+        documentation_id,
+        session_id,
+    )
+    return len(flat_items)
 
 
 async def delete_documentation_document(
