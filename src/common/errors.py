@@ -106,6 +106,13 @@ class DocumentationItemNotFoundError(AppError):
         super().__init__(f"Documentation {documentation_id} not found in session {session_id}")
 
 
+class InvalidDocumentationImportError(AppError):
+    """Raised when a documentation import payload violates the import contract."""
+
+    status_code = 422
+    code = "invalid_documentation_import"
+
+
 class NoDocumentationStoredError(AppError):
     """Raised when an operation needs documentation but none has been stored yet."""
 

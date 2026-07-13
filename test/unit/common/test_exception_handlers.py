@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.common.errors import (
+    InvalidDocumentationImportError,
     InvalidObjectClassesOutputError,
     ObjectClassesNotFoundError,
     RelevantChunksNotFoundError,
@@ -35,6 +36,10 @@ def client() -> TestClient:
     async def _app_422():
         raise InvalidObjectClassesOutputError(uuid4())
 
+    @app.get("/invalid-documentation-import")
+    async def _invalid_documentation_import():
+        raise InvalidDocumentationImportError("Import payload must include at least one documentation chunk.")
+
     @app.get("/unexpected")
     async def _unexpected():
         raise RuntimeError("internal detail that must not leak")
@@ -58,6 +63,18 @@ def test_app_error_status_codes_follow_the_exception(client: TestClient) -> None
     assert client.get("/app-400").status_code == 400
     assert client.get("/app-422").json()["error"]["code"] == "invalid_object_classes_output"
     assert client.get("/app-422").status_code == 422
+
+
+def test_invalid_documentation_import_uses_structured_error_contract(client: TestClient) -> None:
+    response = client.get("/invalid-documentation-import")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error": {
+            "code": "invalid_documentation_import",
+            "message": "Import payload must include at least one documentation chunk.",
+        }
+    }
 
 
 def test_unexpected_error_returns_generic_500_without_leaking_internals(client: TestClient) -> None:
