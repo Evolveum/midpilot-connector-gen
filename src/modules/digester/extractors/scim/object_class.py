@@ -15,11 +15,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from src.common.chunking.tokens import normalize_to_text
-from src.common.documentation.content_types import is_conndev_document
+from src.common.documentation.content_types import is_conndev_content_type
 from src.common.jobs import update_job_progress
 from src.common.utils.coerce import as_dict_list, as_mapping
-from src.modules.digester.entities.object_classes import confidence_order_key
-from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
+from src.common.utils.normalize import canonical_object_class_key
+from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_object_classes
 from src.modules.digester.extraction.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
 from src.modules.digester.extraction.llm_execution import run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
@@ -34,59 +34,10 @@ from src.modules.digester.prompts.scim.object_class_prompts import (
 )
 from src.modules.digester.schemas import (
     ExtendedObjectClass,
-    FinalObjectClass,
     ObjectClassesExtendedResponse,
-    ObjectClassesResponse,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _merge_scim_final_object_classes(object_classes: List[FinalObjectClass]) -> List[FinalObjectClass]:
-    """
-    Merge SCIM object classes by name while preserving deterministic structural metadata.
-    """
-    by_name: Dict[str, FinalObjectClass] = {}
-
-    for obj_class in object_classes:
-        class_name = obj_class.name.strip().lower()
-        if not class_name:
-            continue
-
-        existing = by_name.get(class_name)
-        if existing is None:
-            by_name[class_name] = obj_class
-            continue
-
-        if confidence_order_key(obj_class.confidence) < confidence_order_key(existing.confidence):
-            existing.confidence = obj_class.confidence
-
-        existing.superclass = existing.superclass or obj_class.superclass
-        existing.abstract = bool(existing.abstract or obj_class.abstract)
-        existing.embedded = bool(existing.embedded or obj_class.embedded)
-
-        if not existing.description and obj_class.description:
-            existing.description = obj_class.description
-
-        seen_chunks = {
-            (
-                str(chunk.get("doc_id") or chunk.get("docId")),
-                str(chunk.get("chunk_id") or chunk.get("chunkId")),
-            )
-            for chunk in existing.relevant_documentations
-            if chunk.get("doc_id") or chunk.get("docId")
-        }
-        for chunk in obj_class.relevant_documentations:
-            key = (
-                str(chunk.get("doc_id") or chunk.get("docId")),
-                str(chunk.get("chunk_id") or chunk.get("chunkId")),
-            )
-            if key in seen_chunks:
-                continue
-            existing.relevant_documentations.append(chunk)
-            seen_chunks.add(key)
-
-    return list(by_name.values())
 
 
 async def extract_scim_object_classes(
@@ -100,6 +51,7 @@ async def extract_scim_object_classes(
     2. Derive embedded classes from standard SCIM complex attributes
     3. Extract only custom extensions from documentation
     4. Merge base + embedded + custom
+    5. Assign confidence and sort with the shared REST/SCIM ranking pipeline
 
     Args:
         doc_items: List of documentation items to process
@@ -115,12 +67,7 @@ async def extract_scim_object_classes(
     # The conndev documents are the deterministic baseline source (steps 1-2); only the
     # remaining documentation is sent to the LLM for custom-class extraction (step 3).
     llm_doc_items = [
-        item
-        for item in doc_items
-        if not is_conndev_document(
-            as_mapping(item.get("@metadata")).get("content_type"),
-            as_mapping(item.get("@metadata")).get("filename") or item.get("url"),
-        )
+        item for item in doc_items if not is_conndev_content_type(as_mapping(item.get("@metadata")).get("content_type"))
     ]
     if len(llm_doc_items) < len(doc_items):
         logger.info(
@@ -139,18 +86,12 @@ async def extract_scim_object_classes(
     scim_schemas = baseline_bundle.schemas
     base_classes_data = get_base_scim_object_classes(baseline_bundle)
     base_classes = [
-        FinalObjectClass(
+        ExtendedObjectClass(
             name=cls["name"],
-            relevant=RelevantLevel.TRUE,
-            confidence=ConfidenceLevel.HIGH,
             superclass=cls.get("superclass"),
             abstract=cls.get("abstract", False),
             embedded=cls.get("embedded", False),
             description=cls["description"],
-            relevant_documentations=get_scim_class_document_references(
-                baseline_bundle,
-                cls["name"],
-            ),
         )
         for cls in base_classes_data
     ]
@@ -160,19 +101,12 @@ async def extract_scim_object_classes(
     # Step 2: Derive embedded object classes from standard SCIM complex attributes
     embedded_classes_data = get_embedded_object_classes_from_scim_schemas(scim_schemas)
     embedded_classes = [
-        FinalObjectClass(
+        ExtendedObjectClass(
             name=cls["name"],
-            relevant=RelevantLevel.TRUE,
-            confidence=ConfidenceLevel.HIGH,
             superclass=cls.get("superclass"),
             abstract=cls.get("abstract", False),
             embedded=cls.get("embedded", True),
             description=cls["description"],
-            relevant_documentations=get_scim_class_document_references(
-                baseline_bundle,
-                cls["name"],
-                source_class_name=cls.get("sourceClass"),
-            ),
         )
         for cls in embedded_classes_data
     ]
@@ -185,10 +119,18 @@ async def extract_scim_object_classes(
     # Step 3: Extract custom extensions from documentation
     all_custom_classes: List[ExtendedObjectClass] = []
     all_relevant_chunks: List[Dict[str, Any]] = []
-    class_to_chunks: Dict[str, List[Dict[str, Any]]] = {
-        obj_class.name.strip().lower(): list(obj_class.relevant_documentations)
-        for obj_class in [*base_classes, *embedded_classes]
-    }
+    class_to_chunks: Dict[str, List[Dict[str, Any]]] = {}
+    for cls in base_classes_data:
+        class_to_chunks[canonical_object_class_key(cls["name"])] = get_scim_class_document_references(
+            baseline_bundle,
+            cls["name"],
+        )
+    for cls in embedded_classes_data:
+        class_to_chunks[canonical_object_class_key(cls["name"])] = get_scim_class_document_references(
+            baseline_bundle,
+            cls["name"],
+            source_class_name=cls.get("sourceClass"),
+        )
     chunk_id_to_doc_id: Dict[str, str] = {}
     chunk_metadata_map = build_doc_metadata_map(llm_doc_items)
 
@@ -241,7 +183,7 @@ async def extract_scim_object_classes(
 
         # Track chunks for each custom class
         for obj_class in custom_classes:
-            class_name = obj_class.name.strip().lower()
+            class_name = canonical_object_class_key(obj_class.name)
             if class_name not in class_to_chunks:
                 class_to_chunks[class_name] = []
 
@@ -277,33 +219,15 @@ async def extract_scim_object_classes(
         class_to_chunks=class_to_chunks,
     )
 
-    # Step 5: Merge base + embedded + custom
-    custom_classes = [
-        FinalObjectClass(
-            name=obj_class.name,
-            relevant=RelevantLevel.TRUE,
-            confidence=ConfidenceLevel.MEDIUM,
-            superclass=obj_class.superclass,
-            abstract=obj_class.abstract,
-            embedded=obj_class.embedded,
-            description=obj_class.description,
-        )
-        for obj_class in all_custom_classes
-    ]
-    all_classes = _merge_scim_final_object_classes(base_classes + embedded_classes + custom_classes)
+    # Step 5: Use the shared REST/SCIM post-processing pipeline to merge classes,
+    # assign confidence with the LLM, and apply the final bucket ordering.
+    result = await deduplicate_and_sort_object_classes(
+        [*base_classes, *embedded_classes, *all_custom_classes],
+        job_id,
+        class_to_chunks,
+    )
 
-    # Step 6: Attach relevant chunks to merged classes
-    for obj_class in all_classes:
-        class_name = obj_class.name.strip().lower()
-        if class_name in class_to_chunks:
-            obj_class.relevant_documentations = class_to_chunks[class_name]
-
-    all_classes.sort(key=lambda item: (confidence_order_key(item.confidence), item.name.strip().lower()))
-
-    # Create response
-    result = ObjectClassesResponse(object_classes=all_classes)
-
-    logger.info("[SCIM:ObjectClasses] Completed. Total classes: %d", len(all_classes))
+    logger.info("[SCIM:ObjectClasses] Completed. Total classes: %d", len(result.objectClasses))
 
     return {
         "result": result.model_dump(by_alias=True),
@@ -312,7 +236,7 @@ async def extract_scim_object_classes(
 
 
 async def _find_relevant_chunks_for_base_classes(
-    base_classes: List[FinalObjectClass],
+    base_classes: List[ExtendedObjectClass],
     doc_items: List[dict],
     class_to_chunks: Dict[str, List[Dict[str, Any]]],
 ) -> None:
@@ -330,7 +254,7 @@ async def _find_relevant_chunks_for_base_classes(
     logger.info("[SCIM:ObjectClasses] Finding relevant chunks for %d base classes", len(base_classes))
 
     for base_class in base_classes:
-        class_name = base_class.name.strip().lower()
+        class_name = canonical_object_class_key(base_class.name)
         if class_name not in class_to_chunks:
             class_to_chunks[class_name] = []
 
@@ -371,7 +295,7 @@ async def _find_relevant_chunks_for_base_classes(
 
     # Log results
     for base_class in base_classes:
-        class_name = base_class.name.strip().lower()
+        class_name = canonical_object_class_key(base_class.name)
         chunk_count = len(class_to_chunks.get(class_name, []))
         logger.info(
             "[SCIM:ObjectClasses] Base class '%s' found in %d chunks",

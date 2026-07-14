@@ -18,11 +18,11 @@ from uuid import UUID
 from src.common.enums import ApiType
 from src.common.utils.normalize import canonical_object_class_key
 from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_object_classes
 from src.modules.digester.extraction.chunk_extraction import run_doc_extractors_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest.object_class import (
     build_object_class_extraction_chain,
-    deduplicate_and_sort_object_classes,
     extract_object_classes_raw,
 )
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes

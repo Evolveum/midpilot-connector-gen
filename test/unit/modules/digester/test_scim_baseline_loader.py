@@ -284,9 +284,18 @@ async def test_loader_skips_unrecognized_and_non_conndev_documents():
 
 
 @pytest.mark.asyncio
-async def test_loader_recognizes_existing_named_conndev_json_with_legacy_json_content_type():
+async def test_loader_does_not_use_conndev_filename_as_content_type_fallback():
     item = _conndev_item(_schema_document(USER_SCHEMA), "upload://conndev_ScimSchema_User.json")
     item["metadata"]["content_type"] = "application/json"
+
+    bundle = await _load_bundle([item])
+
+    assert bundle.schemas == {}
+
+
+@pytest.mark.asyncio
+async def test_loader_uses_conndev_content_type_with_arbitrary_filename():
+    item = _conndev_item(_schema_document(USER_SCHEMA), "upload://enterprise-user-definition.json")
 
     bundle = await _load_bundle([item])
 

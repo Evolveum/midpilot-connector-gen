@@ -7,8 +7,11 @@ Canonical media types for midPoint connector-development (conndev) schema upload
 
 A conndev document is a connector schema, SCIM resource descriptor or connector object-class
 projection exported from midPoint. The document is JSON; both the short and the
-Evolveum-namespaced media types are accepted for backward compatibility. This is the single
-source of truth shared by upload/ingest and digester paths so the two cannot drift apart.
+Evolveum-namespaced media types are accepted for backward compatibility.
+
+Persisted documents must be selected exclusively by their metadata content type. Filename
+recognition exists only for upload-time normalization and must never be used as a fallback by
+digester or other DB-backed runtime paths.
 """
 
 # The conndev connector schema is JSON.
@@ -38,13 +41,8 @@ def is_conndev_content_type(content_type: str | None) -> bool:
 
 
 def is_conndev_export_filename(filename_or_url: str | None) -> bool:
-    """Recognize connector-development exports without depending on an object-class name."""
+    """Recognize an upload filename so ingest can assign the canonical conndev content type."""
     basename = str(filename_or_url or "").rsplit("/", 1)[-1].strip().lower()
     return basename.endswith(CONNDEV_SUFFIX) or (
         basename.startswith(CONNDEV_JSON_FILENAME_PREFIX) and basename.endswith(".json")
     )
-
-
-def is_conndev_document(content_type: str | None, filename_or_url: str | None = None) -> bool:
-    """Recognize a conndev document from its canonical media type or export filename."""
-    return is_conndev_content_type(content_type) or is_conndev_export_filename(filename_or_url)

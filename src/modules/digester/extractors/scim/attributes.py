@@ -14,7 +14,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
-from src.common.documentation.content_types import is_conndev_document
+from src.common.documentation.content_types import is_conndev_content_type
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.llm import build_structured_chain
 from src.common.utils.coerce import as_dict_list, as_list, as_mapping
@@ -336,7 +336,7 @@ async def extract_scim_attributes(
     for chunk, chunk_id in zip(chunks, chunk_details, strict=False):
         chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map and chunk_id else None
         metadata = as_mapping(as_mapping(chunk_metadata).get("@metadata"))
-        if is_conndev_document(metadata.get("content_type"), metadata.get("filename")):
+        if is_conndev_content_type(metadata.get("content_type")):
             continue
         llm_chunks.append(chunk)
         llm_chunk_details.append(chunk_id)

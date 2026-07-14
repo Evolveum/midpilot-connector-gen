@@ -31,7 +31,7 @@ from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
-from src.common.documentation.content_types import is_conndev_document
+from src.common.documentation.content_types import is_conndev_content_type
 from src.common.utils.coerce import as_dict_list, as_mapping
 from src.modules.digester.schemas.common import ChunkReference
 
@@ -322,10 +322,11 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
     """
     Load and classify the session's conndev documents into the SCIM baseline bundle.
 
-    Documents are recognized by contract shape (``schemaContent`` / ``endpoint`` +
+    Only persisted documents marked with a conndev metadata content type are considered. Those
+    documents are then classified by contract shape (``schemaContent`` / ``endpoint`` +
     ``primarySchema`` / ``locator`` + ``uid``); unrecognized conndev documents are logged and
-    skipped. Raw SCIM schemas come from the dedicated schema documents; resource-embedded
-    copies only fill in classes that have no dedicated document.
+    skipped. Raw SCIM schemas come from the dedicated schema documents; resource-embedded copies
+    only fill in classes that have no dedicated document.
     """
     async with async_session_maker() as db:
         items = await DocumentationRepository(db).get_documentation_items_by_session(session_id)
@@ -338,8 +339,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
 
     for item in items:
         metadata = as_mapping(item.get("metadata"))
-        filename_or_url = metadata.get("filename") or item.get("url")
-        if not is_conndev_document(metadata.get("content_type"), filename_or_url):
+        if not is_conndev_content_type(metadata.get("content_type")):
             continue
 
         doc_id = item.get("docId")
@@ -573,7 +573,6 @@ def get_base_scim_object_classes(bundle: ScimBaselineBundle) -> List[Dict[str, A
                 "name": class_name,
                 "schemaUrn": schema.get("id", ""),
                 "relevant": "true",
-                "confidence": "high",
                 "superclass": bundle.extension_superclasses.get(class_name),
                 "abstract": False,
                 "embedded": False,

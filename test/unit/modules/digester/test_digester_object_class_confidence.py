@@ -7,8 +7,8 @@ from uuid import uuid4
 
 import pytest
 
+from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_object_classes
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
-from src.modules.digester.extractors.rest.object_class import deduplicate_and_sort_object_classes
 from src.modules.digester.schemas import (
     ExtendedObjectClass,
     ObjectClassesConfidenceResponse,
@@ -40,9 +40,9 @@ async def test_deduplicate_and_sort_object_classes_keeps_all_and_sorts_by_confid
     )
 
     with (
-        patch("src.modules.digester.extractors.rest.object_class.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.extractors.rest.object_class.get_default_llm", return_value=MagicMock()),
-        patch("src.modules.digester.extractors.rest.object_class.make_basic_chain", return_value=mock_chain),
+        patch("src.modules.digester.aggregation.object_class_ranking.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.aggregation.object_class_ranking.get_default_llm", return_value=MagicMock()),
+        patch("src.modules.digester.aggregation.object_class_ranking.make_basic_chain", return_value=mock_chain),
     ):
         result = await deduplicate_and_sort_object_classes(
             all_object_classes=all_object_classes,
@@ -68,10 +68,10 @@ async def test_deduplicate_and_sort_object_classes_defaults_to_low_when_confiden
     mock_chain.ainvoke = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
 
     with (
-        patch("src.modules.digester.extractors.rest.object_class.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.extractors.rest.object_class.get_default_llm", return_value=MagicMock()),
-        patch("src.modules.digester.extractors.rest.object_class.make_basic_chain", return_value=mock_chain),
-        patch("src.modules.digester.extractors.rest.object_class.append_job_error"),
+        patch("src.modules.digester.aggregation.object_class_ranking.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.aggregation.object_class_ranking.get_default_llm", return_value=MagicMock()),
+        patch("src.modules.digester.aggregation.object_class_ranking.make_basic_chain", return_value=mock_chain),
+        patch("src.modules.digester.aggregation.object_class_ranking.append_job_error"),
     ):
         result = await deduplicate_and_sort_object_classes(
             all_object_classes=all_object_classes,
@@ -130,10 +130,14 @@ async def test_deduplicate_and_sort_object_classes_sorts_with_llm_inside_same_co
     )
 
     with (
-        patch("src.modules.digester.extractors.rest.object_class.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.extractors.rest.object_class.get_default_llm", return_value=MagicMock()),
-        patch("src.modules.digester.extractors.rest.object_class.make_basic_chain", return_value=classification_chain),
-        patch("src.modules.digester.extractors.rest.object_class.build_structured_chain", return_value=sorting_chain),
+        patch("src.modules.digester.aggregation.object_class_ranking.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.aggregation.object_class_ranking.get_default_llm", return_value=MagicMock()),
+        patch(
+            "src.modules.digester.aggregation.object_class_ranking.make_basic_chain", return_value=classification_chain
+        ),
+        patch(
+            "src.modules.digester.aggregation.object_class_ranking.build_structured_chain", return_value=sorting_chain
+        ),
     ):
         result = await deduplicate_and_sort_object_classes(
             all_object_classes=all_object_classes,
