@@ -9,11 +9,13 @@ from uuid import uuid4
 
 import pytest
 
+from src.modules.digester.extractors.scim.baseline import build_scim_baseline_bundle
 from src.modules.digester.extractors.scim.object_class import (
     build_embedded_object_class_name,
     extract_scim_object_classes,
     get_embedded_object_classes_from_scim_schema,
 )
+from src.modules.digester.schemas.common import ChunkReference
 
 _SCHEMA_DIR = Path(__file__).parent / "scim_schemas"
 
@@ -28,6 +30,7 @@ def _baseline_schemas() -> dict:
 
 
 BASELINE_SCHEMAS = _baseline_schemas()
+BASELINE_BUNDLE = build_scim_baseline_bundle(BASELINE_SCHEMAS)
 
 
 def test_build_embedded_object_class_name_preserves_schema_attribute_plurality():
@@ -66,6 +69,7 @@ def test_get_embedded_object_classes_from_scim_schema_uses_complex_attributes_on
             "embedded": True,
             "description": "Phone numbers for the User.",
             "sourceAttribute": "phoneNumbers",
+            "sourceClass": "User",
         }
     ]
 
@@ -78,9 +82,9 @@ async def test_extract_scim_object_classes_includes_standard_embedded_classes():
             "src.modules.digester.extractors.scim.object_class.run_chunks_concurrently", new_callable=AsyncMock
         ) as run_chunks,
         patch(
-            "src.modules.digester.extractors.scim.object_class.load_session_scim_schemas",
+            "src.modules.digester.extractors.scim.object_class.load_session_scim_baseline",
             new_callable=AsyncMock,
-            return_value=BASELINE_SCHEMAS,
+            return_value=BASELINE_BUNDLE,
         ),
     ):
         run_chunks.return_value = []
@@ -98,3 +102,31 @@ async def test_extract_scim_object_classes_includes_standard_embedded_classes():
     assert by_name["UserPhoneNumbers"]["superclass"] is None
     assert by_name["GroupMembers"]["embedded"] is True
     assert by_name["GroupMembers"]["superclass"] is None
+
+
+@pytest.mark.asyncio
+async def test_extract_scim_object_classes_propagates_schema_provenance_to_derived_classes():
+    reference = ChunkReference(doc_id=str(uuid4()), chunk_id=str(uuid4()))
+    bundle = build_scim_baseline_bundle(
+        {"User": BASELINE_SCHEMAS["User"]},
+        schema_references={"User": reference},
+    )
+
+    with (
+        patch("src.modules.digester.extractors.scim.object_class.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.modules.digester.extractors.scim.object_class.run_chunks_concurrently",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "src.modules.digester.extractors.scim.object_class.load_session_scim_baseline",
+            new_callable=AsyncMock,
+            return_value=bundle,
+        ),
+    ):
+        result = await extract_scim_object_classes([], uuid4(), uuid4())
+
+    by_name = {item["name"]: item for item in result["result"]["objectClasses"]}
+    assert by_name["User"]["relevantDocumentations"] == [reference.to_api_dict()]
+    assert by_name["UserName"]["relevantDocumentations"] == [reference.to_api_dict()]

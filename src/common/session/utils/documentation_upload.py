@@ -24,6 +24,7 @@ from src.common.documentation.content_types import (
     CONNDEV_SUFFIX,
     DEFAULT_CONNDEV_CONTENT_TYPE,
     is_conndev_content_type,
+    is_conndev_export_filename,
     normalize_content_type,
 )
 from src.common.enums import JobStage
@@ -118,15 +119,21 @@ _CONTENT_TYPE_BY_SUFFIX = {
 }
 
 
-def _resolve_content_type(content_type: str | None, upload_content_type: str | None, suffix: str) -> str:
+def _resolve_content_type(content_type: str | None, upload_content_type: str | None, filename: str) -> str:
     explicit_content_type = normalize_content_type(content_type)
     if explicit_content_type:
         return explicit_content_type
 
     normalized_upload_type = normalize_content_type(upload_content_type)
+    if is_conndev_export_filename(filename) and normalized_upload_type in {
+        *_GENERIC_CONTENT_TYPES,
+        "application/json",
+    }:
+        return DEFAULT_CONNDEV_CONTENT_TYPE
     if normalized_upload_type not in _GENERIC_CONTENT_TYPES:
         return normalized_upload_type
 
+    suffix = Path(filename).suffix.lower()
     return _CONTENT_TYPE_BY_SUFFIX.get(suffix, normalized_upload_type)
 
 
@@ -241,8 +248,7 @@ async def read_raw_uploaded_documentation(
     content_type: str | None = None,
 ) -> RawUploadedDocumentation:
     filename = documentation.filename or "unknown"
-    suffix = Path(filename).suffix.lower()
-    content_type = _resolve_content_type(content_type, documentation.content_type, suffix)
+    content_type = _resolve_content_type(content_type, documentation.content_type, filename)
     data = await documentation.read()
 
     if not data:

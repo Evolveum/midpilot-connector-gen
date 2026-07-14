@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -41,7 +42,11 @@ from src.modules.codegen.selection.relevant_chunks import (
     _collect_relation_object_class_pairs,
     _collect_relevant_chunks,
 )
-from src.modules.codegen.utils.prompt_records import build_attribute_mapping_records
+from src.modules.codegen.utils.prompt_records import (
+    build_attribute_mapping_records,
+    build_connid_attribute_mapping_records,
+    extract_scim_context,
+)
 from src.modules.digester.schemas import RelationsResponse
 
 logger = logging.getLogger(__name__)
@@ -64,6 +69,11 @@ async def generate_native_schema_code(
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
 
     records = build_attribute_mapping_records(attributes_payload)
+    scim_context_json = json.dumps(
+        extract_scim_context(attributes_payload),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
     code = await generate_groovy(
         records=records,
@@ -71,7 +81,7 @@ async def generate_native_schema_code(
         system_prompt=get_native_schema_system_prompt,
         user_prompt=get_native_schema_user_prompt,
         logger_prefix="NativeSchema",
-        extra_prompt_vars={"user_schema_docs": docs_text},
+        extra_prompt_vars={"user_schema_docs": docs_text, "scim_context_json": scim_context_json},
         job_id=job_id,
         repair_context=repair_context,
     )
@@ -148,7 +158,7 @@ async def generate_conn_id_code(
         __package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc"
     )
 
-    records = build_attribute_mapping_records(attributes_payload)
+    records = build_connid_attribute_mapping_records(attributes_payload)
 
     code = await generate_groovy(
         records=records,

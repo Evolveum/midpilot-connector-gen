@@ -12,6 +12,8 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester.extractors.scim import endpoints as scim_endpoints
+from src.modules.digester.extractors.scim.baseline import ScimResourceDefinition, build_scim_baseline_bundle
+from src.modules.digester.schemas.common import ChunkReference
 
 _MODULE = scim_endpoints.__name__
 _SCHEMA_DIR = Path(__file__).parent / "scim_schemas"
@@ -39,10 +41,16 @@ class _NoopAsyncSession:
         return False
 
 
-async def _run_pregenerate(object_class: str, schemas: dict | None = None, object_classes_output=None) -> dict:
-    """Invoke pregenerate_scim_endpoints with the DB and baseline-schema loading stubbed out."""
+async def _run_pregenerate(
+    object_class: str,
+    schemas: dict | None = None,
+    object_classes_output=None,
+    resources: dict | None = None,
+) -> dict:
+    """Invoke pregenerate_scim_endpoints with the DB and baseline loading stubbed out."""
     repo = MagicMock()
     repo.get_session_data = AsyncMock(return_value=object_classes_output)
+    bundle = build_scim_baseline_bundle(BASELINE_SCHEMAS if schemas is None else schemas, resources)
 
     with (
         patch(f"{_MODULE}.update_job_progress", new_callable=AsyncMock),
@@ -50,9 +58,9 @@ async def _run_pregenerate(object_class: str, schemas: dict | None = None, objec
         patch(f"{_MODULE}.async_session_maker", return_value=_NoopAsyncSession()),
         patch(f"{_MODULE}.SessionRepository", return_value=repo),
         patch(
-            f"{_MODULE}.load_session_scim_schemas",
+            f"{_MODULE}.load_session_scim_baseline",
             new_callable=AsyncMock,
-            return_value=BASELINE_SCHEMAS if schemas is None else schemas,
+            return_value=bundle,
         ),
     ):
         return await scim_endpoints.pregenerate_scim_endpoints(
@@ -96,3 +104,43 @@ async def test_pregenerate_skips_extension_schema():
     """SCIM extension schemas (e.g. EnterpriseUser) augment another resource and get no endpoints."""
     result = await _run_pregenerate("enterpriseuser")
     assert result["result"]["endpoints"] == []
+
+
+@pytest.mark.asyncio
+async def test_pregenerate_prefers_exported_resource_endpoint_over_inference():
+    """The endpoint exported in the conndev resource document beats name-based path inference."""
+    resources = {
+        "User": ScimResourceDefinition(
+            name="User",
+            endpoint="/scim/v2/Users",
+            schema_urn="urn:ietf:params:scim:schemas:core:2.0:User",
+            primary_schema=BASELINE_SCHEMAS["User"],
+        )
+    }
+    result = await _run_pregenerate("user", resources=resources)
+
+    endpoints = result["result"]["endpoints"]
+    assert endpoints
+    assert all(ep["path"] in ("/scim/v2/Users", "/scim/v2/Users/{id}") for ep in endpoints)
+
+
+@pytest.mark.asyncio
+async def test_pregenerate_attaches_exported_resource_provenance():
+    reference = ChunkReference(doc_id=str(uuid4()), chunk_id=str(uuid4()))
+    resources = {
+        "User": ScimResourceDefinition(
+            name="User",
+            endpoint="/scim/v2/Users",
+            schema_urn="urn:ietf:params:scim:schemas:core:2.0:User",
+            primary_schema=BASELINE_SCHEMAS["User"],
+            source_reference=reference,
+        )
+    }
+
+    result = await _run_pregenerate("user", resources=resources)
+
+    expected_api_reference = reference.to_api_dict()
+    assert result["relevantDocumentations"] == [reference.to_internal_dict()]
+    assert all(
+        endpoint["relevantDocumentations"] == [expected_api_reference] for endpoint in result["result"]["endpoints"]
+    )

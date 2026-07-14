@@ -218,6 +218,7 @@ async def test_override_class_attributes_success():
     """Test manual override of class attributes."""
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.get_session_data = AsyncMock(return_value=None)
     mock_repo.update_session = AsyncMock()
     mock_relevant_repo = MagicMock()
     mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()

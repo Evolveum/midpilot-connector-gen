@@ -13,6 +13,22 @@ Prepare a native schema in Groovy code based on the following `.adoc` documentat
 <user_schema_docs>
 {user_schema_docs}
 </user_schema_docs>
+
+For SCIM generation, the following context preserves the source contracts separately. It is an
+empty JSON object for non-SCIM protocols:
+
+<scim_context>
+{scim_context_json}
+</scim_context>
+
+When <scim_context> is not empty:
+- Treat `schema` and `extensions` as the authoritative SCIM attribute/rule definitions.
+- Preserve schema URNs, complex sub-attributes, required/multi-value flags, mutability, returned,
+  uniqueness, canonical values and reference types when they affect the native schema.
+- Treat `resource.endpoint` as the documented resource path and `extensionOf`/`extensions` as
+  schema bindings; these descriptors are not runtime resource instances.
+- `connectorObjectClass` is a simplified connector exposure projection. Do not mistake omitted
+  connector attributes for attributes absent from the SCIM schema.
 """)
     + "{repair_system_suffix}"
     + textwrap.dedent("""

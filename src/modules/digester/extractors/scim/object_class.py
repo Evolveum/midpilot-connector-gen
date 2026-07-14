@@ -5,8 +5,8 @@
 """
 SCIM 2.0 guided object class extraction.
 
-This module extracts ONLY custom extensions and additional resources
-beyond the standard SCIM User, Group, and EnterpriseUser classes.
+This module starts from every SCIM schema uploaded for the session and extracts only
+additional application-specific classes from the remaining documentation.
 """
 
 import logging
@@ -15,14 +15,19 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from src.common.chunking.tokens import normalize_to_text
+from src.common.documentation.content_types import is_conndev_document
 from src.common.jobs import update_job_progress
-from src.common.utils.coerce import as_dict_list
+from src.common.utils.coerce import as_dict_list, as_mapping
 from src.modules.digester.entities.object_classes import confidence_order_key
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extraction.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
 from src.modules.digester.extraction.llm_execution import run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
-from src.modules.digester.extractors.scim.baseline import get_base_scim_object_classes, load_session_scim_schemas
+from src.modules.digester.extractors.scim.baseline import (
+    get_base_scim_object_classes,
+    get_scim_class_document_references,
+    load_session_scim_baseline,
+)
 from src.modules.digester.prompts.scim.object_class_prompts import (
     scim_object_class_system_prompt,
     scim_object_class_user_prompt,
@@ -91,7 +96,7 @@ async def extract_scim_object_classes(
 ) -> Dict[str, Any]:
     """
     Extract SCIM object classes using guided approach:
-    1. Start with SCIM base classes (User, Group, EnterpriseUser)
+    1. Start with every class in the session SCIM baseline
     2. Derive embedded classes from standard SCIM complex attributes
     3. Extract only custom extensions from documentation
     4. Merge base + embedded + custom
@@ -107,15 +112,32 @@ async def extract_scim_object_classes(
     """
     logger.info("[SCIM:ObjectClasses] Starting guided extraction")
 
+    # The conndev documents are the deterministic baseline source (steps 1-2); only the
+    # remaining documentation is sent to the LLM for custom-class extraction (step 3).
+    llm_doc_items = [
+        item
+        for item in doc_items
+        if not is_conndev_document(
+            as_mapping(item.get("@metadata")).get("content_type"),
+            as_mapping(item.get("@metadata")).get("filename") or item.get("url"),
+        )
+    ]
+    if len(llm_doc_items) < len(doc_items):
+        logger.info(
+            "[SCIM:ObjectClasses] Excluded %d conndev baseline document(s) from LLM extraction",
+            len(doc_items) - len(llm_doc_items),
+        )
+
     # Update job progress with total documents
-    total_docs = len(doc_items)
+    total_docs = len(llm_doc_items)
     await update_job_progress(
         job_id, total_processing=total_docs, processing_completed=0, message="Processing SCIM documents"
     )
 
     # Step 1: Load SCIM base object classes from the session's conndev schema documents
-    scim_schemas = await load_session_scim_schemas(session_id)
-    base_classes_data = get_base_scim_object_classes(scim_schemas)
+    baseline_bundle = await load_session_scim_baseline(session_id)
+    scim_schemas = baseline_bundle.schemas
+    base_classes_data = get_base_scim_object_classes(baseline_bundle)
     base_classes = [
         FinalObjectClass(
             name=cls["name"],
@@ -125,6 +147,10 @@ async def extract_scim_object_classes(
             abstract=cls.get("abstract", False),
             embedded=cls.get("embedded", False),
             description=cls["description"],
+            relevant_documentations=get_scim_class_document_references(
+                baseline_bundle,
+                cls["name"],
+            ),
         )
         for cls in base_classes_data
     ]
@@ -142,6 +168,11 @@ async def extract_scim_object_classes(
             abstract=cls.get("abstract", False),
             embedded=cls.get("embedded", True),
             description=cls["description"],
+            relevant_documentations=get_scim_class_document_references(
+                baseline_bundle,
+                cls["name"],
+                source_class_name=cls.get("sourceClass"),
+            ),
         )
         for cls in embedded_classes_data
     ]
@@ -154,11 +185,14 @@ async def extract_scim_object_classes(
     # Step 3: Extract custom extensions from documentation
     all_custom_classes: List[ExtendedObjectClass] = []
     all_relevant_chunks: List[Dict[str, Any]] = []
-    class_to_chunks: Dict[str, List[Dict[str, Any]]] = {}
+    class_to_chunks: Dict[str, List[Dict[str, Any]]] = {
+        obj_class.name.strip().lower(): list(obj_class.relevant_documentations)
+        for obj_class in [*base_classes, *embedded_classes]
+    }
     chunk_id_to_doc_id: Dict[str, str] = {}
-    chunk_metadata_map = build_doc_metadata_map(doc_items)
+    chunk_metadata_map = build_doc_metadata_map(llm_doc_items)
 
-    for item in doc_items:
+    for item in llm_doc_items:
         raw_chunk_id = item.get("chunkId")
         raw_doc_id = item.get("docId")
         if raw_chunk_id and raw_doc_id:
@@ -170,7 +204,7 @@ async def extract_scim_object_classes(
             system_prompt=scim_object_class_system_prompt,
             user_prompt=scim_object_class_user_prompt,
         )
-        if doc_items
+        if llm_doc_items
         else None
     )
 
@@ -189,7 +223,7 @@ async def extract_scim_object_classes(
 
     # Process all chunks in parallel
     results = await run_chunks_concurrently(
-        chunk_items=doc_items,
+        chunk_items=llm_doc_items,
         job_id=job_id,
         extractor=extractor_with_scim_schemas,
     )
@@ -233,14 +267,13 @@ async def extract_scim_object_classes(
     logger.info(
         "[SCIM:ObjectClasses] Extracted %d custom classes from %d chunks",
         len(all_custom_classes),
-        len(doc_items),
+        len(llm_doc_items),
     )
 
-    # Step 4: Find relevant chunks for base classes (User, Group)
-    # Search documents for mentions of these standard SCIM classes
+    # Step 4: Find relevant chunks for every schema-backed base class.
     await _find_relevant_chunks_for_base_classes(
         base_classes=base_classes,
-        doc_items=doc_items,
+        doc_items=llm_doc_items,
         class_to_chunks=class_to_chunks,
     )
 
@@ -284,13 +317,13 @@ async def _find_relevant_chunks_for_base_classes(
     class_to_chunks: Dict[str, List[Dict[str, Any]]],
 ) -> None:
     """
-    Find relevant documentation chunks for base SCIM classes (User, Group).
+    Find relevant documentation chunks for every schema-backed SCIM class.
 
-    Searches through documentation to find mentions of standard SCIM resources
+    Searches through documentation to find mentions of the exported SCIM resources
     and adds their {doc_id, chunk_id} references to class_to_chunks.
 
     Args:
-        base_classes: List of base SCIM classes (User, Group)
+        base_classes: List of schema-backed SCIM classes
         doc_items: List of documentation items
         class_to_chunks: Dictionary to populate with found chunks
     """
@@ -357,7 +390,7 @@ async def extract_custom_scim_classes(
 ) -> Tuple[List[ExtendedObjectClass], bool]:
     """
     Extract ONLY custom SCIM extensions and additional resources from a chunk.
-    Does NOT extract standard User, Group, EnterpriseUser.
+    Does not re-extract any class already present in the session baseline.
 
     Args:
         schema: The chunk content to extract from
@@ -464,6 +497,7 @@ def get_embedded_object_classes_from_scim_schema(
                 "embedded": True,
                 "description": description.strip(),
                 "sourceAttribute": attr_name,
+                "sourceClass": class_name,
             }
         )
 

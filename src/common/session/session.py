@@ -14,9 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.chunk_processor.llms import get_llm_processed_chunk
 from src.common.chunk_processor.processor import build_chunk_metadata
 from src.common.chunk_processor.prompts import get_llm_chunk_process_prompt
+from src.common.chunk_processor.schema import LlmChunkOutput
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.session_repository import SessionRepository
+from src.common.documentation.content_types import is_conndev_content_type
 from src.common.enums import JobStage
 from src.common.errors import JobNotFoundError, NoDocumentationStoredError, SessionNotFoundError
 from src.common.jobs import increment_processed_documents, update_job_progress
@@ -95,9 +97,19 @@ async def process_documentation_worker(
         async def process_chunk(idx: int, chunk_data: tuple[str, int]) -> ProcessedDocumentationChunk:
             chunk_text, chunk_length = chunk_data
 
-            async with semaphore:
-                prompts = get_llm_chunk_process_prompt(chunk_text, uploaded.filename, app, app_version)
-                data = await get_llm_processed_chunk(prompts)
+            if is_conndev_content_type(uploaded.content_type):
+                data = LlmChunkOutput(
+                    summary=f"midPoint connector-development SCIM export: {uploaded.filename}",
+                    num_endpoints=0,
+                    tags=["scim", "schema", "conndev"],
+                    category="spec_json",
+                    different_app_name=False,
+                    num_defined_object_classes=1,
+                )
+            else:
+                async with semaphore:
+                    prompts = get_llm_chunk_process_prompt(chunk_text, uploaded.filename, app, app_version)
+                    data = await get_llm_processed_chunk(prompts)
 
             metadata = build_chunk_metadata(
                 chunk_number=idx,

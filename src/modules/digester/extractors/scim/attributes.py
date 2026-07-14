@@ -14,17 +14,20 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
+from src.common.documentation.content_types import is_conndev_document
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.llm import build_structured_chain
-from src.common.utils.coerce import as_dict_list, as_list
+from src.common.utils.coerce import as_dict_list, as_list, as_mapping
 from src.common.utils.normalize import build_relevant_documentations, normalize_chunk_pair
 from src.modules.digester.entities.attribute_filters import normalize_readability_flags
 from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extraction.llm_execution import invoke_chunk_chain, parse_structured_result
 from src.modules.digester.extractors.scim.baseline import (
+    build_scim_codegen_context,
     get_base_scim_attributes,
+    get_scim_class_document_references,
     is_scim_standard_class,
-    load_session_scim_schemas,
+    load_session_scim_baseline,
 )
 from src.modules.digester.extractors.scim.object_class import build_embedded_object_class_name
 from src.modules.digester.prompts.scim.attributes_prompts import (
@@ -34,6 +37,44 @@ from src.modules.digester.prompts.scim.attributes_prompts import (
 from src.modules.digester.schemas import AttributeInfoScim, ExtractedAttributeResponseSCIM
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_documentation_references(*reference_groups: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    pairs = {
+        pair
+        for references in reference_groups
+        for reference in references
+        if (pair := normalize_chunk_pair(reference)) is not None
+    }
+    return build_relevant_documentations(pairs)
+
+
+def _attach_common_documentation_references(
+    attributes: Dict[str, Dict[str, Any]],
+    references: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    if not references:
+        return attributes
+
+    enriched: Dict[str, Dict[str, Any]] = {}
+    for name, attribute in attributes.items():
+        item = dict(attribute)
+        item["relevantDocumentations"] = _merge_documentation_references(
+            as_dict_list(item.get("relevantDocumentations")),
+            references,
+        )
+        enriched[name] = item
+    return enriched
+
+
+def _build_scim_attribute_result(
+    attributes: Dict[str, Dict[str, Any]],
+    relevant_documentations: List[Dict[str, Any]],
+    scim_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    result = build_attribute_result(attributes, relevant_documentations)
+    result["result"]["scimContext"] = scim_context
+    return result
 
 
 def _attach_relevant_documentations_per_attribute(
@@ -290,7 +331,34 @@ async def extract_scim_attributes(
     if chunk_details is None:
         chunk_details = [""] * len(chunks)
 
-    scim_schemas = await load_session_scim_schemas(session_id)
+    llm_chunks: List[str] = []
+    llm_chunk_details: List[str] = []
+    for chunk, chunk_id in zip(chunks, chunk_details, strict=False):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map and chunk_id else None
+        metadata = as_mapping(as_mapping(chunk_metadata).get("@metadata"))
+        if is_conndev_document(metadata.get("content_type"), metadata.get("filename")):
+            continue
+        llm_chunks.append(chunk)
+        llm_chunk_details.append(chunk_id)
+
+    if len(llm_chunks) < len(chunks):
+        logger.info(
+            "[SCIM:Attributes] Excluded %d conndev baseline document(s) from LLM mapping extraction",
+            len(chunks) - len(llm_chunks),
+        )
+    chunks = llm_chunks
+    chunk_details = llm_chunk_details
+
+    baseline_bundle = await load_session_scim_baseline(session_id)
+    scim_schemas = baseline_bundle.schemas
+    embedded_source = _find_embedded_source_attribute(scim_schemas, object_class)
+    source_class_name = embedded_source[0] if embedded_source is not None else None
+    baseline_references = get_scim_class_document_references(
+        baseline_bundle,
+        object_class,
+        source_class_name=source_class_name,
+    )
+    scim_context = build_scim_codegen_context(baseline_bundle, object_class)
     schema_attributes = get_scim_schema_attributes_for_object_class(scim_schemas, object_class)
     if schema_attributes is not None and not chunks:
         await update_job_progress(
@@ -305,7 +373,8 @@ async def extract_scim_attributes(
             len(schema_attributes),
             object_class,
         )
-        return build_attribute_result(schema_attributes)
+        schema_attributes = _attach_common_documentation_references(schema_attributes, baseline_references)
+        return _build_scim_attribute_result(schema_attributes, baseline_references, scim_context)
 
     # Step 1: Load base SCIM attributes for LLM context when schema heuristics are unavailable.
     base_attributes = schema_attributes or {}
@@ -418,6 +487,12 @@ async def extract_scim_attributes(
             object_class=object_class,
         )
 
+    merged_custom_with_references = _attach_common_documentation_references(
+        merged_custom_with_references,
+        baseline_references,
+    )
+    all_relevant_chunks = _merge_documentation_references(relevant_chunks, baseline_references)
+
     logger.info(
         "[SCIM:Attributes] Completed for %s. Total attributes: %d (schema baseline: %d, documented mappings: %d)",
         object_class,
@@ -426,7 +501,11 @@ async def extract_scim_attributes(
         len(merged_custom),
     )
 
-    return build_attribute_result(merged_custom_with_references, relevant_chunks)
+    return _build_scim_attribute_result(
+        merged_custom_with_references,
+        all_relevant_chunks,
+        scim_context,
+    )
 
 
 async def extract_custom_scim_attributes(
@@ -700,7 +779,7 @@ def scim_path_targets_filtered_attribute(scim_path: str, attribute_context: Dict
 def _find_embedded_source_attribute(
     schemas: Dict[str, Any],
     object_class: str,
-) -> Optional[Tuple[str, Dict[str, Any]]]:
+) -> Optional[Tuple[str, str, Dict[str, Any]]]:
     normalized_name = object_class.strip().lower()
     for parent_class, schema in schemas.items():
         if not isinstance(schema, dict):
@@ -713,7 +792,7 @@ def _find_embedded_source_attribute(
                 continue
             embedded_name = build_embedded_object_class_name(parent_class, attr_name)
             if embedded_name.strip().lower() == normalized_name:
-                return attr_name, attr
+                return parent_class, attr_name, attr
     return None
 
 
@@ -748,7 +827,7 @@ def get_scim_schema_attributes_for_object_class(
     if embedded_source is None:
         return None
 
-    source_attr_name, source_attr = embedded_source
+    _, source_attr_name, source_attr = embedded_source
     result = {}
     for sub_attr in as_dict_list(source_attr.get("subAttributes")):
         sub_attr_name = sub_attr.get("name")

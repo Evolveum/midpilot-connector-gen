@@ -22,8 +22,10 @@ from src.modules.digester.entities.scim_resource import extract_scim_resource_pa
 from src.modules.digester.extractors.scim.baseline import (
     generate_scim_crud_endpoints,
     get_scim_canonical_class_name,
+    get_scim_class_document_references,
+    get_scim_resource_endpoint,
     is_scim_extension_schema,
-    load_session_scim_schemas,
+    load_session_scim_baseline,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,17 +64,23 @@ async def pregenerate_scim_endpoints(
     except Exception as e:
         logger.warning("[SCIM:Endpoints] Failed to read objectClassesOutput for pregeneration: %s", e)
 
-    scim_schemas = await load_session_scim_schemas(session_id)
+    baseline_bundle = await load_session_scim_baseline(session_id)
 
     endpoints: List[Dict[str, Any]]
-    if is_scim_extension_schema(scim_schemas, object_class):
+    if is_scim_extension_schema(baseline_bundle, object_class):
         logger.info("[SCIM:Endpoints] %s is a SCIM extension schema; skipping standalone endpoints", object_class)
         endpoints = []
     else:
         # object_class arrives lower-cased for case-insensitive matching; prefer the schema's canonical
         # name so schema-backed resources keep their proper casing (User -> /Users, not /users).
-        canonical_class = get_scim_canonical_class_name(scim_schemas, object_class) or object_class
-        resource_path = extract_scim_resource_path(object_class_data) or infer_scim_resource_path(canonical_class)
+        canonical_class = get_scim_canonical_class_name(baseline_bundle.schemas, object_class) or object_class
+        # The exported resource endpoint is authoritative; the earlier extraction output and
+        # name-based inference are fallbacks for classes the export does not cover.
+        resource_path = (
+            get_scim_resource_endpoint(baseline_bundle, object_class)
+            or extract_scim_resource_path(object_class_data)
+            or infer_scim_resource_path(canonical_class)
+        )
         endpoints = generate_scim_crud_endpoints(resource_path, canonical_class)
 
     await increment_processed_documents(job_id, delta=1)
@@ -83,9 +91,12 @@ async def pregenerate_scim_endpoints(
         object_class,
     )
 
-    normalized_pairs = [normalize_chunk_pair(chunk_ref) for chunk_ref in relevant_chunks]
+    baseline_references = get_scim_class_document_references(baseline_bundle, object_class)
+    all_relevant_chunks = [*relevant_chunks, *baseline_references]
+    normalized_pairs = [normalize_chunk_pair(chunk_ref) for chunk_ref in all_relevant_chunks]
     valid_pairs = sorted({pair for pair in normalized_pairs if pair is not None}, key=lambda pair: (pair[0], pair[1]))
     endpoint_relevant = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in valid_pairs]
     endpoints_with_references = [dict(endpoint, relevantDocumentations=endpoint_relevant) for endpoint in endpoints]
 
-    return build_endpoint_result(endpoints_with_references, relevant_chunks)
+    top_level_relevant = [{"doc_id": doc_id, "chunk_id": chunk_id} for doc_id, chunk_id in valid_pairs]
+    return build_endpoint_result(endpoints_with_references, top_level_relevant)

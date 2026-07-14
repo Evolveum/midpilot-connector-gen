@@ -2,7 +2,12 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.modules.codegen.utils.prompt_records import build_attribute_context_records, build_attribute_mapping_records
+from src.modules.codegen.utils.prompt_records import (
+    build_attribute_context_records,
+    build_attribute_mapping_records,
+    build_connid_attribute_mapping_records,
+    extract_scim_context,
+)
 from src.modules.digester.schemas import AttributeInfoScim, AttributeResponse
 
 
@@ -93,3 +98,63 @@ def test_build_attribute_mapping_records_uses_prompt_shape_and_sorting():
             "returnedByDefault": True,
         },
     ]
+
+
+def test_build_attribute_mapping_records_preserves_scim_mapping_fields_when_present():
+    records = build_attribute_mapping_records(
+        {
+            "attributes": {
+                "login": {
+                    "type": "string",
+                    "scimAttribute": "userName",
+                    "connectorExposed": True,
+                }
+            }
+        }
+    )
+
+    assert records[0]["scimAttribute"] == "userName"
+    assert records[0]["connectorExposed"] is True
+
+
+def test_connid_mapping_prefers_scim_connector_object_class_projection():
+    payload = {
+        "attributes": {
+            "userName": {"type": "string", "mandatory": True},
+            "emails": {"type": "UserEmails", "multivalue": True},
+        },
+        "scimContext": {
+            "connectorObjectClass": {
+                "name": "User",
+                "attributes": [
+                    {
+                        "name": "userName",
+                        "type": "string",
+                        "mandatory": True,
+                        "scimAttribute": "userName",
+                        "connectorExposed": True,
+                    },
+                    {
+                        "name": "id",
+                        "type": "string",
+                        "updatable": False,
+                        "scimAttribute": "id",
+                        "connectorExposed": True,
+                    },
+                ],
+            }
+        },
+    }
+
+    records = build_connid_attribute_mapping_records(payload)
+
+    assert [record["name"] for record in records] == ["id", "userName"]
+    assert all(record["connectorExposed"] is True for record in records)
+    assert "emails" not in {record["name"] for record in records}
+    assert extract_scim_context(payload) == payload["scimContext"]
+
+
+def test_connid_mapping_falls_back_when_scim_projection_is_missing():
+    records = build_connid_attribute_mapping_records({"attributes": {"displayName": {"type": "string"}}})
+
+    assert [record["name"] for record in records] == ["displayName"]
