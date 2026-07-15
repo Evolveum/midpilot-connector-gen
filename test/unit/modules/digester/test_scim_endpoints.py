@@ -12,7 +12,11 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester.extractors.scim import endpoints as scim_endpoints
-from src.modules.digester.extractors.scim.baseline import ScimResourceDefinition, build_scim_baseline_bundle
+from src.modules.digester.extractors.scim.baseline import (
+    ConnIdObjectClassDefinition,
+    ScimResourceDefinition,
+    build_scim_baseline_bundle,
+)
 from src.modules.digester.schemas.common import ChunkReference
 
 _MODULE = scim_endpoints.__name__
@@ -46,11 +50,16 @@ async def _run_pregenerate(
     schemas: dict | None = None,
     object_classes_output=None,
     resources: dict | None = None,
-) -> dict:
+    connid_classes: dict | None = None,
+) -> dict | None:
     """Invoke pregenerate_scim_endpoints with the DB and baseline loading stubbed out."""
     repo = MagicMock()
     repo.get_session_data = AsyncMock(return_value=object_classes_output)
-    bundle = build_scim_baseline_bundle(BASELINE_SCHEMAS if schemas is None else schemas, resources)
+    bundle = build_scim_baseline_bundle(
+        BASELINE_SCHEMAS if schemas is None else schemas,
+        resources,
+        connid_classes,
+    )
 
     with (
         patch(f"{_MODULE}.update_job_progress", new_callable=AsyncMock),
@@ -67,7 +76,6 @@ async def _run_pregenerate(
             session_id=uuid4(),
             object_class=object_class,
             job_id=uuid4(),
-            relevant_chunks=[],
         )
 
 
@@ -81,7 +89,20 @@ async def test_pregenerate_keeps_canonical_casing_for_standard_resources(object_
     object_class reaches the extractor lower-cased (normalize_object_class_name), but standard SCIM
     resources must keep their schema casing so the paths stay RFC-7644 conformant (/Users, not /users).
     """
-    result = await _run_pregenerate(object_class)
+    canonical_name = expected_path.strip("/").removesuffix("s")
+    schema = BASELINE_SCHEMAS[canonical_name]
+    result = await _run_pregenerate(
+        object_class,
+        resources={
+            canonical_name: ScimResourceDefinition(
+                name=canonical_name,
+                endpoint=expected_path,
+                schema_urn=schema["id"],
+                primary_schema=schema,
+            )
+        },
+    )
+    assert result is not None
     endpoints = result["result"]["endpoints"]
 
     assert endpoints, "expected CRUD endpoints for a standard schema-backed resource"
@@ -89,20 +110,32 @@ async def test_pregenerate_keeps_canonical_casing_for_standard_resources(object_
 
 
 @pytest.mark.asyncio
-async def test_pregenerate_infers_path_for_schema_backed_custom_resource():
-    """A conndev schema-backed custom resource (not a built-in) still gets CRUD endpoints."""
+async def test_pregenerate_requests_documentation_fallback_for_schema_without_resource_endpoint():
+    """A SCIM schema alone does not prove that a standalone CRUD resource exists."""
     schemas = {**BASELINE_SCHEMAS, "Account": {"id": "urn:example:conndev:schemas:Account", "name": "Account"}}
     result = await _run_pregenerate("account", schemas=schemas)
 
-    endpoints = result["result"]["endpoints"]
-    assert endpoints, "schema-backed custom resource must not produce empty endpoints"
-    assert all(ep["path"] in ("/Accounts", "/Accounts/{id}") for ep in endpoints)
+    assert result is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", ["embedded", "abstract"])
+async def test_pregenerate_skips_non_resource_object_class_flags(flag):
+    result = await _run_pregenerate(
+        "UserName",
+        object_classes_output={"objectClasses": [{"name": "UserName", flag: True}]},
+    )
+
+    assert result is not None
+    assert result["result"]["endpoints"] == []
+    assert result["relevantDocumentations"] == []
 
 
 @pytest.mark.asyncio
 async def test_pregenerate_skips_extension_schema():
     """SCIM extension schemas (e.g. EnterpriseUser) augment another resource and get no endpoints."""
     result = await _run_pregenerate("enterpriseuser")
+    assert result is not None
     assert result["result"]["endpoints"] == []
 
 
@@ -119,6 +152,7 @@ async def test_pregenerate_prefers_exported_resource_endpoint_over_inference():
     }
     result = await _run_pregenerate("user", resources=resources)
 
+    assert result is not None
     endpoints = result["result"]["endpoints"]
     assert endpoints
     assert all(ep["path"] in ("/scim/v2/Users", "/scim/v2/Users/{id}") for ep in endpoints)
@@ -139,8 +173,36 @@ async def test_pregenerate_attaches_exported_resource_provenance():
 
     result = await _run_pregenerate("user", resources=resources)
 
+    assert result is not None
     expected_api_reference = reference.to_api_dict()
     assert result["relevantDocumentations"] == [reference.to_internal_dict()]
     assert all(
         endpoint["relevantDocumentations"] == [expected_api_reference] for endpoint in result["result"]["endpoints"]
     )
+
+
+@pytest.mark.asyncio
+async def test_pregenerate_uses_connid_locator_and_its_provenance():
+    reference = ChunkReference(doc_id=str(uuid4()), chunk_id=str(uuid4()))
+    connid_classes = {
+        "Device": ConnIdObjectClassDefinition(
+            name="Device",
+            namespace="urn:example:Device",
+            locator="inventory/devices",
+            uid="Device",
+            source_reference=reference,
+        )
+    }
+
+    result = await _run_pregenerate(
+        "device",
+        schemas={},
+        connid_classes=connid_classes,
+    )
+
+    assert result is not None
+    endpoints = result["result"]["endpoints"]
+    assert endpoints
+    assert all(endpoint["path"] in {"/inventory/devices", "/inventory/devices/{id}"} for endpoint in endpoints)
+    assert result["relevantDocumentations"] == [reference.to_internal_dict()]
+    assert all(endpoint["relevantDocumentations"] == [reference.to_api_dict()] for endpoint in endpoints)

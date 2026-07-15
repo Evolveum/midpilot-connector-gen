@@ -187,6 +187,92 @@ async def test_extract_scim_attributes_does_not_send_conndev_contracts_to_llm():
 
 
 @pytest.mark.asyncio
+async def test_extract_scim_attributes_uses_general_discovery_without_scim_baseline():
+    job_id = uuid4()
+    conndev_chunk_id = str(uuid4())
+    documentation_chunk_id = str(uuid4())
+    documentation_doc_id = str(uuid4())
+    metadata_map = {
+        conndev_chunk_id: {
+            "@metadata": {"content_type": "application/com.evolveum.conndev+json"},
+        },
+        documentation_chunk_id: {
+            "@metadata": {"content_type": "text/html"},
+        },
+    }
+    documented_result = {
+        "result": {
+            "attributes": {
+                "actionId": {
+                    "type": "string",
+                    "description": "Identifier documented for the custom Action resource.",
+                }
+            }
+        },
+        "relevantDocumentations": [
+            {"docId": documentation_doc_id, "chunkId": documentation_chunk_id},
+        ],
+    }
+
+    with (
+        patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain") as build_chain,
+        patch(
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
+            new_callable=AsyncMock,
+            return_value=build_scim_baseline_bundle({}),
+        ),
+        patch(
+            "src.modules.digester.extractors.scim.attributes.extract_documented_attributes",
+            new_callable=AsyncMock,
+            return_value=documented_result,
+        ) as extract_documented,
+    ):
+        result = await extract_scim_attributes(
+            ["connector contract", "Action attributes include actionId."],
+            "Action",
+            job_id,
+            uuid4(),
+            [conndev_chunk_id, documentation_chunk_id],
+            chunk_metadata_map=metadata_map,
+            chunk_id_to_doc_id={documentation_chunk_id: documentation_doc_id},
+        )
+
+    extract_documented.assert_awaited_once_with(
+        chunks=["Action attributes include actionId."],
+        object_class="Action",
+        job_id=job_id,
+        chunk_details=[documentation_chunk_id],
+        chunk_metadata_map=metadata_map,
+        chunk_id_to_doc_id={documentation_chunk_id: documentation_doc_id},
+    )
+    build_chain.assert_not_called()
+    assert "actionId" in result["result"]["attributes"]
+    assert result["result"]["scimContext"] == {}
+    assert result["relevantDocumentations"] == [{"docId": documentation_doc_id, "chunkId": documentation_chunk_id}]
+
+
+@pytest.mark.asyncio
+async def test_extract_scim_attributes_without_baseline_or_documentation_returns_empty_result():
+    with (
+        patch(
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
+            new_callable=AsyncMock,
+            return_value=build_scim_baseline_bundle({}),
+        ),
+        patch(
+            "src.modules.digester.extractors.scim.attributes.extract_documented_attributes",
+            new_callable=AsyncMock,
+        ) as extract_documented,
+    ):
+        result = await extract_scim_attributes([], "Action", uuid4(), uuid4())
+
+    extract_documented.assert_not_awaited()
+    assert result["result"]["attributes"] == {}
+    assert result["result"]["scimContext"] == {}
+    assert result["relevantDocumentations"] == []
+
+
+@pytest.mark.asyncio
 async def test_extract_scim_attributes_merges_documented_mapping_over_schema_baseline():
     chunk_id = str(uuid4())
     doc_id = str(uuid4())

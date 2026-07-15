@@ -17,8 +17,10 @@ from typing import Any, Dict, List
 from uuid import UUID
 
 from src.common.chunk_filter.filter import filter_documentation_items
+from src.common.documentation.content_types import is_conndev_content_type
 from src.common.enums import ApiType
 from src.common.jobs import update_job_progress
+from src.common.utils.coerce import as_mapping
 from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.modules.digester.entities.object_classes import build_endpoint_result, extract_endpoints_from_result
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
@@ -48,7 +50,12 @@ async def _extract_rest_endpoints_from_relevant_chunks(
     relevant_chunks: List[Dict[str, Any]],
     job_id: UUID,
     base_api_url: str,
+    *,
+    exclude_conndev: bool = False,
 ) -> Dict[str, Any] | None:
+    if exclude_conndev:
+        doc_items = _exclude_conndev_documents(doc_items)
+
     selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
 
     if not selected_content:
@@ -83,6 +90,8 @@ async def _retry_rest_endpoints_with_default_criteria(
     relevant_chunks: List[Dict[str, Any]],
     job_id: UUID,
     base_api_url: str,
+    *,
+    exclude_conndev: bool = False,
 ) -> Dict[str, Any]:
     if _endpoint_result_has_items(primary_result):
         return primary_result
@@ -100,6 +109,8 @@ async def _retry_rest_endpoints_with_default_criteria(
     )
 
     fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
+    if exclude_conndev:
+        fallback_doc_items = _exclude_conndev_documents(fallback_doc_items)
     if not fallback_doc_items:
         logger.info(
             "[Digester:Endpoints] DEFAULT_CRITERIA matched no documentation for session %s; keeping empty endpoint result",
@@ -133,6 +144,7 @@ async def _retry_rest_endpoints_with_default_criteria(
         fallback_relevant_chunks,
         job_id,
         base_api_url,
+        exclude_conndev=exclude_conndev,
     )
     if fallback_result is None:
         logger.info(
@@ -142,6 +154,15 @@ async def _retry_rest_endpoints_with_default_criteria(
         return primary_result
 
     return fallback_result
+
+
+def _exclude_conndev_documents(doc_items: List[dict]) -> List[dict]:
+    """Keep connector-export contracts out of documentation-driven endpoint extraction."""
+    return [
+        item
+        for item in doc_items
+        if not is_conndev_content_type(as_mapping(item.get("@metadata") or item.get("metadata")).get("content_type"))
+    ]
 
 
 async def extract_endpoints(
@@ -181,12 +202,34 @@ async def extract_endpoints(
     is_scim = protocol == ApiType.SCIM
 
     if is_scim:
-        result = await pregenerate_scim_endpoints(
+        deterministic_result = await pregenerate_scim_endpoints(
             session_id=session_id,
             object_class=object_class,
             job_id=job_id,
-            relevant_chunks=relevant_chunks,
         )
+        if deterministic_result is not None:
+            result = deterministic_result
+        else:
+            documented_result = await _extract_rest_endpoints_from_relevant_chunks(
+                doc_items,
+                object_class,
+                relevant_chunks,
+                job_id,
+                base_api_url,
+                exclude_conndev=True,
+            )
+            if documented_result is None:
+                documented_result = build_endpoint_result()
+
+            result = await _retry_rest_endpoints_with_default_criteria(
+                documented_result,
+                object_class,
+                session_id,
+                relevant_chunks,
+                job_id,
+                base_api_url,
+                exclude_conndev=True,
+            )
     else:
         rest_result = await _extract_rest_endpoints_from_relevant_chunks(
             doc_items,

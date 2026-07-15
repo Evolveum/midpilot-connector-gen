@@ -63,14 +63,23 @@ class ConnIdObjectClassDefinition:
 
 
 @dataclass(frozen=True)
+class ScimResourceEndpoint:
+    """Explicit SCIM resource path together with the conndev document that defines it."""
+
+    endpoint: str
+    source_reference: Optional[ChunkReference] = None
+
+
+@dataclass(frozen=True)
 class ScimBaselineBundle:
     """
     The session's SCIM baseline, split by document contract so same-named representations
     (SCIM schema vs. resource vs. ConnId class, all called "User") cannot overwrite each other.
 
     ``schemas`` maps canonical class name -> raw SCIM schema (the shape the attribute and
-    embedded-class heuristics operate on). ``extension_superclasses`` maps an extension
-    schema's class name (e.g. ``EnterpriseUser``) to the class it augments (e.g. ``User``).
+    embedded-class heuristics operate on). ``extension_superclasses`` records the internal
+    extension -> resource binding (e.g. ``EnterpriseUser`` augments ``User``); it is not
+    object-class inheritance and must not be exported as ``superclass``.
     """
 
     schemas: Dict[str, Dict[str, Any]]
@@ -480,24 +489,39 @@ def is_scim_extension_schema(bundle: ScimBaselineBundle, class_name: str) -> boo
     return isinstance(schema_id, str) and ":extension:" in schema_id.lower()
 
 
-def get_scim_resource_endpoint(bundle: ScimBaselineBundle, class_name: str) -> Optional[str]:
+def get_scim_resource_endpoint_definition(
+    bundle: ScimBaselineBundle,
+    class_name: str,
+) -> Optional[ScimResourceEndpoint]:
     """
-    Return the real endpoint for ``class_name`` from the exported baseline, or None.
+    Return the explicit endpoint for ``class_name`` and its conndev provenance.
 
     The resource document's ``endpoint`` is authoritative; the ConnId object class ``locator``
     is the secondary source. Both come from the connector export, so they beat name-based
-    path inference.
+    path inference. A SCIM schema by itself does not define a manageable resource endpoint.
     """
     resource = _get_case_insensitive(bundle.resources, class_name)
     if isinstance(resource, ScimResourceDefinition) and resource.endpoint:
-        return resource.endpoint
+        return ScimResourceEndpoint(
+            endpoint=resource.endpoint,
+            source_reference=resource.source_reference,
+        )
 
     connid_class = _get_case_insensitive(bundle.connid_classes, class_name)
     if isinstance(connid_class, ConnIdObjectClassDefinition) and connid_class.locator:
         locator = connid_class.locator.strip()
-        return locator if locator.startswith("/") else f"/{locator}"
+        return ScimResourceEndpoint(
+            endpoint=locator if locator.startswith("/") else f"/{locator}",
+            source_reference=connid_class.source_reference,
+        )
 
     return None
+
+
+def get_scim_resource_endpoint(bundle: ScimBaselineBundle, class_name: str) -> Optional[str]:
+    """Return the explicit exported endpoint path for ``class_name``, or None."""
+    definition = get_scim_resource_endpoint_definition(bundle, class_name)
+    return definition.endpoint if definition is not None else None
 
 
 def _append_reference(
@@ -562,20 +586,26 @@ def get_scim_class_document_references(
 
 
 def get_base_scim_object_classes(bundle: ScimBaselineBundle) -> List[Dict[str, Any]]:
-    """Return the baseline schemas as digester object-class definitions."""
+    """Return baseline schemas as digester object classes.
+
+    SCIM extension schemas are embedded parts of their resource, not inherited standalone
+    object classes. Their parent binding remains available in ``extension_superclasses`` for
+    schema composition and codegen context, while the user-facing class has no superclass.
+    """
     object_classes: List[Dict[str, Any]] = []
 
     for class_name, schema in bundle.schemas.items():
         if not isinstance(schema, dict):
             continue
+        is_extension = is_scim_extension_schema(bundle, class_name)
         object_classes.append(
             {
                 "name": class_name,
                 "schemaUrn": schema.get("id", ""),
                 "relevant": "true",
-                "superclass": bundle.extension_superclasses.get(class_name),
+                "superclass": None,
                 "abstract": False,
-                "embedded": False,
+                "embedded": is_extension,
                 "description": schema.get("description", f"SCIM 2.0 {class_name} resource"),
             }
         )

@@ -221,7 +221,9 @@ async def test_loaded_baseline_supports_base_and_embedded_class_derivation():
 
     base_classes = {cls["name"]: cls for cls in get_base_scim_object_classes(bundle)}
     assert set(base_classes) == {"User", "Group", "EnterpriseUser"}
-    assert base_classes["EnterpriseUser"]["superclass"] == "User"
+    assert base_classes["EnterpriseUser"]["embedded"] is True
+    assert base_classes["EnterpriseUser"]["superclass"] is None
+    assert base_classes["User"]["embedded"] is False
     assert base_classes["User"]["superclass"] is None
 
     embedded_names = {cls["name"] for cls in get_embedded_object_classes_from_scim_schemas(bundle.schemas)}

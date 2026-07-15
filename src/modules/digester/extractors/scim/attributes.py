@@ -5,7 +5,9 @@
 """
 SCIM 2.0 guided attributes extraction.
 
-This module extracts explicit application-to-SCIM attribute mappings.
+Schema-backed classes use deterministic SCIM attributes and documented mapping
+enrichment. Classes without a SCIM baseline use general attribute discovery
+over scraped documentation.
 """
 
 import asyncio
@@ -22,9 +24,9 @@ from src.common.utils.normalize import build_relevant_documentations, normalize_
 from src.modules.digester.entities.attribute_filters import normalize_readability_flags
 from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extraction.llm_execution import invoke_chunk_chain, parse_structured_result
+from src.modules.digester.extractors.rest.attributes import extract_attributes as extract_documented_attributes
 from src.modules.digester.extractors.scim.baseline import (
     build_scim_codegen_context,
-    get_base_scim_attributes,
     get_scim_class_document_references,
     is_scim_standard_class,
     load_session_scim_baseline,
@@ -360,6 +362,33 @@ async def extract_scim_attributes(
     )
     scim_context = build_scim_codegen_context(baseline_bundle, object_class)
     schema_attributes = get_scim_schema_attributes_for_object_class(scim_schemas, object_class)
+
+    if schema_attributes is None:
+        if not chunks:
+            logger.info(
+                "[SCIM:Attributes] No SCIM baseline or documentation chunks available for %s",
+                object_class,
+            )
+            return _build_scim_attribute_result({}, [], scim_context)
+
+        logger.info(
+            "[SCIM:Attributes] No SCIM baseline for %s; using general attribute discovery over %d documentation chunks",
+            object_class,
+            len(chunks),
+        )
+        documented_result = await extract_documented_attributes(
+            chunks=chunks,
+            object_class=object_class,
+            job_id=job_id,
+            chunk_details=chunk_details,
+            chunk_metadata_map=chunk_metadata_map,
+            chunk_id_to_doc_id=chunk_id_to_doc_id,
+        )
+        result_payload = documented_result.get("result")
+        if isinstance(result_payload, dict):
+            result_payload["scimContext"] = scim_context
+        return documented_result
+
     if schema_attributes is not None and not chunks:
         await update_job_progress(
             job_id,
@@ -376,29 +405,14 @@ async def extract_scim_attributes(
         schema_attributes = _attach_common_documentation_references(schema_attributes, baseline_references)
         return _build_scim_attribute_result(schema_attributes, baseline_references, scim_context)
 
-    # Step 1: Load base SCIM attributes for LLM context when schema heuristics are unavailable.
-    base_attributes = schema_attributes or {}
-    has_schema_baseline = schema_attributes is not None
+    # Step 1: Use deterministic schema attributes as context for mapping enrichment.
+    base_attributes = schema_attributes
     is_standard_class = is_scim_standard_class(scim_schemas, object_class)
-    if has_schema_baseline:
-        logger.info(
-            "[SCIM:Attributes] Using %d schema baseline attributes for %s",
-            len(base_attributes),
-            object_class,
-        )
-    elif is_standard_class:
-        if not base_attributes:
-            base_attributes = get_base_scim_attributes(scim_schemas, object_class)
-        logger.info(
-            "[SCIM:Attributes] Loaded %d base attributes for %s",
-            len(base_attributes),
-            object_class,
-        )
-    else:
-        logger.info(
-            "[SCIM:Attributes] %s is not a standard SCIM class, skipping base attributes",
-            object_class,
-        )
+    logger.info(
+        "[SCIM:Attributes] Using %d schema baseline attributes for %s",
+        len(base_attributes),
+        object_class,
+    )
 
     # Step 2: Extract custom attributes and deviations from documentation
     total_chunks = len(chunks)

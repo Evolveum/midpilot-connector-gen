@@ -347,11 +347,11 @@ async def extract_custom_scim_classes(
 
     # Filter out any baseline SCIM classes that the LLM might have mistakenly re-extracted.
     custom_only: List[ExtendedObjectClass] = []
-    standard_classes = {name.strip().lower() for name in (scim_base_schemas or {})}
+    standard_classes = {canonical_object_class_key(name) for name in (scim_base_schemas or {})}
 
     for obj_class in extracted:
-        class_name_lower = obj_class.name.strip().lower()
-        if class_name_lower not in standard_classes:
+        class_name = canonical_object_class_key(obj_class.name)
+        if class_name not in standard_classes:
             custom_only.append(obj_class)
         else:
             logger.info(

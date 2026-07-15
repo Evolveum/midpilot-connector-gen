@@ -13,11 +13,13 @@ from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extractors.scim.baseline import build_scim_baseline_bundle, get_base_scim_object_classes
 from src.modules.digester.extractors.scim.object_class import (
     build_embedded_object_class_name,
+    extract_custom_scim_classes,
     extract_scim_object_classes,
     get_embedded_object_classes_from_scim_schema,
     get_embedded_object_classes_from_scim_schemas,
 )
 from src.modules.digester.schemas import (
+    ExtendedObjectClass,
     ObjectClassesConfidenceResponse,
     ObjectClassesRankedResponse,
     ObjectClassWithConfidence,
@@ -107,6 +109,30 @@ def test_get_embedded_object_classes_from_scim_schema_uses_complex_attributes_on
 
 
 @pytest.mark.asyncio
+async def test_custom_extraction_filters_whitespace_variant_of_baseline_extension():
+    extracted_extension = ExtendedObjectClass(
+        name="Enterprise User",
+        description="Enterprise extension",
+        superclass="User",
+        embedded=False,
+    )
+
+    with patch(
+        "src.modules.digester.extractors.scim.object_class.extract_single_chunk",
+        new_callable=AsyncMock,
+        return_value=([extracted_extension], True),
+    ):
+        custom_classes, has_relevant_data = await extract_custom_scim_classes(
+            schema="Enterprise User",
+            job_id=uuid4(),
+            scim_base_schemas={"EnterpriseUser": BASELINE_SCHEMAS["EnterpriseUser"]},
+        )
+
+    assert custom_classes == []
+    assert has_relevant_data is False
+
+
+@pytest.mark.asyncio
 async def test_extract_scim_object_classes_filters_llm_input_only_by_content_type():
     json_with_conndev_filename = {
         "docId": str(uuid4()),
@@ -185,7 +211,8 @@ async def test_extract_scim_object_classes_includes_standard_embedded_classes():
     by_name = {item["name"]: item for item in object_classes}
 
     assert by_name["User"]["embedded"] is False
-    assert by_name["EnterpriseUser"]["superclass"] == "User"
+    assert by_name["EnterpriseUser"]["embedded"] is True
+    assert by_name["EnterpriseUser"]["superclass"] is None
     assert by_name["UserName"]["embedded"] is True
     assert by_name["UserName"]["superclass"] is None
     assert by_name["UserPhoneNumbers"]["embedded"] is True
