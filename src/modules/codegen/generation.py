@@ -2,7 +2,6 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-import json
 import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -24,10 +23,6 @@ from src.modules.codegen.core.operations import (
 )
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
-from src.modules.codegen.prompts.native_schema_prompts import (
-    get_native_schema_system_prompt,
-    get_native_schema_user_prompt,
-)
 from src.modules.codegen.schema import AttributesPayload, AuthPayload, CodegenRepairContext, EndpointsPayload
 from src.modules.codegen.selection.authorization import (
     enrich_preferred_authorizations,
@@ -45,7 +40,7 @@ from src.modules.codegen.selection.relevant_chunks import (
 from src.modules.codegen.utils.prompt_records import (
     build_attribute_mapping_records,
     build_connid_attribute_mapping_records,
-    extract_scim_context,
+    build_scim_contract_prompt_vars,
 )
 from src.modules.digester.schemas import RelationsResponse
 
@@ -69,19 +64,17 @@ async def generate_native_schema_code(
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
 
     records = build_attribute_mapping_records(attributes_payload)
-    scim_context_json = json.dumps(
-        extract_scim_context(attributes_payload),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    extra_prompt_vars = {"user_schema_docs": docs_text}
+    if protocol == ApiType.SCIM:
+        extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))
 
     code = await generate_groovy(
         records=records,
         object_class=object_class,
-        system_prompt=get_native_schema_system_prompt,
-        user_prompt=get_native_schema_user_prompt,
+        system_prompt=assets.system_prompt,
+        user_prompt=assets.user_prompt,
         logger_prefix="NativeSchema",
-        extra_prompt_vars={"user_schema_docs": docs_text, "scim_context_json": scim_context_json},
+        extra_prompt_vars=extra_prompt_vars,
         job_id=job_id,
         repair_context=repair_context,
     )
@@ -203,6 +196,7 @@ async def generate_search_code(
         protocol_label=protocol.value,
         base_api_url=base_api_url,
         database_name=database_name,
+        include_scim_context=protocol == ApiType.SCIM,
     )
 
     # Collect relevant chunks
@@ -249,6 +243,7 @@ async def generate_create_code(
         protocol_label=protocol.value,
         base_api_url=base_api_url,
         database_name=database_name,
+        include_scim_context=protocol == ApiType.SCIM,
     )
 
     # Collect relevant chunks
@@ -295,6 +290,7 @@ async def generate_update_code(
         protocol_label=protocol.value,
         base_api_url=base_api_url,
         database_name=database_name,
+        include_scim_context=protocol == ApiType.SCIM,
     )
 
     # Collect relevant chunks
@@ -341,6 +337,7 @@ async def generate_delete_code(
         protocol_label=protocol.value,
         base_api_url=base_api_url,
         database_name=database_name,
+        include_scim_context=protocol == ApiType.SCIM,
     )
 
     # Collect relevant chunks

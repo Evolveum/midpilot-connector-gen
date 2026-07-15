@@ -12,6 +12,44 @@ import pytest
 
 from src.common.enums import ApiType
 from src.modules.codegen import generation
+from src.modules.codegen.prompts.native_schema_prompts import (
+    get_native_schema_system_prompt,
+    get_native_schema_user_prompt,
+)
+from src.modules.codegen.prompts.scim.native_schema_prompts import (
+    get_scim_native_schema_system_prompt,
+    get_scim_native_schema_user_prompt,
+)
+from src.modules.codegen.selection.docs_loader import load_required_adoc_text
+
+
+def test_scim_native_schema_inputs_exclude_connid_mapping_dsl():
+    docs_text = load_required_adoc_text(
+        "src.modules.codegen.documentations",
+        "scim/25-schema-customization.adoc",
+    )
+
+    assert "connIdAttribute" not in docs_text
+    assert "Never emit `connIdAttribute(...)`" in get_native_schema_system_prompt
+    assert "ConnID mappings belong exclusively" in get_native_schema_system_prompt
+
+
+def test_protocol_neutral_native_schema_prompts_contain_no_scim_context():
+    prompt_text = get_native_schema_system_prompt + get_native_schema_user_prompt
+
+    assert "SCIM" not in prompt_text
+    assert "scim_protocol_schema" not in prompt_text
+    assert "scim_resource_contract" not in prompt_text
+    assert "connid_object_class" not in prompt_text
+
+
+def test_scim_native_schema_prompts_add_scim_context_explicitly():
+    prompt_text = get_scim_native_schema_system_prompt + get_scim_native_schema_user_prompt
+
+    assert "SCIM CONTRACT CONTEXT RULES" in prompt_text
+    assert "{scim_protocol_schema_json}" in prompt_text
+    assert "{scim_resource_contract_json}" in prompt_text
+    assert "{connid_object_class_json}" in prompt_text
 
 
 @pytest.mark.asyncio
@@ -40,6 +78,10 @@ async def test_generate_native_schema():
         assert result["code"] == "mocked groovy code"
 
         mock_generate_groovy.assert_called_once()
+        _, kwargs = mock_generate_groovy.call_args
+        assert kwargs["system_prompt"] == get_native_schema_system_prompt
+        assert kwargs["user_prompt"] == get_native_schema_user_prompt
+        assert set(kwargs["extra_prompt_vars"]) == {"user_schema_docs"}
 
 
 @pytest.mark.asyncio
@@ -64,7 +106,9 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
     assert result == {"code": "mocked sql schema code"}
     _, kwargs = mock_generate_groovy.call_args
     assert "SQL native schema mapping" in kwargs["extra_prompt_vars"]["user_schema_docs"]
-    assert json.loads(kwargs["extra_prompt_vars"]["scim_context_json"]) == {}
+    assert kwargs["system_prompt"] == get_native_schema_system_prompt
+    assert kwargs["user_prompt"] == get_native_schema_user_prompt
+    assert set(kwargs["extra_prompt_vars"]) == {"user_schema_docs"}
 
 
 @pytest.mark.asyncio
@@ -73,6 +117,12 @@ async def test_generate_native_schema_passes_bounded_scim_context_to_prompt():
         "className": "Device",
         "resource": {"endpoint": "/inventory/devices"},
         "schema": {"urn": "urn:example:Device", "attributes": [{"name": "serialNumber"}]},
+        "extensions": [{"name": "DeviceExtension", "urn": "urn:example:DeviceExtension"}],
+        "connectorObjectClass": {
+            "name": "Device",
+            "locator": "/inventory/devices",
+            "attributes": [{"name": "serialNumber", "type": "string"}],
+        },
     }
     payload = {
         "attributes": {"serialNumber": {"type": "string", "scimAttribute": "serialNumber"}},
@@ -91,7 +141,15 @@ async def test_generate_native_schema_passes_bounded_scim_context_to_prompt():
         )
 
     _, kwargs = mock_generate_groovy.call_args
-    assert json.loads(kwargs["extra_prompt_vars"]["scim_context_json"]) == scim_context
+    prompt_vars = kwargs["extra_prompt_vars"]
+    assert kwargs["system_prompt"] == get_scim_native_schema_system_prompt
+    assert kwargs["user_prompt"] == get_scim_native_schema_user_prompt
+    assert json.loads(prompt_vars["scim_protocol_schema_json"]) == scim_context["schema"]
+    assert json.loads(prompt_vars["scim_resource_contract_json"]) == {
+        "resource": scim_context["resource"],
+        "extensions": scim_context["extensions"],
+    }
+    assert json.loads(prompt_vars["connid_object_class_json"]) == scim_context["connectorObjectClass"]
     assert kwargs["records"][0]["scimAttribute"] == "serialNumber"
 
 

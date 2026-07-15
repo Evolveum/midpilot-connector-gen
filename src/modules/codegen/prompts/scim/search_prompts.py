@@ -4,6 +4,13 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.scim.shared_context_prompts import (
+    SCIM_CONTRACT_CONTEXT_SYSTEM_RULES,
+    SCIM_CONTRACT_CONTEXT_USER_SECTION,
+    SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES,
+    SCIM_OPERATION_ENDPOINTS_USER_SECTION,
+)
+
 _SCIM_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX = (
     textwrap.dedent("""\
 You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs.
@@ -22,6 +29,8 @@ Prepare valid Groovy search schema code based on the following `.adoc` documenta
 {search_docs}
 </search_docs>
 """)
+    + SCIM_CONTRACT_CONTEXT_SYSTEM_RULES
+    + SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
@@ -62,7 +71,7 @@ _SCIM_SEARCH_SYSTEM_PROMPT_ID_RULES = textwrap.dedent("""\
 
 INTENT PROFILE: `id`
 - Generate ONLY identifier-based lookup.
-- Prefer dedicated id endpoint paths like `Users/{{id}}` when documented.
+- Prefer the item form of the explicit resource endpoint, such as `<resource-path>/{{id}}`, when documented.
 - For id lookup, include `singleResult()` and an exact-match `supportedFilter(...)` block mapping identifier value to path/query parameter.
 - If endpoint uses path placeholder `{{id}}`, map it with `request.pathParameter("id", value)`.
 - If path lookup is not documented, map exact id filter with documented SCIM query (`filter=id eq \\"value\\"`) behavior.
@@ -101,6 +110,10 @@ Here is extracted object class attributes from SCIM schema wrapped into JSON fro
 <extracted_attributes>
 {attributes_json}
 </extracted_attributes>
+""")
+    + SCIM_CONTRACT_CONTEXT_USER_SECTION
+    + SCIM_OPERATION_ENDPOINTS_USER_SECTION
+    + textwrap.dedent("""\
 
 Optional user-provided preferred endpoints (JSON):
 

@@ -16,6 +16,7 @@ from src.modules.digester.extractors.scim.baseline import (
     ConnIdObjectClassDefinition,
     ScimResourceDefinition,
     build_scim_baseline_bundle,
+    generate_scim_crud_endpoints,
 )
 from src.modules.digester.schemas.common import ChunkReference
 
@@ -33,6 +34,10 @@ def _baseline_schemas() -> dict:
 
 
 BASELINE_SCHEMAS = _baseline_schemas()
+
+
+def test_crud_endpoint_generation_requires_explicit_resource_path():
+    assert generate_scim_crud_endpoints("", "Device") == []
 
 
 class _NoopAsyncSession:

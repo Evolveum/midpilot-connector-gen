@@ -113,7 +113,7 @@ class _NoopAsyncSession:
 
 async def _load_bundle(items: list[dict]):
     repo = MagicMock()
-    repo.get_documentation_items_by_session = AsyncMock(return_value=items)
+    repo.get_conndev_documentation_items_by_session = AsyncMock(return_value=items)
 
     with (
         patch(f"{_MODULE}.async_session_maker", return_value=_NoopAsyncSession()),
@@ -189,6 +189,7 @@ async def test_loader_supports_arbitrary_schema_resource_and_object_class_names(
 
     context = build_scim_codegen_context(bundle, "device")
     assert context["resource"]["endpoint"] == "/inventory/devices"
+    assert context["resource"]["primarySchema"] == context["schema"]
     assert [attribute["name"] for attribute in context["schema"]["attributes"]] == ["serialNumber", "owner"]
     assert [attribute["name"] for attribute in context["connectorObjectClass"]["attributes"]] == [
         "serialNumber",
@@ -197,6 +198,44 @@ async def test_loader_supports_arbitrary_schema_resource_and_object_class_names(
     assert context["connectorObjectClass"]["attributes"][0]["mandatory"] is True
     assert context["connectorObjectClass"]["attributes"][1]["updatable"] is False
     assert len(get_scim_class_document_references(bundle, "device")) == 3
+
+
+def test_codegen_context_preserves_differences_between_schema_resource_and_connid_views():
+    standalone_schema = {
+        "id": "urn:example:Device",
+        "name": "Device",
+        "attributes": [{"name": "serialNumber", "type": "string", "required": True}],
+    }
+    resource_schema = {
+        "id": "urn:example:Device",
+        "name": "Device",
+        "attributes": [{"name": "serialNumber", "type": "integer", "required": False}],
+    }
+    resource = ScimResourceDefinition(
+        name="Device",
+        endpoint="/Devices",
+        schema_urn=standalone_schema["id"],
+        primary_schema=resource_schema,
+    )
+    connid_class = ConnIdObjectClassDefinition(
+        name="Device",
+        namespace=standalone_schema["id"],
+        locator="/Devices",
+        uid="Device",
+        attributes=[{"name": "serialNumber", "type": "boolean"}],
+    )
+    bundle = build_scim_baseline_bundle(
+        {"Device": standalone_schema},
+        {"Device": resource},
+        {"Device": connid_class},
+    )
+
+    context = build_scim_codegen_context(bundle, "Device")
+
+    assert context["schema"]["attributes"][0]["type"] == "string"
+    assert context["resource"]["primarySchema"]["attributes"][0]["type"] == "integer"
+    assert context["connectorObjectClass"]["attributes"][0]["type"] == "boolean"
+    assert "mandatory" not in context["connectorObjectClass"]["attributes"][0]
 
 
 @pytest.mark.asyncio

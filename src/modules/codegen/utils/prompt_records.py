@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import json
 from collections.abc import Iterator
 from typing import Any, Dict, List, Mapping
 
@@ -78,6 +79,34 @@ def extract_scim_context(payload: AttributesPayload) -> Dict[str, Any]:
     if isinstance(payload, AttributeResponse):
         return {}
     return dict(as_mapping(payload.get("scimContext")))
+
+
+def build_scim_contract_prompt_vars(payload: AttributesPayload) -> Dict[str, str]:
+    """Serialize the three SCIM source abstractions into separate prompt variables."""
+    context = extract_scim_context(payload)
+    protocol_schema = dict(as_mapping(context.get("schema")))
+
+    resource_contract: Dict[str, Any] = {}
+    resource = as_mapping(context.get("resource"))
+    if resource:
+        resource_contract["resource"] = dict(resource)
+    extensions = context.get("extensions")
+    if isinstance(extensions, list):
+        resource_contract["extensions"] = extensions
+    extension_of = context.get("extensionOf")
+    if isinstance(extension_of, str) and extension_of.strip():
+        resource_contract["extensionOf"] = extension_of.strip()
+
+    connid_object_class = dict(as_mapping(context.get("connectorObjectClass")))
+
+    def _serialize(value: Mapping[str, Any]) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    return {
+        "scim_protocol_schema_json": _serialize(protocol_schema),
+        "scim_resource_contract_json": _serialize(resource_contract),
+        "connid_object_class_json": _serialize(connid_object_class),
+    }
 
 
 def build_connid_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:

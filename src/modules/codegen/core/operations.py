@@ -15,10 +15,29 @@ from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, OperationConfig
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
-from src.modules.codegen.utils.prompt_records import build_attribute_context_records
+from src.modules.codegen.utils.prompt_records import (
+    build_attribute_context_records,
+    build_scim_contract_prompt_vars,
+)
 from src.modules.digester.schemas import RelationsResponse
 
 logger = logging.getLogger(__name__)
+
+
+def _prepare_operation_input_data(
+    attributes: AttributesPayload,
+    endpoints: Optional[EndpointsPayload],
+    *,
+    include_scim_context: bool,
+) -> Dict[str, str]:
+    endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
+    input_data = {
+        "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
+        "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
+    }
+    if include_scim_context:
+        input_data.update(build_scim_contract_prompt_vars(attributes))
+    return input_data
 
 
 class SearchGenerator(BaseGroovyGenerator):
@@ -34,6 +53,7 @@ class SearchGenerator(BaseGroovyGenerator):
         protocol_label: str,
         base_api_url: str = "",
         database_name: str = "",
+        include_scim_context: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -52,15 +72,16 @@ class SearchGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
+        self.include_scim_context = include_scim_context
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
-        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
-        return {
-            "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
-        }
+        return _prepare_operation_input_data(
+            attributes,
+            endpoints,
+            include_scim_context=self.include_scim_context,
+        )
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return f'objectClass("{self.object_class}") {{\n    search {{\n    }}\n}}\n'
@@ -78,6 +99,7 @@ class CreateGenerator(BaseGroovyGenerator):
         protocol_label: str,
         base_api_url: str = "",
         database_name: str = "",
+        include_scim_context: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -95,15 +117,16 @@ class CreateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
+        self.include_scim_context = include_scim_context
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
-        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
-        return {
-            "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
-        }
+        return _prepare_operation_input_data(
+            attributes,
+            endpoints,
+            include_scim_context=self.include_scim_context,
+        )
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return f'objectClass("{self.object_class}") {{\n    create {{\n    }}\n}}\n'
@@ -121,6 +144,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         protocol_label: str,
         base_api_url: str = "",
         database_name: str = "",
+        include_scim_context: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -138,15 +162,16 @@ class UpdateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
+        self.include_scim_context = include_scim_context
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
-        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
-        return {
-            "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
-        }
+        return _prepare_operation_input_data(
+            attributes,
+            endpoints,
+            include_scim_context=self.include_scim_context,
+        )
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return f'objectClass("{self.object_class}") {{\n    update {{\n    }}\n}}\n'
@@ -164,6 +189,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         protocol_label: str,
         base_api_url: str = "",
         database_name: str = "",
+        include_scim_context: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -181,15 +207,16 @@ class DeleteGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
+        self.include_scim_context = include_scim_context
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
-        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
-        return {
-            "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
-        }
+        return _prepare_operation_input_data(
+            attributes,
+            endpoints,
+            include_scim_context=self.include_scim_context,
+        )
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return f'objectClass("{self.object_class}") {{\n    delete {{\n    }}\n}}\n'

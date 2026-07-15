@@ -4,49 +4,50 @@
 
 import textwrap
 
-get_native_schema_system_prompt = (
-    textwrap.dedent("""
+
+def build_native_schema_system_prompt(protocol_context_rules: str = "") -> str:
+    """Build a protocol-neutral native-schema prompt with optional protocol context."""
+    return (
+        textwrap.dedent("""
 You are an expert in creating connectors for midPoint. Your goal is to prepare a native schema in Groovy code. 
-You receive a fragment that was extracted in the previous step LLM from the OpenAPI/Swagger schema. This schema will represent one object class ({object_class}) and its attributes that have been extracted from endpoint `api/v1/digester/{{session_id}}/attributes`. 
+You receive structured schema data extracted in the previous step. It represents one object class ({object_class})
+and its attributes from endpoint `api/v1/digester/{{session_id}}/attributes`.
 Prepare a native schema in Groovy code based on the following `.adoc` documentations:
 
 <user_schema_docs>
 {user_schema_docs}
 </user_schema_docs>
 
-For SCIM generation, the following context preserves the source contracts separately. It is an
-empty JSON object for non-SCIM protocols:
-
-<scim_context>
-{scim_context_json}
-</scim_context>
-
-When <scim_context> is not empty:
-- Treat `schema` and `extensions` as the authoritative SCIM attribute/rule definitions.
-- Preserve schema URNs, complex sub-attributes, required/multi-value flags, mutability, returned,
-  uniqueness, canonical values and reference types when they affect the native schema.
-- Treat `resource.endpoint` as the documented resource path and `extensionOf`/`extensions` as
-  schema bindings; these descriptors are not runtime resource instances.
-- `connectorObjectClass` is a simplified connector exposure projection. Do not mistake omitted
-  connector attributes for attributes absent from the SCIM schema.
 """)
-    + "{repair_system_suffix}"
-    + textwrap.dedent("""
+        + protocol_context_rules
+        + "{repair_system_suffix}"
+        + textwrap.dedent("""
 
 OUTPUT RULES:
+- Generate only the native schema for the target object class.
+- Never emit `connIdAttribute(...)` statements or UID/NAME mappings. ConnID mappings belong exclusively
+  to the separate ConnID schema generation stage.
 - Return ONLY Groovy code, fenced as a single ```groovy code block```. No text outside the code block. 
 - Check the example in <user_schema_docs></user_schema_docs>.
 - The Groovy structure may vary, but should be consistent and syntactically valid.
 """)
-)
+    )
 
-get_native_schema_user_prompt = (
-    textwrap.dedent("""
-Here is extracted data from OpenAPI/SCIM schema wrapped into JSON for {object_class}:
+
+def build_native_schema_user_prompt(protocol_context_section: str = "") -> str:
+    """Build a protocol-neutral native-schema user prompt with optional protocol context."""
+    return (
+        textwrap.dedent("""
+Here is extracted schema data wrapped into JSON for {object_class}:
 
 <extracted_info>
 {records_json}
 </extracted_info>
 """)
-    + "{repair_user_suffix}"
-)
+        + protocol_context_section
+        + "{repair_user_suffix}"
+    )
+
+
+get_native_schema_system_prompt = build_native_schema_system_prompt()
+get_native_schema_user_prompt = build_native_schema_user_prompt()

@@ -4,6 +4,13 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.scim.shared_context_prompts import (
+    SCIM_CONTRACT_CONTEXT_SYSTEM_RULES,
+    SCIM_CONTRACT_CONTEXT_USER_SECTION,
+    SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES,
+    SCIM_OPERATION_ENDPOINTS_USER_SECTION,
+)
+
 get_scim_create_system_prompt = (
     textwrap.dedent("""\
 You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs. Your goal is to prepare a `create` schema in Groovy for SCIM resources.
@@ -20,6 +27,8 @@ Prepare a valid Groovy code for create schema in Groovy based on the following `
 {create_docs}
 </create_docs>
 """)
+    + SCIM_CONTRACT_CONTEXT_SYSTEM_RULES
+    + SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
@@ -44,6 +53,10 @@ Here is extracted object class attributes from SCIM schema wrapped into JSON fro
 <extracted_attributes>
 {attributes_json}
 </extracted_attributes>
+""")
+    + SCIM_CONTRACT_CONTEXT_USER_SECTION
+    + SCIM_OPERATION_ENDPOINTS_USER_SECTION
+    + textwrap.dedent("""\
 
 Optional user-provided preferred endpoints (JSON):
 

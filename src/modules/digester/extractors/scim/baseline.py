@@ -338,7 +338,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
     only fill in classes that have no dedicated document.
     """
     async with async_session_maker() as db:
-        items = await DocumentationRepository(db).get_documentation_items_by_session(session_id)
+        items = await DocumentationRepository(db).get_conndev_documentation_items_by_session(session_id)
 
     schemas: Dict[str, Dict[str, Any]] = {}
     schema_references: Dict[str, ChunkReference] = {}
@@ -431,7 +431,9 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
         )
 
     bundle = build_scim_baseline_bundle(schemas, resources, connid_classes, schema_references)
-    logger.info(
+    # Every SCIM extractor job loads the baseline, so this per-load summary stays at DEBUG;
+    # the extractors log what they derived from it at INFO.
+    logger.debug(
         "[SCIM:Baseline] Session %s: loaded %d SCIM schema(s), %d resource(s), %d ConnId object class(es), "
         "%d extension mapping(s)",
         session_id,
@@ -658,7 +660,9 @@ def get_base_scim_attributes(schemas: Dict[str, Any], class_name: str) -> Dict[s
 
         attributes[attr_name] = attribute_info
 
-    logger.info("[SCIM:Baseline] Loaded %d attributes for %s", len(attributes), class_name)
+    # Called per class from several flows (attribute extraction, codegen-context projection);
+    # the callers report the resulting counts at INFO.
+    logger.debug("[SCIM:Baseline] Loaded %d attributes for %s", len(attributes), class_name)
     return attributes
 
 
@@ -693,32 +697,17 @@ def _schema_codegen_context(schema: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _find_schema_attribute(schema: Dict[str, Any], attribute_name: str) -> Optional[Dict[str, Any]]:
-    normalized_name = attribute_name.strip().lower()
-    for attribute in as_dict_list(schema.get("attributes")):
-        name = attribute.get("name")
-        if isinstance(name, str) and name.strip().lower() == normalized_name:
-            return attribute
-    return None
-
-
 def _build_connector_attribute_projection(
     definition: ConnIdObjectClassDefinition,
-    schema: Optional[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Map the simplified connector contract to the attribute shape used by codegen prompts."""
+    """Normalize only the ConnId export, without enriching it from a SCIM schema."""
     projected: List[Dict[str, Any]] = []
-    schema_attributes = get_base_scim_attributes({definition.name: schema}, definition.name) if schema else {}
     for raw_attribute in definition.attributes:
         name = raw_attribute.get("name")
         if not isinstance(name, str) or not name.strip():
             continue
 
-        schema_attribute = _find_schema_attribute(schema, name) if schema is not None else None
-        enriched = _get_case_insensitive(schema_attributes, name) if schema_attribute is not None else {}
-        if not isinstance(enriched, dict):
-            enriched = {}
-        item: Dict[str, Any] = dict(enriched)
+        item: Dict[str, Any] = {}
         item["name"] = name.strip()
         item["scimAttribute"] = name.strip()
         item["connectorExposed"] = True
@@ -744,7 +733,7 @@ def _build_connector_attribute_projection(
 
 def build_scim_codegen_context(bundle: ScimBaselineBundle, class_name: str) -> Dict[str, Any]:
     """
-    Build bounded, class-specific SCIM context for native-schema and ConnId code generation.
+    Build bounded, class-specific SCIM context for native-schema, ConnId and operation code generation.
 
     The context deliberately preserves the three source abstractions instead of flattening them:
     schema rules, resource endpoint/extension bindings and the connector's exposed projection.
@@ -770,13 +759,11 @@ def build_scim_codegen_context(bundle: ScimBaselineBundle, class_name: str) -> D
             "name": resource.name,
             "schemaUrn": resource.schema_urn,
             "endpoint": resource.endpoint,
+            "primarySchema": _schema_codegen_context(resource.primary_schema),
         }
-        extension_contexts: List[Dict[str, Any]] = []
-        for embedded_extension in resource.extension_schemas:
-            extension_name = _schema_name(embedded_extension)
-            canonical_extension = get_scim_schema(bundle.schemas, extension_name) or embedded_extension
-            extension_contexts.append(_schema_codegen_context(canonical_extension))
-        context["extensions"] = extension_contexts
+        context["extensions"] = [
+            _schema_codegen_context(embedded_extension) for embedded_extension in resource.extension_schemas
+        ]
 
     if isinstance(parent_name, str):
         context["extensionOf"] = parent_name
@@ -787,17 +774,17 @@ def build_scim_codegen_context(bundle: ScimBaselineBundle, class_name: str) -> D
             "namespace": connid_class.namespace,
             "locator": connid_class.locator,
             "uid": connid_class.uid,
-            "attributes": _build_connector_attribute_projection(connid_class, schema),
+            "attributes": _build_connector_attribute_projection(connid_class),
         }
 
     return context
 
 
 def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Dict[str, Any]]:
-    """Generate standard SCIM CRUD endpoints for a given resource path."""
+    """Generate standard SCIM CRUD endpoints only for an explicit resource path."""
     clean_path = (resource_path or "").strip()
     if not clean_path:
-        clean_path = "/Resources"
+        return []
     if not clean_path.startswith("/"):
         clean_path = "/" + clean_path
     clean_path = "/" + clean_path.strip("/")

@@ -29,6 +29,10 @@ from src.modules.codegen.prompts.rest.search_prompts import (
 from src.modules.codegen.prompts.rest.update_prompts import get_update_system_prompt, get_update_user_prompt
 from src.modules.codegen.prompts.scim.create_prompts import get_scim_create_system_prompt, get_scim_create_user_prompt
 from src.modules.codegen.prompts.scim.delete_prompts import get_scim_delete_system_prompt, get_scim_delete_user_prompt
+from src.modules.codegen.prompts.scim.native_schema_prompts import (
+    get_scim_native_schema_system_prompt,
+    get_scim_native_schema_user_prompt,
+)
 from src.modules.codegen.prompts.scim.search_prompts import (
     get_scim_search_all_system_prompt,
     get_scim_search_filter_system_prompt,
@@ -65,8 +69,8 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
     "delete": {
         ApiType.REST: OperationAssets(get_delete_system_prompt, get_delete_user_prompt, "rest/70-delete.adoc"),
         ApiType.SCIM: OperationAssets(
-            get_scim_delete_system_prompt, get_scim_delete_user_prompt, ""
-        ),  # TODO add new documentation for SCIM delete operation
+            get_scim_delete_system_prompt, get_scim_delete_user_prompt, "scim/70-delete.adoc"
+        ),
         ApiType.SQL: OperationAssets(get_sql_delete_system_prompt, get_sql_delete_user_prompt, "sql/70-delete.adoc"),
     },
     "native_schema": {
@@ -74,7 +78,9 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
             get_native_schema_system_prompt, get_native_schema_user_prompt, "rest/25-user-schema.adoc"
         ),
         ApiType.SCIM: OperationAssets(
-            get_native_schema_system_prompt, get_native_schema_user_prompt, "scim/25-schema-customization.adoc"
+            get_scim_native_schema_system_prompt,
+            get_scim_native_schema_user_prompt,
+            "scim/25-schema-customization.adoc",
         ),
         ApiType.SQL: OperationAssets(
             get_native_schema_system_prompt, get_native_schema_user_prompt, "sql/25-native-schema.adoc"

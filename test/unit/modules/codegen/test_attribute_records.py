@@ -2,10 +2,13 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import json
+
 from src.modules.codegen.utils.prompt_records import (
     build_attribute_context_records,
     build_attribute_mapping_records,
     build_connid_attribute_mapping_records,
+    build_scim_contract_prompt_vars,
     extract_scim_context,
 )
 from src.modules.digester.schemas import AttributeInfoScim, AttributeResponse
@@ -158,3 +161,58 @@ def test_connid_mapping_falls_back_when_scim_projection_is_missing():
     records = build_connid_attribute_mapping_records({"attributes": {"displayName": {"type": "string"}}})
 
     assert [record["name"] for record in records] == ["displayName"]
+
+
+def test_build_scim_contract_prompt_vars_keeps_source_abstractions_separate():
+    scim_context = {
+        "className": "User",
+        "schema": {
+            "name": "User",
+            "urn": "urn:ietf:params:scim:schemas:core:2.0:User",
+            "attributes": [{"name": "userName", "required": True}],
+        },
+        "resource": {
+            "name": "User",
+            "schemaUrn": "urn:ietf:params:scim:schemas:core:2.0:User",
+            "endpoint": "/Users",
+        },
+        "extensions": [
+            {
+                "name": "EnterpriseUser",
+                "urn": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User",
+            }
+        ],
+        "connectorObjectClass": {
+            "name": "User",
+            "locator": "/Users",
+            "uid": "id",
+            "attributes": [{"name": "userName", "type": "string"}],
+        },
+    }
+
+    prompt_vars = build_scim_contract_prompt_vars(
+        {"attributes": {"userName": {"type": "string"}}, "scimContext": scim_context}
+    )
+
+    assert json.loads(prompt_vars["scim_protocol_schema_json"]) == scim_context["schema"]
+    assert json.loads(prompt_vars["scim_resource_contract_json"]) == {
+        "resource": scim_context["resource"],
+        "extensions": scim_context["extensions"],
+    }
+    assert json.loads(prompt_vars["connid_object_class_json"]) == scim_context["connectorObjectClass"]
+
+
+def test_build_scim_contract_prompt_vars_preserves_extension_relationship():
+    prompt_vars = build_scim_contract_prompt_vars(
+        {
+            "attributes": {"employeeNumber": {"type": "string"}},
+            "scimContext": {
+                "schema": {"name": "EnterpriseUser"},
+                "extensionOf": "User",
+            },
+        }
+    )
+
+    assert json.loads(prompt_vars["scim_protocol_schema_json"]) == {"name": "EnterpriseUser"}
+    assert json.loads(prompt_vars["scim_resource_contract_json"]) == {"extensionOf": "User"}
+    assert json.loads(prompt_vars["connid_object_class_json"]) == {}
