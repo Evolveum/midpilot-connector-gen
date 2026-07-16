@@ -15,9 +15,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from src.common.chunking.tokens import normalize_to_text
-from src.common.documentation.content_types import is_conndev_content_type
+from src.common.documentation.content_types import is_conndev_documentation_item
 from src.common.jobs import update_job_progress
-from src.common.utils.coerce import as_dict_list, as_mapping
+from src.common.utils.coerce import as_dict_list
 from src.common.utils.normalize import canonical_object_class_key
 from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_object_classes
 from src.modules.digester.extraction.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
@@ -66,9 +66,7 @@ async def extract_scim_object_classes(
 
     # The conndev documents are the deterministic baseline source (steps 1-2); only the
     # remaining documentation is sent to the LLM for custom-class extraction (step 3).
-    llm_doc_items = [
-        item for item in doc_items if not is_conndev_content_type(as_mapping(item.get("@metadata")).get("content_type"))
-    ]
+    llm_doc_items = [item for item in doc_items if not is_conndev_documentation_item(item)]
     if len(llm_doc_items) < len(doc_items):
         logger.info(
             "[SCIM:ObjectClasses] Excluded %d conndev baseline document(s) from LLM extraction",

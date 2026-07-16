@@ -163,6 +163,23 @@ def test_connid_mapping_falls_back_when_scim_projection_is_missing():
     assert [record["name"] for record in records] == ["displayName"]
 
 
+def test_typed_attribute_response_preserves_scim_context_for_codegen():
+    scim_context = {
+        "resource": {"endpoint": "/Users"},
+        "connectorObjectClass": {
+            "name": "User",
+            "attributes": [{"name": "userName", "type": "string"}],
+        },
+    }
+    payload = AttributeResponse(
+        attributes={"userName": AttributeInfoScim(type="string")},
+        scimContext=scim_context,
+    )
+
+    assert extract_scim_context(payload) == scim_context
+    assert [record["name"] for record in build_connid_attribute_mapping_records(payload)] == ["userName"]
+
+
 def test_build_scim_contract_prompt_vars_keeps_source_abstractions_separate():
     scim_context = {
         "className": "User",

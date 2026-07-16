@@ -13,14 +13,14 @@ onto the object class. Protocol-specific leaves live under ``extractors/rest``,
 """
 
 import logging
+from collections.abc import Mapping
 from typing import Any, Dict, List
 from uuid import UUID
 
 from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.documentation.content_types import is_conndev_content_type
+from src.common.documentation.content_types import is_conndev_documentation_item
 from src.common.enums import ApiType
 from src.common.jobs import update_job_progress
-from src.common.utils.coerce import as_mapping
 from src.common.utils.session_info_metadata import resolve_effective_api_type
 from src.modules.digester.entities.object_classes import build_endpoint_result, extract_endpoints_from_result
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
@@ -158,11 +158,7 @@ async def _retry_rest_endpoints_with_default_criteria(
 
 def _exclude_conndev_documents(doc_items: List[dict]) -> List[dict]:
     """Keep connector-export contracts out of documentation-driven endpoint extraction."""
-    return [
-        item
-        for item in doc_items
-        if not is_conndev_content_type(as_mapping(item.get("@metadata") or item.get("metadata")).get("content_type"))
-    ]
+    return [item for item in doc_items if not is_conndev_documentation_item(item)]
 
 
 async def extract_endpoints(
@@ -173,6 +169,7 @@ async def extract_endpoints(
     job_id: UUID,
     base_api_url: str = "",
     api_type_override: ApiType | None = None,
+    object_class_flags: Mapping[str, Any] | None = None,
 ):
     """
     Extract endpoints from only the relevant chunks of documentation and update the specific object class
@@ -189,6 +186,7 @@ async def extract_endpoints(
         job_id: Job ID for progress tracking
         base_api_url: Base API URL for endpoint extraction
         api_type_override: Explicit protocol override; falls back to detected apiType when None
+        object_class_flags: Structural flags loaded during request orchestration for SCIM endpoint routing
     """
 
     protocol = await resolve_effective_api_type(session_id, api_type_override)
@@ -206,6 +204,7 @@ async def extract_endpoints(
             session_id=session_id,
             object_class=object_class,
             job_id=job_id,
+            object_class_flags=object_class_flags,
         )
         if deterministic_result is not None:
             result = deterministic_result

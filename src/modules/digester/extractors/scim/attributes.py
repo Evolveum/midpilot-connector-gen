@@ -16,7 +16,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
-from src.common.documentation.content_types import is_conndev_content_type
+from src.common.documentation.content_types import is_conndev_documentation_item
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.llm import build_structured_chain
 from src.common.utils.coerce import as_dict_list, as_list, as_mapping
@@ -30,6 +30,7 @@ from src.modules.digester.extractors.scim.baseline import (
     get_scim_class_document_references,
     is_scim_standard_class,
     load_session_scim_baseline,
+    map_scim_type_to_digester,
 )
 from src.modules.digester.extractors.scim.object_class import build_embedded_object_class_name
 from src.modules.digester.prompts.scim.attributes_prompts import (
@@ -337,8 +338,7 @@ async def extract_scim_attributes(
     llm_chunk_details: List[str] = []
     for chunk, chunk_id in zip(chunks, chunk_details, strict=False):
         chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map and chunk_id else None
-        metadata = as_mapping(as_mapping(chunk_metadata).get("@metadata"))
-        if is_conndev_content_type(metadata.get("content_type")):
+        if is_conndev_documentation_item(as_mapping(chunk_metadata)):
             continue
         llm_chunks.append(chunk)
         llm_chunk_details.append(chunk_id)
@@ -616,23 +616,9 @@ def _format_attributes_for_prompt(attributes: Dict[str, Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _map_scim_type_to_digester(scim_type: Any) -> str:
-    type_map = {
-        "string": "string",
-        "boolean": "boolean",
-        "decimal": "number",
-        "integer": "integer",
-        "dateTime": "string",
-        "binary": "string",
-        "reference": "string",
-        "complex": "object",
-    }
-    return type_map.get(str(scim_type or ""), "string")
-
-
 def _infer_scim_format(attr: Dict[str, Any]) -> Optional[str]:
-    scim_type = attr.get("type")
-    if scim_type == "dateTime":
+    scim_type = str(attr.get("type") or "").strip().lower()
+    if scim_type == "datetime":
         return "date-time"
     if scim_type == "binary":
         return "binary"
@@ -677,7 +663,7 @@ def map_scim_attribute_to_digester_attribute(
     """
     updatable, creatable, readable = _map_scim_mutability(attr)
     attribute = AttributeInfoScim(
-        type=attribute_type or _map_scim_type_to_digester(attr.get("type")),
+        type=attribute_type or map_scim_type_to_digester(attr.get("type")),
         format=attribute_format if attribute_format is not None else _infer_scim_format(attr),
         description=str(attr.get("description") or ""),
         mandatory=bool(attr.get("required", False)),

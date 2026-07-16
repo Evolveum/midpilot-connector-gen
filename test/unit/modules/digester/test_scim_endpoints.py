@@ -6,7 +6,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -40,26 +40,14 @@ def test_crud_endpoint_generation_requires_explicit_resource_path():
     assert generate_scim_crud_endpoints("", "Device") == []
 
 
-class _NoopAsyncSession:
-    """Async context manager standing in for ``async_session_maker()`` in unit tests."""
-
-    async def __aenter__(self):
-        return MagicMock()
-
-    async def __aexit__(self, *exc):
-        return False
-
-
 async def _run_pregenerate(
     object_class: str,
     schemas: dict | None = None,
-    object_classes_output=None,
+    object_class_flags: dict | None = None,
     resources: dict | None = None,
     connid_classes: dict | None = None,
 ) -> dict | None:
-    """Invoke pregenerate_scim_endpoints with the DB and baseline loading stubbed out."""
-    repo = MagicMock()
-    repo.get_session_data = AsyncMock(return_value=object_classes_output)
+    """Invoke pregenerate_scim_endpoints with baseline loading stubbed out."""
     bundle = build_scim_baseline_bundle(
         BASELINE_SCHEMAS if schemas is None else schemas,
         resources,
@@ -69,8 +57,6 @@ async def _run_pregenerate(
     with (
         patch(f"{_MODULE}.update_job_progress", new_callable=AsyncMock),
         patch(f"{_MODULE}.increment_processed_documents", new_callable=AsyncMock),
-        patch(f"{_MODULE}.async_session_maker", return_value=_NoopAsyncSession()),
-        patch(f"{_MODULE}.SessionRepository", return_value=repo),
         patch(
             f"{_MODULE}.load_session_scim_baseline",
             new_callable=AsyncMock,
@@ -81,6 +67,7 @@ async def _run_pregenerate(
             session_id=uuid4(),
             object_class=object_class,
             job_id=uuid4(),
+            object_class_flags=object_class_flags,
         )
 
 
@@ -128,7 +115,7 @@ async def test_pregenerate_requests_documentation_fallback_for_schema_without_re
 async def test_pregenerate_skips_non_resource_object_class_flags(flag):
     result = await _run_pregenerate(
         "UserName",
-        object_classes_output={"objectClasses": [{"name": "UserName", flag: True}]},
+        object_class_flags={flag: True},
     )
 
     assert result is not None

@@ -31,8 +31,8 @@ from uuid import UUID
 
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
-from src.common.documentation.content_types import is_conndev_content_type
-from src.common.utils.coerce import as_dict_list, as_mapping
+from src.common.documentation.content_types import is_conndev_documentation_item
+from src.common.utils.coerce import as_dict_list
 from src.modules.digester.schemas.common import ChunkReference
 
 logger = logging.getLogger(__name__)
@@ -347,8 +347,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
     fallback_schemas: List[tuple[Dict[str, Any], str, Any, Optional[ChunkReference]]] = []
 
     for item in items:
-        metadata = as_mapping(item.get("metadata"))
-        if not is_conndev_content_type(metadata.get("content_type")):
+        if not is_conndev_documentation_item(item):
             continue
 
         doc_id = item.get("docId")
@@ -637,7 +636,7 @@ def get_base_scim_attributes(schemas: Dict[str, Any], class_name: str) -> Dict[s
         returned_by_default = returned in ("always", "default")
 
         attribute_info: Dict[str, Any] = {
-            "type": _map_scim_type_to_digester(attr.get("type")),
+            "type": map_scim_type_to_digester(attr.get("type")),
             "format": _infer_format_from_scim_attr(attr),
             "description": attr.get("description", ""),
             "mandatory": attr.get("required", False),
@@ -654,7 +653,7 @@ def get_base_scim_attributes(schemas: Dict[str, Any], class_name: str) -> Dict[s
                 sub_name = sub_attr.get("name")
                 if sub_name:
                     attribute_info["subAttributes"][sub_name] = {
-                        "type": _map_scim_type_to_digester(sub_attr.get("type")),
+                        "type": map_scim_type_to_digester(sub_attr.get("type")),
                         "description": sub_attr.get("description", ""),
                     }
 
@@ -714,7 +713,7 @@ def _build_connector_attribute_projection(
 
         connector_type = raw_attribute.get("type")
         if connector_type:
-            item["type"] = _map_scim_type_to_digester(connector_type)
+            item["type"] = map_scim_type_to_digester(connector_type)
         if "required" in raw_attribute:
             item["mandatory"] = bool(raw_attribute.get("required"))
         if "updateable" in raw_attribute or "updatable" in raw_attribute:
@@ -841,8 +840,8 @@ def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Di
     ]
 
 
-def _map_scim_type_to_digester(scim_type: Optional[str]) -> str:
-    """Map a SCIM attribute type to the digester type format."""
+def map_scim_type_to_digester(scim_type: Any) -> str:
+    """Map a SCIM/ConnId-exported attribute type to the digester type format."""
     if not scim_type:
         return "string"
 
@@ -851,19 +850,24 @@ def _map_scim_type_to_digester(scim_type: Optional[str]) -> str:
         "boolean": "boolean",
         "decimal": "number",
         "integer": "integer",
-        "dateTime": "string",
+        "datetime": "string",
         "binary": "string",
         "reference": "string",
         "complex": "object",
     }
-    return type_map.get(scim_type, "string")
+    normalized_type = str(scim_type).strip().lower()
+    mapped_type = type_map.get(normalized_type)
+    if mapped_type is None:
+        logger.debug("[SCIM:Baseline] Unknown attribute type %r; defaulting to string", scim_type)
+        return "string"
+    return mapped_type
 
 
 def _infer_format_from_scim_attr(attr: Dict[str, Any]) -> Optional[str]:
     """Infer a digester format hint from a SCIM attribute definition."""
-    scim_type = attr.get("type")
+    scim_type = str(attr.get("type") or "").strip().lower()
 
-    if scim_type == "dateTime":
+    if scim_type == "datetime":
         return "date-time"
     if scim_type == "binary":
         return "binary"

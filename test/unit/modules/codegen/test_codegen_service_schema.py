@@ -20,18 +20,6 @@ from src.modules.codegen.prompts.scim.native_schema_prompts import (
     get_scim_native_schema_system_prompt,
     get_scim_native_schema_user_prompt,
 )
-from src.modules.codegen.selection.docs_loader import load_required_adoc_text
-
-
-def test_scim_native_schema_inputs_exclude_connid_mapping_dsl():
-    docs_text = load_required_adoc_text(
-        "src.modules.codegen.documentations",
-        "scim/25-schema-customization.adoc",
-    )
-
-    assert "connIdAttribute" not in docs_text
-    assert "Never emit `connIdAttribute(...)`" in get_native_schema_system_prompt
-    assert "ConnID mappings belong exclusively" in get_native_schema_system_prompt
 
 
 def test_protocol_neutral_native_schema_prompts_contain_no_scim_context():

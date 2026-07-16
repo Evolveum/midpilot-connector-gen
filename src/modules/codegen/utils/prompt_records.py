@@ -77,7 +77,7 @@ def build_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str
 def extract_scim_context(payload: AttributesPayload) -> Dict[str, Any]:
     """Return class-specific SCIM context persisted beside the extracted attributes."""
     if isinstance(payload, AttributeResponse):
-        return {}
+        return dict(payload.scimContext)
     return dict(as_mapping(payload.get("scimContext")))
 
 

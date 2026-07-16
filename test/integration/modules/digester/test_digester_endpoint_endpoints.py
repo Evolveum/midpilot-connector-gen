@@ -57,7 +57,7 @@ async def test_extract_class_endpoints_success():
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
-            return_value=[],
+            return_value=["scim"],
         ),
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_base_api_url",
@@ -89,7 +89,15 @@ async def test_extract_class_endpoints_success():
         mock_schedule.assert_awaited_once()
         schedule_kwargs = mock_schedule.call_args.kwargs
         assert schedule_kwargs["input_payload"]["objectClass"] == "user"
+        assert schedule_kwargs["input_payload"]["objectClassFlags"] == {
+            "embedded": False,
+            "abstract": False,
+        }
         assert schedule_kwargs["worker_args"][1] == "user"
+        assert schedule_kwargs["worker_kwargs"]["object_class_flags"] == {
+            "embedded": False,
+            "abstract": False,
+        }
         assert schedule_kwargs["session_result_key"] == "userEndpointsOutput"
         mock_repo.update_session.assert_awaited_once()
 

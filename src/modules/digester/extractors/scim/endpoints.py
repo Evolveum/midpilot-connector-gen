@@ -11,11 +11,10 @@ are terminal non-resources. Other classes return control to the documentation ex
 """
 
 import logging
+from collections.abc import Mapping
 from typing import Any, Dict
 from uuid import UUID
 
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.session_repository import SessionRepository
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.extractors.scim.baseline import (
@@ -34,6 +33,7 @@ async def pregenerate_scim_endpoints(
     session_id: UUID,
     object_class: str,
     job_id: UUID,
+    object_class_flags: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any] | None:
     """
     Resolve a terminal deterministic SCIM endpoint result.
@@ -48,22 +48,10 @@ async def pregenerate_scim_endpoints(
         message=f"Pregenerating SCIM endpoints for {object_class}",
     )
 
-    object_class_data: Dict[str, Any] = {}
-    async with async_session_maker() as db:
-        repo = SessionRepository(db)
-        object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-        if object_classes_output and isinstance(object_classes_output, dict):
-            object_classes = object_classes_output.get("objectClasses", [])
-            if isinstance(object_classes, list):
-                normalized_name = object_class.strip().lower()
-                for obj_class in object_classes:
-                    if isinstance(obj_class, dict) and obj_class.get("name", "").strip().lower() == normalized_name:
-                        object_class_data = obj_class
-                        break
-
     baseline_bundle = await load_session_scim_baseline(session_id)
 
-    if _is_true(object_class_data.get("embedded")) or _is_true(object_class_data.get("abstract")):
+    flags = object_class_flags or {}
+    if _is_true(flags.get("embedded")) or _is_true(flags.get("abstract")):
         logger.info("[SCIM:Endpoints] %s is embedded or abstract; skipping standalone endpoints", object_class)
         await increment_processed_documents(job_id, delta=1)
         return build_endpoint_result()

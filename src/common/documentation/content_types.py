@@ -14,6 +14,9 @@ recognition exists only for upload-time normalization and must never be used as 
 digester or other DB-backed runtime paths.
 """
 
+from collections.abc import Mapping
+from typing import Any
+
 # The conndev connector schema is JSON.
 CONNDEV_CONTENT_TYPES: frozenset[str] = frozenset(
     {
@@ -38,6 +41,24 @@ def normalize_content_type(content_type: str | None) -> str:
 def is_conndev_content_type(content_type: str | None) -> bool:
     """True when ``content_type`` is any accepted conndev media type."""
     return normalize_content_type(content_type) in CONNDEV_CONTENT_TYPES
+
+
+def get_documentation_item_content_type(item: Mapping[str, Any] | None) -> str | None:
+    """Read content type from normalized (``@metadata``) or repository (``metadata``) item shapes."""
+    if not isinstance(item, Mapping):
+        return None
+
+    metadata = item.get("@metadata") or item.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return None
+
+    content_type = metadata.get("content_type")
+    return content_type if isinstance(content_type, str) else None
+
+
+def is_conndev_documentation_item(item: Mapping[str, Any] | None) -> bool:
+    """True when a documentation item is marked with an accepted conndev content type."""
+    return is_conndev_content_type(get_documentation_item_content_type(item))
 
 
 def is_conndev_export_filename(filename_or_url: str | None) -> bool:

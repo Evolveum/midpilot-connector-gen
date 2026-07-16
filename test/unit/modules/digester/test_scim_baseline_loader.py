@@ -30,6 +30,7 @@ from src.modules.digester.extractors.scim.baseline import (
     get_scim_class_document_references,
     get_scim_resource_endpoint,
     load_session_scim_baseline,
+    map_scim_type_to_digester,
 )
 from src.modules.digester.extractors.scim.object_class import get_embedded_object_classes_from_scim_schemas
 
@@ -236,6 +237,27 @@ def test_codegen_context_preserves_differences_between_schema_resource_and_conni
     assert context["resource"]["primarySchema"]["attributes"][0]["type"] == "integer"
     assert context["connectorObjectClass"]["attributes"][0]["type"] == "boolean"
     assert "mandatory" not in context["connectorObjectClass"]["attributes"][0]
+
+
+@pytest.mark.parametrize(
+    ("exported_type", "expected_type"),
+    [
+        ("String", "string"),
+        ("Boolean", "boolean"),
+        ("INTEGER", "integer"),
+        ("DateTime", "string"),
+        ("Complex", "object"),
+    ],
+)
+def test_scim_type_mapping_is_case_insensitive(exported_type, expected_type):
+    assert map_scim_type_to_digester(exported_type) == expected_type
+
+
+def test_unknown_scim_type_defaults_to_string_with_debug_log(caplog):
+    with caplog.at_level("DEBUG", logger="src.modules.digester.extractors.scim.baseline"):
+        assert map_scim_type_to_digester("CustomScalar") == "string"
+
+    assert "Unknown attribute type 'CustomScalar'" in caplog.text
 
 
 @pytest.mark.asyncio

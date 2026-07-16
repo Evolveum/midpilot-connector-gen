@@ -366,6 +366,7 @@ async def test_scim_extract_endpoints_uses_scraped_documentation_when_conndev_ha
         session_id=session_id,
         object_class="Action",
         job_id=job_id,
+        object_class_flags=None,
     )
     mock_select_chunks.assert_called_once_with([scraped_item], relevant_chunks, "Digester:Endpoints")
     mock_extract_documented.assert_awaited_once()

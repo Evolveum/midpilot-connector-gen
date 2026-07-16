@@ -265,6 +265,7 @@ async def store_attributes_override(
     existing_scim_context = existing_output.get("scimContext") if isinstance(existing_output, dict) else None
     incoming_scim_context = attributes.get("scimContext")
     scim_context = incoming_scim_context if isinstance(incoming_scim_context, dict) else existing_scim_context
+    stripped_attributes.pop("scimContext", None)
     if isinstance(scim_context, dict):
         if isinstance(stripped_attributes.get("attributes"), dict):
             stripped_attributes["scimContext"] = scim_context
@@ -387,6 +388,9 @@ async def build_object_class_detail(
             attributes_output,
         )
         result["attributes"] = _select_attributes_payload(hydrated_attributes)
+        scim_context = hydrated_attributes.get("scimContext")
+        if isinstance(scim_context, dict):
+            result["scimContext"] = scim_context
 
     endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
     if endpoints_output and isinstance(endpoints_output, dict):
