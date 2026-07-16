@@ -63,6 +63,8 @@ For each endpoint, provide:
 - **responseContentType**: application/scim+json or other
 - **requestContentType**: application/scim+json or other
 - **suggestedUse**: List of use cases (create, update, delete, getById, getAll, search, custom actions)
+- **parameters**: Structured path/query/header parameters with name, location, type, description,
+  required, optional minimum/maximum, and optional allowedValues.
 
 ### EXAMPLES
 
@@ -109,18 +111,22 @@ Example 3 - Custom query parameters:
       "responseContentType": "application/scim+json",
       "requestContentType": null,
       "suggestedUse": ["getAll", "search"],
-      "customQueryParameters": {{
-        "includeDeleted": {{
+      "parameters": [
+        {{
+          "name": "includeDeleted",
+          "location": "query",
           "type": "boolean",
           "description": "Include soft-deleted users in results",
           "required": false
         }},
-        "expand": {{
+        {{
+          "name": "expand",
+          "location": "query",
           "type": "string",
           "description": "Comma-separated list of related resources to expand (e.g., 'groups,roles')",
           "required": false
         }}
-      }}
+      ]
     }}
   ]
 }}

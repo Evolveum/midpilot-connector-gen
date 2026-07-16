@@ -5,7 +5,7 @@
 """
 SCIM baseline model sourced from the session's midPoint connector-development documents.
 
-A conndev upload delivers three document contracts (one JSON document each, kept whole —
+A conndev upload delivers four document contracts (one JSON document each, kept whole —
 never chunked). The contract shapes are fixed by the midPoint/connector-scimrest export:
 
 - **SCIM schema** — ``{"schemaContent": "<raw SCIM schema JSON>", "name", "id": <URN>}``.
@@ -16,8 +16,11 @@ never chunked). The contract shapes are fixed by the midPoint/connector-scimrest
   (e.g. EnterpriseUser) attach to which resource.
 - **ConnId object class** — ``{"namespace": <URN>, "attributes", "locator", "name", "uid"}``.
   The final object class as exposed by connector-scimrest.
+- **SCIM service-provider configuration** — ``{"name": "ServiceProviderConfig",
+  "content": "<raw ServiceProviderConfig JSON>", "id": "ServiceProviderConfig"}``.
+  Session-wide protocol capabilities such as PATCH, filtering, sorting, ETags and bulk limits.
 
-The three contracts share ``name`` values (User, Group, ...), so they must never be merged
+The resource-facing contracts share ``name`` values (User, Group, ...), so they must never be merged
 into one mapping. This module classifies each document by its contract, unwraps the embedded
 JSON payloads, and exposes them as a :class:`ScimBaselineBundle`. The digester-shaped schema
 helpers keep taking the raw ``schemas`` mapping explicitly.
@@ -29,11 +32,17 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.documentation.content_types import is_conndev_documentation_item
 from src.common.utils.coerce import as_dict_list
 from src.modules.digester.schemas.common import ChunkReference
+from src.modules.digester.schemas.scim import (
+    SCIM_SERVICE_PROVIDER_CONFIG_URN,
+    ScimServiceProviderConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +80,14 @@ class ScimResourceEndpoint:
 
 
 @dataclass(frozen=True)
+class ScimServiceProviderConfigDefinition:
+    """Validated session-wide SCIM capabilities and their conndev provenance."""
+
+    config: ScimServiceProviderConfig
+    source_reference: Optional[ChunkReference] = None
+
+
+@dataclass(frozen=True)
 class ScimBaselineBundle:
     """
     The session's SCIM baseline, split by document contract so same-named representations
@@ -87,6 +104,7 @@ class ScimBaselineBundle:
     connid_classes: Dict[str, ConnIdObjectClassDefinition]
     extension_superclasses: Dict[str, str]
     schema_references: Dict[str, ChunkReference] = field(default_factory=dict)
+    service_provider_config: Optional[ScimServiceProviderConfigDefinition] = None
 
 
 def _schema_name(schema: Dict[str, Any]) -> str:
@@ -281,11 +299,50 @@ def _parse_connid_object_class(
     )
 
 
+def _get_service_provider_config_payload(doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    raw_config = _parse_embedded_json(doc.get("content"))
+    if not isinstance(raw_config, dict):
+        return None
+
+    schemas = raw_config.get("schemas")
+    normalized_schemas = (
+        {schema.strip().lower() for schema in schemas if isinstance(schema, str) and schema.strip()}
+        if isinstance(schemas, list)
+        else set()
+    )
+    return raw_config if SCIM_SERVICE_PROVIDER_CONFIG_URN.lower() in normalized_schemas else None
+
+
+def _parse_service_provider_config(
+    raw_config: Dict[str, Any],
+    *,
+    session_id: UUID,
+    doc_id: Any,
+    source_reference: Optional[ChunkReference] = None,
+) -> Optional[ScimServiceProviderConfigDefinition]:
+    try:
+        config = ScimServiceProviderConfig.model_validate(raw_config)
+    except ValidationError as exc:
+        logger.warning(
+            "[SCIM:Baseline] Skipping ServiceProviderConfig document %s for session %s: invalid contract (%s)",
+            doc_id,
+            session_id,
+            exc,
+        )
+        return None
+
+    return ScimServiceProviderConfigDefinition(
+        config=config,
+        source_reference=source_reference,
+    )
+
+
 def build_scim_baseline_bundle(
     schemas: Dict[str, Dict[str, Any]],
     resources: Optional[Dict[str, ScimResourceDefinition]] = None,
     connid_classes: Optional[Dict[str, ConnIdObjectClassDefinition]] = None,
     schema_references: Optional[Dict[str, ChunkReference]] = None,
+    service_provider_config: Optional[ScimServiceProviderConfigDefinition] = None,
 ) -> ScimBaselineBundle:
     """
     Assemble a bundle and derive the extension -> base class mapping.
@@ -324,6 +381,7 @@ def build_scim_baseline_bundle(
         connid_classes=connid_classes,
         extension_superclasses=extension_superclasses,
         schema_references=schema_references or {},
+        service_provider_config=service_provider_config,
     )
 
 
@@ -333,9 +391,9 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
 
     Only persisted documents marked with a conndev metadata content type are considered. Those
     documents are then classified by contract shape (``schemaContent`` / ``endpoint`` +
-    ``primarySchema`` / ``locator`` + ``uid``); unrecognized conndev documents are logged and
-    skipped. Raw SCIM schemas come from the dedicated schema documents; resource-embedded copies
-    only fill in classes that have no dedicated document.
+    ``primarySchema`` / ``locator`` + ``uid`` / ServiceProviderConfig ``content``); unrecognized
+    conndev documents are logged and skipped. Raw SCIM schemas come from the dedicated schema
+    documents; resource-embedded copies only fill in classes that have no dedicated document.
     """
     async with async_session_maker() as db:
         items = await DocumentationRepository(db).get_conndev_documentation_items_by_session(session_id)
@@ -344,6 +402,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
     schema_references: Dict[str, ChunkReference] = {}
     resources: Dict[str, ScimResourceDefinition] = {}
     connid_classes: Dict[str, ConnIdObjectClassDefinition] = {}
+    service_provider_config: Optional[ScimServiceProviderConfigDefinition] = None
     fallback_schemas: List[tuple[Dict[str, Any], str, Any, Optional[ChunkReference]]] = []
 
     for item in items:
@@ -368,6 +427,24 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             continue
 
         if not isinstance(doc, dict):
+            continue
+
+        raw_service_provider_config = _get_service_provider_config_payload(doc)
+        if raw_service_provider_config is not None:
+            parsed_service_provider_config = _parse_service_provider_config(
+                raw_service_provider_config,
+                session_id=session_id,
+                doc_id=doc_id,
+                source_reference=source_reference,
+            )
+            if parsed_service_provider_config is not None:
+                if service_provider_config is not None:
+                    logger.info(
+                        "[SCIM:Baseline] Replacing older ServiceProviderConfig in session %s with document %s",
+                        session_id,
+                        doc_id,
+                    )
+                service_provider_config = parsed_service_provider_config
             continue
 
         if "schemaContent" in doc:
@@ -429,17 +506,24 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             source_reference=source_reference,
         )
 
-    bundle = build_scim_baseline_bundle(schemas, resources, connid_classes, schema_references)
+    bundle = build_scim_baseline_bundle(
+        schemas,
+        resources,
+        connid_classes,
+        schema_references,
+        service_provider_config,
+    )
     # Every SCIM extractor job loads the baseline, so this per-load summary stays at DEBUG;
     # the extractors log what they derived from it at INFO.
     logger.debug(
         "[SCIM:Baseline] Session %s: loaded %d SCIM schema(s), %d resource(s), %d ConnId object class(es), "
-        "%d extension mapping(s)",
+        "%d extension mapping(s), ServiceProviderConfig=%s",
         session_id,
         len(bundle.schemas),
         len(bundle.resources),
         len(bundle.connid_classes),
         len(bundle.extension_superclasses),
+        bundle.service_provider_config is not None,
     )
     return bundle
 
@@ -734,8 +818,9 @@ def build_scim_codegen_context(bundle: ScimBaselineBundle, class_name: str) -> D
     """
     Build bounded, class-specific SCIM context for native-schema, ConnId and operation code generation.
 
-    The context deliberately preserves the three source abstractions instead of flattening them:
-    schema rules, resource endpoint/extension bindings and the connector's exposed projection.
+    The context deliberately preserves the four source abstractions instead of flattening them:
+    schema rules, resource endpoint/extension bindings, the connector's exposed projection and
+    session-wide service-provider capabilities.
     """
     schema = get_scim_schema(bundle.schemas, class_name)
     resource = _get_case_insensitive(bundle.resources, class_name)
@@ -776,11 +861,21 @@ def build_scim_codegen_context(bundle: ScimBaselineBundle, class_name: str) -> D
             "attributes": _build_connector_attribute_projection(connid_class),
         }
 
+    if bundle.service_provider_config is not None:
+        context["serviceProviderConfig"] = bundle.service_provider_config.config.model_dump(
+            by_alias=True,
+            exclude_none=True,
+        )
+
     return context
 
 
-def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Dict[str, Any]]:
-    """Generate standard SCIM CRUD endpoints only for an explicit resource path."""
+def generate_scim_crud_endpoints(
+    resource_path: str,
+    class_name: str,
+    service_provider_config: Optional[ScimServiceProviderConfig] = None,
+) -> List[Dict[str, Any]]:
+    """Generate SCIM CRUD endpoints and capability-backed request parameters."""
     clean_path = (resource_path or "").strip()
     if not clean_path:
         return []
@@ -788,14 +883,85 @@ def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Di
         clean_path = "/" + clean_path
     clean_path = "/" + clean_path.strip("/")
 
-    return [
+    collection_get_parameters: List[Dict[str, Any]] = [
+        {
+            "name": "startIndex",
+            "location": "query",
+            "type": "integer",
+            "description": "One-based index of the first result requested",
+            "required": False,
+            "minimum": 1,
+        },
+        {
+            "name": "count",
+            "location": "query",
+            "type": "integer",
+            "description": "Maximum number of resources requested in the response",
+            "required": False,
+            "minimum": 0,
+        },
+    ]
+    collection_features = ["pagination"]
+    if service_provider_config is not None and service_provider_config.filter.supported:
+        collection_get_parameters.append(
+            {
+                "name": "filter",
+                "location": "query",
+                "type": "string",
+                "description": "SCIM filter expression",
+                "required": False,
+            }
+        )
+        collection_features.append("filtering")
+        if service_provider_config.filter.max_results is not None:
+            collection_get_parameters[1]["maximum"] = service_provider_config.filter.max_results
+
+    if service_provider_config is not None and service_provider_config.sort.supported:
+        collection_get_parameters.extend(
+            [
+                {
+                    "name": "sortBy",
+                    "location": "query",
+                    "type": "string",
+                    "description": "Attribute path used to order returned resources",
+                    "required": False,
+                },
+                {
+                    "name": "sortOrder",
+                    "location": "query",
+                    "type": "string",
+                    "description": "Requested sort direction",
+                    "required": False,
+                    "allowedValues": ["ascending", "descending"],
+                },
+            ]
+        )
+        collection_features.append("sorting")
+
+    id_parameter = {
+        "name": "id",
+        "location": "path",
+        "type": "string",
+        "description": f"Identifier of the {class_name} resource",
+        "required": True,
+    }
+    conditional_header = {
+        "name": "If-Match",
+        "location": "header",
+        "type": "string",
+        "description": "Resource ETag used for a conditional modification",
+        "required": False,
+    }
+
+    endpoints: List[Dict[str, Any]] = [
         {
             "path": clean_path,
             "method": "GET",
-            "description": f"Retrieve all {class_name}s with optional filtering, sorting, and pagination",
+            "description": f"Retrieve all {class_name}s with optional {', '.join(collection_features)}",
             "responseContentType": "application/scim+json",
             "requestContentType": None,
             "suggestedUse": ["getAll", "search"],
+            "parameters": collection_get_parameters,
         },
         {
             "path": clean_path,
@@ -804,6 +970,7 @@ def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Di
             "responseContentType": "application/scim+json",
             "requestContentType": "application/scim+json",
             "suggestedUse": ["create"],
+            "parameters": [],
         },
         {
             "path": f"{clean_path}/{{id}}",
@@ -812,6 +979,7 @@ def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Di
             "responseContentType": "application/scim+json",
             "requestContentType": None,
             "suggestedUse": ["getById"],
+            "parameters": [id_parameter],
         },
         {
             "path": f"{clean_path}/{{id}}",
@@ -820,14 +988,14 @@ def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Di
             "responseContentType": "application/scim+json",
             "requestContentType": "application/scim+json",
             "suggestedUse": ["update"],
-        },
-        {
-            "path": f"{clean_path}/{{id}}",
-            "method": "PATCH",
-            "description": f"Modify an existing {class_name} resource partially using SCIM PATCH operations",
-            "responseContentType": "application/scim+json",
-            "requestContentType": "application/scim+json",
-            "suggestedUse": ["update"],
+            "parameters": [
+                id_parameter,
+                *(
+                    [conditional_header]
+                    if service_provider_config is not None and service_provider_config.etag.supported
+                    else []
+                ),
+            ],
         },
         {
             "path": f"{clean_path}/{{id}}",
@@ -836,8 +1004,39 @@ def generate_scim_crud_endpoints(resource_path: str, class_name: str) -> List[Di
             "responseContentType": None,
             "requestContentType": None,
             "suggestedUse": ["delete"],
+            "parameters": [
+                id_parameter,
+                *(
+                    [conditional_header]
+                    if service_provider_config is not None and service_provider_config.etag.supported
+                    else []
+                ),
+            ],
         },
     ]
+
+    if service_provider_config is not None and service_provider_config.patch.supported:
+        endpoints.insert(
+            -1,
+            {
+                "path": f"{clean_path}/{{id}}",
+                "method": "PATCH",
+                "description": f"Modify an existing {class_name} resource partially using SCIM PATCH operations",
+                "responseContentType": "application/scim+json",
+                "requestContentType": "application/scim+json",
+                "suggestedUse": ["update"],
+                "parameters": [
+                    id_parameter,
+                    *(
+                        [conditional_header]
+                        if service_provider_config is not None and service_provider_config.etag.supported
+                        else []
+                    ),
+                ],
+            },
+        )
+
+    return endpoints
 
 
 def map_scim_type_to_digester(scim_type: Any) -> str:

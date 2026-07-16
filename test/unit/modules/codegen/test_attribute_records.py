@@ -205,6 +205,10 @@ def test_build_scim_contract_prompt_vars_keeps_source_abstractions_separate():
             "uid": "id",
             "attributes": [{"name": "userName", "type": "string"}],
         },
+        "serviceProviderConfig": {
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+            "patch": {"supported": True},
+        },
     }
 
     prompt_vars = build_scim_contract_prompt_vars(
@@ -217,6 +221,30 @@ def test_build_scim_contract_prompt_vars_keeps_source_abstractions_separate():
         "extensions": scim_context["extensions"],
     }
     assert json.loads(prompt_vars["connid_object_class_json"]) == scim_context["connectorObjectClass"]
+    assert json.loads(prompt_vars["scim_service_provider_config_json"]) == scim_context["serviceProviderConfig"]
+
+
+def test_endpoint_service_provider_config_overrides_attribute_snapshot_for_codegen():
+    prompt_vars = build_scim_contract_prompt_vars(
+        {
+            "attributes": {"userName": {"type": "string"}},
+            "scimContext": {
+                "serviceProviderConfig": {
+                    "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+                    "patch": {"supported": True},
+                }
+            },
+        },
+        {
+            "endpoints": [],
+            "scimCapabilities": {
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+                "patch": {"supported": False},
+            },
+        },
+    )
+
+    assert json.loads(prompt_vars["scim_service_provider_config_json"])["patch"]["supported"] is False
 
 
 def test_build_scim_contract_prompt_vars_preserves_extension_relationship():

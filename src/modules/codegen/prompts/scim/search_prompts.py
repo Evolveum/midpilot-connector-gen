@@ -42,7 +42,8 @@ OUTPUT RULES:
 - If <preferred_endpoints> conflict with docs or SCIM semantics, prefer documented behavior and add a short TODO comment.
 - `emptyFilterSupported true` MUST be inside an `endpoint("...") {{ ... }}` block.
 - Never generate `sortingSupport {{ ... }}` blocks and never reference `sorting.*`.
-- Use SCIM filter syntax in query parameters (`filter=<attribute> <operator> <value>`) when applicable.
+- Use SCIM filter syntax in query parameters (`filter=<attribute> <operator> <value>`) only when
+  `filter.supported` is true in <scim_service_provider_config>.
 - For string values in filters, use escaped quotes: `\\"value\\"`.
 - Treat <result> as current working code and minimally edit/extend it.
 - Do not fabricate parameters, attributes, or fields. If unclear, add a TODO comment.
@@ -56,13 +57,14 @@ _SCIM_SEARCH_SYSTEM_PROMPT_ALL_RULES = textwrap.dedent("""\
 INTENT PROFILE: `all`
 - Generate ONLY empty-filter / get-all search support.
 - Prefer standard SCIM list endpoint semantics and pagination (`startIndex`, `count`) when documented.
+- When `filter.maxResults` is present, do not generate a page-size/count value above that limit.
 - Do not add broad supported filters unless docs require filters for list behavior.
 """)
 
 _SCIM_SEARCH_SYSTEM_PROMPT_FILTER_RULES = textwrap.dedent("""\
 
 INTENT PROFILE: `filter`
-- Generate ONLY documented SCIM filtering capabilities.
+- Generate ONLY documented SCIM filtering capabilities and require `filter.supported` to be true.
 - Prefer explicit `supportedFilter(...) {{ ... }}` or `anyFilterSupported true` based on docs.
 - Do not add get-all behavior unless docs explicitly show it is part of filtered mode.
 """)

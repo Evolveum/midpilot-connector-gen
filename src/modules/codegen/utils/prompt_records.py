@@ -7,8 +7,8 @@ from collections.abc import Iterator
 from typing import Any, Dict, List, Mapping
 
 from src.common.utils.coerce import as_dict_list, as_mapping
-from src.modules.codegen.schema import AttributesPayload
-from src.modules.digester.schemas import AttributeResponse
+from src.modules.codegen.schema import AttributesPayload, EndpointsPayload
+from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 
 
 def _attribute_items(payload: AttributesPayload) -> Iterator[tuple[str, Any]]:
@@ -81,8 +81,11 @@ def extract_scim_context(payload: AttributesPayload) -> Dict[str, Any]:
     return dict(as_mapping(payload.get("scimContext")))
 
 
-def build_scim_contract_prompt_vars(payload: AttributesPayload) -> Dict[str, str]:
-    """Serialize the three SCIM source abstractions into separate prompt variables."""
+def build_scim_contract_prompt_vars(
+    payload: AttributesPayload,
+    endpoints: EndpointsPayload | None = None,
+) -> Dict[str, str]:
+    """Serialize the four SCIM source abstractions into separate prompt variables."""
     context = extract_scim_context(payload)
     protocol_schema = dict(as_mapping(context.get("schema")))
 
@@ -98,6 +101,10 @@ def build_scim_contract_prompt_vars(payload: AttributesPayload) -> Dict[str, str
         resource_contract["extensionOf"] = extension_of.strip()
 
     connid_object_class = dict(as_mapping(context.get("connectorObjectClass")))
+    service_provider_config = dict(as_mapping(context.get("serviceProviderConfig")))
+    endpoint_capabilities = _extract_endpoint_scim_capabilities(endpoints)
+    if endpoint_capabilities:
+        service_provider_config = endpoint_capabilities
 
     def _serialize(value: Mapping[str, Any]) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -106,7 +113,18 @@ def build_scim_contract_prompt_vars(payload: AttributesPayload) -> Dict[str, str
         "scim_protocol_schema_json": _serialize(protocol_schema),
         "scim_resource_contract_json": _serialize(resource_contract),
         "connid_object_class_json": _serialize(connid_object_class),
+        "scim_service_provider_config_json": _serialize(service_provider_config),
     }
+
+
+def _extract_endpoint_scim_capabilities(payload: EndpointsPayload | None) -> Dict[str, Any]:
+    if isinstance(payload, EndpointResponse):
+        if payload.scimCapabilities is None:
+            return {}
+        return payload.scimCapabilities.model_dump(by_alias=True, exclude_none=True)
+    if isinstance(payload, Mapping):
+        return dict(as_mapping(payload.get("scimCapabilities")))
+    return {}
 
 
 def build_connid_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:

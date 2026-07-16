@@ -35,7 +35,8 @@ Prepare a valid Groovy code for update schema in Groovy based on the following `
 Output rules:
 - Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
-- SCIM updates typically use PATCH with PatchOp schema for partial updates, or PUT for full replacement.
+- Select PATCH only when it is present in <extracted_endpoints> and `patch.supported` is true in
+  <scim_service_provider_config>. Otherwise use the documented PUT endpoint for full replacement.
 - Handle multi-valued complex attributes with path selectors when needed.
 - Exclude readOnly and immutable attributes from updates.
 - Treat <extracted_attributes> as the primary sources of truth. Prefer them over the examples in <update_docs>.

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.schemas.common import RelevantDocumentationsMixin
+from src.modules.digester.schemas.scim import ScimServiceProviderConfig
 
 EndpointSuggestedUse = Literal[
     "create",
@@ -20,6 +21,25 @@ EndpointSuggestedUse = Literal[
     "activate",
     "deactivate",
 ]
+
+
+class EndpointRequestParameter(BaseModel):
+    """Structured request parameter available on one endpoint."""
+
+    model_config = {"populate_by_name": True}
+
+    name: str
+    location: Literal["path", "query", "header"]
+    type: str
+    description: str = ""
+    required: bool = False
+    minimum: Optional[int] = None
+    maximum: Optional[int] = None
+    allowed_values: List[str] = Field(
+        default_factory=list,
+        validation_alias="allowedValues",
+        serialization_alias="allowedValues",
+    )
 
 
 class ExtractedEndpointInfo(BaseModel):
@@ -62,6 +82,10 @@ class ExtractedEndpointInfo(BaseModel):
         validation_alias="suggestedUse",
         serialization_alias="suggestedUse",
         description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'list', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
+    )
+    parameters: List[EndpointRequestParameter] = Field(
+        default_factory=list,
+        description="Documented path, query and header parameters available on this endpoint.",
     )
 
     @field_validator("method", mode="before")
@@ -112,6 +136,10 @@ class EndpointParamInfo(BaseModel):
         serialization_alias="suggestedUse",
         description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
     )
+    parameters: List[EndpointRequestParameter] = Field(
+        default_factory=list,
+        description="Documented path, query and header parameters available on this endpoint.",
+    )
 
 
 class EndpointResponse(BaseModel):
@@ -122,6 +150,10 @@ class EndpointResponse(BaseModel):
     endpoints: List[EndpointInfo] = Field(
         default_factory=list,
         description="List of HTTP endpoints related to the specified object class.",
+    )
+    scimCapabilities: Optional[ScimServiceProviderConfig] = Field(
+        default=None,
+        description="Session-wide SCIM service-provider capabilities used to derive the endpoint surface.",
     )
 
 

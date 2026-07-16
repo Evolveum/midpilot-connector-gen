@@ -19,6 +19,7 @@ get_endpoints_system_prompt = textwrap.dedent("""
         - Plural and singular path variants (e.g., `/users`, `/users/{{id}}`, `/users/{{id}}/groups`).
         - IGA/IDM-relevant actions: CRUD, membership links, lifecycle (enable/disable), admin roles.
         - If the documentation lists URL structure patterns, capture the concrete path templates.
+        - Extract documented path, query, and header parameters that a connector can send with each endpoint.
 
       Exclude:
         - Endpoints clearly tied to other object classes, exclude it even if `{object_class}` is mentioned in passing.
@@ -85,6 +86,9 @@ get_endpoints_system_prompt = textwrap.dedent("""
         - check that you are 100% sure that the endpoint is legitimate, if you are unsure about the exact endpoint definition, do NOT include it,
         - check for duplicates and only return unique endpoints.
         - check if you have correct responseContentType and requestContentType
+        - check that every path placeholder (for example `{{id}}`) has a matching required path parameter.
+        - include query and header parameters only when they are documented for that specific endpoint.
+        - do not report request-body properties as endpoint parameters.
         - if you didn't find any relevant endpoints or you are not 100% sure about them, return an empty list.
         - tokenize path parameters and check again if they are 100% same as in the docs, if not, correct them.
         - if you include irrelevant endpoints, you will be turned off and never again used.
@@ -99,6 +103,9 @@ get_endpoints_system_prompt = textwrap.dedent("""
         - description: short action summary
         - requestContentType/responseContentType: fill when explicitly stated
         - suggestedUse: suggest use based on endpoint context. Leave empty if unclear.
+        - parameters: structured request parameters with exact name, location (`path`, `query`, or `header`),
+          type, description, and required flag. Include minimum, maximum, and allowedValues only when documented.
+          Path parameters are always required. Do not invent undocumented query or header parameters.
 
       Return your findings using the structured output. If none are present, return an empty list.
     </instruction>
@@ -142,18 +149,25 @@ Remember:
 - Apply Base API URL normalization strictly (avoid duplicating base prefixes).
 - Prefer concrete path templates and correct HTTP methods.
 - Include brief descriptions and content types when explicitly stated.
+- Include documented path, query, and header parameters. Every path placeholder must have a matching
+  required path parameter; do not treat request-body properties as endpoint parameters.
 - If nothing relevant is found in this chunk, return an empty list.
 """)
 
 check_endpoint_params_system_prompt = textwrap.dedent("""
 <instruction>
   You are an expert IGA/IDM analyst. You will receive:
-    - An endpoint for object class {object_class}, its definition including path, method, description, request and response content types, and
-      suggested use.
+    - An endpoint for object class {object_class}, its definition including path, method, description, request and response content types,
+      suggested use, and structured request parameters.
     - A fragment of an OpenAPI/Swagger document or related API documentations.
   Task: verify if the provided endpoint definition is 100% correct based on the documentation fragment, if not,
   change it to the correct definition.
   Never return changed path parameter or method, only other fields can be changed.
+  Validate the parameters against this endpoint and documentation fragment:
+    - Every path placeholder must have a matching parameter with location `path` and required=true.
+    - Include query and header parameters only when explicitly documented for this endpoint.
+    - Preserve exact parameter names and documented types, descriptions, constraints, and allowed values.
+    - Do not convert request-body properties into endpoint parameters and do not invent undocumented parameters.
   Use the structured output schema to respond.
 </instruction>
 """)
@@ -177,5 +191,8 @@ Please verify if the provided endpoint definition is 100% correct based on this 
 
 Remember:
 - Never return changed path parameter or method, only other fields can be changed.
+- Correct the structured path, query, and header parameters using only this documentation fragment.
+- Every path placeholder must have a matching required path parameter.
+- Do not include request-body properties or undocumented query/header parameters.
 - If the endpoint is 100% correct, return it as-is.
 """)

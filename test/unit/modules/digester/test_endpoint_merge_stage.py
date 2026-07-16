@@ -9,6 +9,7 @@ import pytest
 
 from src.common.enums import JobStage
 from src.modules.digester.aggregation.merges import merge_endpoint_candidates
+from src.modules.digester.schemas import EndpointRequestParameter, ExtractedEndpointInfo
 
 
 @pytest.mark.asyncio
@@ -28,3 +29,49 @@ async def test_merge_endpoint_candidates_does_not_emit_finished_stage():
 
     emitted_stages = [call.kwargs.get("stage") for call in mock_update.await_args_list]
     assert JobStage.finished not in emitted_stages
+
+
+@pytest.mark.asyncio
+async def test_merge_endpoint_candidates_preserves_parameters_from_duplicate_endpoints():
+    endpoints = [
+        ExtractedEndpointInfo(
+            path="/Users",
+            method="GET",
+            description="List users",
+            parameters=[
+                EndpointRequestParameter(
+                    name="filter",
+                    location="query",
+                    type="string",
+                    description="Filter users",
+                )
+            ],
+        ),
+        ExtractedEndpointInfo(
+            path="/Users",
+            method="GET",
+            description="List users with pagination",
+            parameters=[
+                EndpointRequestParameter(
+                    name="count",
+                    location="query",
+                    type="integer",
+                    maximum=50,
+                ),
+                EndpointRequestParameter(
+                    name="FILTER",
+                    location="query",
+                    type="string",
+                    description="SCIM filter expression for users",
+                ),
+            ],
+        ),
+    ]
+
+    merged = await merge_endpoint_candidates(endpoints, "User", uuid4())
+
+    assert len(merged) == 1
+    parameters = {parameter["name"].lower(): parameter for parameter in merged[0]["parameters"]}
+    assert set(parameters) == {"filter", "count"}
+    assert parameters["filter"]["description"] == "SCIM filter expression for users"
+    assert parameters["count"]["maximum"] == 50

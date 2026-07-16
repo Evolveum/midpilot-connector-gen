@@ -108,6 +108,16 @@ async def test_get_class_endpoints_status_found():
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     job_id = uuid4()
+    scim_capabilities = {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+        "patch": {"supported": False},
+        "bulk": {"supported": True, "maxOperations": 15, "maxPayloadSize": 2097152},
+        "filter": {"supported": True, "maxResults": 50},
+        "changePassword": {"supported": False},
+        "sort": {"supported": True},
+        "etag": {"supported": False},
+        "authenticationSchemes": [],
+    }
     mock_repo.get_session_data = AsyncMock(
         side_effect=[
             str(job_id),
@@ -116,7 +126,8 @@ async def test_get_class_endpoints_status_found():
                     EndpointInfo(method=EndpointMethod.GET, path="/users", description="List users").model_dump(
                         by_alias=True
                     )
-                ]
+                ],
+                "scimCapabilities": scim_capabilities,
             },
         ]
     )
@@ -150,6 +161,9 @@ async def test_get_class_endpoints_status_found():
     assert len(response.result.endpoints) == 1
     assert response.result.endpoints[0].method == "GET"
     assert response.result.endpoints[0].path == "/users"
+    assert response.result.scimCapabilities is not None
+    assert response.result.scimCapabilities.patch.supported is False
+    assert response.result.scimCapabilities.filter.max_results == 50
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     assert mock_repo.get_session_data.await_args_list == [
         call(session_id, "userEndpointsJobId"),

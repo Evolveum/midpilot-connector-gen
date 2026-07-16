@@ -65,6 +65,16 @@ def test_scim_crud_input_keeps_contract_views_and_endpoints_separate():
         },
     }
     endpoints = {
+        "scimCapabilities": {
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+            "patch": {"supported": False},
+            "bulk": {"supported": True, "maxOperations": 15, "maxPayloadSize": 2097152},
+            "filter": {"supported": True, "maxResults": 50},
+            "changePassword": {"supported": False},
+            "sort": {"supported": True},
+            "etag": {"supported": False},
+            "authenticationSchemes": [],
+        },
         "endpoints": [
             {
                 "method": "POST",
@@ -72,7 +82,7 @@ def test_scim_crud_input_keeps_contract_views_and_endpoints_separate():
                 "description": "Create User",
                 "relevantDocumentations": [{"docId": "doc-1", "chunkId": "chunk-1"}],
             }
-        ]
+        ],
     }
     generator = CreateGenerator(
         object_class="User",
@@ -91,6 +101,7 @@ def test_scim_crud_input_keeps_contract_views_and_endpoints_separate():
         "extensions": extensions,
     }
     assert json.loads(prompt_vars["connid_object_class_json"]) == connid_object_class
+    assert json.loads(prompt_vars["scim_service_provider_config_json"]) == endpoints["scimCapabilities"]
     assert json.loads(prompt_vars["endpoints_json"]) == [
         {"method": "POST", "path": "/scim/v2/Users", "description": "Create User"}
     ]
@@ -130,13 +141,15 @@ def test_all_scim_operation_prompts_receive_the_separated_context_contract():
     ]
 
     for system_prompt in system_prompts:
-        assert "Keep the three supplied SCIM views separate" in system_prompt
+        assert "Keep the four supplied SCIM views separate" in system_prompt
         assert "Treat <extracted_endpoints> as deterministic" in system_prompt
+        assert "<scim_service_provider_config>" in system_prompt
 
     for user_prompt in user_prompts:
         assert "{scim_protocol_schema_json}" in user_prompt
         assert "{scim_resource_contract_json}" in user_prompt
         assert "{connid_object_class_json}" in user_prompt
+        assert "{scim_service_provider_config_json}" in user_prompt
         assert "{endpoints_json}" in user_prompt
 
 

@@ -5,10 +5,11 @@
 """
 Regression tests for the conndev SCIM baseline loader.
 
-A conndev upload delivers three document contracts that can share the same ``name`` value:
+A conndev upload delivers four document contracts. Three can share the same ``name`` value:
 raw SCIM schemas (``schemaContent``), SCIM resources (``endpoint`` + ``primarySchema`` +
-``schemaExtensions``) and ConnId object classes (``locator`` + ``uid``). The loader must keep
-them apart — mixing them into one name-keyed mapping silently overwrote the raw schemas and
+``schemaExtensions``), ConnId object classes (``locator`` + ``uid``), plus one session-wide
+ServiceProviderConfig capability contract. The loader must keep them apart — mixing the
+resource-facing contracts into one name-keyed mapping silently overwrote the raw schemas and
 broke embedded-class and attribute derivation.
 """
 
@@ -75,8 +76,51 @@ def _connid_document(name: str, namespace: str, locator: str, attributes: list[d
     return {"namespace": namespace, "attributes": attributes, "locator": locator, "name": name, "uid": name}
 
 
+def _service_provider_document(
+    *,
+    patch_supported: bool = True,
+    filter_max_results: int = 50,
+) -> dict:
+    return {
+        "name": "ServiceProviderConfig",
+        "content": json.dumps(
+            {
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+                "documentationUri": "https://scim.example.test",
+                "patch": {"supported": patch_supported},
+                "bulk": {
+                    "supported": True,
+                    "maxOperations": 15,
+                    "maxPayloadSize": 2097152,
+                },
+                "filter": {
+                    "supported": True,
+                    "maxResults": filter_max_results,
+                },
+                "changePassword": {"supported": False},
+                "sort": {"supported": True},
+                "etag": {"supported": False},
+                "authenticationSchemes": [
+                    {
+                        "name": "OAuth Bearer Token",
+                        "description": "OAuth bearer token",
+                        "specUri": "https://www.rfc-editor.org/info/rfc6750",
+                        "type": "oauthbearertoken",
+                        "primary": True,
+                    }
+                ],
+                "meta": {
+                    "resourceType": "ServiceProviderConfig",
+                    "location": "https://scim.example.test/v2/ServiceProviderConfig",
+                },
+            }
+        ),
+        "id": "ServiceProviderConfig",
+    }
+
+
 def _session_conndev_items() -> list[dict]:
-    """Example export: 3 schemas, 2 resources and 2 ConnId classes."""
+    """Example export: schemas, resources, ConnId classes and service-provider capabilities."""
     return [
         _conndev_item(_schema_document(USER_SCHEMA), "upload://conndev_ScimSchema_User.json"),
         _conndev_item(_schema_document(GROUP_SCHEMA), "upload://conndev_ScimSchema_Group.json"),
@@ -98,6 +142,10 @@ def _session_conndev_items() -> list[dict]:
         _conndev_item(
             _connid_document("Group", GROUP_SCHEMA["id"], "/Groups", [{"name": "displayName", "type": "string"}]),
             "upload://conndev_ObjectClass_Group.json",
+        ),
+        _conndev_item(
+            _service_provider_document(),
+            "upload://conndev_ScimServiceProviderConfig_ServiceProviderConfig.json",
         ),
     ]
 
@@ -125,8 +173,8 @@ async def _load_bundle(items: list[dict]):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reverse_order", [False, True])
-async def test_loader_keeps_the_three_conndev_contracts_apart(reverse_order):
-    """Same-named schema/resource/ConnId documents must not overwrite each other, in any order."""
+async def test_loader_keeps_the_four_conndev_contracts_apart(reverse_order):
+    """Schema/resource/ConnId/config documents must not overwrite each other, in any order."""
     items = _session_conndev_items()
     if reverse_order:
         items = list(reversed(items))
@@ -149,6 +197,10 @@ async def test_loader_keeps_the_three_conndev_contracts_apart(reverse_order):
     assert [attr["name"] for attr in bundle.connid_classes["User"].attributes] == ["profileUrl", "active"]
 
     assert bundle.extension_superclasses == {"EnterpriseUser": "User"}
+    assert bundle.service_provider_config is not None
+    assert bundle.service_provider_config.config.patch.supported is True
+    assert bundle.service_provider_config.config.filter.max_results == 50
+    assert bundle.service_provider_config.config.bulk.max_operations == 15
 
 
 @pytest.mark.asyncio
@@ -302,6 +354,8 @@ async def test_loaded_baseline_supports_base_and_embedded_class_derivation():
         "profileUrl",
         "active",
     ]
+    assert user_context["serviceProviderConfig"]["filter"]["maxResults"] == 50
+    assert user_context["serviceProviderConfig"]["authenticationSchemes"][0]["type"] == "oauthbearertoken"
 
     extension_context = build_scim_codegen_context(bundle, "EnterpriseUser")
     assert extension_context["extensionOf"] == "User"
@@ -323,6 +377,47 @@ async def test_loader_falls_back_to_resource_embedded_schemas():
 
     assert set(bundle.schemas) == {"User", "Group", "EnterpriseUser"}
     assert bundle.extension_superclasses == {"EnterpriseUser": "User"}
+
+
+@pytest.mark.asyncio
+async def test_loader_uses_latest_service_provider_config_upload():
+    bundle = await _load_bundle(
+        [
+            _conndev_item(
+                _service_provider_document(patch_supported=False, filter_max_results=25),
+                "upload://older-service-provider-config.json",
+            ),
+            _conndev_item(
+                _service_provider_document(patch_supported=True, filter_max_results=100),
+                "upload://latest-service-provider-config.json",
+            ),
+        ]
+    )
+
+    assert bundle.service_provider_config is not None
+    assert bundle.service_provider_config.config.patch.supported is True
+    assert bundle.service_provider_config.config.filter.max_results == 100
+
+
+@pytest.mark.asyncio
+async def test_loader_rejects_invalid_service_provider_config_contract(caplog):
+    invalid_document = _service_provider_document()
+    raw_config = json.loads(invalid_document["content"])
+    raw_config.pop("patch")
+    invalid_document["content"] = json.dumps(raw_config)
+
+    with caplog.at_level("WARNING", logger=_MODULE):
+        bundle = await _load_bundle(
+            [
+                _conndev_item(
+                    invalid_document,
+                    "upload://invalid-service-provider-config.json",
+                )
+            ]
+        )
+
+    assert bundle.service_provider_config is None
+    assert "invalid contract" in caplog.text
 
 
 @pytest.mark.asyncio

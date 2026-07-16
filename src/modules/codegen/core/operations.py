@@ -36,7 +36,7 @@ def _prepare_operation_input_data(
         "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
     }
     if include_scim_context:
-        input_data.update(build_scim_contract_prompt_vars(attributes))
+        input_data.update(build_scim_contract_prompt_vars(attributes, endpoints))
     return input_data
 
 

@@ -7,7 +7,7 @@ import textwrap
 SCIM_CONTRACT_CONTEXT_SYSTEM_RULES = textwrap.dedent("""\
 
 SCIM CONTRACT CONTEXT RULES:
-- Keep the three supplied SCIM views separate; they describe different abstraction levels and may legitimately differ.
+- Keep the four supplied SCIM views separate; they describe different abstraction levels and may legitimately differ.
 - <scim_protocol_schema> is the standalone SCIM schema. Use it as the protocol-level authority for attribute names,
   types, complex sub-attributes, required/multi-value flags, mutability, returned behavior, uniqueness, canonical values,
   reference types, and schema URN.
@@ -18,6 +18,12 @@ SCIM CONTRACT CONTEXT RULES:
 - <connid_object_class> is the connector-framework projection. Use it to understand which attributes and identifiers
   the ConnID layer currently exposes. It is normalized only from the ObjectClass export, not enriched from either
   schema view. Attributes omitted there are not automatically absent from the SCIM API.
+- <scim_service_provider_config> is the session-wide capability contract. Treat its explicit flags and limits as
+  authoritative: PATCH is available only when `patch.supported` is true; generate SCIM filtering or sorting only when
+  their respective `supported` flags are true; respect `filter.maxResults`; and add ETag/If-Match behavior only when
+  `etag.supported` is true. Bulk and change-password capabilities do not prove per-object-class CRUD endpoints.
+- ServiceProviderConfig does not carry independent support flags for GET, POST, PUT or DELETE. Determine those methods
+  from <extracted_endpoints> and the SCIM resource contract rather than inferring that they are disabled.
 - When the views disagree, do not silently merge them or let one overwrite another. Use SCIM schema/resource data for
   target API semantics and the ConnID projection for framework visibility. Bridge a discrepancy only when extracted
   attributes or provider documentation provide enough evidence; otherwise preserve a short TODO instead of guessing.
@@ -42,6 +48,12 @@ ConnID object class projection (what the connector framework currently exposes, 
 <connid_object_class>
 {connid_object_class_json}
 </connid_object_class>
+
+SCIM ServiceProviderConfig (session-wide protocol capabilities and limits):
+
+<scim_service_provider_config>
+{scim_service_provider_config_json}
+</scim_service_provider_config>
 """)
 
 SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES = textwrap.dedent("""\
