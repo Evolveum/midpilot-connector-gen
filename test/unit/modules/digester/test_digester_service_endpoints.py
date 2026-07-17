@@ -7,10 +7,11 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester import service
+from src.common.enums import ApiType
 from src.modules.digester.enums import EndpointMethod
+from src.modules.digester.extractors.endpoints import extract_endpoints
 from src.modules.digester.schemas import EndpointInfo
-from src.modules.digester.utils.criteria import DEFAULT_CRITERIA
+from src.modules.digester.selection import DEFAULT_CRITERIA
 
 
 # ==================== EXTRACT ENDPOINTS ====================
@@ -37,14 +38,18 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
     relevant_chunks = [{"doc_id": doc_uuid, "chunk_id": doc_uuid}]
 
     with (
-        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service._extract_rest_endpoints") as mock_extract_endpoints,
+        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints") as mock_extract_endpoints,
         patch(
-            "src.modules.digester.service.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         mock_extract_chunks.return_value = (["chunk-0 text"], [(0, doc_uuid)])
 
@@ -74,9 +79,7 @@ async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester
             "relevantDocumentations": relevant_chunks,
         }
 
-        result = await service.extract_endpoints(
-            fake_doc_items, "User", session_id, relevant_chunks, job_id, base_api_url
-        )
+        result = await extract_endpoints(fake_doc_items, "User", session_id, relevant_chunks, job_id, base_api_url)
 
         # Verify result structure
         assert "result" in result
@@ -102,12 +105,16 @@ async def test_extract_endpoints_no_relevant_chunks(mock_llm, mock_digester_upda
     job_id = uuid4()
 
     with (
-        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_extract_chunks,
+        patch(
+            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         mock_extract_chunks.return_value = ([], [])
 
-        result = await service.extract_endpoints([], "User", session_id, [], job_id, "")
+        result = await extract_endpoints([], "User", session_id, [], job_id, "")
 
         assert result["result"]["endpoints"] == []
         assert result["relevantDocumentations"] == []
@@ -125,14 +132,18 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
     relevant_chunks = [{"doc_id": doc_uuid, "chunk_id": doc_uuid}]
 
     with (
-        patch("src.modules.digester.service.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.service._extract_rest_endpoints") as mock_extract_endpoints,
+        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints") as mock_extract_endpoints,
         patch(
-            "src.modules.digester.service.update_object_class_field_in_session",
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         mock_extract_chunks.return_value = (["chunk"], [(0, doc_uuid)])
         mock_extract_endpoints.return_value = {
@@ -148,7 +159,7 @@ async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_jo
             "relevantDocumentations": relevant_chunks,
         }
 
-        await service.extract_endpoints(fake_doc_items, "User", session_id, relevant_chunks, job_id, base_api_url)
+        await extract_endpoints(fake_doc_items, "User", session_id, relevant_chunks, job_id, base_api_url)
 
         # Verify base_api_url was passed correctly
         call_args = mock_extract_endpoints.call_args
@@ -190,15 +201,23 @@ async def test_extract_endpoints_retries_with_default_criteria_when_primary_is_e
     }
 
     with (
-        patch("src.modules.digester.service.select_doc_chunks") as mock_select_chunks,
-        patch("src.modules.digester.service._extract_rest_endpoints", new_callable=AsyncMock) as mock_extract_endpoints,
-        patch("src.modules.digester.service.filter_documentation_items", new_callable=AsyncMock) as mock_filter,
+        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_select_chunks,
         patch(
-            "src.modules.digester.service.update_object_class_field_in_session",
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints", new_callable=AsyncMock
+        ) as mock_extract_endpoints,
+        patch(
+            "src.modules.digester.extractors.endpoints.filter_documentation_items", new_callable=AsyncMock
+        ) as mock_filter,
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         mock_select_chunks.side_effect = [
             (["group overview"], [primary_chunk_id]),
@@ -207,7 +226,7 @@ async def test_extract_endpoints_retries_with_default_criteria_when_primary_is_e
         mock_extract_endpoints.side_effect = [empty_primary, fallback_result]
         mock_filter.return_value = default_doc_items
 
-        result = await service.extract_endpoints(primary_doc_items, "Group", session_id, relevant_chunks, job_id, "")
+        result = await extract_endpoints(primary_doc_items, "Group", session_id, relevant_chunks, job_id, "")
 
     assert result == fallback_result
     mock_filter.assert_awaited_once_with(DEFAULT_CRITERIA, session_id)
@@ -236,21 +255,29 @@ async def test_extract_endpoints_does_not_retry_when_default_criteria_matches_sa
     empty_primary = {"result": {"endpoints": []}, "relevantDocumentations": []}
 
     with (
-        patch("src.modules.digester.service.select_doc_chunks") as mock_select_chunks,
-        patch("src.modules.digester.service._extract_rest_endpoints", new_callable=AsyncMock) as mock_extract_endpoints,
-        patch("src.modules.digester.service.filter_documentation_items", new_callable=AsyncMock) as mock_filter,
+        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_select_chunks,
         patch(
-            "src.modules.digester.service.update_object_class_field_in_session",
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints", new_callable=AsyncMock
+        ) as mock_extract_endpoints,
+        patch(
+            "src.modules.digester.extractors.endpoints.filter_documentation_items", new_callable=AsyncMock
+        ) as mock_filter,
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         mock_select_chunks.return_value = (["group overview"], [chunk_id])
         mock_extract_endpoints.return_value = empty_primary
         mock_filter.return_value = doc_items
 
-        result = await service.extract_endpoints(doc_items, "Group", session_id, relevant_chunks, job_id, "")
+        result = await extract_endpoints(doc_items, "Group", session_id, relevant_chunks, job_id, "")
 
     assert result == empty_primary
     mock_filter.assert_awaited_once_with(DEFAULT_CRITERIA, session_id)
@@ -258,3 +285,177 @@ async def test_extract_endpoints_does_not_retry_when_default_criteria_matches_sa
     mock_extract_endpoints.assert_awaited_once()
     mock_digester_update_job_progress.assert_awaited()
     mock_update_object_class.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scim_extract_endpoints_uses_scraped_documentation_when_conndev_has_no_endpoint(
+    mock_llm, mock_digester_update_job_progress
+):
+    session_id = uuid4()
+    job_id = uuid4()
+    conndev_doc_id = str(uuid4())
+    conndev_chunk_id = str(uuid4())
+    scraped_doc_id = str(uuid4())
+    scraped_chunk_id = str(uuid4())
+    conndev_item = {
+        "docId": conndev_doc_id,
+        "chunkId": conndev_chunk_id,
+        "content": '{"schemaContent": "..."}',
+        "@metadata": {"content_type": "application/com.evolveum.conndev+json"},
+    }
+    scraped_item = {
+        "docId": scraped_doc_id,
+        "chunkId": scraped_chunk_id,
+        "content": "GET /api/actions",
+        "@metadata": {"content_type": "text/html"},
+    }
+    doc_items = [conndev_item, scraped_item]
+    relevant_chunks = [
+        {"doc_id": conndev_doc_id, "chunk_id": conndev_chunk_id},
+        {"doc_id": scraped_doc_id, "chunk_id": scraped_chunk_id},
+    ]
+    documented_result = {
+        "result": {
+            "endpoints": [
+                EndpointInfo(
+                    method=EndpointMethod.GET,
+                    path="/api/actions",
+                    description="List actions",
+                ).model_dump()
+            ]
+        },
+        "relevantDocumentations": [{"doc_id": scraped_doc_id, "chunk_id": scraped_chunk_id}],
+    }
+
+    with (
+        patch(
+            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SCIM,
+        ),
+        patch(
+            "src.modules.digester.extractors.endpoints.pregenerate_scim_endpoints",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as mock_pregenerate,
+        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_select_chunks,
+        patch(
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
+            new_callable=AsyncMock,
+            return_value=documented_result,
+        ) as mock_extract_documented,
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        mock_select_chunks.return_value = ([scraped_item["content"]], [scraped_chunk_id])
+
+        result = await extract_endpoints(
+            doc_items,
+            "Action",
+            session_id,
+            relevant_chunks,
+            job_id,
+            "https://example.test",
+        )
+
+    assert result == documented_result
+    mock_pregenerate.assert_awaited_once_with(
+        session_id=session_id,
+        object_class="Action",
+        job_id=job_id,
+        object_class_flags=None,
+    )
+    mock_select_chunks.assert_called_once_with([scraped_item], relevant_chunks, "Digester:Endpoints")
+    mock_extract_documented.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scim_extract_endpoints_does_not_fall_back_for_terminal_non_resource(
+    mock_llm, mock_digester_update_job_progress
+):
+    session_id = uuid4()
+    job_id = uuid4()
+    terminal_result = {"result": {"endpoints": []}, "relevantDocumentations": []}
+
+    with (
+        patch(
+            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SCIM,
+        ),
+        patch(
+            "src.modules.digester.extractors.endpoints.pregenerate_scim_endpoints",
+            new_callable=AsyncMock,
+            return_value=terminal_result,
+        ),
+        patch(
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
+            new_callable=AsyncMock,
+        ) as mock_extract_documented,
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        result = await extract_endpoints([], "UserName", session_id, [], job_id)
+
+    assert result == terminal_result
+    mock_extract_documented.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scim_documentation_fallback_returns_empty_when_only_conndev_documents_exist(
+    mock_llm, mock_digester_update_job_progress
+):
+    session_id = uuid4()
+    job_id = uuid4()
+    doc_id = str(uuid4())
+    chunk_id = str(uuid4())
+    conndev_item = {
+        "docId": doc_id,
+        "chunkId": chunk_id,
+        "content": '{"schemaContent": "..."}',
+        "@metadata": {"content_type": "application/com.evolveum.conndev+json"},
+    }
+    relevant_chunks = [{"doc_id": doc_id, "chunk_id": chunk_id}]
+
+    with (
+        patch(
+            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SCIM,
+        ),
+        patch(
+            "src.modules.digester.extractors.endpoints.pregenerate_scim_endpoints",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
+            new_callable=AsyncMock,
+        ) as mock_extract_documented,
+        patch(
+            "src.modules.digester.extractors.endpoints.filter_documentation_items",
+            new_callable=AsyncMock,
+            return_value=[conndev_item],
+        ),
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        result = await extract_endpoints(
+            [conndev_item],
+            "Action",
+            session_id,
+            relevant_chunks,
+            job_id,
+        )
+
+    assert result == {"result": {"endpoints": []}, "relevantDocumentations": []}
+    mock_extract_documented.assert_not_awaited()

@@ -50,6 +50,35 @@ class JobStage(StrEnum):
 
 
 class ApiType(StrEnum):
-    REST = "REST"
-    SCIM = "SCIM"
-    SQL = "SQL"
+    REST = "rest"
+    SCIM = "scim"
+    SQL = "sql"
+
+
+class ProtocolAvailability(StrEnum):
+    """
+    Whether a detected integration protocol is generally usable by the customer or gated.
+
+    Shared advisory signal for any detected protocol (SCIM, REST): a product may expose a
+    protocol yet gate it behind a paid/enterprise/partner plan the customer might not have.
+    """
+
+    AVAILABLE = "available"
+    PAID = "paid"
+    UNKNOWN = "unknown"
+
+
+class DetectionSource(StrEnum):
+    """
+    Where a protocol confirmation came from.
+
+    Shared provenance for the per-protocol availability advisories (which signals confirmed a
+    protocol). Declaration order is the order sources are reported in. Python StrEnums cannot be
+    extended with extra members via subclassing, so this single enum carries every source and
+    ``SCIM_CLOUD`` is a SCIM-only member (no other protocol has a dedicated registry signal).
+    """
+
+    SCIM_CLOUD = "scim_cloud"
+    DOCUMENTATION = "documentation"
+    KNOWLEDGE = "knowledge_of_llm"
+    WEB_SEARCH = "web_search"

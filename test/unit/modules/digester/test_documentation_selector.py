@@ -7,10 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester.utils.documentation_selector import (
-    DocumentationSelector,
-    RelevantChunksNotFoundError,
-)
+from src.common.errors import RelevantChunksNotFoundError
+from src.modules.digester.selection import DocumentationSelector
 
 
 @pytest.mark.asyncio
@@ -39,22 +37,22 @@ async def test_attribute_plan_uses_scim_object_class_relevance_when_filter_has_n
 
     with (
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_api_types",
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
-            return_value=["SCIM"],
+            return_value=["scim"],
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.filter_documentation_items",
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
             new_callable=AsyncMock,
             return_value=[],
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_documentation",
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new_callable=AsyncMock,
             return_value=doc_items,
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.RelevantChunkRepository",
+            "src.modules.digester.selection.documentation_selector.RelevantChunkRepository",
             return_value=relevant_repo,
         ),
     ):
@@ -93,22 +91,22 @@ async def test_endpoint_plan_uses_default_criteria_when_endpoint_filter_has_no_c
 
     with (
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_api_types",
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
             return_value=[],
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_base_api_url",
+            "src.modules.digester.selection.documentation_selector.get_session_base_api_url",
             new_callable=AsyncMock,
             return_value="https://api.example.com",
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.filter_documentation_items",
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
             new_callable=AsyncMock,
             side_effect=[[], [{"docId": doc_id, "chunkId": chunk_id}]],
         ) as mock_filter,
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_documentation",
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new_callable=AsyncMock,
             return_value=doc_items,
         ),
@@ -122,9 +120,63 @@ async def test_endpoint_plan_uses_default_criteria_when_endpoint_filter_has_no_c
     assert plan.base_api_url == "https://api.example.com"
     assert plan.doc_items == doc_items
     assert plan.relevant_chunks == [{"doc_id": doc_id, "chunk_id": chunk_id}]
+    assert plan.object_class_flags == {}
     assert mock_filter.await_count == 2
     assert mock_filter.await_args_list[0].args[1] == session_id
     assert mock_filter.await_args_list[1].args[1] == session_id
+
+
+@pytest.mark.asyncio
+async def test_scim_endpoint_plan_carries_structural_flags_into_job_input():
+    session_id = uuid4()
+    repo = MagicMock()
+    repo.get_session_data = AsyncMock(
+        return_value={
+            "objectClasses": [
+                {
+                    "name": "UserPhoneNumbers",
+                    "embedded": "true",
+                    "abstract": False,
+                }
+            ]
+        }
+    )
+
+    with (
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
+            new_callable=AsyncMock,
+            return_value=["scim"],
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_base_api_url",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.RelevantChunkRepository",
+            return_value=MagicMock(
+                get_relevant_chunks_grouped_by_entity=AsyncMock(return_value={}),
+            ),
+        ),
+    ):
+        plan = await DocumentationSelector(MagicMock()).build_endpoint_plan(
+            repo=repo,
+            session_id=session_id,
+            object_class="UserPhoneNumbers",
+        )
+
+    assert plan.object_class_flags == {"embedded": True, "abstract": False}
 
 
 @pytest.mark.asyncio
@@ -152,22 +204,22 @@ async def test_attribute_plan_uses_sql_schema_chunks_without_rest_filtering():
 
     with (
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_api_types",
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
-            return_value=["SQL"],
+            return_value=["sql"],
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.filter_documentation_items",
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
             new_callable=AsyncMock,
             return_value=[],
         ) as mock_filter,
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_documentation",
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new_callable=AsyncMock,
             return_value=doc_items,
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.RelevantChunkRepository",
+            "src.modules.digester.selection.documentation_selector.RelevantChunkRepository",
             return_value=relevant_repo,
         ),
     ):
@@ -211,27 +263,27 @@ async def test_endpoint_plan_uses_sql_schema_chunks_with_zero_endpoint_metadata(
 
     with (
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_api_types",
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
-            return_value=["SQL"],
+            return_value=["sql"],
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_base_api_url",
+            "src.modules.digester.selection.documentation_selector.get_session_base_api_url",
             new_callable=AsyncMock,
             return_value="",
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.filter_documentation_items",
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
             new_callable=AsyncMock,
             return_value=[],
         ) as mock_filter,
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_documentation",
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new_callable=AsyncMock,
             return_value=doc_items,
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.RelevantChunkRepository",
+            "src.modules.digester.selection.documentation_selector.RelevantChunkRepository",
             return_value=relevant_repo,
         ),
     ):
@@ -263,12 +315,12 @@ async def test_attribute_plan_rejects_rest_without_relevant_chunks():
 
     with (
         patch(
-            "src.modules.digester.utils.documentation_selector.get_session_api_types",
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
             return_value=[],
         ),
         patch(
-            "src.modules.digester.utils.documentation_selector.filter_documentation_items",
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
             new_callable=AsyncMock,
             return_value=[],
         ),

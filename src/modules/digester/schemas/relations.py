@@ -4,17 +4,17 @@
 
 from typing import List, Optional
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field
+
+from src.common.schema import CamelCaseModel
 
 # --- Relation ---
 
 
-class RelationRecord(BaseModel):
+class RelationRecord(CamelCaseModel):
     """
     Relationship between two object classes discovered in the schema.
     """
-
-    model_config = {"populate_by_name": True}
 
     name: str = Field(
         ...,
@@ -25,8 +25,6 @@ class RelationRecord(BaseModel):
     )
     display_name: str = Field(
         ...,
-        validation_alias=AliasChoices("displayName", "display_name"),
-        serialization_alias="displayName",
         description=(
             "Human-readable relation name shown to users based on documentation "
             "(e.g., 'User to Group', 'Membership to Project')."
@@ -34,8 +32,6 @@ class RelationRecord(BaseModel):
     )
     short_description: str = Field(
         default="",
-        validation_alias="shortDescription",
-        serialization_alias="shortDescription",
         description=(
             "One concise sentence describing the relation meaning, grounded in documentation evidence. "
             "Leave empty when no trustworthy short description can be derived."
@@ -50,8 +46,6 @@ class RelationRecord(BaseModel):
     )
     subject_attribute: Optional[str] = Field(
         default="",
-        validation_alias="subjectAttribute",
-        serialization_alias="subjectAttribute",
         description=(
             "Attribute on the subject that points to object identifiers/references (e.g., groups, roles, projects). "
             "Can be a virtual attribute name when the relation is explicit only via inverse/query evidence."
@@ -66,8 +60,6 @@ class RelationRecord(BaseModel):
     )
     object_attribute: Optional[str] = Field(
         default="",
-        validation_alias="objectAttribute",
-        serialization_alias="objectAttribute",
         description=(
             "Inverse attribute on the object that points back to subject identifiers/references "
             "(e.g., members, owners). Leave empty when not documented or not applicable."

@@ -4,6 +4,7 @@
 
 from typing import Any, Dict, List, Mapping, Optional
 
+from src.common.utils.coerce import as_list, as_mapping
 from src.modules.codegen.schema import AuthPayload, PreferredAuthorizations
 from src.modules.digester.enums import auth_type_match_key, normalize_auth_type_value
 
@@ -33,10 +34,7 @@ def _normalize_preferred_authorization(preferred: Mapping[str, Any]) -> Dict[str
 
 
 def _auth_items_from_payload(auth_payload: AuthPayload) -> List[Mapping[str, Any]]:
-    raw_auth = auth_payload.get("auth")
-    if not isinstance(raw_auth, list):
-        return []
-    return [item for item in raw_auth if isinstance(item, Mapping)]
+    return [item for item in as_list(auth_payload.get("auth")) if isinstance(item, Mapping)]
 
 
 def _find_matching_auth_item(
@@ -162,12 +160,9 @@ def has_matching_preferred_authorization(
 
 
 def _normalize_chunk_refs(value: Any) -> List[Dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-
     normalized: List[Dict[str, Any]] = []
     seen_chunk_ids: set[str] = set()
-    for item in value:
+    for item in as_list(value):
         if not isinstance(item, Mapping):
             continue
         chunk_id = item.get("chunk_id") or item.get("chunkId")
@@ -192,8 +187,7 @@ def select_authorization_chunk_refs(
     auth_payload: AuthPayload,
     preferred_authorizations: PreferredAuthorizations,
 ) -> List[Dict[str, Any]]:
-    if not isinstance(relevant_documentations, Mapping):
-        return []
+    relevant_documentations = as_mapping(relevant_documentations)
 
     auth_pairs = _normalize_chunk_refs(relevant_documentations.get("authOutput"))
     if not auth_pairs:

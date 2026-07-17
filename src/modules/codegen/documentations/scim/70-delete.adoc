@@ -1,0 +1,34 @@
+= SCIM delete operation customization
+:page-nav-title: Delete operations
+:page-upkeep-status: orange
+:page-toc: top
+
+This document is part of the SCIM 2.0 connector tutorial. See xref:index#[Index] for other topics.
+
+SCIM 2.0 deletes a resource with HTTP `DELETE` against the item form of its resource endpoint.
+The collection endpoint must come from the resource contract or provider documentation; it must not
+be derived only from the object-class name.
+
+== Standard delete
+
+For a well-behaved SCIM server, no delete customization is required:
+
+[source,groovy]
+----
+objectClass("User") {
+    delete {
+    }
+}
+----
+
+The framework uses the resource endpoint configured for the object class, appends the resource identifier,
+and expects the standard successful response without a resource body.
+
+== Provider-specific behavior
+
+Customize delete only when the provider documentation proves that the target differs from standard SCIM behavior.
+Examples include an alternative identifier, a non-standard item path, required request parameters, or deactivation
+through an update instead of physical deletion.
+
+Do not generate delete operations for embedded complex attributes or extension schemas because they do not expose
+independent resource endpoints.

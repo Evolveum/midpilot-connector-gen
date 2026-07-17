@@ -7,10 +7,10 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester import service
 from src.modules.digester.enums import EndpointMethod
+from src.modules.digester.extractors.connectivity_endpoint import extract_connectivity_endpoint
 from src.modules.digester.schemas import ExtractedConnectivityEndpointInfo
-from src.modules.digester.utils.criteria import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA
+from src.modules.digester.selection import CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA
 
 
 @pytest.mark.asyncio
@@ -46,7 +46,10 @@ async def test_extract_connectivity_endpoint_returns_all_candidates_ranked(mock_
     )
 
     with (
-        patch("src.modules.digester.service.run_doc_extractors_concurrently", new_callable=AsyncMock) as mock_run,
+        patch(
+            "src.modules.digester.extractors.connectivity_endpoint.run_doc_extractors_concurrently",
+            new_callable=AsyncMock,
+        ) as mock_run,
         patch(
             "src.modules.digester.extractors.connectivity_endpoint.rank_connectivity_candidates",
             new_callable=AsyncMock,
@@ -64,7 +67,7 @@ async def test_extract_connectivity_endpoint_returns_all_candidates_ranked(mock_
 
         mock_rank.side_effect = fake_rank
 
-        result = await service.extract_connectivity_endpoint(
+        result = await extract_connectivity_endpoint(
             doc_items=doc_items,
             session_id=session_id,
             job_id=job_id,
@@ -117,15 +120,17 @@ async def test_extract_connectivity_endpoint_retries_with_fallback_when_primary_
 
     with (
         patch(
-            "src.modules.digester.service._extract_connectivity_endpoint_from_doc_items",
+            "src.modules.digester.extractors.connectivity_endpoint._extract_connectivity_endpoint_from_doc_items",
             new_callable=AsyncMock,
         ) as mock_extract,
-        patch("src.modules.digester.service.filter_documentation_items", new_callable=AsyncMock) as mock_filter,
+        patch(
+            "src.modules.digester.extractors.connectivity_endpoint.filter_documentation_items", new_callable=AsyncMock
+        ) as mock_filter,
     ):
         mock_extract.side_effect = [empty_result, fallback_result]
         mock_filter.return_value = fallback_doc_items
 
-        result = await service.extract_connectivity_endpoint(
+        result = await extract_connectivity_endpoint(
             doc_items=primary_doc_items,
             session_id=session_id,
             job_id=job_id,

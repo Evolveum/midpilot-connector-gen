@@ -4,9 +4,9 @@
 
 """Structure-aware splitting of oversized single-item schemas.
 
-Some schemas (SQL DDL, SCIM/conndev JSON or YAML) are intentionally kept as a
+Some schemas (SQL DDL, SCIM/conndev JSON) are intentionally kept as a
 single documentation item because downstream heuristics parse them in their
-native format (runnable SQL statements, valid JSON/YAML). A naive token-overlap
+native format (runnable SQL statements, valid JSON). A naive token-overlap
 split would cut through the middle of a statement or object and break that
 parsing.
 
@@ -27,8 +27,6 @@ import json
 import logging
 from typing import Any, Callable
 
-import yaml
-
 from src.common.chunking.tokens import count_tokens, split_text_with_token_overlap
 
 logger = logging.getLogger(__name__)
@@ -47,7 +45,7 @@ def split_single_item_schema(
 
     Args:
         text: The full schema text (already pretty-printed by the parser stage).
-        parser: The parser used for the upload (``json``, ``yaml`` or ``text`` for SQL).
+        parser: The parser used for the upload (``json`` or ``text`` for SQL).
         filename: Source filename, used for logging only.
         max_tokens: Per-chunk token budget for the schema content.
 
@@ -59,10 +57,6 @@ def split_single_item_schema(
         return _split_structured_schema(
             text, filename=filename, max_tokens=max_tokens, serialize=_serialize_json, load=json.loads
         )
-    if parser == "yaml":
-        return _split_structured_schema(
-            text, filename=filename, max_tokens=max_tokens, serialize=_serialize_yaml, load=yaml.safe_load
-        )
     return _split_sql_statements(text, filename=filename, max_tokens=max_tokens)
 
 
@@ -70,17 +64,8 @@ def _serialize_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def _serialize_yaml(value: Any) -> str:
-    return yaml.safe_dump(value, allow_unicode=True, sort_keys=False)
-
-
 def _as_chunks(texts: list[str]) -> list[tuple[str, int]]:
     return [(stripped, count_tokens(stripped)) for text in texts if (stripped := text.strip())]
-
-
-# --------------------------------------------------------------------------- #
-# JSON / YAML structural splitting
-# --------------------------------------------------------------------------- #
 
 
 def _split_structured_schema(
@@ -93,7 +78,7 @@ def _split_structured_schema(
 ) -> list[tuple[str, int]]:
     try:
         parsed = load(text)
-    except (json.JSONDecodeError, yaml.YAMLError) as exc:
+    except json.JSONDecodeError as exc:
         logger.warning(
             "[Chunking] Single-item schema %s is not valid structured data (%s); "
             "falling back to token-overlap split which may break native parsing.",
@@ -110,7 +95,7 @@ def _split_value(value: Any, *, max_tokens: int, serialize: Serializer) -> list[
     """Split a parsed value into sub-values that each serialize within ``max_tokens``.
 
     Each returned sub-value is a valid structural fragment (list, dict or scalar),
-    so re-serializing it yields valid JSON/YAML.
+    so re-serializing it yields valid JSON.
     """
     if count_tokens(serialize(value)) <= max_tokens:
         return [value]
@@ -158,10 +143,6 @@ def _split_dict_value(value: dict[str, Any], *, max_tokens: int, serialize: Seri
         else:
             small[key] = val
 
-    # Scalar metadata (e.g. databaseName, schema version) is cheap and identifies the
-    # schema. When a container key has to be split, carry that metadata into every
-    # fragment so each sub-schema stays self-describing and so the metadata is not
-    # emitted as a lone object that downstream heuristics could misread.
     scalar_context = {key: val for key, val in small.items() if not isinstance(val, (list, dict))} if oversized else {}
     context_tokens = count_tokens(serialize(scalar_context)) if scalar_context else 0
     standalone_small = {key: val for key, val in small.items() if key not in scalar_context}
@@ -181,8 +162,6 @@ def _split_dict_value(value: dict[str, Any], *, max_tokens: int, serialize: Seri
 
     fragment_budget = max(1, max_tokens - context_tokens)
     for key, val in oversized.items():
-        # Re-wrap each fragment under the original key so container keys
-        # (e.g. "tables", "schema") are preserved for downstream heuristics.
         for sub in _split_value(val, max_tokens=fragment_budget, serialize=serialize):
             groups.append({**scalar_context, key: sub})
 
@@ -192,11 +171,6 @@ def _split_dict_value(value: dict[str, Any], *, max_tokens: int, serialize: Seri
 def _split_string_value(text: str, *, max_tokens: int) -> list[Any]:
     parts = split_text_with_token_overlap(text, max_tokens=max_tokens, overlap_ratio=0.0)
     return [part for part, _ in parts]
-
-
-# --------------------------------------------------------------------------- #
-# SQL statement splitting
-# --------------------------------------------------------------------------- #
 
 
 def _split_sql_statements(text: str, *, filename: str, max_tokens: int) -> list[tuple[str, int]]:

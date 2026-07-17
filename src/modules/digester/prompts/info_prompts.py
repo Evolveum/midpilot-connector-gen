@@ -9,7 +9,7 @@ You are an expert IGA/IDM analyst. Extract *high-level* application and API meta
 
 You will receive explicit format instructions; follow them exactly.
 
-You MUST produce output that fits the structured schema (InfoResponse - InfoMetadata - BaseAPIEndpoint).
+You MUST produce output that fits the structured schema (InfoExtractionResponse - InfoMetadataExtraction - BaseAPIEndpoint).
 If the fragment provides nothing relevant, do not invent values.
 
 Populate fields ONLY when clearly supported by the fragment. Do not copy ambiguous values.
@@ -30,12 +30,7 @@ RULES:
    - Typical sources: "servers.url" path segment ("/api/v3"), "basePath" or explicit "API version" notes.
    - If not present, leave empty string "".
 
-4) apiType
-   - A list with normalized technology labels, chosen from: REST, SCIM, or SQL.
-   - Treat OpenAPI/Swagger evidence as REST; treat direct database/schema/table integration evidence as SQL.
-   - If unclear, leave empty list.
-
-5) baseApiEndpoint
+4) baseApiEndpoint
    GOAL: Provide one or more canonical *base API URLs* suitable for connectivity checks or discovery, NOT specific resource paths.
    - Prefer the global API base root + version if applicable (e.g., "https://<hostname>/api/v3/").
    - Sources (in priority order):
@@ -51,11 +46,16 @@ RULES:
    - Classification:
      * "type": "dynamic" if the hostname or tenant can vary (default unless explicitly constant across all deployments).
      * "type": "constant" only if docs assert a single, global, non-tenant URL for everyone.
+     * "apiType": "scim" if the endpoint is clearly a SCIM provisioning base (e.g. ".../scim/v2/",
+       SCIM-labelled sections, or "/Users" + "/Groups" resource roots).
+     * "apiType": "rest" if the endpoint is clearly a general REST/OpenAPI/HTTP API base.
+     * Omit "apiType" when the endpoint URL is documented but the endpoint protocol is not clear.
    - Return ALL distinct canonical base endpoints supported by evidence in docs.
-   - Deduplicate by (uri, type) and sort the final list by uri ascending, then type (constant before dynamic).
+   - Deduplicate by (uri, type, apiType) and sort the final list by uri ascending, then apiType, then type
+     (constant before dynamic).
    - This applies to HTTP APIs (REST/SCIM) only. For a SQL/database integration, leave baseApiEndpoint empty.
 
-6) databaseName
+5) databaseName
    - The name of the database/schema the connector must connect to, for SQL/database integrations only.
    - Sources: connection strings/JDBC URLs (the path segment after the host, e.g. "jdbc:postgresql://host:5432/<databaseName>"),
      "Database:"/"Schema:" notes, or explicit setup instructions.
@@ -94,9 +94,8 @@ Text from actual documentation:
 </chunk>
 
 Return structured output for THIS fragment only:
-- Apply the FIELD RULES for name, applicationVersion, apiVersion, apiType, baseApiEndpoint, and databaseName.
-- For apiType, output only REST/SCIM/SQL; treat OpenAPI/Swagger evidence as REST and database/schema-only integration evidence as SQL.
-- For baseApiEndpoint, return a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless docs guarantee a single global URL). Leave empty for SQL/database integrations.
+- Apply the FIELD RULES for name, applicationVersion, apiVersion, baseApiEndpoint, and databaseName.
+- For baseApiEndpoint, return a deduplicated sorted list of canonical base URLs (template host "<hostname>", API root + optional version, trailing slash; classify type as "dynamic" unless docs guarantee a single global URL; classify apiType only when the endpoint is clearly REST/OpenAPI/general HTTP or SCIM provisioning). Leave empty for SQL/database integrations.
 - For databaseName, populate only for SQL/database integrations (bare database/schema identifier); leave empty otherwise.
 - Summary/tags may be empty; rely primarily on <chunk>.
 - If this fragment adds nothing reliable, keep fields empty.

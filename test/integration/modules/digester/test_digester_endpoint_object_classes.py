@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
 from src.common.enums import JobStatus
-from src.modules.digester.router import extract_object_classes, get_object_classes_status
+from src.common.errors import SessionNotFoundError
+from src.modules.digester.routes.object_classes import extract_object_classes, get_object_classes_status
 
 # CLASSES (object classes)
 
@@ -22,20 +22,17 @@ async def test_extract_object_classes_success():
     session_id = uuid4()
     job_id = uuid4()
 
-    fake_docs = [{"docId": str(uuid4()), "chunkId": str(uuid4()), "content": "fake content for testing"}]
-
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.get_session_documentation", new_callable=AsyncMock, return_value=fake_docs),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.routes.object_classes.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
 
-        response = await extract_object_classes(session_id, db=MagicMock())
+        response = await extract_object_classes(session_id, db=MagicMock(), api_type=None)
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
@@ -49,12 +46,12 @@ async def test_extract_object_classes_session_not_found():
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=False)
 
-    with patch("src.modules.digester.router.SessionRepository", return_value=mock_repo):
-        with pytest.raises(HTTPException) as exc_info:
+    with patch("src.modules.digester.routes.object_classes.SessionRepository", return_value=mock_repo):
+        with pytest.raises(SessionNotFoundError) as exc_info:
             await extract_object_classes(uuid4(), db=MagicMock())
 
         assert exc_info.value.status_code == 404
-        assert "not found" in str(exc_info.value.detail).lower()
+        assert "not found" in exc_info.value.message.lower()
 
 
 @pytest.mark.asyncio
@@ -97,7 +94,7 @@ async def test_get_object_classes_status_found():
     }
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.object_classes.SessionRepository", return_value=mock_repo),
         patch("src.common.utils.status_response.get_job_status", new_callable=AsyncMock, return_value=mock_status),
     ):
         session_id = uuid4()

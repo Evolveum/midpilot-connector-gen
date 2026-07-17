@@ -74,3 +74,53 @@ async def test_process_documentation_worker_updates_progress_per_chunk_and_persi
 
     persisted_indexes = [call.kwargs["chunk"].index for call in mock_persist.await_args_list]
     assert persisted_indexes == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_process_documentation_worker_skips_llm_for_conndev_export():
+    raw_upload = RawUploadedDocumentation(
+        data=b"raw",
+        filename="conndev_ScimSchema_Device.json",
+        content_type="application/com.evolveum.conndev+json",
+        content_hash="hash",
+    )
+    uploaded = UploadedDocumentation(
+        text='{"schemaContent":"{}","name":"Device"}',
+        filename=raw_upload.filename,
+        content_type=raw_upload.content_type,
+        metadata={
+            "filename": raw_upload.filename,
+            "content_type": raw_upload.content_type,
+            "parser": "json",
+        },
+        preserve_as_single_item=True,
+    )
+
+    with (
+        patch("src.common.session.session.parse_uploaded_documentation", new_callable=AsyncMock, return_value=uploaded),
+        patch(
+            "src.common.session.session.chunk_uploaded_documentation",
+            return_value=[(uploaded.text, 10)],
+        ),
+        patch("src.common.session.session.get_llm_processed_chunk", new_callable=AsyncMock) as process_with_llm,
+        patch("src.common.session.session.update_job_progress", new_callable=AsyncMock),
+        patch("src.common.session.session.increment_processed_documents", new_callable=AsyncMock),
+        patch(
+            "src.common.session.session._persist_processed_documentation_chunk",
+            new_callable=AsyncMock,
+        ) as persist_chunk,
+    ):
+        result = await process_documentation_worker(
+            session_id=uuid4(),
+            raw_upload=raw_upload,
+            doc_id=uuid4(),
+            app="Example",
+            app_version="1.0",
+            job_id=uuid4(),
+        )
+
+    assert result["chunks_processed"] == 1
+    process_with_llm.assert_not_awaited()
+    persisted = persist_chunk.await_args.kwargs["chunk"]
+    assert persisted.metadata["category"] == "spec_json"
+    assert persisted.metadata["tags"] == ["scim", "schema", "conndev"]

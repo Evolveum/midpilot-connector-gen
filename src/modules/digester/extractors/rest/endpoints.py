@@ -17,8 +17,15 @@ from src.common.jobs import (
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain, get_default_llm
-from src.common.utils.normalize import normalize_chunk_pair, normalize_endpoint_key
+from src.common.llm import build_structured_chain, get_default_llm, raise_if_llm_unavailable
+from src.common.utils.normalize import build_relevant_documentations, normalize_chunk_pair, normalize_endpoint_key
+from src.modules.digester.aggregation.merges import merge_endpoint_candidates
+from src.modules.digester.entities.object_classes import build_endpoint_result
+from src.modules.digester.extraction.llm_execution import (
+    invoke_chunk_chain,
+    invoke_llm,
+    run_chunk_groups_concurrently,
+)
 from src.modules.digester.prompts.rest.endpoints_prompts import (
     check_endpoint_params_system_prompt,
     check_endpoint_params_user_prompt,
@@ -26,11 +33,17 @@ from src.modules.digester.prompts.rest.endpoints_prompts import (
     get_endpoints_user_prompt,
 )
 from src.modules.digester.schemas import EndpointParamInfo, ExtractedEndpointInfo, ExtractedEndpointResponse
-from src.modules.digester.utils.llm_execution import invoke_llm, run_chunk_groups_concurrently
-from src.modules.digester.utils.merges import merge_endpoint_candidates
-from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_validated_endpoint_details(
+    endpoint: ExtractedEndpointInfo,
+    checked_result: EndpointParamInfo,
+) -> None:
+    """Apply validated endpoint details without serializing nested models to dictionaries."""
+    for field_name in EndpointParamInfo.model_fields:
+        setattr(endpoint, field_name, getattr(checked_result, field_name))
 
 
 def _attach_relevant_documentations_per_endpoint(
@@ -43,8 +56,8 @@ def _attach_relevant_documentations_per_endpoint(
     for endpoint in endpoints:
         endpoint_copy = dict(endpoint)
         key = normalize_endpoint_key(endpoint_copy.get("path"), endpoint_copy.get("method"))
-        pairs = sorted(endpoint_chunk_pairs.get(key, set()), key=lambda pair: (pair[0], pair[1])) if key else []
-        endpoint_copy["relevantDocumentations"] = [{"docId": doc_id, "chunkId": chunk_id} for doc_id, chunk_id in pairs]
+        pairs = endpoint_chunk_pairs.get(key, set()) if key else set()
+        endpoint_copy["relevantDocumentations"] = build_relevant_documentations(pairs)
         enriched.append(endpoint_copy)
 
     return enriched
@@ -63,8 +76,8 @@ async def extract_endpoints(
     Extract API endpoints from document chunks using LLM analysis.
 
     Processes chunks of text to identify and extract API endpoint information including
-    paths, methods, parameters, and metadata. Uses parallel processing for efficiency
-    and includes parameter validation through context analysis.
+    paths, methods, and metadata. Uses parallel processing for efficiency and includes
+    a per-endpoint double-check of the editable fields through context analysis.
 
     Args:
         chunks: List of text chunks to analyze for endpoint information
@@ -167,16 +180,9 @@ async def extract_endpoints(
             try:
                 logger.info("[Digester:Endpoints] LLM call for chunk %s", chunk_id)
 
-                # Extract summary and tags from chunk metadata
-                summary, tags = extract_summary_and_tags(chunk_metadata)
-
                 result = cast(
                     ExtractedEndpointResponse,
-                    await invoke_llm(
-                        chain,
-                        {"chunk": chunk, "summary": summary, "tags": tags},
-                        config=RunnableConfig(callbacks=[langfuse_handler]),
-                    ),
+                    await invoke_chunk_chain(chain, chunk, chunk_metadata, run_name="Digester:ExtractEndpoints"),
                 )
 
                 if not result or not result.endpoints:
@@ -216,7 +222,6 @@ async def extract_endpoints(
                     chunk_id,
                 )
 
-                # In this step, we are validating parameters of the extracted endpoints
                 # we choose 1000 tokens around the found endpoint in text and run the llm on it
                 for endpoint in valid_endpoints:
                     context_snippet = get_neighboring_tokens(
@@ -233,16 +238,18 @@ async def extract_endpoints(
                                 "endpoint": endpoint.model_dump(by_alias=True, exclude={"relevant_documentations"}),
                                 "chunk": context_snippet,
                             },
-                            config=RunnableConfig(callbacks=[langfuse_handler]),
+                            config=RunnableConfig(
+                                callbacks=[langfuse_handler], run_name="Digester:CheckEndpointParams"
+                            ),
                         ),
                     )
                     if checked_result:
-                        for field_name, value in checked_result.model_dump().items():
-                            setattr(endpoint, field_name, value)
+                        _apply_validated_endpoint_details(endpoint, checked_result)
 
                 return valid_endpoints
 
             except Exception as exc:
+                raise_if_llm_unavailable(exc, context="extracting endpoints")
                 error_message = f"[Digester:Endpoints] Failed to process chunk {chunk_id}: {exc}"
                 logger.exception(error_message)
                 append_job_error(job_id, error_message)
@@ -264,7 +271,6 @@ async def extract_endpoints(
         chunks_by_id=chunks_by_id,
         job_id=job_id,
         extractor=_extract_for_chunk_id,
-        logger_scope="Digester:Endpoints",
         total_groups=total_chunk_ids,
     )
 
@@ -300,4 +306,4 @@ async def extract_endpoints(
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Endpoint extraction complete")
 
-    return {"result": {"endpoints": merged_with_references}, "relevantDocumentations": relevant_chunk_info}
+    return build_endpoint_result(merged_with_references, relevant_chunk_info)

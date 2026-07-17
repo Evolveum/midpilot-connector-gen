@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 
@@ -15,6 +16,24 @@ def _build_repo() -> tuple[DocumentationRepository, MagicMock]:
     db.add = MagicMock()
     db.flush = AsyncMock()
     return DocumentationRepository(db), db
+
+
+@pytest.mark.asyncio
+async def test_get_conndev_documentation_items_builds_normalized_postgres_filter() -> None:
+    repo, db = _build_repo()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=result)
+
+    await repo.get_conndev_documentation_items_by_session(uuid4())
+
+    query = db.execute.await_args.args[0]
+    compiled = str(query.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+    assert "lower(btrim(split_part((documentation_items.metadata ->> 'content_type'), ';', 1)))" in compiled
+    assert "application/com.evolveum.conndev+json" in compiled
+    assert "application/conndev+json" in compiled
+    assert "ORDER BY documentation_items.created_at" in compiled
 
 
 @pytest.mark.asyncio

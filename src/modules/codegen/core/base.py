@@ -14,6 +14,7 @@ from langchain_core.runnables.config import RunnableConfig
 from src.common.chunking import normalize_to_text
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
+from src.common.documentation.content_types import is_conndev_documentation_item
 from src.common.enums import JobStage
 from src.common.jobs import (
     append_job_error,
@@ -21,17 +22,23 @@ from src.common.jobs import (
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
+from src.common.llm import (
+    get_default_llm,
+    make_basic_chain,
+    raise_if_llm_unavailable,
+    retry_on_transient_llm_error,
+)
+from src.config import config
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
     get_groovy_cleanup_user_prompt,
 )
 from src.modules.codegen.repair import build_repair_prompt_vars, get_repair_initial_result
-from src.modules.codegen.schema import AttributesPayload, CodegenRepairContext, EndpointsPayload, OperationConfig
+from src.modules.codegen.schema import CodegenRepairContext, EndpointsPayload, OperationConfig
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
-from src.modules.codegen.utils.map_to_record import _without_relevant_documentations
-from src.modules.codegen.utils.postprocess import _coerce_llm_text, strip_markdown_fences
-from src.modules.digester.schemas import AttributeResponse, EndpointResponse
+from src.modules.codegen.utils.postprocess import coerce_llm_text, strip_markdown_fences
+from src.modules.codegen.utils.prompt_records import strip_relevant_documentation_refs
+from src.modules.digester.schemas import EndpointResponse
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +176,21 @@ class BaseGroovyGenerator(ABC):
             relevant_chunk_pairs=relevant_chunk_pairs,
         )
 
+        if (
+            not chunks
+            and self.config.context_only_for_conndev
+            and documentation_items
+            and all(is_conndev_documentation_item(item) for item in documentation_items)
+        ):
+            chunks = [""]
+            provenance_chunk_ids = [None]
+            per_chunk_counts = {}
+            chunk_ids_included = []
+            logger.info(
+                "%s Only conndev contracts are available; running one context-only generation pass",
+                self.config.logger_prefix,
+            )
+
         if not chunks and repair_context is not None:
             chunks = [""]
             provenance_chunk_ids = [None]
@@ -236,9 +258,12 @@ class BaseGroovyGenerator(ABC):
             chain = make_basic_chain(prompt, llm, StrOutputParser())
             response = await chain.ainvoke(
                 {"groovy_code": code},
-                config=RunnableConfig(callbacks=[langfuse_handler]),
+                config=RunnableConfig(
+                    callbacks=[langfuse_handler],
+                    run_name=f"{self.config.logger_prefix.strip('[]')}:cleanup",
+                ),
             )
-            candidate = strip_markdown_fences(_coerce_llm_text(response).strip())
+            candidate = strip_markdown_fences(coerce_llm_text(response).strip())
             if not candidate:
                 logger.warning(
                     "%s Cleanup pass returned empty output; keeping previous code", self.config.logger_prefix
@@ -272,21 +297,44 @@ class BaseGroovyGenerator(ABC):
         documentation_items: List[Dict[str, Any]],
         relevant_chunk_pairs: Optional[List[Dict[str, Any]]],
     ) -> tuple[List[str], List[Optional[str]], Dict[str, int], List[str]]:
-        """Build chunks from pre-chunked documentation items."""
+        """Build LLM chunks while keeping deterministic conndev contracts out of codegen."""
         if not documentation_items:
             logger.warning("%s No documentation items available", self.config.logger_prefix)
             return [], [], {}, []
 
+        llm_documentation_items: List[Dict[str, Any]] = []
+        excluded_chunk_ids: set[str] = set()
+        for item in documentation_items:
+            if is_conndev_documentation_item(item):
+                chunk_id = item.get("chunkId")
+                if isinstance(chunk_id, str):
+                    excluded_chunk_ids.add(chunk_id)
+                continue
+            llm_documentation_items.append(item)
+        if len(llm_documentation_items) < len(documentation_items):
+            logger.info(
+                "%s Excluded %d conndev contract document(s) from codegen LLM chunks",
+                self.config.logger_prefix,
+                len(documentation_items) - len(llm_documentation_items),
+            )
+
         if relevant_chunk_pairs is not None:
+            llm_relevant_chunk_pairs = [
+                pair
+                for pair in relevant_chunk_pairs
+                if (pair.get("chunk_id") or pair.get("chunkId")) not in excluded_chunk_ids
+            ]
             # Use selected chunks based on pairs
             chunks, provenance, per_chunk_counts, selected_chunk_ids = ChunkProcessor.build_chunks_from_pairs(
-                relevant_chunk_pairs, documentation_items, self.config.logger_prefix
+                llm_relevant_chunk_pairs,
+                llm_documentation_items,
+                self.config.logger_prefix,
             )
             return chunks, provenance, per_chunk_counts, selected_chunk_ids
         else:
             # Use all documentation items directly
-            chunks = [normalize_to_text(item.get("content", "")) for item in documentation_items]
-            provenance = [item.get("chunkId") for item in documentation_items]
+            chunks = [normalize_to_text(item.get("content", "")) for item in llm_documentation_items]
+            provenance = [item.get("chunkId") for item in llm_documentation_items]
             logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
             return chunks, provenance, {}, []
 
@@ -368,8 +416,20 @@ class BaseGroovyGenerator(ABC):
                 prompt_vars = {"idx": idx, "chunk": chunk, "result": result}
                 prompt_vars.update(input_data)
 
-                response = await chain.ainvoke(prompt_vars, config=RunnableConfig(callbacks=[langfuse_handler]))
-                code = _coerce_llm_text(response).strip()
+                response = await retry_on_transient_llm_error(
+                    lambda: chain.ainvoke(
+                        prompt_vars,
+                        config=RunnableConfig(
+                            callbacks=[langfuse_handler],
+                            run_name=self.config.logger_prefix.strip("[]"),
+                        ),
+                    ),
+                    max_attempts=config.llm.transient_retry_attempts,
+                    base_delay=config.llm.transient_retry_base_delay_seconds,
+                    logger_prefix=f"{self.config.logger_prefix} ",
+                    context=f"chunk {idx}/{total_chunks}",
+                )
+                code = coerce_llm_text(response).strip()
 
                 if code:
                     candidate = strip_markdown_fences(code)
@@ -385,6 +445,7 @@ class BaseGroovyGenerator(ABC):
                         append_job_error(job_id, error_message)
 
             except Exception as exc:
+                raise_if_llm_unavailable(exc, context="generating connector code")
                 error_message = f"[{self.config.logger_prefix}] Failed to process chunk {idx}/{total_chunks}: {exc}"
                 logger.exception(error_message)
                 append_job_error(job_id, error_message)
@@ -403,46 +464,20 @@ class BaseGroovyGenerator(ABC):
         return result
 
 
-def attributes_to_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
-    """Convert attributes payload to list of records."""
-    if isinstance(payload, AttributeResponse):
-        records: List[Dict[str, Any]] = []
-        for name, info in (payload.attributes or {}).items():
-            item = {"name": name}
-            item.update(_without_relevant_documentations(info.model_dump()))
-            records.append(item)
-        return records
-
-    if isinstance(payload, Mapping):
-        if "attributes" in payload and isinstance(payload["attributes"], Mapping):
-            attrs_map: Mapping[str, Any] = cast(Mapping[str, Any], payload["attributes"])
-        else:
-            attrs_map = payload
-
-        records_alt: List[Dict[str, Any]] = []
-        for name, info in attrs_map.items():
-            item_alt: Dict[str, Any] = {"name": name}
-            if isinstance(info, Mapping):
-                item_alt.update(_without_relevant_documentations(info))
-            records_alt.append(item_alt)
-        return records_alt
-    return []
-
-
 def endpoints_to_records(payload: EndpointsPayload) -> List[Dict[str, Any]]:
     """Convert endpoints payload to list of records."""
     if isinstance(payload, EndpointResponse):
         return [
-            _without_relevant_documentations(cast(Dict[str, Any], ep.model_dump())) for ep in (payload.endpoints or [])
+            strip_relevant_documentation_refs(cast(Dict[str, Any], ep.model_dump())) for ep in (payload.endpoints or [])
         ]
 
     if isinstance(payload, Mapping):
         if "endpoints" in payload and isinstance(payload["endpoints"], list):
             return [
-                _without_relevant_documentations(cast(Mapping[str, Any], endpoint))
+                strip_relevant_documentation_refs(cast(Mapping[str, Any], endpoint))
                 for endpoint in payload["endpoints"]
                 if isinstance(endpoint, Mapping)
             ]
         if all(k in payload for k in ("path", "method", "description")):
-            return [_without_relevant_documentations(payload)]
+            return [strip_relevant_documentation_refs(payload)]
     return []

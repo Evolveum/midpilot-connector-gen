@@ -4,23 +4,24 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 from uuid import UUID
 
 from src.common.chunking import normalize_to_text
 from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain
+from src.common.llm import build_structured_chain, raise_if_llm_unavailable
 from src.common.utils.normalize import normalize_object_class_name
+from src.modules.digester.aggregation.merges import merge_relations_results
+from src.modules.digester.entities.relations import deduplicate_semantic_relations
 from src.modules.digester.enums import ConfidenceLevel
+from src.modules.digester.extraction.chunk_extraction import process_over_chunks
+from src.modules.digester.extraction.llm_execution import invoke_chunk_chain
+from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.prompts.rest.relations_prompts import (
     get_relations_system_prompt,
     get_relations_user_prompt,
 )
 from src.modules.digester.schemas import FinalObjectClass, ObjectClassesResponse, RelationRecord, RelationsResponse
-from src.modules.digester.utils.llm_execution import invoke_llm
-from src.modules.digester.utils.metadata_helper import extract_summary_and_tags
-from src.modules.digester.utils.relations import deduplicate_semantic_relations
 
 logger = logging.getLogger(__name__)
 
@@ -229,11 +230,7 @@ async def _extract_from_chunk(
     chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[RelationRecord]:
     try:
-        summary, tags = extract_summary_and_tags(chunk_metadata)
-
-        result = await invoke_llm(
-            chain, {"chunk": chunk, "summary": summary, "tags": tags}, config={"callbacks": [langfuse_handler]}
-        )
+        result = await invoke_chunk_chain(chain, chunk, chunk_metadata)
         return _parse_relations_result(
             result,
             job_id=job_id,
@@ -242,6 +239,7 @@ async def _extract_from_chunk(
             chunk_id=chunk_id,
         )
     except Exception as exc:
+        raise_if_llm_unavailable(exc, context="extracting relations")
         total = total_chunks or 0
         error_message = f"[Digester:Relations] Failed to process chunk {idx + 1}/{total if total else '?'}: {exc}"
         if chunk_id:
@@ -251,7 +249,7 @@ async def _extract_from_chunk(
         return []
 
 
-async def extract_relations(
+async def extract_relations_raw(
     schema: str,
     relevant_object_classes: Any,
     job_id: UUID,
@@ -367,3 +365,35 @@ async def extract_relations(
     # update_job_progress(job_id, stage=JobStage.finished, message="Relation extraction complete")
 
     return RelationsResponse(relations=final_relations), bool(final_relations)
+
+
+async def extract_relations(doc_items: List[dict], relevant_object_class: Any, job_id: UUID):
+    """Extract relations from multiple documentation items."""
+
+    chunk_metadata_map = build_doc_metadata_map(doc_items)
+
+    def extractor(content: str, jid: UUID, chunk_id: UUID):
+        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
+        return extract_relations_raw(content, relevant_object_class, jid, chunk_id, chunk_metadata)
+
+    def per_chunk_count(d: Dict[str, Any]) -> int:
+        return len(cast(List[dict], d.get("relations", [])))
+
+    def merge_and_sort_relations(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        merged = merge_relations_results(results)
+        raw_relations = merged.get("relations", [])
+        if not isinstance(raw_relations, list):
+            merged["relations"] = []
+            return merged
+
+        merged["relations"] = sort_relation_dicts_by_iga_priority(raw_relations, relevant_object_class)
+        return merged
+
+    return await process_over_chunks(
+        chunk_items=doc_items,
+        job_id=job_id,
+        extractor=extractor,
+        merger=merge_and_sort_relations,
+        logger_scope="Digester:Relations",
+        per_chunk_count=per_chunk_count,
+    )

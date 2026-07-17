@@ -9,16 +9,35 @@ from typing import Any, Dict, Optional
 from src.common.enums import ApiType
 from src.modules.codegen.core.base import (
     BaseGroovyGenerator,
-    attributes_to_records,
     endpoints_to_records,
 )
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, OperationConfig
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
+from src.modules.codegen.utils.prompt_records import (
+    build_attribute_context_records,
+    build_scim_contract_prompt_vars,
+)
 from src.modules.digester.schemas import RelationsResponse
 
 logger = logging.getLogger(__name__)
+
+
+def _prepare_operation_input_data(
+    attributes: AttributesPayload,
+    endpoints: Optional[EndpointsPayload],
+    *,
+    include_scim_context: bool,
+) -> Dict[str, str]:
+    endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
+    input_data = {
+        "attributes_json": json.dumps(build_attribute_context_records(attributes), ensure_ascii=False),
+        "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
+    }
+    if include_scim_context:
+        input_data.update(build_scim_contract_prompt_vars(attributes, endpoints))
+    return input_data
 
 
 class SearchGenerator(BaseGroovyGenerator):
@@ -34,6 +53,7 @@ class SearchGenerator(BaseGroovyGenerator):
         protocol_label: str,
         base_api_url: str = "",
         database_name: str = "",
+        include_scim_context: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -43,6 +63,7 @@ class SearchGenerator(BaseGroovyGenerator):
             default_scaffold="search {\n}\n",
             logger_prefix=f"[Codegen:Search:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
+            context_only_for_conndev=include_scim_context,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["intent"] = intent
@@ -52,15 +73,16 @@ class SearchGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
+        self.include_scim_context = include_scim_context
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
-        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
-        return {
-            "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
-        }
+        return _prepare_operation_input_data(
+            attributes,
+            endpoints,
+            include_scim_context=self.include_scim_context,
+        )
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return f'objectClass("{self.object_class}") {{\n    search {{\n    }}\n}}\n'
@@ -78,6 +100,7 @@ class CreateGenerator(BaseGroovyGenerator):
         protocol_label: str,
         base_api_url: str = "",
         database_name: str = "",
+        include_scim_context: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -87,6 +110,7 @@ class CreateGenerator(BaseGroovyGenerator):
             default_scaffold="create {\n}\n",
             logger_prefix=f"[Codegen:Create:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
+            context_only_for_conndev=include_scim_context,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["create_docs"] = docs_text
@@ -95,15 +119,16 @@ class CreateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
+        self.include_scim_context = include_scim_context
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
-        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
-        return {
-            "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
-        }
+        return _prepare_operation_input_data(
+            attributes,
+            endpoints,
+            include_scim_context=self.include_scim_context,
+        )
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return f'objectClass("{self.object_class}") {{\n    create {{\n    }}\n}}\n'
@@ -121,6 +146,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         protocol_label: str,
         base_api_url: str = "",
         database_name: str = "",
+        include_scim_context: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -130,6 +156,7 @@ class UpdateGenerator(BaseGroovyGenerator):
             default_scaffold="update {\n}\n",
             logger_prefix=f"[Codegen:Update:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
+            context_only_for_conndev=include_scim_context,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["update_docs"] = docs_text
@@ -138,15 +165,16 @@ class UpdateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
+        self.include_scim_context = include_scim_context
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
-        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
-        return {
-            "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
-        }
+        return _prepare_operation_input_data(
+            attributes,
+            endpoints,
+            include_scim_context=self.include_scim_context,
+        )
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return f'objectClass("{self.object_class}") {{\n    update {{\n    }}\n}}\n'
@@ -164,6 +192,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         protocol_label: str,
         base_api_url: str = "",
         database_name: str = "",
+        include_scim_context: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -173,6 +202,7 @@ class DeleteGenerator(BaseGroovyGenerator):
             default_scaffold="delete {\n}\n",
             logger_prefix=f"[Codegen:Delete:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
+            context_only_for_conndev=include_scim_context,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["delete_docs"] = docs_text
@@ -181,15 +211,16 @@ class DeleteGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
         super().__init__(config)
         self.object_class = object_class
+        self.include_scim_context = include_scim_context
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         attributes: AttributesPayload = kwargs.get("attributes")  # type: ignore[assignment]
         endpoints: Optional[EndpointsPayload] = kwargs.get("endpoints")  # type: ignore[assignment]
-        endpoint_records = endpoints_to_records(endpoints) if endpoints is not None else []
-        return {
-            "attributes_json": json.dumps(attributes_to_records(attributes), ensure_ascii=False),
-            "endpoints_json": json.dumps(endpoint_records, ensure_ascii=False),
-        }
+        return _prepare_operation_input_data(
+            attributes,
+            endpoints,
+            include_scim_context=self.include_scim_context,
+        )
 
     def get_initial_result(self, **kwargs: Any) -> str:
         return f'objectClass("{self.object_class}") {{\n    delete {{\n    }}\n}}\n'
@@ -229,7 +260,7 @@ class RelationGenerator(BaseGroovyGenerator):
 def build_other_authorization_scaffold(protocol: ApiType) -> str:
     return (
         "authentication {\n"
-        f"    {protocol.value.lower()} {{\n"
+        f"    {protocol.value} {{\n"
         "        other {\n"
         "            implementation {\n"
         "                // write your custom implementation of authorization here\n"
@@ -272,7 +303,7 @@ def build_authorization_scaffold(
 ) -> str:
     lines = [
         "authentication {",
-        f"    {protocol.value.lower()} {{",
+        f"    {protocol.value} {{",
     ]
     lines.extend(f"        // {comment}" for comment in _unsupported_authorization_comments(preferred_authorizations))
     lines.extend(
@@ -296,14 +327,14 @@ class AuthorizationGenerator(BaseGroovyGenerator):
         base_api_url: str = "",
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
-        authentication_container = protocol.value.lower()
+        authentication_container = protocol.value
         default_scaffold = build_authorization_scaffold(protocol, preferred_authorizations)
         config = OperationConfig(
             operation_name="Authorization",
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold=default_scaffold,
-            logger_prefix=f"[Codegen:Authorization:{protocol.name}]",
+            logger_prefix=f"[Codegen:Authorization:{protocol.value}]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["authorization_docs"] = docs_text

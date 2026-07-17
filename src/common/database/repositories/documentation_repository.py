@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.models import DocumentationItem
+from src.common.documentation.content_types import CONNDEV_CONTENT_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,19 @@ class DocumentationRepository:
         :param db: SQLAlchemy AsyncSession
         """
         self.db = db
+
+    @staticmethod
+    def _to_item_dict(item: DocumentationItem) -> Dict[str, Any]:
+        """Map a documentation row to the dict shape shared by the read queries."""
+        return {
+            "chunkId": str(item.chunk_id),
+            "docId": str(item.doc_id) if item.doc_id else None,
+            "source": item.source,
+            "url": item.url,
+            "summary": item.summary,
+            "content": item.content,
+            "metadata": item.doc_metadata,
+        }
 
     async def create_documentation_item(
         self,
@@ -86,18 +100,36 @@ class DocumentationRepository:
         result = await self.db.execute(query)
         items = result.scalars().all()
 
-        return [
-            {
-                "chunkId": str(item.chunk_id),
-                "docId": str(item.doc_id) if item.doc_id else None,
-                "source": item.source,
-                "url": item.url,
-                "summary": item.summary,
-                "content": item.content,
-                "metadata": item.doc_metadata,
-            }
-            for item in items
-        ]
+        return [self._to_item_dict(item) for item in items]
+
+    async def get_conndev_documentation_items_by_session(self, session_id: UUID) -> List[Dict[str, Any]]:
+        """
+        Get only the session's midPoint connector-development (conndev) documents.
+
+        Filters by the metadata content type in the database so the session's full
+        documentation is never loaded when only the few conndev contract documents are
+        needed. The SQL normalization mirrors ``normalize_content_type``: parameters after
+        ``;`` are dropped and the value is trimmed and lower-cased before comparison.
+
+        :param session_id: Session ID
+        :return: List of documentation item dicts, oldest first
+        """
+        normalized_content_type = func.lower(
+            func.btrim(func.split_part(DocumentationItem.doc_metadata["content_type"].astext, ";", 1))
+        )
+        query = (
+            select(DocumentationItem)
+            .where(
+                DocumentationItem.session_id == session_id,
+                normalized_content_type.in_(sorted(CONNDEV_CONTENT_TYPES)),
+            )
+            .order_by(DocumentationItem.created_at)
+        )
+
+        result = await self.db.execute(query)
+        items = result.scalars().all()
+
+        return [self._to_item_dict(item) for item in items]
 
     async def get_documentation_items_by_doc_id(self, session_id: UUID, doc_id: UUID) -> List[Dict[str, Any]]:
         """
@@ -119,13 +151,7 @@ class DocumentationRepository:
         items = (await self.db.execute(query)).scalars().all()
         return [
             {
-                "chunkId": str(item.chunk_id),
-                "docId": str(item.doc_id) if item.doc_id else None,
-                "source": item.source,
-                "url": item.url,
-                "summary": item.summary,
-                "content": item.content,
-                "metadata": item.doc_metadata,
+                **self._to_item_dict(item),
                 "createdAt": item.created_at.isoformat(),
                 "scrapeJobIds": list(item.scrape_job_ids or []),
             }
@@ -152,13 +178,7 @@ class DocumentationRepository:
 
         return [
             {
-                "chunkId": str(item.chunk_id),
-                "docId": str(item.doc_id) if item.doc_id else None,
-                "source": item.source,
-                "url": item.url,
-                "summary": item.summary,
-                "content": item.content,
-                "metadata": item.doc_metadata,
+                **self._to_item_dict(item),
                 "createdAt": item.created_at.isoformat(),
                 "scrapeJobIds": list(item.scrape_job_ids or []),
             }
@@ -229,18 +249,7 @@ class DocumentationRepository:
         result = await self.db.execute(query)
         items = result.scalars().all()
 
-        return [
-            {
-                "chunkId": str(item.chunk_id),
-                "docId": str(item.doc_id) if item.doc_id else None,
-                "source": item.source,
-                "url": item.url,
-                "summary": item.summary,
-                "content": item.content,
-                "metadata": item.doc_metadata,
-            }
-            for item in items
-        ]
+        return [self._to_item_dict(item) for item in items]
 
     async def update_documentation_item(
         self,
@@ -361,16 +370,7 @@ class DocumentationRepository:
         if item is None:
             return None
 
-        return {
-            "chunkId": str(item.chunk_id),
-            "sessionId": str(item.session_id),
-            "docId": str(item.doc_id) if item.doc_id else None,
-            "source": item.source,
-            "url": item.url,
-            "summary": item.summary,
-            "content": item.content,
-            "metadata": item.doc_metadata,
-        }
+        return {**self._to_item_dict(item), "sessionId": str(item.session_id)}
 
     async def delete_documentation_items_by_session(self, session_id: UUID) -> int:
         """

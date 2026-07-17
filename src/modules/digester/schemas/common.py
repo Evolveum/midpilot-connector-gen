@@ -2,10 +2,27 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from typing import Annotated, Any, Dict, List
+
+from pydantic import BaseModel, BeforeValidator, Field, field_serializer, field_validator
+
+from src.common.schema import CamelCaseModel
+from src.common.utils.normalize import normalize_relevant_documentation_refs
+from src.modules.digester.enums import EndpointMethod
 
 
-class ChunkReference(BaseModel):
+def normalize_http_method(value: Any) -> Any:
+    """Accept lowercase/mixed-case HTTP methods and normalize them before enum validation."""
+    if isinstance(value, str):
+        return value.strip().upper()
+    return value
+
+
+NormalizedEndpointMethod = Annotated[EndpointMethod, BeforeValidator(normalize_http_method)]
+"""``EndpointMethod`` that tolerates lowercase/whitespace-padded LLM output."""
+
+
+class ChunkReference(CamelCaseModel):
     """
     Internal reference to one documentation chunk.
 
@@ -13,18 +30,12 @@ class ChunkReference(BaseModel):
     normalizes all runtime use to snake_case.
     """
 
-    model_config = ConfigDict(populate_by_name=True)
-
     doc_id: str = Field(
         ...,
-        validation_alias=AliasChoices("doc_id", "docId"),
-        serialization_alias="docId",
         description="Unique identifier for the source documentation item.",
     )
     chunk_id: str = Field(
         ...,
-        validation_alias=AliasChoices("chunk_id", "chunkId"),
-        serialization_alias="chunkId",
         description="Unique identifier for the documentation chunk.",
     )
 
@@ -35,51 +46,39 @@ class ChunkReference(BaseModel):
         return self.model_dump(by_alias=True)
 
 
-class DocSequenceItem(BaseModel):
+class DocSequenceItem(CamelCaseModel):
     """
     Represents a sequence from a chunk relevant to the extracted information.
     """
 
-    model_config = {"populate_by_name": True}
-
     chunk_id: str = Field(
         ...,
-        validation_alias=AliasChoices("chunk_id", "chunkId"),
-        serialization_alias="chunkId",
         description="Unique identifier for the document chunk.",
     )
     start_sequence: str = Field(
         ...,
         description="Unique token / word sequence that identifies the start of the relevant chunk.",
-        validation_alias=AliasChoices("start_sequence", "startSequence"),
-        serialization_alias="startSequence",
     )
     end_sequence: str = Field(
         ...,
         description="Unique token / word sequence that identifies the end of the relevant chunk.",
-        validation_alias=AliasChoices("end_sequence", "endSequence"),
-        serialization_alias="endSequence",
     )
 
 
-class DocSequenceMarker(BaseModel):
+class DocSequenceMarker(CamelCaseModel):
     """
     Marker pair returned by the LLM before the system attaches the known chunk id.
     """
 
-    model_config = {"extra": "forbid", "populate_by_name": True}
+    model_config = {"extra": "forbid"}
 
     start_sequence: str = Field(
         ...,
         description="Unique token / word sequence that identifies the start of the relevant chunk.",
-        validation_alias=AliasChoices("start_sequence", "startSequence"),
-        serialization_alias="startSequence",
     )
     end_sequence: str = Field(
         ...,
         description="Unique token / word sequence that identifies the end of the relevant chunk.",
-        validation_alias=AliasChoices("end_sequence", "endSequence"),
-        serialization_alias="endSequence",
     )
 
 
@@ -91,6 +90,45 @@ class DocProcessingSequenceItem(DocSequenceItem):
     text: str = Field(
         ..., description="Full text of the document chunk from start_sequence to end_sequence for processing."
     )
+
+
+class RelevantDocumentationsMixin(BaseModel):
+    """
+    Shared ``relevant_documentations`` field for persisted/API metadata models.
+
+    The field is system-populated (never filled by the LLM). It accepts loose
+    snake_case/camelCase chunk references on input and always serializes to a list
+    of ``{"docId", "chunkId"}`` UUID strings.
+    """
+
+    relevant_documentations: List[Dict[str, str]] = Field(
+        default_factory=list,
+        validation_alias="relevantDocumentations",
+        serialization_alias="relevantDocumentations",
+        description=(
+            "List of chunks that contain evidence for this entity. "
+            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
+            "This field is populated automatically by the system and should NOT be filled by the LLM."
+        ),
+    )
+
+    model_config = {"validate_by_name": True}
+
+    @field_validator("relevant_documentations", mode="before")
+    @classmethod
+    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
+        return normalize_relevant_documentation_refs(v)
+
+    @field_serializer("relevant_documentations", when_used="always")
+    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        serialized: List[Dict[str, str]] = []
+        for chunk in value or []:
+            doc_id = chunk.get("doc_id") or chunk.get("docId")
+            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
+            if not doc_id or not chunk_id:
+                continue
+            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
+        return serialized
 
 
 class DocMarkerMatch(BaseModel):

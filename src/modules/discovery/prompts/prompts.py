@@ -7,31 +7,31 @@ from src.modules.discovery.schema import DiscoveryIntegrationType
 
 
 def _normalize_integration_type(integration_type: str | None) -> DiscoveryIntegrationType:
-    normalized = str(integration_type or "DUMMY").strip().upper()
-    if normalized == "REST":
-        return "REST"
-    if normalized == "SCIM":
-        return "SCIM"
-    return "DUMMY"
+    normalized = str(integration_type or "dummy").strip().lower()
+    if normalized == "rest":
+        return "rest"
+    if normalized == "scim":
+        return "scim"
+    return "dummy"
 
 
 def _integration_search_priority_rules(integration_type: DiscoveryIntegrationType) -> str:
-    if integration_type == "REST":
+    if integration_type == "rest":
         return """- Priority target: REST API docs, endpoint references, OpenAPI/Swagger.
 - Include only a small SCIM cross-check set (max 2 queries) when possible."""
-    if integration_type == "SCIM":
+    if integration_type == "scim":
         return """- Priority target: SCIM 2.0 docs, provisioning, schema/resource references.
 - Include only a small REST cross-check set (max 2 queries) when possible."""
     return """- Keep a balanced mix of REST and SCIM discovery queries."""
 
 
 def _integration_relevance_rules(integration_type: DiscoveryIntegrationType) -> str:
-    if integration_type == "REST":
+    if integration_type == "rest":
         return (
             "- In borderline cases, prefer REST/OpenAPI/Swagger pages over SCIM-only pages.\n"
             "- Keep SCIM pages only when they clearly help IDM integration."
         )
-    if integration_type == "SCIM":
+    if integration_type == "scim":
         return (
             "- In borderline cases, prefer SCIM provisioning/schema/resource pages over generic REST pages.\n"
             "- Keep REST pages only when they clearly support SCIM/IDM implementation."
@@ -55,7 +55,7 @@ def get_discovery_fetch_sys_prompt() -> str:
 def get_discovery_fetch_user_prompt(
     app: str = "APP",
     app_version: str = "VERSION",
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
     num_queries: int = 5,
 ) -> str:
     normalized_integration_type = _normalize_integration_type(integration_type)
@@ -95,7 +95,7 @@ def get_irrelevant_filter_prompts(
     candidates: Iterable[Dict[str, Any]],
     app: str,
     app_version: str,
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
 ) -> tuple[str, str]:
     """
     Returns developer and user messages for filtering irrelevant links.
@@ -246,7 +246,7 @@ def get_rank_links_prompts(
     candidates: Iterable[Dict[str, Any]],
     app: str,
     app_version: str,
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
 ) -> tuple[str, str]:
     """
     Returns developer and user messages for ranking links by relevance.

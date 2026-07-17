@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, Generic, List, Optional, Tuple, TypeVar
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_serializer
 
@@ -49,14 +49,6 @@ class DiscoveryAuth(BaseAuth):
     Guide the LLM to extract concrete auth methods (e.g., Basic, Bearer/JWT, Session/Cookie,
     OAuth2 variants, API Key, mTLS)
     """
-
-    # quirks: Optional[str] = Field(
-    #     default="",
-    #     description=(
-    #         "Short, verbatim notes about special behavior or non-standard aspects (e.g., header/cookie/name, "
-    #         "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
-    #     ),
-    # )
 
     relevant_sequences: List[DocSequenceItem] = Field(
         description=("List of relevant document sequences that support the presence of this auth method. "),
@@ -111,12 +103,18 @@ class AuthDedupResponse(BaseModel):
     )
 
 
-class AuthDiscoveryResponse(BaseModel):
+AuthItemT = TypeVar("AuthItemT")
+
+
+class AuthResponse(BaseModel, Generic[AuthItemT]):
     """
-    Container for extracted authentication mechanisms in discovery. Return an empty list when none are present.
+    Base for ``{auth: [...]}`` responses.
+
+    Coerces a null ``auth`` to ``[]`` on input and always serializes the list (never null),
+    keeping the API contract stable. Subclasses bind the concrete element type of ``auth``.
     """
 
-    auth: Optional[List[DiscoveryAuth]] = Field(
+    auth: Optional[List[AuthItemT]] = Field(
         default_factory=list,
         description="List of authentication methods supported or referenced by the API.",
     )
@@ -126,13 +124,11 @@ class AuthDiscoveryResponse(BaseModel):
     # Ensure robustness: coerce null to [] and never serialize null
     @field_validator("auth", mode="before")
     @classmethod
-    def _normalize_auth(cls, v):
-        if v is None:
-            return []
-        return v
+    def _normalize_auth(cls, value: Any) -> Any:
+        return [] if value is None else value
 
     @model_serializer
-    def _serialize(self):
+    def _serialize(self) -> dict[str, Any]:
         # Always emit [] instead of null to keep contract stable
         return {"auth": self.auth or []}
 
@@ -149,29 +145,3 @@ class AuthBuildResponse(BaseAuth):
             "required scopes/realms, token prefix, custom challenge/flow). Leave empty if not applicable."
         ),
     )
-
-
-class AuthResponse(BaseModel):
-    """
-    Container for extracted authentication mechanisms. Return an empty list when none are present.
-    """
-
-    auth: Optional[List[AuthInfo]] = Field(
-        default_factory=list,
-        description="List of authentication methods supported or referenced by the API.",
-    )
-
-    model_config = {"populate_by_name": True}
-
-    # Ensure robustness: coerce null to [] and never serialize null
-    @field_validator("auth", mode="before")
-    @classmethod
-    def _normalize_auth(cls, v):
-        if v is None:
-            return []
-        return v
-
-    @model_serializer
-    def _serialize(self):
-        # Always emit [] instead of null to keep contract stable
-        return {"auth": self.auth or []}

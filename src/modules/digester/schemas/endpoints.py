@@ -2,11 +2,16 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field
 
-from src.modules.digester.enums import EndpointMethod
+from src.common.schema import CamelCaseModel
+from src.modules.digester.schemas.common import (
+    NormalizedEndpointMethod,
+    RelevantDocumentationsMixin,
+)
+from src.modules.digester.schemas.scim import ScimServiceProviderConfig
 
 EndpointSuggestedUse = Literal[
     "create",
@@ -21,142 +26,88 @@ EndpointSuggestedUse = Literal[
 ]
 
 
-class ExtractedEndpointInfo(BaseModel):
+# --- Endpoints ---
+
+
+class EndpointRequestParameter(CamelCaseModel):
+    """
+    Structured request parameter available on one endpoint.
+
+    Populated only by deterministic SCIM endpoint pregeneration
+    (``extractors/scim/baseline.py``); REST documentation extraction does not produce it.
+    """
+
+    name: str
+    location: Literal["path", "query", "header"]
+    type: str
+    description: str = ""
+    required: bool = False
+    minimum: Optional[int] = None
+    maximum: Optional[int] = None
+    allowed_values: List[str] = Field(default_factory=list)
+
+
+class EndpointParamInfo(CamelCaseModel):
+    """
+    LLM-editable endpoint fields (everything except path and method).
+
+    Used directly as the structured output of the per-endpoint double-check pass,
+    so the LLM can correct these fields without touching the endpoint identity.
+    """
+
+    description: str = Field(
+        ...,
+        description=(
+            "Short summary of what this method does for the object class (e.g., 'Get user by ID', "
+            "'Add user to group', 'Disable user')."
+        ),
+    )
+    response_content_type: Optional[str] = Field(
+        default=None,
+        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json', 'application/vnd.oracle.resource+json', application/scim+json, other).",
+    )
+    request_content_type: Optional[str] = Field(
+        default=None,
+        description="Primary request media type if specified (often for POST/PUT/PATCH).",
+    )
+    suggested_use: List[EndpointSuggestedUse] = Field(
+        default_factory=list,
+        description="List of endpoint suggested use-cases. If unsure, leave empty.",
+    )
+
+
+class ExtractedEndpointInfo(EndpointParamInfo):
     """
     LLM extraction model for an HTTP endpoint associated with a specific object class.
     Contains only fields the LLM should produce.
     """
 
-    model_config = {"populate_by_name": True}
-
     path: str = Field(
         ...,
         description="Concrete URL path template as documented (e.g., '/users/{id}', '/users/{id}/groups').",
     )
-    method: EndpointMethod = Field(
+    method: NormalizedEndpointMethod = Field(
         ...,
         description="HTTP method (e.g., GET, POST, PUT, PATCH, DELETE).",
     )
-    description: str = Field(
-        ...,
-        description=(
-            "Short summary of what this method does for the object class (e.g., 'Get user by ID', "
-            "'Add user to group', 'Disable user')."
-        ),
-    )
-    response_content_type: Optional[str] = Field(
-        default=None,
-        validation_alias="responseContentType",
-        serialization_alias="responseContentType",
-        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json', 'application/vnd.oracle.resource+json', application/scim+json, other).",
-    )
-    request_content_type: Optional[str] = Field(
-        default=None,
-        validation_alias="requestContentType",
-        serialization_alias="requestContentType",
-        description="Primary request media type if specified (often for POST/PUT/PATCH).",
-    )
-    suggested_use: List[EndpointSuggestedUse] = Field(
-        default_factory=list,
-        validation_alias="suggestedUse",
-        serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'list', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
-    )
-
-    @field_validator("method", mode="before")
-    @classmethod
-    def _normalize_method(cls, value: Any) -> Any:
-        """Accept lowercase/mixed-case methods and normalize them before literal validation."""
-        if isinstance(value, str):
-            return value.strip().upper()
-        return value
 
 
-class EndpointInfo(ExtractedEndpointInfo):
+class EndpointInfo(ExtractedEndpointInfo, RelevantDocumentationsMixin):
     """
     Final API/session endpoint metadata.
     Adds system-populated fields not used in LLM extraction prompts.
     """
 
-    relevant_documentations: List[Dict[str, str]] = Field(
+    parameters: List[EndpointRequestParameter] = Field(
         default_factory=list,
-        validation_alias="relevantDocumentations",
-        serialization_alias="relevantDocumentations",
         description=(
-            "List of chunks that contain evidence for this specific endpoint. "
-            "Each entry is serialized as 'docId' and 'chunkId' UUID strings. "
-            "This field is populated automatically by the system and should NOT be filled by the LLM."
+            "Structured path, query and header parameters. Populated by deterministic SCIM "
+            "endpoint pregeneration; empty for documentation-extracted endpoints."
         ),
     )
 
-    @field_validator("relevant_documentations", mode="before")
-    @classmethod
-    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
-        if not isinstance(v, list):
-            return []
 
-        validated_chunks: List[Dict[str, str]] = []
-        for chunk in v:
-            if not isinstance(chunk, dict):
-                continue
-            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-            doc_id = chunk.get("doc_id") or chunk.get("docId")
-            if chunk_id and doc_id:
-                validated_chunks.append(
-                    {
-                        "chunk_id": str(chunk_id),
-                        "doc_id": str(doc_id),
-                    }
-                )
-        return validated_chunks
-
-    @field_serializer("relevant_documentations", when_used="always")
-    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        serialized: List[Dict[str, str]] = []
-        for chunk in value or []:
-            doc_id = chunk.get("doc_id") or chunk.get("docId")
-            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-            if not doc_id or not chunk_id:
-                continue
-            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
-        return serialized
-
-
-class EndpointParamInfo(BaseModel):
-    """
-    EndpointInfo without path and method, so the LLM can only modify other fields.
-    """
-
-    model_config = {"populate_by_name": True}
-
-    description: str = Field(
-        ...,
-        description=(
-            "Short summary of what this method does for the object class (e.g., 'Get user by ID', "
-            "'Add user to group', 'Disable user')."
-        ),
-    )
-    response_content_type: Optional[str] = Field(
-        default=None,
-        validation_alias="responseContentType",
-        serialization_alias="responseContentType",
-        description="Primary response media type if specified (e.g., 'application/json', 'application/hal+json', 'application/vnd.oracle.resource+json', application/scim+json, other).",
-    )
-    request_content_type: Optional[str] = Field(
-        default=None,
-        validation_alias="requestContentType",
-        serialization_alias="requestContentType",
-        description="Primary request media type if specified (often for POST/PUT/PATCH).",
-    )
-    suggested_use: List[EndpointSuggestedUse] = Field(
-        default_factory=list,
-        validation_alias="suggestedUse",
-        serialization_alias="suggestedUse",
-        description="List of endpoint suggested use-cases. Allowed values: 'create', 'update', 'delete', 'getById', 'getAll', 'search', 'activate', 'deactivate'. If unsure, leave empty.",
-    )
-
-
-class EndpointResponse(BaseModel):
+class EndpointResponse(CamelCaseModel):
     """
     Container for endpoints discovered for a given object class. Return an empty list when none.
     """
@@ -164,6 +115,10 @@ class EndpointResponse(BaseModel):
     endpoints: List[EndpointInfo] = Field(
         default_factory=list,
         description="List of HTTP endpoints related to the specified object class.",
+    )
+    scim_capabilities: Optional[ScimServiceProviderConfig] = Field(
+        default=None,
+        description="Session-wide SCIM service-provider capabilities used to derive the endpoint surface.",
     )
 
 
@@ -178,25 +133,20 @@ class ExtractedEndpointResponse(BaseModel):
     )
 
 
-# --- Endpoints ---
-
-
 # --- Connectivity Endpoint ---
 
 
-class ExtractedConnectivityEndpointInfo(BaseModel):
+class ExtractedConnectivityEndpointInfo(CamelCaseModel):
     """
     LLM extraction model for an endpoint suitable for testing connector connectivity.
     Contains only fields the LLM should produce.
     """
 
-    model_config = {"populate_by_name": True}
-
     path: str = Field(
         ...,
         description="Concrete URL path template as documented, normalized to start with '/' and without scheme/host.",
     )
-    method: EndpointMethod = Field(
+    method: NormalizedEndpointMethod = Field(
         ...,
         description="HTTP method for the connectivity check endpoint. Prefer GET when supported by documentation.",
     )
@@ -206,103 +156,37 @@ class ExtractedConnectivityEndpointInfo(BaseModel):
     )
     response_content_type: Optional[str] = Field(
         default=None,
-        validation_alias="responseContentType",
-        serialization_alias="responseContentType",
         description="Primary response media type if specified.",
     )
     request_content_type: Optional[str] = Field(
         default=None,
-        validation_alias="requestContentType",
-        serialization_alias="requestContentType",
         description="Primary request media type if specified. Usually empty for GET connectivity checks.",
     )
     requires_auth: Optional[bool] = Field(
         default=None,
-        validation_alias="requiresAuth",
-        serialization_alias="requiresAuth",
         description="Whether the endpoint requires configured authentication according to documentation.",
     )
 
-    @field_validator("method", mode="before")
-    @classmethod
-    def _normalize_method(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return value.strip().upper()
-        return value
 
-
-class ConnectivityEndpointInfo(ExtractedConnectivityEndpointInfo):
+class ConnectivityEndpointInfo(ExtractedConnectivityEndpointInfo, RelevantDocumentationsMixin):
     """
     Final API/session metadata for the endpoint selected for connectivity testing.
     Adds system-populated evidence chunk references.
     """
 
-    relevant_documentations: List[Dict[str, str]] = Field(
-        default_factory=list,
-        validation_alias="relevantDocumentations",
-        serialization_alias="relevantDocumentations",
-        description=(
-            "List of chunks that contain evidence for this connectivity endpoint. "
-            "Each entry is serialized as 'docId' and 'chunkId' UUID strings."
-        ),
-    )
 
-    @field_validator("relevant_documentations", mode="before")
-    @classmethod
-    def _validate_relevant_documentations(cls, v: Any) -> List[Dict[str, str]]:
-        if not isinstance(v, list):
-            return []
-
-        validated_chunks: List[Dict[str, str]] = []
-        for chunk in v:
-            if not isinstance(chunk, dict):
-                continue
-            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-            doc_id = chunk.get("doc_id") or chunk.get("docId")
-            if chunk_id and doc_id:
-                validated_chunks.append(
-                    {
-                        "chunk_id": str(chunk_id),
-                        "doc_id": str(doc_id),
-                    }
-                )
-        return validated_chunks
-
-    @field_serializer("relevant_documentations", when_used="always")
-    def _serialize_relevant_documentations(self, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        serialized: List[Dict[str, str]] = []
-        for chunk in value or []:
-            doc_id = chunk.get("doc_id") or chunk.get("docId")
-            chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-            if not doc_id or not chunk_id:
-                continue
-            serialized.append({"docId": str(doc_id), "chunkId": str(chunk_id)})
-        return serialized
-
-
-class RankedEndpointKey(BaseModel):
+class RankedEndpointKey(CamelCaseModel):
     """LLM output model for a single ranked endpoint key (method + path)."""
 
-    model_config = {"populate_by_name": True}
-
-    method: EndpointMethod = Field(..., description="HTTP method of the endpoint.")
+    method: NormalizedEndpointMethod = Field(..., description="HTTP method of the endpoint.")
     path: str = Field(..., description="Normalized path of the endpoint, starting with '/'.")
 
-    @field_validator("method", mode="before")
-    @classmethod
-    def _normalize_method(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return value.strip().upper()
-        return value
 
-
-class ConnectivityEndpointRankingResponse(BaseModel):
+class ConnectivityEndpointRankingResponse(CamelCaseModel):
     """LLM output model for ranked connectivity endpoint candidates."""
 
     ranked_endpoints: List[RankedEndpointKey] = Field(
         default_factory=list,
-        validation_alias="rankedEndpoints",
-        serialization_alias="rankedEndpoints",
         description="Endpoints ranked by suitability for connectivity testing, most suitable first.",
     )
 
@@ -318,8 +202,6 @@ class ConnectivityEndpointResponse(BaseModel):
         description="Ranked list of documented endpoints for connectivity checks, most suitable first.",
     )
 
-    model_config = {"populate_by_name": True}
-
 
 class ExtractedConnectivityEndpointResponse(BaseModel):
     """
@@ -330,6 +212,3 @@ class ExtractedConnectivityEndpointResponse(BaseModel):
         default_factory=list,
         description="Candidate HTTP endpoints that may be suitable for connectivity testing.",
     )
-
-
-# --- Connectivity Endpoint ---

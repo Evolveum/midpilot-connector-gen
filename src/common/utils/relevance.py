@@ -10,7 +10,13 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
-from src.common.utils.normalize import normalize_endpoint_key, normalize_object_class_name, normalize_url
+from src.common.utils.coerce import as_dict_list, as_list, as_mapping
+from src.common.utils.normalize import (
+    normalize_endpoint_key,
+    normalize_object_class_name,
+    normalize_relevant_sequence,
+    normalize_url,
+)
 
 
 def build_auth_entity_key(name: Any, auth_type: Any) -> str:
@@ -36,12 +42,7 @@ def unwrap_result_payload(result_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_chunk_to_doc_map(doc_items: Any) -> Dict[str, str]:
     mapping: Dict[str, str] = {}
-    if not isinstance(doc_items, list):
-        return mapping
-
-    for item in doc_items:
-        if not isinstance(item, dict):
-            continue
+    for item in as_dict_list(doc_items):
         chunk_id = item.get("chunk_id") or item.get("chunkId")
         doc_id = item.get("doc_id") or item.get("docId")
         if chunk_id and doc_id:
@@ -109,12 +110,9 @@ def remap_reused_output_relevance(
     """
 
     def _remap_doc_refs(value: Any, *, snake_case: bool) -> list[Dict[str, str]]:
-        if not isinstance(value, list):
-            return []
-
         mapped: list[Dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
-        for item in value:
+        for item in as_list(value):
             if not isinstance(item, Mapping):
                 continue
             chunk_id = item.get("chunk_id") or item.get("chunkId")
@@ -137,12 +135,9 @@ def remap_reused_output_relevance(
         return mapped
 
     def _remap_sequence_refs(value: Any) -> list[Dict[str, str]]:
-        if not isinstance(value, list):
-            return []
-
         mapped: list[Dict[str, str]] = []
         seen: set[tuple[str, str, str, str]] = set()
-        for item in value:
+        for item in as_list(value):
             if not isinstance(item, Mapping):
                 continue
             chunk_id = item.get("chunk_id") or item.get("chunkId")
@@ -199,19 +194,6 @@ def remap_reused_output_relevance(
     return _remap_node(payload, is_root=True)
 
 
-def normalize_relevant_sequence(value: Any) -> Dict[str, str]:
-    if not isinstance(value, Mapping):
-        return {}
-    start_sequence = value.get("start_sequence") or value.get("startSequence")
-    end_sequence = value.get("end_sequence") or value.get("endSequence")
-    if not start_sequence or not end_sequence:
-        return {}
-    return {
-        "startSequence": str(start_sequence),
-        "endSequence": str(end_sequence),
-    }
-
-
 def normalize_chunk_refs_for_storage(
     value: Any,
     *,
@@ -219,11 +201,8 @@ def normalize_chunk_refs_for_storage(
     entity_key: Optional[str] = None,
     chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-
     normalized: List[Dict[str, Any]] = []
-    for item in value:
+    for item in as_list(value):
         if not isinstance(item, Mapping):
             continue
 
@@ -490,11 +469,8 @@ def extract_attribute_relevance_rows(
     chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> list[Dict[str, Any]]:
     attributes_map, _ = extract_attributes_map(payload)
-    if not isinstance(attributes_map, dict):
-        return []
-
     rows: list[Dict[str, Any]] = []
-    for attribute_name, info in attributes_map.items():
+    for attribute_name, info in as_mapping(attributes_map).items():
         if not isinstance(info, dict):
             continue
         entity_key = attribute_entity_key(attribute_name)
@@ -562,14 +538,8 @@ def strip_endpoints_relevance(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def extract_endpoint_relevance_rows(payload: Dict[str, Any], result_key: str) -> list[Dict[str, Any]]:
-    endpoints = payload.get("endpoints")
-    if not isinstance(endpoints, list):
-        return []
-
     rows: list[Dict[str, Any]] = []
-    for endpoint in endpoints:
-        if not isinstance(endpoint, dict):
-            continue
+    for endpoint in as_dict_list(payload.get("endpoints")):
         entity_key = build_endpoint_entity_key(endpoint.get("path"), endpoint.get("method"))
         if entity_key:
             rows.extend(
@@ -595,9 +565,7 @@ async def hydrate_endpoints_with_relevance(
 
     relevance_map = await load_relevance_map_for_result(db, session_id, result_key)
     normalized_endpoints: list[Dict[str, Any]] = []
-    for endpoint in endpoints:
-        if not isinstance(endpoint, dict):
-            continue
+    for endpoint in as_dict_list(endpoints):
         item = dict(endpoint)
         refs = relevance_map.get(build_endpoint_entity_key(item.get("path"), item.get("method")) or "", [])
         relevant_docs, _ = _split_relevance_refs(refs)
@@ -620,9 +588,7 @@ async def hydrate_object_classes_with_relevance(
 
     relevance_map = await load_object_class_relevance_map(db, session_id)
     normalized_classes: list[Dict[str, Any]] = []
-    for obj_class in object_classes:
-        if not isinstance(obj_class, dict):
-            continue
+    for obj_class in as_dict_list(object_classes):
         item = dict(obj_class)
         class_name = item.get("name")
         item["relevantDocumentations"] = (
@@ -635,14 +601,8 @@ async def hydrate_object_classes_with_relevance(
 
 
 def extract_object_class_relevance_rows(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
-    object_classes = payload.get("objectClasses")
-    if not isinstance(object_classes, list):
-        return []
-
     rows: list[Dict[str, Any]] = []
-    for obj_class in object_classes:
-        if not isinstance(obj_class, dict):
-            continue
+    for obj_class in as_dict_list(payload.get("objectClasses")):
         class_name = obj_class.get("name")
         if not isinstance(class_name, str):
             continue
@@ -701,11 +661,8 @@ def _sequence_rows(
     entity_key: str,
     chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-
     rows: List[Dict[str, Any]] = []
-    for sequence in value:
+    for sequence in as_list(value):
         if not isinstance(sequence, Mapping):
             continue
         chunk_id = sequence.get("chunk_id") or sequence.get("chunkId")

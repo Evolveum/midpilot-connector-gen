@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.common.enums import JobStatus
-from src.modules.digester.router import (
+from src.modules.digester.routes.attributes import (
     extract_class_attributes,
     get_class_attributes_status,
     override_class_attributes,
@@ -56,17 +56,21 @@ async def test_extract_class_attributes_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.filter_documentation_items",
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
             new=AsyncMock(return_value=[{"docId": doc_id, "chunkId": chunk_id}]),
         ),
         patch(
-            "src.modules.digester.router.get_session_documentation",
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new=AsyncMock(return_value=fake_docs),
         ),
-        patch("src.modules.digester.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
 
@@ -74,6 +78,7 @@ async def test_extract_class_attributes_success():
             session_id=session_id,
             object_class="User",
             db=MagicMock(),
+            api_type=None,
         )
 
         assert response.jobId == job_id
@@ -116,15 +121,25 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
     )
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevance_repo),
-        patch("src.modules.digester.router.get_session_api_types", new_callable=AsyncMock, return_value=["SCIM"]),
-        patch("src.modules.digester.router.filter_documentation_items", new=AsyncMock(return_value=[])),
+        patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.get_session_documentation",
+            "src.modules.digester.selection.documentation_selector.RelevantChunkRepository",
+            return_value=mock_relevance_repo,
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_api_types",
+            new_callable=AsyncMock,
+            return_value=["scim"],
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.modules.digester.selection.documentation_selector.get_session_documentation",
             new=AsyncMock(return_value=[{"docId": doc_id, "chunkId": chunk_id, "content": "User mapping docs"}]),
         ),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         mock_schedule.return_value = job_id
 
@@ -132,6 +147,7 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
             session_id=session_id,
             object_class="UserPhoneNumbers",
             db=MagicMock(),
+            api_type=None,
         )
 
     assert response.jobId == job_id
@@ -163,15 +179,16 @@ async def test_get_class_attributes_status_found():
                         description="Unique identifier",
                         mandatory=True,
                     ).model_dump(),
-                }
+                },
+                "scimContext": {"resource": {"endpoint": "/Users"}},
             },
         ]
     )
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.build_typed_job_status_response",
+            "src.modules.digester.routes.attributes.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=MagicMock(jobId=job_id, status=JobStatus.finished, result=None),
         ) as mock_status_builder,
@@ -189,6 +206,7 @@ async def test_get_class_attributes_status_found():
     assert isinstance(response.result, AttributeResponse)
     assert "id" in response.result.attributes
     assert response.result.attributes["id"].type == "string"
+    assert response.result.scimContext == {"resource": {"endpoint": "/Users"}}
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     assert mock_repo.get_session_data.await_args_list == [
         call(session_id, "userAttributesJobId"),
@@ -202,6 +220,7 @@ async def test_override_class_attributes_success():
     """Test manual override of class attributes."""
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.get_session_data = AsyncMock(return_value=None)
     mock_repo.update_session = AsyncMock()
     mock_relevant_repo = MagicMock()
     mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()
@@ -209,10 +228,10 @@ async def test_override_class_attributes_success():
     doc_id = str(uuid4())
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.RelevantChunkRepository", return_value=mock_relevant_repo),
+        patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.results.RelevantChunkRepository", return_value=mock_relevant_repo),
         patch(
-            "src.modules.digester.router.get_session_documentation",
+            "src.modules.digester.results.get_session_documentation",
             AsyncMock(return_value=[{"chunkId": chunk_id, "docId": doc_id}]),
         ),
     ):

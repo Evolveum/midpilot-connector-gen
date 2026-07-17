@@ -12,9 +12,9 @@ from langchain_core.runnables.config import RunnableConfig
 
 from src.common.langfuse import langfuse_handler
 from src.common.llm import get_default_llm, make_basic_chain
+from src.common.web import classify_irrelevant_links
 from src.modules.discovery.prompts.prompts import get_irrelevant_filter_prompts, get_rank_links_prompts
 from src.modules.discovery.schema import DiscoveryIntegrationType, RankedLinks
-from src.modules.scrape.llms import get_irrelevant_llm_response
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ async def filter_candidate_links(
     candidates_enriched: List[Dict[str, Any]],
     app: str,
     app_version: str,
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
     max_llm_calls: int = 3,
 ) -> tuple[List[str], List[str]]:
     """
@@ -105,7 +105,7 @@ async def filter_candidate_links(
             break
 
         logger.info(
-            "[Discovery:Filter] Starting LLM filtering call %s/%s with %s links via scrape.llms",
+            "[Discovery:Filter] Starting LLM filtering call %s/%s with %s links",
             call_num + 1,
             max_llm_calls,
             len(relevant_links),
@@ -119,7 +119,7 @@ async def filter_candidate_links(
                 app_version,
                 integration_type=integration_type,
             )
-            irrelevant_llm_response = await get_irrelevant_llm_response(irrelevant_prompts)
+            irrelevant_llm_response = await classify_irrelevant_links(irrelevant_prompts)
 
             if irrelevant_llm_response and irrelevant_llm_response.links:
                 logger.info("[Discovery:Filter] LLM identified %s irrelevant links", len(irrelevant_llm_response.links))
@@ -151,7 +151,7 @@ async def rank_candidate_links(
     app: str,
     app_version: str,
     max_links: int,
-    integration_type: DiscoveryIntegrationType = "DUMMY",
+    integration_type: DiscoveryIntegrationType = "dummy",
 ) -> List[str]:
     """
     Rank candidate links by relevance using LLM and return ordered URLs.
@@ -197,7 +197,9 @@ async def rank_candidate_links(
     )
 
     try:
-        ranked = await chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler]))
+        ranked = await chain.ainvoke(
+            {}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Discovery:RankLinks")
+        )
     except Exception as exc:
         logger.error("[Discovery:Rank] LLM ranking call failed: %s", exc)
         ranked = None

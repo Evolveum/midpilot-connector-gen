@@ -4,8 +4,10 @@
 
 import copy
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
+
+from src.common.utils.coerce import as_dict_list, as_list, as_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,16 @@ def normalize_object_class_name(object_class: str) -> str:
     return object_class.strip().lower()
 
 
+def canonical_object_class_key(name: str) -> str:
+    """Whitespace-insensitive key for grouping object-class name variants.
+
+    Unlike :func:`normalize_object_class_name` (used for result-key matching, where
+    whitespace must be preserved), this also removes all internal whitespace so that
+    e.g. ``"Service Account"`` and ``"ServiceAccount"`` collapse to the same dedup key.
+    """
+    return "".join(normalize_object_class_name(name).split())
+
+
 def normalize_chunk_pair(chunk: Mapping[str, Any]) -> tuple[str, str] | None:
     """Normalize one chunk reference dict to (doc_id, chunk_id) pair."""
     if not isinstance(chunk, Mapping):
@@ -32,6 +44,47 @@ def normalize_chunk_pair(chunk: Mapping[str, Any]) -> tuple[str, str] | None:
     return str(doc_id), str(chunk_id)
 
 
+def normalize_relevant_sequence(value: Any) -> dict[str, str]:
+    """Normalize a relevant-sequence payload to camelCase ``{startSequence, endSequence}``.
+
+    Accepts snake_case or camelCase keys. Returns ``{}`` when either boundary is missing.
+    """
+    value = as_mapping(value)
+    start_sequence = value.get("start_sequence") or value.get("startSequence")
+    end_sequence = value.get("end_sequence") or value.get("endSequence")
+    if not start_sequence or not end_sequence:
+        return {}
+    return {
+        "startSequence": str(start_sequence),
+        "endSequence": str(end_sequence),
+    }
+
+
+def build_relevant_documentations(pairs: Iterable[tuple[str, str]]) -> list[dict[str, str]]:
+    """Build a sorted, deduplicated camelCase ``relevantDocumentations`` list from ``(doc_id, chunk_id)`` pairs."""
+    return [
+        {"docId": doc_id, "chunkId": chunk_id}
+        for doc_id, chunk_id in sorted(set(pairs), key=lambda pair: (pair[0], pair[1]))
+    ]
+
+
+def normalize_relevant_documentation_refs(value: Any) -> list[dict[str, str]]:
+    """
+    Normalize a ``relevantDocumentations`` payload to a list of ``{"chunk_id", "doc_id"}`` refs.
+
+    Accepts the loose shapes that reach pydantic validators and stored payloads (snake_case or
+    camelCase keys, non-list / non-dict noise) and keeps only refs that carry both ids.
+    """
+    refs: list[dict[str, str]] = []
+    for chunk in as_list(value):
+        pair = normalize_chunk_pair(chunk)
+        if pair is None:
+            continue
+        doc_id, chunk_id = pair
+        refs.append({"chunk_id": chunk_id, "doc_id": doc_id})
+    return refs
+
+
 def normalize_endpoint_key(path: Any, method: Any) -> tuple[str, str] | None:
     """Build normalized endpoint key from path + method."""
     path_str = str(path or "").strip()
@@ -39,30 +92,6 @@ def normalize_endpoint_key(path: Any, method: Any) -> tuple[str, str] | None:
     if not path_str or not method_str:
         return None
     return path_str, method_str
-
-
-def normalize_relevant_chunks_for_session(value: Any) -> Any:
-    """
-    Normalize relevant chunk references for session storage.
-
-    Converts dict entries to camelCase shape: {"docId": "...", "chunkId": "..."}.
-    """
-    if not isinstance(value, list):
-        return value
-
-    if value and all(isinstance(item, int) for item in value):
-        return value
-
-    normalized: list[dict[str, str]] = []
-    for item in value:
-        if not isinstance(item, Mapping):
-            continue
-        pair = normalize_chunk_pair(item)
-        if pair is None:
-            continue
-        doc_id, chunk_id = pair
-        normalized.append({"docId": doc_id, "chunkId": chunk_id})
-    return normalized
 
 
 def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
@@ -109,12 +138,9 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
     relevant_object_classes = normalized_input.get("relevantObjectClasses")
     if isinstance(relevant_object_classes, Mapping):
         object_classes = relevant_object_classes.get("objectClasses")
-        if isinstance(object_classes, list):
-            for obj_class in object_classes:
-                if not isinstance(obj_class, dict):
-                    continue
-                obj_class.pop("relevantDocumentations", None)
-                obj_class.pop("relevant_chunk_indices", None)
+        for obj_class in as_dict_list(object_classes):
+            obj_class.pop("relevantDocumentations", None)
+            obj_class.pop("relevant_chunk_indices", None)
     if "relevantDocumentations" in normalized_input:
         normalized_input.pop("relevantDocumentations")
     return normalized_input

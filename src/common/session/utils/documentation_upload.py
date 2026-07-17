@@ -19,6 +19,14 @@ from pypdf import PdfReader
 
 from src.common.chunking import count_tokens, split_single_item_schema, split_text_with_token_overlap
 from src.common.database.repositories.session_repository import SessionRepository
+from src.common.documentation.content_types import (
+    CONNDEV_CONTENT_TYPES,
+    CONNDEV_SUFFIX,
+    DEFAULT_CONNDEV_CONTENT_TYPE,
+    is_conndev_content_type,
+    is_conndev_export_filename,
+    normalize_content_type,
+)
 from src.common.enums import JobStage
 from src.common.jobs import schedule_coroutine_job
 from src.common.session.schema import (
@@ -38,13 +46,12 @@ _CONTENT_TYPES_BY_PARSER = {
         "application/schema+json",
         "application/scim+json",
         "application/sql+json",
-        "application/conndev+json",
+        *CONNDEV_CONTENT_TYPES,
     },
     "yaml": {
         "application/x-yaml",
         "application/yaml",
         "application/vnd.yaml",
-        "application/conndev+yaml",
     },
     "html": {"text/html", "application/xhtml+xml"},
     "text": {
@@ -58,7 +65,7 @@ _CONTENT_TYPES_BY_PARSER = {
     "docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
 }
 _SUFFIXES_BY_PARSER = {
-    "json": {".json"},
+    "json": {".json", CONNDEV_SUFFIX},
     "yaml": {".yaml", ".yml"},
     "html": {".html", ".htm"},
     "text": {
@@ -92,8 +99,7 @@ _TEXT_CONTENT_TYPES = (
 _SINGLE_ITEM_SCHEMA_CONTENT_TYPES = {
     "application/scim+json",
     "application/sql+json",
-    "application/conndev+json",
-    "application/conndev+yaml",
+    *CONNDEV_CONTENT_TYPES,
     "application/sql",
     "application/x-sql",
     "text/sql",
@@ -101,6 +107,7 @@ _SINGLE_ITEM_SCHEMA_CONTENT_TYPES = {
 _GENERIC_CONTENT_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
 _CONTENT_TYPE_BY_SUFFIX = {
     ".json": "application/json",
+    CONNDEV_SUFFIX: DEFAULT_CONNDEV_CONTENT_TYPE,
     ".yaml": "application/yaml",
     ".yml": "application/yaml",
     ".html": "text/html",
@@ -112,25 +119,26 @@ _CONTENT_TYPE_BY_SUFFIX = {
 }
 
 
-def _normalize_content_type(content_type: str | None) -> str:
-    raw = (content_type or "").split(";", 1)[0].strip().lower()
-    return raw or ""
-
-
-def _resolve_content_type(content_type: str | None, upload_content_type: str | None, suffix: str) -> str:
-    explicit_content_type = _normalize_content_type(content_type)
+def _resolve_content_type(content_type: str | None, upload_content_type: str | None, filename: str) -> str:
+    explicit_content_type = normalize_content_type(content_type)
     if explicit_content_type:
         return explicit_content_type
 
-    normalized_upload_type = _normalize_content_type(upload_content_type)
+    normalized_upload_type = normalize_content_type(upload_content_type)
+    if is_conndev_export_filename(filename) and normalized_upload_type in {
+        *_GENERIC_CONTENT_TYPES,
+        "application/json",
+    }:
+        return DEFAULT_CONNDEV_CONTENT_TYPE
     if normalized_upload_type not in _GENERIC_CONTENT_TYPES:
         return normalized_upload_type
 
+    suffix = Path(filename).suffix.lower()
     return _CONTENT_TYPE_BY_SUFFIX.get(suffix, normalized_upload_type)
 
 
 def should_preserve_as_single_item(content_type: str | None) -> bool:
-    return _normalize_content_type(content_type) in _SINGLE_ITEM_SCHEMA_CONTENT_TYPES
+    return normalize_content_type(content_type) in _SINGLE_ITEM_SCHEMA_CONTENT_TYPES
 
 
 def _decode_text(data: bytes, filename: str) -> str:
@@ -240,8 +248,7 @@ async def read_raw_uploaded_documentation(
     content_type: str | None = None,
 ) -> RawUploadedDocumentation:
     filename = documentation.filename or "unknown"
-    suffix = Path(filename).suffix.lower()
-    content_type = _resolve_content_type(content_type, documentation.content_type, suffix)
+    content_type = _resolve_content_type(content_type, documentation.content_type, filename)
     data = await documentation.read()
 
     if not data:
@@ -338,7 +345,7 @@ def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentati
     if uploaded.preserve_as_single_item:
         token_count = count_tokens(uploaded.text)
         max_tokens = config.scrape_and_process.single_item_schema_max_tokens
-        if token_count <= max_tokens:
+        if is_conndev_content_type(uploaded.content_type) or token_count <= max_tokens:
             logger.info(
                 "[Upload] Preserving uploaded schema as a single documentation item for session %s "
                 "filename=%s content_type=%s tokens=%s",

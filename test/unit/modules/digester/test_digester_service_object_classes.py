@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester import service
+from src.common.enums import ApiType
+from src.modules.digester.extractors.object_class import extract_object_classes
 from src.modules.digester.schemas import ExtendedObjectClass
 
 
@@ -37,9 +38,13 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
     ]
 
     with (
-        patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
-        patch("src.modules.digester.service.run_doc_extractors_concurrently") as mock_parallel,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.extractors.object_class.deduplicate_and_sort_object_classes") as mock_dedupe,
+        patch("src.modules.digester.extractors.object_class.run_doc_extractors_concurrently") as mock_parallel,
+        patch(
+            "src.modules.digester.extractors.object_class.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         mock_parallel.return_value = [
             (
@@ -95,7 +100,7 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
 
         job_id = uuid4()
         session_id = uuid4()
-        result = await service.extract_object_classes(fake_doc_items, job_id, session_id)
+        result = await extract_object_classes(fake_doc_items, job_id, session_id)
 
         assert "result" in result
         assert "relevantDocumentations" in result
@@ -111,9 +116,13 @@ async def test_extract_object_classes_success(mock_llm, mock_digester_update_job
 async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_job_progress):
     """Test extract_object_classes with no documentation items."""
     with (
-        patch("src.modules.digester.service.deduplicate_and_sort_object_classes") as mock_dedupe,
-        patch("src.modules.digester.service.run_doc_extractors_concurrently") as mock_parallel,
-        patch("src.modules.digester.service.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.digester.extractors.object_class.deduplicate_and_sort_object_classes") as mock_dedupe,
+        patch("src.modules.digester.extractors.object_class.run_doc_extractors_concurrently") as mock_parallel,
+        patch(
+            "src.modules.digester.extractors.object_class.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.REST,
+        ),
     ):
         mock_parallel.return_value = []
 
@@ -123,7 +132,7 @@ async def test_extract_object_classes_empty_docs(mock_llm, mock_digester_update_
 
         mock_dedupe.return_value = EmptyDeduped()
 
-        result = await service.extract_object_classes([], uuid4(), uuid4())
+        result = await extract_object_classes([], uuid4(), uuid4())
 
         assert result["result"]["objectClasses"] == []
         assert result["relevantDocumentations"] == []

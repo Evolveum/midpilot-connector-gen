@@ -16,8 +16,20 @@ from src.common.jobs import (
     update_job_progress,
 )
 from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain
+from src.common.llm import build_structured_chain, raise_if_llm_unavailable
 from src.config import config
+from src.modules.digester.aggregation.merges import merge_attribute_candidates
+from src.modules.digester.entities.attribute_filters import (
+    filter_ignored_attributes,
+    normalize_readability_flags,
+)
+from src.modules.digester.entities.object_classes import build_attribute_result
+from src.modules.digester.extraction.chunk_extraction import extract_single_chunk
+from src.modules.digester.extraction.llm_execution import (
+    invoke_llm,
+    parse_structured_result,
+    run_chunks_concurrently,
+)
 from src.modules.digester.prompts.rest.attributes_prompts import (
     attribute_deduplication_system_prompt,
     attribute_deduplication_user_prompt,
@@ -42,13 +54,6 @@ from src.modules.digester.schemas import (
     DiscoveryAttribute,
     DocSequenceItem,
 )
-from src.modules.digester.utils.attribute_filters import (
-    filter_ignored_attributes,
-    normalize_readability_flags,
-)
-from src.modules.digester.utils.chunk_extraction import extract_single_chunk
-from src.modules.digester.utils.llm_execution import invoke_llm, run_chunks_concurrently
-from src.modules.digester.utils.merges import merge_attribute_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -264,16 +269,17 @@ async def _build_attr_from_sequences(
                 config={"callbacks": [langfuse_handler]},
             )
 
-            if isinstance(result, response_model):
-                parsed = result
-            elif isinstance(result, dict):
-                parsed = response_model.model_validate(result)
-            else:
-                content = getattr(result, "content", None)
-                if isinstance(content, str) and content.strip():
-                    parsed = response_model.model_validate(json.loads(content))
-                else:
-                    return None
+            parsed = parse_structured_result(result, response_model)
+            if parsed is None:
+                logger.warning(
+                    "[Digester:Attributes] %s returned an unparseable result for attribute %s; "
+                    "skipping this sequence batch (%s-%s)",
+                    log_stage,
+                    attr.name,
+                    begin,
+                    end,
+                )
+                continue
 
             for param in fields_to_update:
                 value = getattr(parsed, param, None)
@@ -281,6 +287,7 @@ async def _build_attr_from_sequences(
                     setattr(attr, param, value)
 
         except Exception as exc:
+            raise_if_llm_unavailable(exc, context="extracting attribute details")
             logger.warning(
                 "[Digester:Attributes] %s from sequences failed for attribute %s: %s, sequences number: %s - %s",
                 log_stage,
@@ -469,7 +476,7 @@ async def extract_attributes(
         await update_job_progress(
             job_id, stage=JobStage.failed, message="No chunk details provided, cannot extract attributes"
         )
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
+        return build_attribute_result()
 
     if len(chunks) != len(chunk_details):
         logger.error(
@@ -480,14 +487,14 @@ async def extract_attributes(
         await update_job_progress(
             job_id, stage=JobStage.failed, message="Chunk length mismatch, cannot extract attributes"
         )
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
+        return build_attribute_result()
 
     if len(chunk_details) != len(set(chunk_details)):
         logger.error("[Digester:Attributes] Duplicate chunk IDs found in chunk_details")
         await update_job_progress(
             job_id, stage=JobStage.failed, message="Duplicate chunk IDs found, cannot extract attributes"
         )
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
+        return build_attribute_result()
 
     logger.info(
         "[Digester:Attributes] Processing %d pre-selected chunks for %s (chunk IDs: %s)",
@@ -555,7 +562,6 @@ async def extract_attributes(
         chunk_items=chunks_by_id,
         job_id=job_id,
         extractor=_extract_for_chunk_id,
-        logger_scope="Digester:Attributes",
     )
 
     for chunk_results, relevant_data, chunk_id_debug in results:
@@ -658,7 +664,7 @@ async def extract_attributes(
         await update_job_progress(
             job_id, stage=JobStage.failed, message="Attribute extraction complete with no attributes found"
         )
-        return {"result": {"attributes": {}}, "relevantDocumentations": []}
+        return build_attribute_result()
 
     consolidated_attributes = await consolidate_attributes(enriched_attributes, object_class)
 
@@ -689,4 +695,4 @@ async def extract_attributes(
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
-    return {"result": {"attributes": normalized_attributes}, "relevantDocumentations": relevant_chunks}
+    return build_attribute_result(normalized_attributes, relevant_chunks)

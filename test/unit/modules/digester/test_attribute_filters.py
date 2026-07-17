@@ -2,12 +2,12 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.modules.digester.schemas import AttributeProcessingInfo
-from src.modules.digester.utils.attribute_filters import (
+from src.modules.digester.entities.attribute_filters import (
     filter_ignored_attributes,
     ignore_attribute_name,
     normalize_readability_flags,
 )
+from src.modules.digester.schemas import AttributeProcessingInfo
 
 
 def test_ignore_attribute_name():

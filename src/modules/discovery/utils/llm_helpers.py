@@ -45,11 +45,11 @@ DEFAULT_FALLBACK_TEMPLATES: list[str] = [
 
 
 def get_prioritized_fallback_templates(integration_type: DiscoveryIntegrationType) -> list[str]:
-    normalized = str(integration_type or "DUMMY").upper()
-    if normalized == "REST":
+    normalized = str(integration_type or "dummy").lower()
+    if normalized == "rest":
         primary_templates = REST_FALLBACK_TEMPLATES
         secondary_templates = SCIM_FALLBACK_TEMPLATES
-    elif normalized == "SCIM":
+    elif normalized == "scim":
         primary_templates = SCIM_FALLBACK_TEMPLATES
         secondary_templates = REST_FALLBACK_TEMPLATES
     else:
@@ -119,7 +119,9 @@ def generate_queries_via_llm(
     enriched_user_prompt = f"{user_prompt}\n\nReturn exactly {num_queries} distinct queries."
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=enriched_user_prompt)]
-    response = model.invoke(messages, config=RunnableConfig(callbacks=[langfuse_handler]))
+    response = model.invoke(
+        messages, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Discovery:GenerateQueries")
+    )
 
     logger.info("Parse LLM output into structured search prompts.")
     parsed = _parse_search_prompts(parser_model, str(response.content))

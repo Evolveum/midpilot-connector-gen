@@ -4,33 +4,61 @@
 
 from uuid import UUID
 
-from fastapi import HTTPException
+
+class AppError(Exception):
+    """
+    Base class for domain errors that map to an HTTP response.
+
+    Carries the HTTP status code and a stable, machine-readable error code as
+    data rather than coupling the domain layer to FastAPI. The mapping to an
+    HTTP response is done centrally in src.common.exception_handlers, so
+    routers and services only need to raise these exceptions.
+    """
+
+    status_code: int = 500
+    code: str = "internal_error"
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
 
 
-class ObjectClassesNotFoundError(LookupError):
+class ObjectClassesNotFoundError(AppError):
     """Raised when a session has no object classes available for a requested operation."""
+
+    status_code = 404
+    code = "object_classes_not_found"
 
     def __init__(self, session_id: UUID | None = None):
         session_context = f" in session {session_id}" if session_id else " in session"
         super().__init__(f"No object classes found{session_context}. Please run /classes endpoint first.")
 
 
-class InvalidObjectClassesOutputError(ValueError):
+class InvalidObjectClassesOutputError(AppError):
     """Raised when objectClassesOutput exists but does not match the expected contract."""
+
+    status_code = 422
+    code = "invalid_object_classes_output"
 
     def __init__(self, session_id: UUID):
         super().__init__(f"Invalid object classes data in session {session_id}")
 
 
-class ObjectClassNotFoundError(LookupError):
+class ObjectClassNotFoundError(AppError):
     """Raised when a requested object class cannot be found in session data."""
+
+    status_code = 404
+    code = "object_class_not_found"
 
     def __init__(self, object_class: str, session_id: UUID):
         super().__init__(f"Object class '{object_class}' not found in session {session_id}")
 
 
-class RelevantChunksNotFoundError(ValueError):
+class RelevantChunksNotFoundError(AppError):
     """Raised when an extraction cannot proceed because no relevant chunks were selected."""
+
+    status_code = 400
+    code = "relevant_chunks_not_found"
 
     def __init__(self, object_class: str, extraction_target: str):
         super().__init__(
@@ -38,19 +66,152 @@ class RelevantChunksNotFoundError(ValueError):
         )
 
 
-class LLMResponseValidationException(HTTPException):
-    """
-    Exception raised when an LLM response fails validation.
+class SessionNotFoundError(AppError):
+    """Raised when a session does not exist."""
+
+    status_code = 404
+    code = "session_not_found"
+
+    def __init__(self, session_id: UUID):
+        super().__init__(f"Session {session_id} not found")
+
+
+class SessionAlreadyExistsError(AppError):
+    """Raised when creating a session with an ID that is already taken."""
+
+    status_code = 409
+    code = "session_already_exists"
+
+    def __init__(self, session_id: UUID):
+        super().__init__(f"Session {session_id} already exists")
+
+
+class DocumentationNotFoundError(AppError):
+    """Raised when a session has no documentation at all."""
+
+    status_code = 404
+    code = "documentation_not_found"
+
+    def __init__(self, session_id: UUID):
+        super().__init__(f"No documentation found in session {session_id}")
+
+
+class DocumentationItemNotFoundError(AppError):
+    """Raised when a specific documentation document cannot be found in a session."""
+
+    status_code = 404
+    code = "documentation_item_not_found"
+
+    def __init__(self, documentation_id: UUID, session_id: UUID):
+        super().__init__(f"Documentation {documentation_id} not found in session {session_id}")
+
+
+class InvalidDocumentationImportError(AppError):
+    """Raised when a documentation import payload violates the import contract."""
+
+    status_code = 422
+    code = "invalid_documentation_import"
+
+
+class NoDocumentationStoredError(AppError):
+    """Raised when an operation needs documentation but none has been stored yet."""
+
+    status_code = 400
+    code = "no_documentation_stored"
+
+    def __init__(self, session_id: UUID):
+        super().__init__(
+            f"Session {session_id} has no stored documentation. Please upload documentation file or run scraper."
+        )
+
+
+class JobNotFoundError(AppError):
+    """Raised when a referenced job cannot be found in a session."""
+
+    status_code = 404
+    code = "job_not_found"
+
+    def __init__(self, job_label: str, session_id: UUID, detail: str | None = None):
+        super().__init__(detail or f"No {job_label} job found in session {session_id}")
+
+
+class AttributesNotFoundError(AppError):
+    """Raised when attributes for an object class have not been extracted yet."""
+
+    status_code = 404
+    code = "attributes_not_found"
+
+    def __init__(self, object_class: str, session_id: UUID):
+        super().__init__(
+            f"No attributes found for {object_class} in session {session_id}. "
+            f"Please run /classes/{object_class}/attributes endpoint first."
+        )
+
+
+class OperationSurfaceNotFoundError(AppError):
+    """Raised when the endpoints/table metadata needed to generate operations are missing.
+
+    The message is protocol-dependent (REST endpoints vs SQL table metadata) and is
+    therefore supplied by the caller rather than built here.
     """
 
-    def __init__(self):
-        super().__init__(status_code=500, detail="LLM Response Validation Error")
+    status_code = 404
+    code = "operation_surface_not_found"
+
+    def __init__(self, message: str):
+        super().__init__(message)
 
 
-class NotImplementedError(HTTPException):
+class RelationsNotFoundError(AppError):
+    """Raised when a session has no extracted relations."""
+
+    status_code = 404
+    code = "relations_not_found"
+
+    def __init__(self, session_id: UUID):
+        super().__init__(f"No relations found in session {session_id}. Please run /relations endpoint first.")
+
+
+class RelationNotFoundError(AppError):
+    """Raised when a specific relation cannot be found in a session."""
+
+    status_code = 404
+    code = "relation_not_found"
+
+    def __init__(self, relation_name: str, session_id: UUID):
+        super().__init__(f"Relation {relation_name} not found in session {session_id}.")
+
+
+class InvalidRelationsOutputError(AppError):
+    """Raised when stored relationsOutput exists but does not match the expected contract."""
+
+    status_code = 422
+    code = "invalid_relations_output"
+
+    def __init__(self, session_id: UUID):
+        super().__init__(
+            f"Stored relationsOutput is invalid in session {session_id}. "
+            "Re-run relations extraction or override the relations payload."
+        )
+
+
+class LLMUnavailableError(AppError):
     """
-    Exception raised for functionality not being implemented yet.
+    Raised when the language-model backend is unreachable (connection/timeout failure).
+
+    Distinguishes an infrastructure outage (the model server being down, e.g. VPN not
+    connected or the GPU host not responding) from a per-item content failure. This lets a
+    background job fail explicitly with a clear, machine-readable signal the GUI can render,
+    instead of silently degrading to an empty/scaffold result reported as a finished job.
     """
 
-    def __init__(self):
-        super().__init__(status_code=501, detail="Not Implemented")
+    status_code = 503
+    code = "llm_unavailable"
+
+    def __init__(self, context: str = ""):
+        detail = f" while {context}" if context else ""
+        super().__init__(
+            f"The language model service is currently unreachable{detail}. "
+            "This is usually a temporary connectivity problem with the server "
+            "Please verify the connection and try again."
+        )

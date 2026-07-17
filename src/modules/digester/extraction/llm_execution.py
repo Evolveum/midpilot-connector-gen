@@ -1,0 +1,191 @@
+# Copyright (C) 2010-2026 Evolveum and contributors
+#
+# Licensed under the EUPL-1.2 or later.
+
+import asyncio
+import json
+import logging
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, cast
+from uuid import UUID
+
+from langchain_core.callbacks.base import Callbacks
+from langchain_core.runnables.config import RunnableConfig
+from pydantic import BaseModel
+
+from src.common.jobs import increment_processed_documents, update_job_progress
+from src.common.langfuse import langfuse_handler
+from src.config import config
+from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+ModelT = TypeVar("ModelT", bound=BaseModel)
+_digester_llm_semaphore: asyncio.Semaphore | None = None
+_digester_llm_semaphore_limit: int | None = None
+
+
+def _get_digester_llm_limit() -> int:
+    return max(1, config.digester.max_concurrent_llm_calls)
+
+
+def _get_digester_llm_semaphore() -> asyncio.Semaphore:
+    global _digester_llm_semaphore, _digester_llm_semaphore_limit
+
+    limit = _get_digester_llm_limit()
+    semaphore = _digester_llm_semaphore
+    if semaphore is None or _digester_llm_semaphore_limit != limit:
+        semaphore = asyncio.Semaphore(limit)
+        _digester_llm_semaphore = semaphore
+        _digester_llm_semaphore_limit = limit
+
+    return semaphore
+
+
+async def run_with_digester_llm_limit(callback: Callable[[], Awaitable[T]]) -> T:
+    """
+    Run digester LLM work behind the process-wide concurrency limit.
+    """
+    async with _get_digester_llm_semaphore():
+        return await callback()
+
+
+async def invoke_llm(chain: Any, input: Any, **kwargs: Any) -> Any:
+    """
+    Run one digester LLM chain invocation behind the process-wide digester LLM limit.
+    """
+
+    async def _invoke() -> Any:
+        return await chain.ainvoke(input, **kwargs)
+
+    return await run_with_digester_llm_limit(_invoke)
+
+
+def parse_structured_result(result: Any, model: type[ModelT]) -> ModelT | None:
+    """Coerce a structured-output invocation result into a validated pydantic model.
+
+    Accepts the model instance directly, a dict, or an object carrying a non-empty string
+    ``content`` (raw LLM message). Returns ``None`` when none of those apply; the caller
+    decides what ``None`` means (skip, empty, keep). ``ValidationError`` / ``JSONDecodeError``
+    propagate to the caller, matching the previous inline parsing behavior.
+    """
+    if isinstance(result, model):
+        return result
+    if isinstance(result, dict):
+        return model.model_validate(result)
+    content = getattr(result, "content", None)
+    if isinstance(content, str) and content.strip():
+        return model.model_validate(json.loads(content))
+    return None
+
+
+async def invoke_chunk_chain(
+    chain: Any,
+    chunk: str,
+    chunk_metadata: Optional[Dict[str, Any]],
+    *,
+    run_name: Optional[str] = None,
+) -> Any:
+    """Invoke a per-chunk extraction chain with the standard summary/tags context and tracing.
+
+    Centralizes the ``extract_summary_and_tags`` + langfuse callback + input assembly that the
+    per-chunk extractors previously duplicated (and had drifted on).
+    """
+    summary, tags = extract_summary_and_tags(chunk_metadata)
+    callbacks = cast(Callbacks, [langfuse_handler] if langfuse_handler else [])
+    if run_name:
+        llm_config = RunnableConfig(callbacks=callbacks, run_name=run_name)
+    else:
+        llm_config = RunnableConfig(callbacks=callbacks)
+    return await invoke_llm(
+        chain,
+        {"chunk": chunk, "summary": summary, "tags": tags},
+        config=llm_config,
+    )
+
+
+async def run_chunks_concurrently(
+    *,
+    chunk_items: List[dict],
+    job_id: UUID,
+    extractor: Callable[[str, UUID, UUID], Awaitable[Tuple[T, bool]]],
+    set_total: bool = True,
+) -> List[Tuple[T, bool, UUID]]:
+    """
+    Process multiple chunks in parallel using the provided extractor function.
+
+    Takes a list of chunk items and processes them concurrently, updating job progress
+    and tracking completion. Each chunk is processed using the extractor
+    function which returns the result and a relevance flag.
+
+    Args:
+        chunk_items: List of chunk dictionaries containing 'chunkId' and 'content' keys
+        job_id: UUID for job tracking and progress updates
+        extractor: Async function that processes chunk content and returns (result, has_relevant_data)
+        set_total: Whether to set the job's total document count to this run's chunk count. Set to
+            False when several extractors run over the same chunks concurrently and the caller has
+            already set the combined total; each run still increments completed counts so the total
+            reflects every LLM call (e.g. info + apiType) and only reaches 100% when all are done.
+
+    Returns:
+        List of tuples containing (result, has_relevant_data, chunk_id) for each processed chunk
+    """
+    total_chunks = len(chunk_items)
+    if set_total:
+        await update_job_progress(job_id, total_processing=total_chunks, message="Processing chunks")
+    semaphore = asyncio.Semaphore(_get_digester_llm_limit())
+
+    async def _process_single_chunk_item(chunk_item: dict) -> Tuple[T, bool, UUID]:
+        """Process a single chunk and return its results."""
+        async with semaphore:
+            chunk_id = UUID(chunk_item["chunkId"])
+            chunk_content = chunk_item["content"]
+
+            result, has_relevant_data = await extractor(chunk_content, job_id, chunk_id)
+
+            await increment_processed_documents(job_id, delta=1)
+            return result, has_relevant_data, chunk_id
+
+    return list(await asyncio.gather(*(_process_single_chunk_item(chunk_item) for chunk_item in chunk_items)))
+
+
+async def run_chunk_groups_concurrently(
+    *,
+    chunks_by_id: Dict[str, List[str]],
+    job_id: UUID,
+    extractor: Callable[[UUID, List[str]], Awaitable[Tuple[T, List[Dict[str, Any]]]]],
+    total_groups: int,
+) -> List[Tuple[T, List[Dict[str, Any]]]]:
+    """
+    Process grouped chunks in parallel, with each chunk-id group processed together.
+
+    Takes a dictionary mapping chunk IDs to their respective chunks and processes
+    each chunk-id group concurrently using the provided extractor function. Updates
+    job progress and tracks completion.
+
+    Args:
+        chunks_by_id: Dictionary mapping chunk ID strings to lists of chunk texts
+        job_id: UUID for job tracking and progress updates
+        extractor: Async function that processes chunk-id groups and returns (result, relevant_chunks)
+        total_groups: Total number of chunk-id groups for progress tracking
+
+    Returns:
+        List of tuples containing (result, relevant_chunks) for each processed chunk-id group
+    """
+    await update_job_progress(
+        job_id,
+        total_processing=total_groups,
+        processing_completed=0,
+        message="Processing selected chunks",
+    )
+    semaphore = asyncio.Semaphore(_get_digester_llm_limit())
+
+    async def _process_single_chunk(chunk_id: UUID, chunks: List[str]) -> Tuple[T, List[Dict[str, Any]]]:
+        async with semaphore:
+            result, relevant_chunks = await extractor(chunk_id, chunks)
+            await increment_processed_documents(job_id, delta=1)
+            return result, relevant_chunks
+
+    tasks = [_process_single_chunk(UUID(chunk_id), chunks) for chunk_id, chunks in chunks_by_id.items()]
+
+    return list(await asyncio.gather(*tasks))

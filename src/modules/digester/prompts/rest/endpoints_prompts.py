@@ -148,8 +148,8 @@ Remember:
 check_endpoint_params_system_prompt = textwrap.dedent("""
 <instruction>
   You are an expert IGA/IDM analyst. You will receive:
-    - An endpoint for object class {object_class}, its definition including path, method, description, request and response content types, and
-      suggested use.
+    - An endpoint for object class {object_class}, its definition including path, method, description, request and response content types,
+      and suggested use.
     - A fragment of an OpenAPI/Swagger document or related API documentations.
   Task: verify if the provided endpoint definition is 100% correct based on the documentation fragment, if not,
   change it to the correct definition.

@@ -5,7 +5,9 @@
 from typing import Any
 from uuid import UUID
 
+from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
+from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, tables_for_object_class
 
 
@@ -23,6 +25,7 @@ async def extract_sql_tables(
     """
     await update_job_progress(
         job_id,
+        stage=JobStage.processing,
         total_processing=len(doc_items) or 1,
         processing_completed=0,
         message=f"Selecting SQL tables for {object_class}",
@@ -39,7 +42,8 @@ async def extract_sql_tables(
 
     await update_job_progress(
         job_id,
+        stage=JobStage.schema_ready,
         processing_completed=len(doc_items) or 1,
         message=f"SQL table selection complete: {len(tables)} tables",
     )
-    return {"result": {"endpoints": tables}, "relevantDocumentations": relevant_chunks}
+    return build_endpoint_result(tables, relevant_chunks)

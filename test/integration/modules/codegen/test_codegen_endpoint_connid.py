@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.codegen.router import generate_connid
+from src.modules.codegen.routes.connid import generate_connid
 from src.modules.codegen.schema import CodegenRepairContext
 
 
@@ -23,9 +23,8 @@ async def test_generate_connid_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
-        patch("src.modules.codegen.router.get_session_api_types", new_callable=AsyncMock, return_value=[]),
+        patch("src.modules.codegen.routes.connid.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
         session_id = uuid4()
@@ -48,8 +47,8 @@ async def test_generate_connid_uses_repair_context_only():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.codegen.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.codegen.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.codegen.routes.connid.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
         session_id = uuid4()

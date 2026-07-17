@@ -2,72 +2,12 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-import uuid
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, field_validator
 
+from src.common.documentation import normalize_count
 from src.config import config
-from src.modules.scrape.schema import DocumentationReferences
-
-
-def _normalize_count(value: Any) -> Any:
-    """Normalize nullish LLM count outputs to zero before Pydantic integer parsing."""
-    if value is None:
-        return 0
-    if isinstance(value, str) and value.strip().lower() in {"", "null", "none", "unknown", "n/a"}:
-        return 0
-    return value
-
-
-class SummaryOutput(BaseModel):
-    """
-    Schema for LLM output containing summary, number of endpoints, if it is overview documentation, if it is index documentation, and if it contains detailed authentication methods
-    """
-
-    summary: str = Field(description="The generated summary of the content")
-    num_endpoints: Optional[int] = Field(default=None, description="The number of endpoints defined in the content")
-    has_authentication: bool = Field(description="Indicates if the content contains detailed authentication methods")
-    is_overview: bool = Field(description="Indicates if the content is an overview/introduction documentation")
-    is_index: bool = Field(description="Indicates if the content is a navigational/index documentation")
-
-    @field_validator("num_endpoints", mode="before")
-    @classmethod
-    def normalize_num_endpoints(cls, value: Any) -> Any:
-        return _normalize_count(value)
-
-    def to_dict(self) -> dict:
-        return {
-            "summary": self.summary,
-            "num_endpoints": self.num_endpoints,
-            "has_authentication": self.has_authentication,
-            "is_overview": self.is_overview,
-            "is_index": self.is_index,
-        }
-
-
-class SavedDocumentation(BaseModel):
-    """
-    Schema for a saved documentation after scraping or processing uploaded file
-    """
-
-    url: str
-    id: uuid.UUID = Field(default_factory=uuid.uuid4)
-    contentType: Optional[str] = None
-    content: Optional[str] = None
-    documentationReferences: Optional[DocumentationReferences] = None
-    summary: Optional[SummaryOutput] = None
-    links: Optional[List[HttpUrl]] = None
-
-    def to_dict(self) -> dict:
-        return {
-            "url": str(self.url),
-            "contentType": self.contentType,
-            "content": self.content,
-            "documentationReferences": self.documentationReferences.to_dict() if self.documentationReferences else None,
-            "summary": self.summary.to_dict() if self.summary else None,
-            "links": [str(link) for link in self.links] if self.links else None,
-        }
 
 
 class ChunkProcessingError(BaseModel):
@@ -104,7 +44,7 @@ class LlmChunkOutput(BaseModel):
     @field_validator("num_endpoints", mode="before")
     @classmethod
     def normalize_num_endpoints(cls, value: Any) -> Any:
-        return _normalize_count(value)
+        return normalize_count(value)
 
     @field_validator("category")
     @classmethod

@@ -1,11 +1,14 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
 #
 # Licensed under the EUPL-1.2 or later.
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, TypeAlias, Union
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from src.common.schema import CamelCaseModel
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
 from src.modules.digester.enums import normalize_auth_type_value
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
@@ -24,6 +27,7 @@ class OperationConfig:
     default_scaffold: str
     logger_prefix: str
     extra_prompt_vars: Dict[str, Any] = field(default_factory=dict)
+    context_only_for_conndev: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,13 +67,9 @@ class PreferredEndpointsPayload(BaseModel):
         return normalized
 
 
-class PreferredEndpointsInput(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class PreferredEndpointsInput(CamelCaseModel):
     preferred_endpoints: list[PreferredEndpointsPayload] = Field(
         default_factory=list,
-        validation_alias="preferredEndpoints",
-        serialization_alias="preferredEndpoints",
         description="Optional user-provided preferred endpoints used to focus code generation.",
     )
 
@@ -118,16 +118,10 @@ class PreferredAuthorizationPayload(BaseModel):
         return normalized or None
 
 
-class PreferredAuthorizationsInput(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class PreferredAuthorizationsInput(CamelCaseModel):
     preferred_authorizations: list[PreferredAuthorizationPayload] = Field(
         ...,
         min_length=1,
-        validation_alias=AliasChoices(
-            "preferredAuthorizations",
-        ),
-        serialization_alias="preferredAuthorizations",
         description="Required user-selected authentication/authorization methods used to focus code generation.",
     )
 
@@ -139,19 +133,13 @@ class PreferredAuthorizationsInput(BaseModel):
         return value
 
 
-class CodegenRepairContext(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class CodegenRepairContext(CamelCaseModel):
     current_script: str | None = Field(
         default=None,
-        validation_alias="currentScript",
-        serialization_alias="currentScript",
         description="Current user-edited Groovy script to repair.",
     )
     midpoint_errors: list[str] = Field(
         default_factory=list,
-        validation_alias="midpointErrors",
-        serialization_alias="midpointErrors",
         description="midPoint runtime or validation errors returned for the current script.",
     )
 
@@ -182,8 +170,6 @@ class CodegenRepairContext(BaseModel):
     def to_payload(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, mode="json", exclude_none=True)
 
-
-class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
     def repair_context(self) -> CodegenRepairContext | None:
         if not self.is_repair:
             return None
@@ -195,20 +181,22 @@ class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
     def context_payload(self) -> dict[str, Any]:
         if not self.is_repair:
             return {}
-        return CodegenRepairContext(
-            current_script=self.current_script,
-            midpoint_errors=self.midpoint_errors,
-        ).to_payload()
+        repair_context = self.repair_context()
+        return repair_context.to_payload() if repair_context is not None else {}
+
+
+class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
+    def preferred_endpoints_payload(self) -> list[dict[str, Any]] | None:
+        if not self.preferred_endpoints:
+            return None
+        return [endpoint.model_dump() for endpoint in self.preferred_endpoints]
 
 
 class AuthorizationCodegenInput(PreferredAuthorizationsInput, CodegenRepairContext):
-    def repair_context(self) -> CodegenRepairContext | None:
-        if not self.is_repair:
+    def preferred_authorizations_payload(self) -> list[dict[str, Any]] | None:
+        if not self.preferred_authorizations:
             return None
-        return CodegenRepairContext(
-            current_script=self.current_script,
-            midpoint_errors=self.midpoint_errors,
-        )
+        return [authorization.model_dump(exclude_none=True) for authorization in self.preferred_authorizations]
 
     def context_payload(self) -> dict[str, Any]:
         payload = self.model_dump(
@@ -218,10 +206,5 @@ class AuthorizationCodegenInput(PreferredAuthorizationsInput, CodegenRepairConte
             exclude={"current_script", "midpoint_errors"},
         )
         if self.is_repair:
-            payload.update(
-                CodegenRepairContext(
-                    current_script=self.current_script,
-                    midpoint_errors=self.midpoint_errors,
-                ).to_payload()
-            )
+            payload.update(super().context_payload())
         return payload

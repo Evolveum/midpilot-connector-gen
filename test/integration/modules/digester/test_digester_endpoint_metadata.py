@@ -8,10 +8,11 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from src.common.enums import JobStatus
-from src.modules.digester import service
-from src.modules.digester.router import extract_metadata, get_metadata_status, restore_metadata
+from src.modules.digester.extractors.info import extract_info_metadata as extract_info_metadata_worker
+from src.modules.digester.routes.metadata import extract_metadata, get_metadata_status, restore_metadata
 from src.modules.digester.schemas import InfoResponse
 
 
@@ -24,8 +25,8 @@ async def test_extract_metadata_success():
     mock_repo.update_session = AsyncMock()
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
-        patch("src.modules.digester.router.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.routes.metadata.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
         job_id = uuid4()
         mock_schedule.return_value = job_id
@@ -40,7 +41,7 @@ async def test_extract_metadata_success():
         input_payload={"skipCache": True},
         dynamic_input_enabled=True,
         dynamic_input_provider=ANY,
-        worker=service.extract_info_metadata,
+        worker=extract_info_metadata_worker,
         worker_kwargs={},
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
@@ -69,9 +70,9 @@ async def test_get_metadata_status_found():
     fake_status = MagicMock(jobId=job_id, status=JobStatus.finished, result=InfoResponse())
 
     with (
-        patch("src.modules.digester.router.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.routes.metadata.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.router.build_typed_job_status_response",
+            "src.modules.digester.routes.metadata.build_typed_job_status_response",
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
@@ -97,15 +98,17 @@ async def test_restore_metadata_success():
         {
             "infoMetadata": {
                 "name": "OpenProject",
-                "apiType": ["REST"],
+                "apiType": ["rest"],
                 "apiVersion": "3",
-                "baseApiEndpoint": [{"uri": "https://example.com/api", "type": ""}],
+                "restAvailability": {
+                    "baseApiEndpoint": [{"uri": "https://example.com/api", "type": ""}],
+                },
                 "applicationVersion": "12.1.0",
             }
         }
     )
 
-    with patch("src.modules.digester.router.SessionRepository", return_value=mock_repo):
+    with patch("src.modules.digester.routes.metadata.SessionRepository", return_value=mock_repo):
         session_id = uuid4()
         response = await restore_metadata(
             session_id=session_id,
@@ -120,3 +123,22 @@ async def test_restore_metadata_success():
     )
     assert response["message"].startswith("Metadata updated successfully")
     assert response["sessionId"] == session_id
+
+
+def test_restore_metadata_rejects_legacy_flat_metadata_contract():
+    """The restore contract no longer accepts flat connectivity fields."""
+    with pytest.raises(ValidationError) as exc:
+        InfoResponse.model_validate(
+            {
+                "infoMetadata": {
+                    "name": "OpenProject",
+                    "apiType": ["rest"],
+                    "baseApiEndpoint": [{"uri": "https://example.com/api", "type": ""}],
+                    "databaseName": "openproject",
+                }
+            }
+        )
+
+    message = str(exc.value)
+    assert "baseApiEndpoint" in message
+    assert "databaseName" in message

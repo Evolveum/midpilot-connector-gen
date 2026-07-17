@@ -6,7 +6,9 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from src.common.enums import JobStage
 from src.common.jobs import update_job_progress
+from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extractors.sql.schema import (
     collect_sql_tables,
     sql_type_to_attribute_type,
@@ -55,6 +57,7 @@ async def extract_sql_attributes(
     """Build SQL attributes deterministically from selected schema tables."""
     await update_job_progress(
         job_id,
+        stage=JobStage.processing,
         total_processing=len(doc_items) or 1,
         processing_completed=0,
         message=f"Extracting SQL columns for {object_class}",
@@ -82,7 +85,8 @@ async def extract_sql_attributes(
 
     await update_job_progress(
         job_id,
+        stage=JobStage.schema_ready,
         processing_completed=len(doc_items) or 1,
         message=f"SQL attribute extraction complete: {len(attributes)} attributes",
     )
-    return {"result": {"attributes": attributes}, "relevantDocumentations": relevant_chunks}
+    return build_attribute_result(attributes, relevant_chunks)
