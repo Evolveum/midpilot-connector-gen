@@ -3,10 +3,19 @@
 # Licensed under the EUPL-1.2 or later.
 
 import json
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
+import pytest
 from langchain_core.prompts import ChatPromptTemplate
 
-from src.modules.codegen.core.operations import CreateGenerator
+from src.modules.codegen.core.operations import (
+    CreateGenerator,
+    DeleteGenerator,
+    SearchGenerator,
+    UpdateGenerator,
+)
+from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.scim.create_prompts import (
     get_scim_create_system_prompt,
     get_scim_create_user_prompt,
@@ -122,6 +131,101 @@ def test_protocol_neutral_crud_input_contains_no_scim_variables():
     )
 
     assert set(prompt_vars) == {"attributes_json", "endpoints_json"}
+
+
+def test_all_scim_crud_generators_enable_context_only_conndev_generation():
+    shared_kwargs = {
+        "object_class": "User",
+        "docs_text": "SCIM operation docs",
+        "system_prompt": "System prompt",
+        "user_prompt": "{chunk}",
+        "protocol_label": "scim",
+        "include_scim_context": True,
+    }
+    generators = [
+        SearchGenerator(intent=SearchIntent.ALL, **shared_kwargs),
+        CreateGenerator(**shared_kwargs),
+        UpdateGenerator(**shared_kwargs),
+        DeleteGenerator(**shared_kwargs),
+    ]
+
+    assert all(generator.config.context_only_for_conndev for generator in generators)
+
+
+@pytest.mark.asyncio
+async def test_scim_crud_runs_context_only_generation_when_session_has_only_conndev_documents():
+    raw_conndev_content = '{"rawConndevMarker":"must-not-reach-the-prompt"}'
+    conndev_chunk_id = "conndev-only-chunk"
+    generated_code = 'objectClass("User") { create { } }'
+    generator = CreateGenerator(
+        object_class="User",
+        docs_text="SCIM create docs",
+        system_prompt="System prompt",
+        user_prompt="{chunk}",
+        protocol_label="scim",
+        include_scim_context=True,
+    )
+    chain = AsyncMock()
+    chain.ainvoke.return_value = generated_code
+
+    attributes = {
+        "attributes": {"userName": {"type": "string"}},
+        "scimContext": {
+            "schema": {
+                "name": "User",
+                "urn": "urn:ietf:params:scim:schemas:core:2.0:User",
+                "attributes": [{"name": "userName", "type": "string"}],
+            },
+            "resource": {"name": "User", "endpoint": "/Users"},
+            "extensions": [],
+            "connectorObjectClass": {"name": "User", "attributes": []},
+        },
+    }
+    endpoints = {
+        "scimCapabilities": {"filter": {"supported": True}},
+        "endpoints": [{"method": "POST", "path": "/Users", "description": "Create User"}],
+    }
+
+    with (
+        patch.object(
+            generator,
+            "_load_documentation_items",
+            new_callable=AsyncMock,
+            return_value=[
+                {
+                    "chunkId": conndev_chunk_id,
+                    "content": raw_conndev_content,
+                    "metadata": {"content_type": "application/com.evolveum.conndev+json"},
+                }
+            ],
+        ),
+        patch.object(generator, "_build_llm_chain", return_value=chain),
+        patch.object(
+            generator,
+            "_cleanup_generated_code",
+            new_callable=AsyncMock,
+            return_value=generated_code,
+        ),
+        patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.base.validate_groovy_code", return_value=None),
+    ):
+        result = await generator.generate(
+            session_id=uuid4(),
+            relevant_chunk_pairs=[{"chunk_id": conndev_chunk_id}],
+            job_id=uuid4(),
+            attributes=attributes,
+            endpoints=endpoints,
+        )
+
+    assert result == generated_code
+    chain.ainvoke.assert_awaited_once()
+    prompt_vars = chain.ainvoke.await_args.args[0]
+    assert prompt_vars["chunk"] == ""
+    assert json.loads(prompt_vars["attributes_json"]) == [{"name": "userName", "type": "string"}]
+    assert json.loads(prompt_vars["scim_protocol_schema_json"]) == attributes["scimContext"]["schema"]
+    assert json.loads(prompt_vars["endpoints_json"]) == endpoints["endpoints"]
+    assert raw_conndev_content not in json.dumps(prompt_vars)
 
 
 def test_all_scim_operation_prompts_receive_the_separated_context_contract():

@@ -176,6 +176,21 @@ class BaseGroovyGenerator(ABC):
             relevant_chunk_pairs=relevant_chunk_pairs,
         )
 
+        if (
+            not chunks
+            and self.config.context_only_for_conndev
+            and documentation_items
+            and all(is_conndev_documentation_item(item) for item in documentation_items)
+        ):
+            chunks = [""]
+            provenance_chunk_ids = [None]
+            per_chunk_counts = {}
+            chunk_ids_included = []
+            logger.info(
+                "%s Only conndev contracts are available; running one context-only generation pass",
+                self.config.logger_prefix,
+            )
+
         if not chunks and repair_context is not None:
             chunks = [""]
             provenance_chunk_ids = [None]

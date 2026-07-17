@@ -63,6 +63,7 @@ class SearchGenerator(BaseGroovyGenerator):
             default_scaffold="search {\n}\n",
             logger_prefix=f"[Codegen:Search:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
+            context_only_for_conndev=include_scim_context,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["intent"] = intent
@@ -109,6 +110,7 @@ class CreateGenerator(BaseGroovyGenerator):
             default_scaffold="create {\n}\n",
             logger_prefix=f"[Codegen:Create:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
+            context_only_for_conndev=include_scim_context,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["create_docs"] = docs_text
@@ -154,6 +156,7 @@ class UpdateGenerator(BaseGroovyGenerator):
             default_scaffold="update {\n}\n",
             logger_prefix=f"[Codegen:Update:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
+            context_only_for_conndev=include_scim_context,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["update_docs"] = docs_text
@@ -199,6 +202,7 @@ class DeleteGenerator(BaseGroovyGenerator):
             default_scaffold="delete {\n}\n",
             logger_prefix=f"[Codegen:Delete:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
+            context_only_for_conndev=include_scim_context,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["delete_docs"] = docs_text

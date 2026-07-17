@@ -27,6 +27,7 @@ class OperationConfig:
     default_scaffold: str
     logger_prefix: str
     extra_prompt_vars: Dict[str, Any] = field(default_factory=dict)
+    context_only_for_conndev: bool = False
 
 
 @dataclass(frozen=True)
