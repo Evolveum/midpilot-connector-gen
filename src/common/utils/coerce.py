@@ -46,3 +46,8 @@ def as_dict_list(value: Any) -> list[dict[str, Any]]:
     untrusted payloads (replaces a list guard plus a per-item ``isinstance(x, dict)`` skip).
     """
     return [item for item in as_list(value) if isinstance(item, dict)]
+
+
+def is_true(value: Any) -> bool:
+    """Accept a boolean true value or its legacy persisted string representation."""
+    return value is True or (isinstance(value, str) and value.strip().lower() == "true")

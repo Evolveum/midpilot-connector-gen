@@ -5,11 +5,17 @@
 """
 Canonical media types for midPoint connector-development (conndev) schema uploads.
 
-A conndev document is a connector schema exported from midPoint (one object class /
-one schema per document). The schema is JSON; both the short and the Evolveum-namespaced
-spellings are accepted for backward compatibility. This is the single source of truth
-shared by the upload/ingest path and the digester read path so the two cannot drift apart.
+A conndev document is a connector schema, SCIM resource descriptor or connector object-class
+projection exported from midPoint. The document is JSON; both the short and the
+Evolveum-namespaced media types are accepted for backward compatibility.
+
+Persisted documents must be selected exclusively by their metadata content type. Filename
+recognition exists only for upload-time normalization and must never be used as a fallback by
+digester or other DB-backed runtime paths.
 """
+
+from collections.abc import Mapping
+from typing import Any
 
 # The conndev connector schema is JSON.
 CONNDEV_CONTENT_TYPES: frozenset[str] = frozenset(
@@ -19,11 +25,12 @@ CONNDEV_CONTENT_TYPES: frozenset[str] = frozenset(
     }
 )
 
-# Default media type assigned to a ``.conndev`` upload that carries no explicit content type.
+# Default media type assigned to a recognized conndev export without an explicit content type.
 DEFAULT_CONNDEV_CONTENT_TYPE = "application/com.evolveum.conndev+json"
 
 # File suffix midPoint connector schemas are uploaded with.
 CONNDEV_SUFFIX = ".conndev"
+CONNDEV_JSON_FILENAME_PREFIX = "conndev_"
 
 
 def normalize_content_type(content_type: str | None) -> str:
@@ -34,3 +41,29 @@ def normalize_content_type(content_type: str | None) -> str:
 def is_conndev_content_type(content_type: str | None) -> bool:
     """True when ``content_type`` is any accepted conndev media type."""
     return normalize_content_type(content_type) in CONNDEV_CONTENT_TYPES
+
+
+def get_documentation_item_content_type(item: Mapping[str, Any] | None) -> str | None:
+    """Read content type from normalized (``@metadata``) or repository (``metadata``) item shapes."""
+    if not isinstance(item, Mapping):
+        return None
+
+    metadata = item.get("@metadata") or item.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return None
+
+    content_type = metadata.get("content_type")
+    return content_type if isinstance(content_type, str) else None
+
+
+def is_conndev_documentation_item(item: Mapping[str, Any] | None) -> bool:
+    """True when a documentation item is marked with an accepted conndev content type."""
+    return is_conndev_content_type(get_documentation_item_content_type(item))
+
+
+def is_conndev_export_filename(filename_or_url: str | None) -> bool:
+    """Recognize an upload filename so ingest can assign the canonical conndev content type."""
+    basename = str(filename_or_url or "").rsplit("/", 1)[-1].strip().lower()
+    return basename.endswith(CONNDEV_SUFFIX) or (
+        basename.startswith(CONNDEV_JSON_FILENAME_PREFIX) and basename.endswith(".json")
+    )

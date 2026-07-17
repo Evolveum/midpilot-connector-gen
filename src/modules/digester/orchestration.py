@@ -156,13 +156,18 @@ async def schedule_endpoint_extraction(
         input_payload={
             "documentationItems": selection.doc_items,
             "objectClass": object_class,
+            "objectClassFlags": selection.object_class_flags,
             "baseApiUrl": selection.base_api_url,
             "relevantDocumentations": selection.relevant_chunks,
             "skipCache": skip_cache,
         },
         worker=extract_endpoints,
         worker_args=(selection.doc_items, object_class, session_id, selection.relevant_chunks),
-        worker_kwargs={"base_api_url": selection.base_api_url, "api_type_override": api_type},
+        worker_kwargs={
+            "base_api_url": selection.base_api_url,
+            "api_type_override": api_type,
+            "object_class_flags": selection.object_class_flags,
+        },
         initial_stage="chunking",
         initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
         session_id=session_id,
@@ -175,6 +180,7 @@ async def schedule_endpoint_extraction(
         f"{object_class}Endpoints",
         {
             "objectClass": object_class,
+            "objectClassFlags": selection.object_class_flags,
             "relevantDocumentationsCount": total_chunks,
             "baseApiUrl": selection.base_api_url,
         },

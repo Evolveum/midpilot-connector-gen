@@ -6,8 +6,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, TypeAlias, Union
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from src.common.schema import CamelCaseModel
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
 from src.modules.digester.enums import normalize_auth_type_value
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
@@ -65,13 +66,9 @@ class PreferredEndpointsPayload(BaseModel):
         return normalized
 
 
-class PreferredEndpointsInput(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class PreferredEndpointsInput(CamelCaseModel):
     preferred_endpoints: list[PreferredEndpointsPayload] = Field(
         default_factory=list,
-        validation_alias="preferredEndpoints",
-        serialization_alias="preferredEndpoints",
         description="Optional user-provided preferred endpoints used to focus code generation.",
     )
 
@@ -120,16 +117,10 @@ class PreferredAuthorizationPayload(BaseModel):
         return normalized or None
 
 
-class PreferredAuthorizationsInput(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class PreferredAuthorizationsInput(CamelCaseModel):
     preferred_authorizations: list[PreferredAuthorizationPayload] = Field(
         ...,
         min_length=1,
-        validation_alias=AliasChoices(
-            "preferredAuthorizations",
-        ),
-        serialization_alias="preferredAuthorizations",
         description="Required user-selected authentication/authorization methods used to focus code generation.",
     )
 
@@ -141,19 +132,13 @@ class PreferredAuthorizationsInput(BaseModel):
         return value
 
 
-class CodegenRepairContext(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
+class CodegenRepairContext(CamelCaseModel):
     current_script: str | None = Field(
         default=None,
-        validation_alias="currentScript",
-        serialization_alias="currentScript",
         description="Current user-edited Groovy script to repair.",
     )
     midpoint_errors: list[str] = Field(
         default_factory=list,
-        validation_alias="midpointErrors",
-        serialization_alias="midpointErrors",
         description="midPoint runtime or validation errors returned for the current script.",
     )
 

@@ -14,6 +14,7 @@ from langchain_core.runnables.config import RunnableConfig
 from src.common.chunking import normalize_to_text
 from src.common.database.config import async_session_maker
 from src.common.database.repositories.documentation_repository import DocumentationRepository
+from src.common.documentation.content_types import is_conndev_documentation_item
 from src.common.enums import JobStage
 from src.common.jobs import (
     append_job_error,
@@ -281,21 +282,44 @@ class BaseGroovyGenerator(ABC):
         documentation_items: List[Dict[str, Any]],
         relevant_chunk_pairs: Optional[List[Dict[str, Any]]],
     ) -> tuple[List[str], List[Optional[str]], Dict[str, int], List[str]]:
-        """Build chunks from pre-chunked documentation items."""
+        """Build LLM chunks while keeping deterministic conndev contracts out of codegen."""
         if not documentation_items:
             logger.warning("%s No documentation items available", self.config.logger_prefix)
             return [], [], {}, []
 
+        llm_documentation_items: List[Dict[str, Any]] = []
+        excluded_chunk_ids: set[str] = set()
+        for item in documentation_items:
+            if is_conndev_documentation_item(item):
+                chunk_id = item.get("chunkId")
+                if isinstance(chunk_id, str):
+                    excluded_chunk_ids.add(chunk_id)
+                continue
+            llm_documentation_items.append(item)
+        if len(llm_documentation_items) < len(documentation_items):
+            logger.info(
+                "%s Excluded %d conndev contract document(s) from codegen LLM chunks",
+                self.config.logger_prefix,
+                len(documentation_items) - len(llm_documentation_items),
+            )
+
         if relevant_chunk_pairs is not None:
+            llm_relevant_chunk_pairs = [
+                pair
+                for pair in relevant_chunk_pairs
+                if (pair.get("chunk_id") or pair.get("chunkId")) not in excluded_chunk_ids
+            ]
             # Use selected chunks based on pairs
             chunks, provenance, per_chunk_counts, selected_chunk_ids = ChunkProcessor.build_chunks_from_pairs(
-                relevant_chunk_pairs, documentation_items, self.config.logger_prefix
+                llm_relevant_chunk_pairs,
+                llm_documentation_items,
+                self.config.logger_prefix,
             )
             return chunks, provenance, per_chunk_counts, selected_chunk_ids
         else:
             # Use all documentation items directly
-            chunks = [normalize_to_text(item.get("content", "")) for item in documentation_items]
-            provenance = [item.get("chunkId") for item in documentation_items]
+            chunks = [normalize_to_text(item.get("content", "")) for item in llm_documentation_items]
+            provenance = [item.get("chunkId") for item in llm_documentation_items]
             logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
             return chunks, provenance, {}, []
 

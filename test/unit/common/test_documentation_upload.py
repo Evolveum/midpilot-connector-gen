@@ -133,6 +133,22 @@ async def test_read_uploaded_documentation_marks_conndev_json_schema_as_single_i
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("browser_content_type", ["application/json", "application/octet-stream"])
+async def test_read_uploaded_documentation_recognizes_named_conndev_json_export(browser_content_type):
+    uploaded = await read_uploaded_documentation(
+        _upload(
+            "conndev_ScimResource_Device.json",
+            browser_content_type,
+            b'{"name":"Device","endpoint":"/Devices","primarySchema":"{}"}',
+        )
+    )
+
+    assert uploaded.content_type == "application/com.evolveum.conndev+json"
+    assert uploaded.metadata["preserve_as_single_documentation_item"] is True
+    assert uploaded.preserve_as_single_item is True
+
+
+@pytest.mark.asyncio
 async def test_read_uploaded_documentation_extracts_html_text():
     uploaded = await read_uploaded_documentation(
         _upload("docs.html", "text/html", b"<html><script>ignore()</script><body><h1>API Docs</h1></body></html>")

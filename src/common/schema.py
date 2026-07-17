@@ -6,8 +6,21 @@ from typing import Any, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic.alias_generators import to_camel
 
 from src.common.enums import JobStatus
+
+
+class CamelCaseModel(BaseModel):
+    """
+    Base for models that expose camelCase field aliases.
+
+    Accepts both snake_case field names and camelCase aliases on input and
+    serializes to camelCase when dumped with ``by_alias=True``. Explicit
+    per-field aliases keep precedence over the generated ones.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
 
 def validate_pydantic_object(obj: Any, model: Any) -> Any:

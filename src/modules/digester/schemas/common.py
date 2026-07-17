@@ -2,14 +2,27 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Dict, List
+from typing import Annotated, Any, Dict, List
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_serializer, field_validator
 
+from src.common.schema import CamelCaseModel
 from src.common.utils.normalize import normalize_relevant_documentation_refs
+from src.modules.digester.enums import EndpointMethod
 
 
-class ChunkReference(BaseModel):
+def normalize_http_method(value: Any) -> Any:
+    """Accept lowercase/mixed-case HTTP methods and normalize them before enum validation."""
+    if isinstance(value, str):
+        return value.strip().upper()
+    return value
+
+
+NormalizedEndpointMethod = Annotated[EndpointMethod, BeforeValidator(normalize_http_method)]
+"""``EndpointMethod`` that tolerates lowercase/whitespace-padded LLM output."""
+
+
+class ChunkReference(CamelCaseModel):
     """
     Internal reference to one documentation chunk.
 
@@ -17,18 +30,12 @@ class ChunkReference(BaseModel):
     normalizes all runtime use to snake_case.
     """
 
-    model_config = ConfigDict(populate_by_name=True)
-
     doc_id: str = Field(
         ...,
-        validation_alias=AliasChoices("doc_id", "docId"),
-        serialization_alias="docId",
         description="Unique identifier for the source documentation item.",
     )
     chunk_id: str = Field(
         ...,
-        validation_alias=AliasChoices("chunk_id", "chunkId"),
-        serialization_alias="chunkId",
         description="Unique identifier for the documentation chunk.",
     )
 
@@ -39,51 +46,39 @@ class ChunkReference(BaseModel):
         return self.model_dump(by_alias=True)
 
 
-class DocSequenceItem(BaseModel):
+class DocSequenceItem(CamelCaseModel):
     """
     Represents a sequence from a chunk relevant to the extracted information.
     """
 
-    model_config = {"populate_by_name": True}
-
     chunk_id: str = Field(
         ...,
-        validation_alias=AliasChoices("chunk_id", "chunkId"),
-        serialization_alias="chunkId",
         description="Unique identifier for the document chunk.",
     )
     start_sequence: str = Field(
         ...,
         description="Unique token / word sequence that identifies the start of the relevant chunk.",
-        validation_alias=AliasChoices("start_sequence", "startSequence"),
-        serialization_alias="startSequence",
     )
     end_sequence: str = Field(
         ...,
         description="Unique token / word sequence that identifies the end of the relevant chunk.",
-        validation_alias=AliasChoices("end_sequence", "endSequence"),
-        serialization_alias="endSequence",
     )
 
 
-class DocSequenceMarker(BaseModel):
+class DocSequenceMarker(CamelCaseModel):
     """
     Marker pair returned by the LLM before the system attaches the known chunk id.
     """
 
-    model_config = {"extra": "forbid", "populate_by_name": True}
+    model_config = {"extra": "forbid"}
 
     start_sequence: str = Field(
         ...,
         description="Unique token / word sequence that identifies the start of the relevant chunk.",
-        validation_alias=AliasChoices("start_sequence", "startSequence"),
-        serialization_alias="startSequence",
     )
     end_sequence: str = Field(
         ...,
         description="Unique token / word sequence that identifies the end of the relevant chunk.",
-        validation_alias=AliasChoices("end_sequence", "endSequence"),
-        serialization_alias="endSequence",
     )
 
 

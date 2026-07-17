@@ -179,7 +179,8 @@ async def test_get_class_attributes_status_found():
                         description="Unique identifier",
                         mandatory=True,
                     ).model_dump(),
-                }
+                },
+                "scimContext": {"resource": {"endpoint": "/Users"}},
             },
         ]
     )
@@ -205,6 +206,7 @@ async def test_get_class_attributes_status_found():
     assert isinstance(response.result, AttributeResponse)
     assert "id" in response.result.attributes
     assert response.result.attributes["id"].type == "string"
+    assert response.result.scimContext == {"resource": {"endpoint": "/Users"}}
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     assert mock_repo.get_session_data.await_args_list == [
         call(session_id, "userAttributesJobId"),
@@ -218,6 +220,7 @@ async def test_override_class_attributes_success():
     """Test manual override of class attributes."""
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.get_session_data = AsyncMock(return_value=None)
     mock_repo.update_session = AsyncMock()
     mock_relevant_repo = MagicMock()
     mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()

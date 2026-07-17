@@ -37,6 +37,15 @@ from src.modules.digester.schemas import EndpointParamInfo, ExtractedEndpointInf
 logger = logging.getLogger(__name__)
 
 
+def _apply_validated_endpoint_details(
+    endpoint: ExtractedEndpointInfo,
+    checked_result: EndpointParamInfo,
+) -> None:
+    """Apply validated endpoint details without serializing nested models to dictionaries."""
+    for field_name in EndpointParamInfo.model_fields:
+        setattr(endpoint, field_name, getattr(checked_result, field_name))
+
+
 def _attach_relevant_documentations_per_endpoint(
     endpoints: List[Dict[str, Any]],
     endpoint_chunk_pairs: Dict[Tuple[str, str], Set[Tuple[str, str]]],
@@ -67,8 +76,8 @@ async def extract_endpoints(
     Extract API endpoints from document chunks using LLM analysis.
 
     Processes chunks of text to identify and extract API endpoint information including
-    paths, methods, parameters, and metadata. Uses parallel processing for efficiency
-    and includes parameter validation through context analysis.
+    paths, methods, and metadata. Uses parallel processing for efficiency and includes
+    a per-endpoint double-check of the editable fields through context analysis.
 
     Args:
         chunks: List of text chunks to analyze for endpoint information
@@ -213,7 +222,6 @@ async def extract_endpoints(
                     chunk_id,
                 )
 
-                # In this step, we are validating parameters of the extracted endpoints
                 # we choose 1000 tokens around the found endpoint in text and run the llm on it
                 for endpoint in valid_endpoints:
                     context_snippet = get_neighboring_tokens(
@@ -236,8 +244,7 @@ async def extract_endpoints(
                         ),
                     )
                     if checked_result:
-                        for field_name, value in checked_result.model_dump().items():
-                            setattr(endpoint, field_name, value)
+                        _apply_validated_endpoint_details(endpoint, checked_result)
 
                 return valid_endpoints
 

@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -267,6 +267,13 @@ class AttributeResponse(BaseModel):
     attributes: Dict[str, AttributeInfoScim | AttributeInfoRest] = Field(
         default_factory=dict,
         description="Map of attribute name to its normalized metadata (AttributeInfo).",
+    )
+    scimContext: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Class-specific SCIM schema, resource and ConnId projection used by SCIM code generation. "
+            "Empty for non-SCIM object classes."
+        ),
     )
 
 

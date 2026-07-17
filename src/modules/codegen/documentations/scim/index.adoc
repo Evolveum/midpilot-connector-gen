@@ -15,6 +15,7 @@ The SCIM 2.0 connector tutorial is organized as progressive steps:
 * xref:40-search/[Search operations] - Implementing search with SCIM filter support
 * xref:50-create/[Create operations] - Creating resources via SCIM POST
 * xref:60-update/[Update operations] - Updating resources via PUT/PATCH
+* xref:70-delete/[Delete operations] - Deleting resources via SCIM DELETE
 * xref:80-advanced-filters/[Advanced filters] - Filter specifications and custom filters
 * xref:90-relationship-support/[Relationship support] - Handling SCIM relationships
 

@@ -6,7 +6,7 @@
 
 from collections import OrderedDict
 
-from src.common.utils.coerce import as_dict_list, as_list, as_mapping, as_str, as_str_list
+from src.common.utils.coerce import as_dict_list, as_list, as_mapping, as_str, as_str_list, is_true
 
 
 def test_as_mapping_passes_through_mappings():
@@ -44,3 +44,12 @@ def test_as_dict_list_keeps_only_dicts():
     # not a list -> empty; a bare dict is not a list of dicts
     assert as_dict_list({"a": 1}) == []
     assert as_dict_list(None) == []
+
+
+def test_is_true_accepts_boolean_and_legacy_string_only():
+    assert is_true(True)
+    assert is_true(" TRUE ")
+    assert not is_true(False)
+    assert not is_true("false")
+    assert not is_true(1)
+    assert not is_true(None)

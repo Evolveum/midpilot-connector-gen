@@ -57,7 +57,7 @@ async def test_extract_class_endpoints_success():
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_api_types",
             new_callable=AsyncMock,
-            return_value=[],
+            return_value=["scim"],
         ),
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_base_api_url",
@@ -89,7 +89,15 @@ async def test_extract_class_endpoints_success():
         mock_schedule.assert_awaited_once()
         schedule_kwargs = mock_schedule.call_args.kwargs
         assert schedule_kwargs["input_payload"]["objectClass"] == "user"
+        assert schedule_kwargs["input_payload"]["objectClassFlags"] == {
+            "embedded": False,
+            "abstract": False,
+        }
         assert schedule_kwargs["worker_args"][1] == "user"
+        assert schedule_kwargs["worker_kwargs"]["object_class_flags"] == {
+            "embedded": False,
+            "abstract": False,
+        }
         assert schedule_kwargs["session_result_key"] == "userEndpointsOutput"
         mock_repo.update_session.assert_awaited_once()
 
@@ -100,6 +108,16 @@ async def test_get_class_endpoints_status_found():
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     job_id = uuid4()
+    scim_capabilities = {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+        "patch": {"supported": False},
+        "bulk": {"supported": True, "maxOperations": 15, "maxPayloadSize": 2097152},
+        "filter": {"supported": True, "maxResults": 50},
+        "changePassword": {"supported": False},
+        "sort": {"supported": True},
+        "etag": {"supported": False},
+        "authenticationSchemes": [],
+    }
     mock_repo.get_session_data = AsyncMock(
         side_effect=[
             str(job_id),
@@ -108,7 +126,8 @@ async def test_get_class_endpoints_status_found():
                     EndpointInfo(method=EndpointMethod.GET, path="/users", description="List users").model_dump(
                         by_alias=True
                     )
-                ]
+                ],
+                "scimCapabilities": scim_capabilities,
             },
         ]
     )
@@ -142,6 +161,9 @@ async def test_get_class_endpoints_status_found():
     assert len(response.result.endpoints) == 1
     assert response.result.endpoints[0].method == "GET"
     assert response.result.endpoints[0].path == "/users"
+    assert response.result.scim_capabilities is not None
+    assert response.result.scim_capabilities.patch.supported is False
+    assert response.result.scim_capabilities.filter.max_results == 50
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     assert mock_repo.get_session_data.await_args_list == [
         call(session_id, "userEndpointsJobId"),

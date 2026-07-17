@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List
 from uuid import UUID
 
@@ -18,6 +18,7 @@ from src.common.errors import (
     RelevantChunksNotFoundError,
 )
 from src.common.session.session import get_session_documentation
+from src.common.utils.coerce import is_true
 from src.common.utils.normalize import normalize_object_class_name
 from src.common.utils.session_info_metadata import (
     get_session_api_types,
@@ -40,6 +41,7 @@ class DocumentationSelection:
     doc_items: List[Dict[str, Any]]
     chunk_references: List[ChunkReference]
     base_api_url: str = ""
+    object_class_flags: Dict[str, bool] = field(default_factory=dict)
 
     @property
     def relevant_chunks(self) -> List[Dict[str, str]]:
@@ -130,6 +132,7 @@ class DocumentationSelector:
         api_types = await self._resolve_api_types(session_id, api_type_override)
         is_scim = is_scim_api(api_types)
         is_sql = is_sql_api(api_types)
+        object_class_flags = _endpoint_object_class_flags(target_object_class) if is_scim else {}
 
         if is_sql:
             doc_items = await self._get_documentation(session_id, db=self._db)
@@ -140,7 +143,12 @@ class DocumentationSelector:
             )
             if not chunk_refs:
                 raise RelevantChunksNotFoundError(object_class, "endpoints")
-            return DocumentationSelection(doc_items=doc_items, chunk_references=chunk_refs, base_api_url=base_api_url)
+            return DocumentationSelection(
+                doc_items=doc_items,
+                chunk_references=chunk_refs,
+                base_api_url=base_api_url,
+                object_class_flags=object_class_flags,
+            )
 
         criteria = ENDPOINT_CRITERIA.model_copy()
         criteria.allowed_tags = [[normalize_object_class_name(object_class)], ["endpoint", "endpoints"]]
@@ -165,6 +173,7 @@ class DocumentationSelector:
             doc_items=await self._get_documentation(session_id, db=self._db),
             chunk_references=chunk_refs,
             base_api_url=base_api_url,
+            object_class_flags=object_class_flags,
         )
 
     async def _get_target_object_class(self, repo: Any, session_id: UUID, object_class: str) -> Dict[str, Any]:
@@ -248,3 +257,11 @@ def _select_sql_schema_doc_items(doc_items: List[Dict[str, Any]]) -> List[Dict[s
         if collect_sql_tables([item]):
             sql_items.append(item)
     return sql_items
+
+
+def _endpoint_object_class_flags(object_class: Dict[str, Any]) -> Dict[str, bool]:
+    """Keep endpoint-relevant structural state explicit in the job input/cache identity."""
+    return {
+        "embedded": is_true(object_class.get("embedded")),
+        "abstract": is_true(object_class.get("abstract")),
+    }

@@ -43,6 +43,7 @@ from src.modules.digester.schemas.endpoints import (
     ConnectivityEndpointResponse,
     EndpointInfo,
     EndpointParamInfo,
+    EndpointRequestParameter,
     EndpointResponse,
     EndpointSuggestedUse,
     ExtractedConnectivityEndpointInfo,
@@ -79,6 +80,15 @@ from src.modules.digester.schemas.object_classes import (
 from src.modules.digester.schemas.relations import (
     RelationRecord,
     RelationsResponse,
+)
+from src.modules.digester.schemas.scim import (
+    SCIM_SERVICE_PROVIDER_CONFIG_URN,
+    ScimAuthenticationScheme,
+    ScimBulkFeature,
+    ScimFilterFeature,
+    ScimServiceProviderConfig,
+    ScimServiceProviderMeta,
+    ScimSupportedFeature,
 )
 
 __all__ = [
@@ -118,6 +128,7 @@ __all__ = [
     "DocSequenceMarker",
     "EndpointInfo",
     "EndpointParamInfo",
+    "EndpointRequestParameter",
     "EndpointResponse",
     "EndpointSuggestedUse",
     "ExtendedObjectClass",
@@ -145,5 +156,12 @@ __all__ = [
     "RelationRecord",
     "RelationsResponse",
     "RestSignalResult",
+    "SCIM_SERVICE_PROVIDER_CONFIG_URN",
+    "ScimAuthenticationScheme",
     "ScimAvailabilityInfo",
+    "ScimBulkFeature",
+    "ScimFilterFeature",
+    "ScimServiceProviderConfig",
+    "ScimServiceProviderMeta",
+    "ScimSupportedFeature",
 ]

@@ -4,33 +4,48 @@
 
 import textwrap
 
-get_native_schema_system_prompt = (
-    textwrap.dedent("""
+
+def build_native_schema_system_prompt(protocol_context_rules: str = "") -> str:
+    """Build a protocol-neutral native-schema prompt with optional protocol context."""
+    return (
+        textwrap.dedent("""
 You are an expert in creating connectors for midPoint. Your goal is to prepare a native schema in Groovy code. 
-You receive a fragment that was extracted in the previous step LLM from the OpenAPI/Swagger schema. This schema will represent one object class ({object_class}) and its attributes that have been extracted from endpoint `api/v1/digester/{{session_id}}/attributes`. 
+You receive structured schema data extracted in the previous step. It represents one object class ({object_class})
+and its attributes from endpoint `api/v1/digester/{{session_id}}/attributes`.
 Prepare a native schema in Groovy code based on the following `.adoc` documentations:
 
 <user_schema_docs>
 {user_schema_docs}
 </user_schema_docs>
+
 """)
-    + "{repair_system_suffix}"
-    + textwrap.dedent("""
+        + protocol_context_rules
+        + "{repair_system_suffix}"
+        + textwrap.dedent("""
 
 OUTPUT RULES:
+- Generate only the native schema for the target object class.
 - Return ONLY Groovy code, fenced as a single ```groovy code block```. No text outside the code block. 
 - Check the example in <user_schema_docs></user_schema_docs>.
 - The Groovy structure may vary, but should be consistent and syntactically valid.
 """)
-)
+    )
 
-get_native_schema_user_prompt = (
-    textwrap.dedent("""
-Here is extracted data from OpenAPI/SCIM schema wrapped into JSON for {object_class}:
+
+def build_native_schema_user_prompt(protocol_context_section: str = "") -> str:
+    """Build a protocol-neutral native-schema user prompt with optional protocol context."""
+    return (
+        textwrap.dedent("""
+Here is extracted schema data wrapped into JSON for {object_class}:
 
 <extracted_info>
 {records_json}
 </extracted_info>
 """)
-    + "{repair_user_suffix}"
-)
+        + protocol_context_section
+        + "{repair_user_suffix}"
+    )
+
+
+get_native_schema_system_prompt = build_native_schema_system_prompt()
+get_native_schema_user_prompt = build_native_schema_user_prompt()

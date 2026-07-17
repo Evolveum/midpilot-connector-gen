@@ -4,6 +4,13 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.scim.shared_context_prompts import (
+    SCIM_CONTRACT_CONTEXT_SYSTEM_RULES,
+    SCIM_CONTRACT_CONTEXT_USER_SECTION,
+    SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES,
+    SCIM_OPERATION_ENDPOINTS_USER_SECTION,
+)
+
 get_scim_update_system_prompt = (
     textwrap.dedent("""\
 You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs. Your goal is to prepare an `update` schema in Groovy for SCIM resources. 
@@ -20,13 +27,16 @@ Prepare a valid Groovy code for update schema in Groovy based on the following `
 {update_docs}
 </update_docs>
 """)
+    + SCIM_CONTRACT_CONTEXT_SYSTEM_RULES
+    + SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
 Output rules:
 - Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
-- SCIM updates typically use PATCH with PatchOp schema for partial updates, or PUT for full replacement.
+- Select PATCH only when it is present in <extracted_endpoints> and `patch.supported` is true in
+  <scim_service_provider_config>. Otherwise use the documented PUT endpoint for full replacement.
 - Handle multi-valued complex attributes with path selectors when needed.
 - Exclude readOnly and immutable attributes from updates.
 - Treat <extracted_attributes> as the primary sources of truth. Prefer them over the examples in <update_docs>.
@@ -51,6 +61,10 @@ Here is extracted object class attributes from SCIM schema wrapped into JSON fro
 <extracted_attributes>
 {attributes_json}
 </extracted_attributes>
+""")
+    + SCIM_CONTRACT_CONTEXT_USER_SECTION
+    + SCIM_OPERATION_ENDPOINTS_USER_SECTION
+    + textwrap.dedent("""\
 
 Optional user-provided preferred endpoints (JSON):
 

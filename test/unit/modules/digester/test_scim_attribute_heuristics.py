@@ -13,6 +13,12 @@ from src.modules.digester.extractors.scim.attributes import (
     extract_scim_attributes,
     get_scim_schema_attributes_for_object_class,
 )
+from src.modules.digester.extractors.scim.baseline import (
+    ConnIdObjectClassDefinition,
+    ScimResourceDefinition,
+    build_scim_baseline_bundle,
+)
+from src.modules.digester.schemas.common import ChunkReference
 
 _SCHEMA_DIR = Path(__file__).parent / "scim_schemas"
 
@@ -27,6 +33,7 @@ def _baseline_schemas() -> dict:
 
 
 BASELINE_SCHEMAS = _baseline_schemas()
+BASELINE_BUNDLE = build_scim_baseline_bundle(BASELINE_SCHEMAS)
 
 
 def test_scim_user_attributes_are_derived_from_schema_with_embedded_complex_attributes():
@@ -92,6 +99,180 @@ def test_unknown_scim_object_class_returns_none_for_documentation_fallback():
 
 
 @pytest.mark.asyncio
+async def test_extract_scim_attributes_persists_schema_context_and_provenance_without_llm():
+    schema_reference = ChunkReference(doc_id=str(uuid4()), chunk_id=str(uuid4()))
+    resource_reference = ChunkReference(doc_id=str(uuid4()), chunk_id=str(uuid4()))
+    object_class_reference = ChunkReference(doc_id=str(uuid4()), chunk_id=str(uuid4()))
+    user_schema = BASELINE_SCHEMAS["User"]
+    bundle = build_scim_baseline_bundle(
+        {"User": user_schema},
+        resources={
+            "User": ScimResourceDefinition(
+                name="User",
+                endpoint="/Users",
+                schema_urn=user_schema["id"],
+                primary_schema=user_schema,
+                source_reference=resource_reference,
+            )
+        },
+        connid_classes={
+            "User": ConnIdObjectClassDefinition(
+                name="User",
+                namespace=user_schema["id"],
+                locator="/Users",
+                uid="User",
+                attributes=[
+                    {"name": "userName", "type": "string", "required": True},
+                    {"name": "id", "type": "string"},
+                ],
+                source_reference=object_class_reference,
+            )
+        },
+        schema_references={"User": schema_reference},
+    )
+
+    with (
+        patch("src.modules.digester.extractors.scim.attributes.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
+        patch(
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
+            new_callable=AsyncMock,
+            return_value=bundle,
+        ),
+    ):
+        result = await extract_scim_attributes([], "User", uuid4(), uuid4())
+
+    expected_references = {
+        (reference.doc_id, reference.chunk_id)
+        for reference in (schema_reference, resource_reference, object_class_reference)
+    }
+    assert {
+        (reference["docId"], reference["chunkId"])
+        for reference in result["result"]["attributes"]["userName"]["relevantDocumentations"]
+    } == expected_references
+    assert result["result"]["scimContext"]["resource"]["endpoint"] == "/Users"
+    assert [
+        attribute["name"] for attribute in result["result"]["scimContext"]["connectorObjectClass"]["attributes"]
+    ] == ["userName", "id"]
+
+
+@pytest.mark.asyncio
+async def test_extract_scim_attributes_does_not_send_conndev_contracts_to_llm():
+    chunk_id = str(uuid4())
+    with (
+        patch("src.modules.digester.extractors.scim.attributes.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain") as build_chain,
+        patch(
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
+            new_callable=AsyncMock,
+            return_value=BASELINE_BUNDLE,
+        ),
+    ):
+        result = await extract_scim_attributes(
+            [json.dumps({"schemaContent": json.dumps(BASELINE_SCHEMAS["User"])})],
+            "User",
+            uuid4(),
+            uuid4(),
+            [chunk_id],
+            chunk_metadata_map={
+                chunk_id: {
+                    "@metadata": {"content_type": "application/com.evolveum.conndev+json"},
+                }
+            },
+        )
+
+    assert "userName" in result["result"]["attributes"]
+    build_chain.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_extract_scim_attributes_uses_general_discovery_without_scim_baseline():
+    job_id = uuid4()
+    conndev_chunk_id = str(uuid4())
+    documentation_chunk_id = str(uuid4())
+    documentation_doc_id = str(uuid4())
+    metadata_map = {
+        conndev_chunk_id: {
+            "@metadata": {"content_type": "application/com.evolveum.conndev+json"},
+        },
+        documentation_chunk_id: {
+            "@metadata": {"content_type": "text/html"},
+        },
+    }
+    documented_result = {
+        "result": {
+            "attributes": {
+                "actionId": {
+                    "type": "string",
+                    "description": "Identifier documented for the custom Action resource.",
+                }
+            }
+        },
+        "relevantDocumentations": [
+            {"docId": documentation_doc_id, "chunkId": documentation_chunk_id},
+        ],
+    }
+
+    with (
+        patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain") as build_chain,
+        patch(
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
+            new_callable=AsyncMock,
+            return_value=build_scim_baseline_bundle({}),
+        ),
+        patch(
+            "src.modules.digester.extractors.scim.attributes.extract_documented_attributes",
+            new_callable=AsyncMock,
+            return_value=documented_result,
+        ) as extract_documented,
+    ):
+        result = await extract_scim_attributes(
+            ["connector contract", "Action attributes include actionId."],
+            "Action",
+            job_id,
+            uuid4(),
+            [conndev_chunk_id, documentation_chunk_id],
+            chunk_metadata_map=metadata_map,
+            chunk_id_to_doc_id={documentation_chunk_id: documentation_doc_id},
+        )
+
+    extract_documented.assert_awaited_once_with(
+        chunks=["Action attributes include actionId."],
+        object_class="Action",
+        job_id=job_id,
+        chunk_details=[documentation_chunk_id],
+        chunk_metadata_map=metadata_map,
+        chunk_id_to_doc_id={documentation_chunk_id: documentation_doc_id},
+    )
+    build_chain.assert_not_called()
+    assert "actionId" in result["result"]["attributes"]
+    assert result["result"]["scimContext"] == {}
+    assert result["relevantDocumentations"] == [{"docId": documentation_doc_id, "chunkId": documentation_chunk_id}]
+
+
+@pytest.mark.asyncio
+async def test_extract_scim_attributes_without_baseline_or_documentation_returns_empty_result():
+    with (
+        patch(
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
+            new_callable=AsyncMock,
+            return_value=build_scim_baseline_bundle({}),
+        ),
+        patch(
+            "src.modules.digester.extractors.scim.attributes.extract_documented_attributes",
+            new_callable=AsyncMock,
+        ) as extract_documented,
+    ):
+        result = await extract_scim_attributes([], "Action", uuid4(), uuid4())
+
+    extract_documented.assert_not_awaited()
+    assert result["result"]["attributes"] == {}
+    assert result["result"]["scimContext"] == {}
+    assert result["relevantDocumentations"] == []
+
+
+@pytest.mark.asyncio
 async def test_extract_scim_attributes_merges_documented_mapping_over_schema_baseline():
     chunk_id = str(uuid4())
     doc_id = str(uuid4())
@@ -101,9 +282,9 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain", return_value=object()),
         patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_schemas",
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
             new_callable=AsyncMock,
-            return_value=BASELINE_SCHEMAS,
+            return_value=BASELINE_BUNDLE,
         ),
         patch(
             "src.modules.digester.extractors.scim.attributes.invoke_chunk_chain",
@@ -196,9 +377,9 @@ async def test_extract_scim_embedded_attributes_match_indexed_documented_paths_t
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain", return_value=object()),
         patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_schemas",
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
             new_callable=AsyncMock,
-            return_value=BASELINE_SCHEMAS,
+            return_value=BASELINE_BUNDLE,
         ),
         patch(
             "src.modules.digester.extractors.scim.attributes.invoke_chunk_chain",
@@ -265,9 +446,9 @@ async def test_extract_scim_embedded_attributes_discards_unmatched_documented_ma
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain", return_value=object()),
         patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_schemas",
+            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
             new_callable=AsyncMock,
-            return_value=BASELINE_SCHEMAS,
+            return_value=BASELINE_BUNDLE,
         ),
         patch(
             "src.modules.digester.extractors.scim.attributes.invoke_chunk_chain",

@@ -4,6 +4,13 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.scim.shared_context_prompts import (
+    SCIM_CONTRACT_CONTEXT_SYSTEM_RULES,
+    SCIM_CONTRACT_CONTEXT_USER_SECTION,
+    SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES,
+    SCIM_OPERATION_ENDPOINTS_USER_SECTION,
+)
+
 get_scim_delete_system_prompt = (
     textwrap.dedent("""\
 You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs. Your goal is to prepare a `delete` schema in Groovy for SCIM resources. 
@@ -20,15 +27,18 @@ Prepare a valid Groovy code for delete schema in Groovy based on the following `
 {delete_docs}
 </delete_docs>
 """)
+    + SCIM_CONTRACT_CONTEXT_SYSTEM_RULES
+    + SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
 Output rules:
 - Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
 - The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
-- SCIM deletes use DELETE method to the resource endpoint with ID: DELETE /Users/{{id}}.
+- SCIM deletes use DELETE against the item form of the explicit resource endpoint with the documented identifier.
+  Never hardcode `/Users`; derive the collection path from <extracted_endpoints> or <scim_resource_contract>.
 - Typically returns 204 No Content with no response body.
-- Consider soft delete behavior if provider uses active=false pattern.
+- Use an `active=false` soft-delete pattern only when provider documentation explicitly requires it.
 - Treat <extracted_attributes> as the primary sources of truth. Prefer them over the examples in <delete_docs>.
 - If <preferred_endpoints> are provided, prioritize endpoints from this list whenever they are compatible with SCIM behavior and docs.
 - If <preferred_endpoints> conflict with docs or SCIM semantics, prefer documented behavior and leave a short TODO comment about the mismatch.
@@ -51,6 +61,10 @@ Here is extracted object class attributes from SCIM schema wrapped into JSON fro
 <extracted_attributes>
 {attributes_json}
 </extracted_attributes>
+""")
+    + SCIM_CONTRACT_CONTEXT_USER_SECTION
+    + SCIM_OPERATION_ENDPOINTS_USER_SECTION
+    + textwrap.dedent("""\
 
 Optional user-provided preferred endpoints (JSON):
 
