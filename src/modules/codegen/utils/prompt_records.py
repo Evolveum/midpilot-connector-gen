@@ -119,9 +119,9 @@ def build_scim_contract_prompt_vars(
 
 def _extract_endpoint_scim_capabilities(payload: EndpointsPayload | None) -> Dict[str, Any]:
     if isinstance(payload, EndpointResponse):
-        if payload.scimCapabilities is None:
+        if payload.scim_capabilities is None:
             return {}
-        return payload.scimCapabilities.model_dump(by_alias=True, exclude_none=True)
+        return payload.scim_capabilities.model_dump(by_alias=True, exclude_none=True)
     if isinstance(payload, Mapping):
         return dict(as_mapping(payload.get("scimCapabilities")))
     return {}

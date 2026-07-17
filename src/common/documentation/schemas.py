@@ -5,7 +5,9 @@
 import uuid
 from typing import Any, List, Optional
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+from src.common.schema import CamelCaseModel
 
 
 def normalize_count(value: Any) -> Any:
@@ -81,26 +83,16 @@ class DocumentationReferences(BaseModel):
         }
 
 
-class SavedDocumentation(BaseModel):
+class SavedDocumentation(CamelCaseModel):
     """
     Scraped or uploaded documentation prepared for chunk processing.
     """
 
-    model_config = ConfigDict(populate_by_name=True)
-
     url: str
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
-    content_type: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("content_type", "contentType"),
-        serialization_alias="contentType",
-    )
+    content_type: Optional[str] = None
     content: Optional[str] = None
-    documentation_references: Optional[DocumentationReferences] = Field(
-        default=None,
-        validation_alias=AliasChoices("documentation_references", "documentationReferences"),
-        serialization_alias="documentationReferences",
-    )
+    documentation_references: Optional[DocumentationReferences] = None
     summary: Optional[SummaryOutput] = None
     links: Optional[List[HttpUrl]] = None
 

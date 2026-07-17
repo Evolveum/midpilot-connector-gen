@@ -400,30 +400,6 @@ async def merge_endpoint_candidates(
                     existing.append(su)
             current.suggested_use = existing
 
-        # Merge structured request parameters by location + case-insensitive name.
-        if ep.parameters:
-            parameters_by_key = {
-                (parameter.location, parameter.name.strip().lower()): parameter for parameter in current.parameters
-            }
-            for parameter in ep.parameters:
-                parameter_key = (parameter.location, parameter.name.strip().lower())
-                existing_parameter = parameters_by_key.get(parameter_key)
-                if existing_parameter is None:
-                    current.parameters.append(parameter)
-                    parameters_by_key[parameter_key] = parameter
-                    continue
-                if parameter.description and len(parameter.description) > len(existing_parameter.description):
-                    existing_parameter.description = parameter.description
-                if existing_parameter.minimum is None and parameter.minimum is not None:
-                    existing_parameter.minimum = parameter.minimum
-                if existing_parameter.maximum is None and parameter.maximum is not None:
-                    existing_parameter.maximum = parameter.maximum
-                if parameter.allowed_values:
-                    existing_parameter.allowed_values = list(
-                        dict.fromkeys([*existing_parameter.allowed_values, *parameter.allowed_values])
-                    )
-                existing_parameter.required = existing_parameter.required or parameter.required
-
     merged = list(by_key.values())
 
     # Sort by path, then by common HTTP method order

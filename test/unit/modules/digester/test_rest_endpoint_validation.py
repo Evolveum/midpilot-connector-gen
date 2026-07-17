@@ -2,27 +2,34 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from uuid import uuid4
-
-import pytest
-
-from src.modules.digester.aggregation.merges import merge_endpoint_candidates
 from src.modules.digester.extractors.rest.endpoints import _apply_validated_endpoint_details
 from src.modules.digester.prompts.rest.endpoints_prompts import (
     check_endpoint_params_system_prompt,
+    check_endpoint_params_user_prompt,
     get_endpoints_system_prompt,
+    get_endpoints_user_prompt,
 )
-from src.modules.digester.schemas import EndpointParamInfo, EndpointRequestParameter, ExtractedEndpointInfo
+from src.modules.digester.schemas import EndpointParamInfo, ExtractedEndpointInfo
 
 
-def test_rest_endpoint_prompts_explicitly_request_structured_parameters():
-    assert "path, query, and header parameters" in get_endpoints_system_prompt
-    assert "Every path placeholder" in check_endpoint_params_system_prompt
-    assert "Do not convert request-body properties" in check_endpoint_params_system_prompt
+def test_rest_endpoint_extraction_models_exclude_structured_parameters():
+    """Structured parameters are SCIM-only; REST LLM extraction must not request them."""
+    assert "parameters" not in ExtractedEndpointInfo.model_fields
+    assert "parameters" not in EndpointParamInfo.model_fields
 
 
-@pytest.mark.asyncio
-async def test_validated_rest_endpoint_parameters_remain_typed_during_merge():
+def test_rest_endpoint_prompts_do_not_request_structured_parameters():
+    for prompt in (
+        get_endpoints_system_prompt,
+        get_endpoints_user_prompt,
+        check_endpoint_params_system_prompt,
+        check_endpoint_params_user_prompt,
+    ):
+        assert "path, query, and header parameters" not in prompt
+        assert "structured request parameters" not in prompt
+
+
+def test_apply_validated_endpoint_details_copies_editable_fields():
     endpoint = ExtractedEndpointInfo(
         path="/users/{id}",
         method="GET",
@@ -30,31 +37,14 @@ async def test_validated_rest_endpoint_parameters_remain_typed_during_merge():
     )
     checked_result = EndpointParamInfo(
         description="Get a user by identifier",
-        parameters=[
-            EndpointRequestParameter(
-                name="id",
-                location="path",
-                type="string",
-                required=True,
-            )
-        ],
+        response_content_type="application/json",
+        suggested_use=["getById"],
     )
 
     _apply_validated_endpoint_details(endpoint, checked_result)
 
-    assert isinstance(endpoint.parameters[0], EndpointRequestParameter)
-
-    merged = await merge_endpoint_candidates([endpoint], "user", uuid4())
-
-    assert merged[0]["parameters"] == [
-        {
-            "name": "id",
-            "location": "path",
-            "type": "string",
-            "description": "",
-            "required": True,
-            "minimum": None,
-            "maximum": None,
-            "allowedValues": [],
-        }
-    ]
+    assert endpoint.description == "Get a user by identifier"
+    assert endpoint.response_content_type == "application/json"
+    assert endpoint.suggested_use == ["getById"]
+    assert endpoint.path == "/users/{id}"
+    assert endpoint.method == "GET"

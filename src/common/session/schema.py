@@ -9,6 +9,8 @@ from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from src.common.schema import CamelCaseModel
+
 
 @dataclass(frozen=True)
 class RawUploadedDocumentation:
@@ -47,42 +49,32 @@ class ProcessedDocumentationChunk:
     metadata: Dict[str, Any]
 
 
-class Session(BaseModel):
+class Session(CamelCaseModel):
     """
-    Canonical on-disk session model (camelCase).
-    Accepts snake_case on input for backwards compatibility.
+    Canonical session model. Serializes to camelCase (``by_alias=True``) for the
+    on-disk/API shape and accepts snake_case on input for backwards compatibility.
     """
 
-    sessionId: UUID = Field(..., description="UUID v4", validation_alias=AliasChoices("sessionId", "session_id"))
-    createdAt: str = Field(
-        ..., description="Session creation time (ISO 8601)", validation_alias=AliasChoices("createdAt", "created_at")
-    )
-    updatedAt: str = Field(
-        ..., description="Session update time (ISO 8601)", validation_alias=AliasChoices("updatedAt", "updated_at")
-    )
+    session_id: UUID = Field(..., description="UUID v4")
+    created_at: str = Field(..., description="Session creation time (ISO 8601)")
+    updated_at: str = Field(..., description="Session update time (ISO 8601)")
     data: Dict[str, Any] = Field(default_factory=dict, description="Arbitrary session payload")
 
 
-class DocumentationItem(BaseModel):
+class DocumentationItem(CamelCaseModel):
     """Unified documentation item that can come from scraper or user upload."""
 
     chunk_id: UUID = Field(
         default_factory=uuid.uuid4,
-        serialization_alias="chunkId",
-        validation_alias=AliasChoices("chunkId", "chunk_id"),
         description="Unique identifier for this documentation chunk",
     )
     doc_id: Optional[UUID] = Field(
         None,
-        serialization_alias="docId",
-        validation_alias=AliasChoices("docId", "doc_id"),
         description="Document identifier shared across chunks from the same source document",
     )
     source: str = Field(..., description="Source type: 'scraper' or 'upload'")
     scrape_job_ids: Optional[list[UUID]] = Field(
         None,
-        serialization_alias="scrapeJobIds",
-        validation_alias=AliasChoices("scrapeJobIds", "scrape_job_ids"),
         description="List of scrape job IDs that created or needed this documentation item",
     )
     url: Optional[str] = Field(None, description="URL for scraped documentation, null for uploads")
@@ -92,17 +84,18 @@ class DocumentationItem(BaseModel):
         default_factory=dict,
         serialization_alias="@metadata",
         validation_alias=AliasChoices("@metadata", "metadata"),
-        description="Additional metadata: chunk_number, num_endpoints, token_count, character_count, content_type, tags, category",
+        description=(
+            "Additional metadata: chunk_number, num_endpoints, token_count, character_count, content_type, tags, "
+            "category. Serialized as '@metadata'"
+        ),
     )
 
 
-class DocumentationChunk(BaseModel):
+class DocumentationChunk(CamelCaseModel):
     """API model for one documentation chunk payload."""
 
     chunk_id: UUID = Field(
         ...,
-        serialization_alias="chunkId",
-        validation_alias=AliasChoices("chunkId", "chunk_id"),
         description="Unique identifier for the documentation chunk",
     )
     source: str = Field(..., description="Source type: 'scraper' or 'upload'")
@@ -113,23 +106,19 @@ class DocumentationChunk(BaseModel):
         default_factory=dict,
         serialization_alias="metadata",
         validation_alias=AliasChoices("metadata", "@metadata"),
-        description="Chunk metadata",
+        description="Chunk metadata; accepts the GUI-facing '@metadata' key on input",
     )
     created_at: str = Field(
         ...,
-        serialization_alias="createdAt",
-        validation_alias=AliasChoices("createdAt", "created_at"),
         description="Creation timestamp (ISO 8601)",
     )
     scrape_job_ids: list[str] = Field(
         default_factory=list,
-        serialization_alias="scrapeJobIds",
-        validation_alias=AliasChoices("scrapeJobIds", "scrape_job_ids"),
         description="Job IDs used for caching/reference",
     )
 
 
-class Documentation(BaseModel):
+class Documentation(CamelCaseModel):
     """API model for one logical document containing all its chunks.
 
     ``extra="allow"`` keeps any unexpected top-level keys accessible via
@@ -142,8 +131,6 @@ class Documentation(BaseModel):
 
     doc_id: Optional[UUID] = Field(
         None,
-        serialization_alias="docId",
-        validation_alias=AliasChoices("docId", "doc_id"),
         description="Document identifier shared across chunks",
     )
     chunks: list[DocumentationChunk] = Field(default_factory=list, description="All chunks of the document")

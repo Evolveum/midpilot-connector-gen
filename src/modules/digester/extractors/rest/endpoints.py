@@ -76,8 +76,8 @@ async def extract_endpoints(
     Extract API endpoints from document chunks using LLM analysis.
 
     Processes chunks of text to identify and extract API endpoint information including
-    paths, methods, parameters, and metadata. Uses parallel processing for efficiency
-    and includes parameter validation through context analysis.
+    paths, methods, and metadata. Uses parallel processing for efficiency and includes
+    a per-endpoint double-check of the editable fields through context analysis.
 
     Args:
         chunks: List of text chunks to analyze for endpoint information
@@ -222,7 +222,6 @@ async def extract_endpoints(
                     chunk_id,
                 )
 
-                # In this step, we are validating parameters of the extracted endpoints
                 # we choose 1000 tokens around the found endpoint in text and run the llm on it
                 for endpoint in valid_endpoints:
                     context_snippet = get_neighboring_tokens(

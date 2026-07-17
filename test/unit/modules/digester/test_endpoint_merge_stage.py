@@ -9,7 +9,7 @@ import pytest
 
 from src.common.enums import JobStage
 from src.modules.digester.aggregation.merges import merge_endpoint_candidates
-from src.modules.digester.schemas import EndpointRequestParameter, ExtractedEndpointInfo
+from src.modules.digester.schemas import ExtractedEndpointInfo
 
 
 @pytest.mark.asyncio
@@ -32,46 +32,26 @@ async def test_merge_endpoint_candidates_does_not_emit_finished_stage():
 
 
 @pytest.mark.asyncio
-async def test_merge_endpoint_candidates_preserves_parameters_from_duplicate_endpoints():
+async def test_merge_endpoint_candidates_merges_editable_fields_from_duplicate_endpoints():
     endpoints = [
         ExtractedEndpointInfo(
             path="/Users",
             method="GET",
             description="List users",
-            parameters=[
-                EndpointRequestParameter(
-                    name="filter",
-                    location="query",
-                    type="string",
-                    description="Filter users",
-                )
-            ],
+            suggested_use=["getAll"],
         ),
         ExtractedEndpointInfo(
             path="/Users",
             method="GET",
             description="List users with pagination",
-            parameters=[
-                EndpointRequestParameter(
-                    name="count",
-                    location="query",
-                    type="integer",
-                    maximum=50,
-                ),
-                EndpointRequestParameter(
-                    name="FILTER",
-                    location="query",
-                    type="string",
-                    description="SCIM filter expression for users",
-                ),
-            ],
+            response_content_type="application/scim+json",
+            suggested_use=["search"],
         ),
     ]
 
     merged = await merge_endpoint_candidates(endpoints, "User", uuid4())
 
     assert len(merged) == 1
-    parameters = {parameter["name"].lower(): parameter for parameter in merged[0]["parameters"]}
-    assert set(parameters) == {"filter", "count"}
-    assert parameters["filter"]["description"] == "SCIM filter expression for users"
-    assert parameters["count"]["maximum"] == 50
+    assert merged[0]["description"] == "List users with pagination"
+    assert merged[0]["responseContentType"] == "application/scim+json"
+    assert merged[0]["suggestedUse"] == ["getAll", "search"]

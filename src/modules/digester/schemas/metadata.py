@@ -4,9 +4,10 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
 from src.common.enums import ApiType, DetectionSource, ProtocolAvailability
+from src.common.schema import CamelCaseModel
 from src.modules.digester.enums import EndpointType
 
 # Shared alias table for canonicalizing API technology types from upstream sources.
@@ -89,7 +90,7 @@ def coerce_base_api_endpoint_list(value: Any) -> List[Any]:
 
 
 # ---  Info about schema ---
-class BaseAPIEndpoint(BaseModel):
+class BaseAPIEndpoint(CamelCaseModel):
     """
     Base API endpoint for the product. Distinguishes constant vs tenant-specific (dynamic)
     URLs, and which HTTP protocol (REST/SCIM) the endpoint serves.
@@ -105,16 +106,12 @@ class BaseAPIEndpoint(BaseModel):
     )
     api_type: ApiType | None = Field(
         default=None,
-        validation_alias="apiType",
-        serialization_alias="apiType",
         exclude=True,
         description=(
             "Explicit HTTP protocol this base endpoint serves: 'rest' or 'scim'. When omitted, merge logic routes the "
             "endpoint from the session-level apiType; not serialized (the block already implies the protocol)."
         ),
     )
-
-    model_config = {"populate_by_name": True}
 
     @field_validator("type", mode="before")
     @classmethod
@@ -137,7 +134,7 @@ class BaseAPIEndpoint(BaseModel):
         return normalize_endpoint_protocol(value)
 
 
-class InfoMetadataBase(BaseModel):
+class InfoMetadataBase(CamelCaseModel):
     """
     Scalar product/API identity fields shared by per-chunk extraction and the final payload.
     """
@@ -148,33 +145,23 @@ class InfoMetadataBase(BaseModel):
     )
     application_version: Optional[str] = Field(
         default="",
-        validation_alias="applicationVersion",
-        serialization_alias="applicationVersion",
         description="Application version label if provided.",
     )
     api_version: str = Field(
         default="",
-        validation_alias="apiVersion",
-        serialization_alias="apiVersion",
         description="API version string as documented (e.g., 'v1', '2024-05', semantic).",
     )
 
-    model_config = {"populate_by_name": True}
 
-
-class _EndpointCarrier(BaseModel):
+class _EndpointCarrier(CamelCaseModel):
     """
     Shared base-endpoint field and input normalization for metadata models.
     """
 
     base_api_endpoint: List[BaseAPIEndpoint] = Field(
         default_factory=list,
-        validation_alias="baseApiEndpoint",
-        serialization_alias="baseApiEndpoint",
         description="Base endpoints/URI templates with their constant/dynamic and REST/SCIM classification.",
     )
-
-    model_config = {"populate_by_name": True}
 
     @field_validator("base_api_endpoint", mode="before")
     @classmethod
@@ -193,8 +180,6 @@ class InfoMetadataExtraction(_EndpointCarrier, InfoMetadataBase):
 
     database_name: str = Field(
         default="",
-        validation_alias="databaseName",
-        serialization_alias="databaseName",
         description=(
             "Database/schema name the connector must connect to. Populate ONLY for SQL/database integrations; "
             "leave empty for REST/SCIM."
@@ -289,8 +274,6 @@ class RestAvailabilityInfo(_EndpointCarrier):
     )
     required_plan: str = Field(
         default="",
-        validation_alias="requiredPlan",
-        serialization_alias="requiredPlan",
         description="Plan/tier required when status is 'paid' (e.g. 'Enterprise'); empty when unknown.",
     )
     sources: List[DetectionSource] = Field(
@@ -321,8 +304,6 @@ class ScimAvailabilityInfo(_EndpointCarrier):
     )
     required_plan: str = Field(
         default="",
-        validation_alias="requiredPlan",
-        serialization_alias="requiredPlan",
         description="Plan/tier required when status is 'paid' (e.g. 'Enterprise'); empty when unknown.",
     )
     sources: List[DetectionSource] = Field(
@@ -337,7 +318,7 @@ class ScimAvailabilityInfo(_EndpointCarrier):
     )
 
 
-class SqlAvailabilityInfo(BaseModel):
+class SqlAvailabilityInfo(CamelCaseModel):
     """
     SQL-specific connectivity info: the target database/schema name.
 
@@ -346,12 +327,8 @@ class SqlAvailabilityInfo(BaseModel):
 
     database_name: str = Field(
         default="",
-        validation_alias="databaseName",
-        serialization_alias="databaseName",
         description="Database/schema name the connector must connect to. Populated only for SQL integrations.",
     )
-
-    model_config = {"populate_by_name": True}
 
 
 class InfoMetadata(InfoMetadataBase):
@@ -365,32 +342,24 @@ class InfoMetadata(InfoMetadataBase):
     shape is stable regardless of the detected ``apiType``.
     """
 
-    model_config = {"extra": "forbid", "populate_by_name": True}
+    model_config = {"extra": "forbid"}
 
     api_type: List[ApiType] = Field(
         default_factory=list,
-        validation_alias="apiType",
-        serialization_alias="apiType",
         description=(
             "API technology types. Allowed values: REST, SCIM, SQL. OpenAPI/Swagger should be normalized to REST."
         ),
     )
     rest_availability: RestAvailabilityInfo = Field(
         default_factory=RestAvailabilityInfo,
-        validation_alias="restAvailability",
-        serialization_alias="restAvailability",
         description="REST connectivity info (base endpoints). Empty when REST is not detected.",
     )
     scim_availability: ScimAvailabilityInfo = Field(
         default_factory=ScimAvailabilityInfo,
-        validation_alias="scimAvailability",
-        serialization_alias="scimAvailability",
         description="SCIM connectivity info and availability advisory. Empty/unknown when SCIM is not detected.",
     )
     sql_availability: SqlAvailabilityInfo = Field(
         default_factory=SqlAvailabilityInfo,
-        validation_alias="sqlAvailability",
-        serialization_alias="sqlAvailability",
         description="SQL connectivity info (database name). Empty when the integration is not SQL.",
     )
 
@@ -400,7 +369,7 @@ class InfoMetadata(InfoMetadataBase):
         return normalize_api_type_values(value)
 
 
-class ApiTypeResponse(BaseModel):
+class ApiTypeResponse(CamelCaseModel):
     """
     Structured output for the standalone apiType detection LLM call.
 
@@ -410,12 +379,8 @@ class ApiTypeResponse(BaseModel):
 
     api_type: List[ApiType] = Field(
         default_factory=list,
-        validation_alias="apiType",
-        serialization_alias="apiType",
         description="API technology types detected for this fragment. Allowed values: REST, SCIM, SQL.",
     )
-
-    model_config = {"populate_by_name": True}
 
     @field_validator("api_type", mode="before")
     @classmethod
@@ -423,7 +388,7 @@ class ApiTypeResponse(BaseModel):
         return normalize_api_type_values(value)
 
 
-class ApiTypeSignalResult(BaseModel):
+class ApiTypeSignalResult(CamelCaseModel):
     """
     Structured output shared by the documentation-free SCIM apiType signals
     (knowledge-based and web-search-based).
@@ -435,20 +400,14 @@ class ApiTypeSignalResult(BaseModel):
 
     supports_scim: bool = Field(
         default=False,
-        validation_alias="supportsScim",
-        serialization_alias="supportsScim",
         description="True only when the named application is known to expose a SCIM provisioning API.",
     )
     api_type: List[ApiType] = Field(
         default_factory=list,
-        validation_alias="apiType",
-        serialization_alias="apiType",
         description="Integration protocol types the application is known to support. Allowed values: REST, SCIM, SQL.",
     )
     scim_availability: ProtocolAvailability = Field(
         default=ProtocolAvailability.UNKNOWN,
-        validation_alias="scimAvailability",
-        serialization_alias="scimAvailability",
         description=(
             "Whether SCIM is generally available ('available'), restricted to a paid/enterprise tier ('paid'), "
             "or not determinable ('unknown'). Use 'unknown' when unsure."
@@ -456,12 +415,8 @@ class ApiTypeSignalResult(BaseModel):
     )
     required_plan: str = Field(
         default="",
-        validation_alias="requiredPlan",
-        serialization_alias="requiredPlan",
         description="Plan/tier required for SCIM when it is paid (e.g. 'Enterprise Grid'); empty otherwise.",
     )
-
-    model_config = {"populate_by_name": True}
 
     @field_validator("api_type", mode="before")
     @classmethod
@@ -490,7 +445,7 @@ class ApiTypeSignalResult(BaseModel):
         return mapping.get(value.strip().lower(), ProtocolAvailability.UNKNOWN)
 
 
-class RestSignalResult(BaseModel):
+class RestSignalResult(CamelCaseModel):
     """
     Structured output shared by the documentation-free REST apiType signals
     (knowledge-based and web-search-based).
@@ -504,8 +459,6 @@ class RestSignalResult(BaseModel):
 
     supports_rest: bool = Field(
         default=False,
-        validation_alias="supportsRest",
-        serialization_alias="supportsRest",
         description="True only when the named application is known to expose a REST/OpenAPI provisioning API.",
     )
     availability: ProtocolAvailability = Field(
@@ -517,12 +470,8 @@ class RestSignalResult(BaseModel):
     )
     required_plan: str = Field(
         default="",
-        validation_alias="requiredPlan",
-        serialization_alias="requiredPlan",
         description="Plan/tier required for REST when it is paid (e.g. 'Enterprise'); empty otherwise.",
     )
-
-    model_config = {"populate_by_name": True}
 
     @field_validator("availability", mode="before")
     @classmethod
@@ -530,19 +479,15 @@ class RestSignalResult(BaseModel):
         return normalize_protocol_availability(value)
 
 
-class InfoExtractionResponse(BaseModel):
+class InfoExtractionResponse(CamelCaseModel):
     """
     Container for per-chunk info metadata extraction (apiType handled separately).
     """
 
     info_metadata: Optional[InfoMetadataExtraction] = Field(
         default=None,
-        validation_alias="infoMetadata",
-        serialization_alias="infoMetadata",
         description="High-level application metadata if discovered in the documentation. Null when unavailable.",
     )
-
-    model_config = {"populate_by_name": True}
 
     @field_validator("info_metadata", mode="before")
     @classmethod
@@ -552,7 +497,7 @@ class InfoExtractionResponse(BaseModel):
         return v
 
 
-class InfoResponse(BaseModel):
+class InfoResponse(CamelCaseModel):
     """
     Container for high-level API metadata. Return null/empty fields when unknown.
     Use the alias 'InfoMetadata' for serialization if needed.
@@ -560,12 +505,8 @@ class InfoResponse(BaseModel):
 
     info_metadata: Optional[InfoMetadata] = Field(
         default=None,
-        validation_alias="infoMetadata",
-        serialization_alias="infoMetadata",
         description="High-level application and API metadata if discovered in the documentations. Null when unavailable.",
     )
-
-    model_config = {"populate_by_name": True}
 
     @field_validator("info_metadata", mode="before")
     @classmethod

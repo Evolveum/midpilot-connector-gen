@@ -161,9 +161,9 @@ async def test_get_class_endpoints_status_found():
     assert len(response.result.endpoints) == 1
     assert response.result.endpoints[0].method == "GET"
     assert response.result.endpoints[0].path == "/users"
-    assert response.result.scimCapabilities is not None
-    assert response.result.scimCapabilities.patch.supported is False
-    assert response.result.scimCapabilities.filter.max_results == 50
+    assert response.result.scim_capabilities is not None
+    assert response.result.scim_capabilities.patch.supported is False
+    assert response.result.scim_capabilities.filter.max_results == 50
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     assert mock_repo.get_session_data.await_args_list == [
         call(session_id, "userEndpointsJobId"),

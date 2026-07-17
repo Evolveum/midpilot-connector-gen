@@ -4,15 +4,16 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from src.common.schema import CamelCaseModel
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.schemas.common import RelevantDocumentationsMixin
 
 # --- Object Classes ---
 
 
-class BaseObjectClass(BaseModel):
+class BaseObjectClass(CamelCaseModel):
     """
     Minimal shared representation.
     Used when only identity + short meaning of the class are needed.
@@ -22,7 +23,6 @@ class BaseObjectClass(BaseModel):
         "json_schema_extra": {
             "exclude_none": True,
         },
-        "populate_by_name": True,
     }
 
     name: str = Field(
@@ -127,84 +127,68 @@ class FinalObjectClass(RankedObjectClass, RelevantDocumentationsMixin):
     )
 
 
-class ObjectClassesResponse(BaseModel):
+class ObjectClassesResponse(CamelCaseModel):
     """
     Final object classes returned to API consumers.
     """
 
     object_classes: List[FinalObjectClass] = Field(
         default_factory=list,
-        validation_alias="objectClasses",
-        serialization_alias="objectClasses",
         description=(
             "List of extracted object classes enriched with confidence and returned in final order. "
             "Use alias 'objectClasses' in JSON payloads."
         ),
     )
 
-    model_config = {"populate_by_name": True}
-
     @property
     def objectClasses(self) -> List[FinalObjectClass]:
         return self.object_classes
 
 
-class ObjectClassesExtendedResponse(BaseModel):
+class ObjectClassesExtendedResponse(CamelCaseModel):
     """
     First LLM call response container.
     """
 
     object_classes: List[ExtendedObjectClass] = Field(
         default_factory=list,
-        validation_alias="objectClasses",
-        serialization_alias="objectClasses",
         description=(
             "List of extracted extended object classes from the first pass. Use alias 'objectClasses' in JSON payloads."
         ),
     )
-
-    model_config = {"populate_by_name": True}
 
     @property
     def objectClasses(self) -> List[ExtendedObjectClass]:
         return self.object_classes
 
 
-class ObjectClassesConfidenceResponse(BaseModel):
+class ObjectClassesConfidenceResponse(CamelCaseModel):
     """
     Second LLM call response container.
     """
 
     object_classes: List[ObjectClassWithConfidence] = Field(
         default_factory=list,
-        validation_alias="objectClasses",
-        serialization_alias="objectClasses",
         description="List of object classes with assigned confidence levels.",
     )
-
-    model_config = {"populate_by_name": True}
 
     @property
     def objectClasses(self) -> List[ObjectClassWithConfidence]:
         return self.object_classes
 
 
-class ObjectClassesRankedResponse(BaseModel):
+class ObjectClassesRankedResponse(CamelCaseModel):
     """
     Third LLM call response container.
     """
 
     object_classes: List[RankedObjectClass] = Field(
         default_factory=list,
-        validation_alias="objectClasses",
-        serialization_alias="objectClasses",
         description=(
             "Reordered list of ranked object classes. "
             "Each item includes fields needed for ranking and final output composition."
         ),
     )
-
-    model_config = {"populate_by_name": True}
 
     @property
     def objectClasses(self) -> List[RankedObjectClass]:
