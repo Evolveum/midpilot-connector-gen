@@ -18,6 +18,7 @@ from src.common.errors import (
     RelevantChunksNotFoundError,
 )
 from src.common.session.session import get_session_documentation
+from src.common.utils.coerce import is_true
 from src.common.utils.normalize import normalize_object_class_name
 from src.common.utils.session_info_metadata import (
     get_session_api_types,
@@ -260,10 +261,6 @@ def _select_sql_schema_doc_items(doc_items: List[Dict[str, Any]]) -> List[Dict[s
 
 def _endpoint_object_class_flags(object_class: Dict[str, Any]) -> Dict[str, bool]:
     """Keep endpoint-relevant structural state explicit in the job input/cache identity."""
-
-    def is_true(value: Any) -> bool:
-        return value is True or (isinstance(value, str) and value.strip().lower() == "true")
-
     return {
         "embedded": is_true(object_class.get("embedded")),
         "abstract": is_true(object_class.get("abstract")),

@@ -153,6 +153,16 @@ def test_all_scim_operation_prompts_receive_the_separated_context_contract():
         assert "{endpoints_json}" in user_prompt
 
 
+def test_scim_filter_prompt_distinguishes_missing_and_explicitly_disabled_capability():
+    prompt = " ".join(get_scim_search_filter_system_prompt.split())
+
+    assert "explicit `filter.supported: false` forbids" in prompt
+    assert "whole contract is empty" in prompt
+    assert "treat filtering support as unknown" in prompt
+    assert "provider documentation in <current_chunk> explicitly proves it" in prompt
+    assert "An explicit `filter.supported: false` disables this intent" in prompt
+
+
 def test_scim_operation_prompts_do_not_introduce_an_implicit_id_template_variable():
     prompt_pairs = [
         (get_scim_create_system_prompt, get_scim_create_user_prompt),

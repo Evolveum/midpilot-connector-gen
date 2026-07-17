@@ -19,9 +19,11 @@ SCIM CONTRACT CONTEXT RULES:
   the ConnID layer currently exposes. It is normalized only from the ObjectClass export, not enriched from either
   schema view. Attributes omitted there are not automatically absent from the SCIM API.
 - <scim_service_provider_config> is the session-wide capability contract. Treat its explicit flags and limits as
-  authoritative: PATCH is available only when `patch.supported` is true; generate SCIM filtering or sorting only when
-  their respective `supported` flags are true; respect `filter.maxResults`; and add ETag/If-Match behavior only when
-  `etag.supported` is true. Bulk and change-password capabilities do not prove per-object-class CRUD endpoints.
+  authoritative: PATCH is available only when `patch.supported` is true; an explicit `filter.supported: false` forbids
+  SCIM filtering, while `filter.supported: true` enables documented filtering. If the whole contract is empty or the
+  filter capability is absent, treat filtering support as unknown and rely only on explicit provider documentation.
+  Generate sorting only when `sort.supported` is true, respect `filter.maxResults`, and add ETag/If-Match behavior only
+  when `etag.supported` is true. Bulk and change-password capabilities do not prove per-object-class CRUD endpoints.
 - ServiceProviderConfig does not carry independent support flags for GET, POST, PUT or DELETE. Determine those methods
   from <extracted_endpoints> and the SCIM resource contract rather than inferring that they are disabled.
 - When the views disagree, do not silently merge them or let one overwrite another. Use SCIM schema/resource data for

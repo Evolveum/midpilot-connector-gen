@@ -42,8 +42,10 @@ OUTPUT RULES:
 - If <preferred_endpoints> conflict with docs or SCIM semantics, prefer documented behavior and add a short TODO comment.
 - `emptyFilterSupported true` MUST be inside an `endpoint("...") {{ ... }}` block.
 - Never generate `sortingSupport {{ ... }}` blocks and never reference `sorting.*`.
-- Use SCIM filter syntax in query parameters (`filter=<attribute> <operator> <value>`) only when
-  `filter.supported` is true in <scim_service_provider_config>.
+- Use SCIM filter syntax in query parameters (`filter=<attribute> <operator> <value>`) when
+  `filter.supported` is true in <scim_service_provider_config>. Never generate it when that flag is explicitly false.
+  When <scim_service_provider_config> is empty or omits the filter capability, generate filtering only when the provider
+  documentation in <current_chunk> explicitly proves it.
 - For string values in filters, use escaped quotes: `\\"value\\"`.
 - Treat <result> as current working code and minimally edit/extend it.
 - Do not fabricate parameters, attributes, or fields. If unclear, add a TODO comment.
@@ -64,7 +66,9 @@ INTENT PROFILE: `all`
 _SCIM_SEARCH_SYSTEM_PROMPT_FILTER_RULES = textwrap.dedent("""\
 
 INTENT PROFILE: `filter`
-- Generate ONLY documented SCIM filtering capabilities and require `filter.supported` to be true.
+- Generate ONLY documented SCIM filtering capabilities. An explicit `filter.supported: false` disables this intent;
+  `true` enables documented filtering. If the capability contract is empty or omits that flag, filtering is allowed
+  only when <current_chunk> explicitly documents it.
 - Prefer explicit `supportedFilter(...) {{ ... }}` or `anyFilterSupported true` based on docs.
 - Do not add get-all behavior unless docs explicitly show it is part of filtered mode.
 """)

@@ -16,6 +16,7 @@ from typing import Any, Dict
 from uuid import UUID
 
 from src.common.jobs import increment_processed_documents, update_job_progress
+from src.common.utils.coerce import is_true
 from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.extractors.scim.baseline import (
     ScimBaselineBundle,
@@ -53,7 +54,7 @@ async def pregenerate_scim_endpoints(
     baseline_bundle = await load_session_scim_baseline(session_id)
 
     flags = object_class_flags or {}
-    if _is_true(flags.get("embedded")) or _is_true(flags.get("abstract")):
+    if is_true(flags.get("embedded")) or is_true(flags.get("abstract")):
         logger.info("[SCIM:Endpoints] %s is embedded or abstract; skipping standalone endpoints", object_class)
         await increment_processed_documents(job_id, delta=1)
         return _build_scim_endpoint_result(baseline_bundle)
@@ -96,11 +97,6 @@ async def pregenerate_scim_endpoints(
         endpoints=endpoints,
         endpoint_source_reference=endpoint_definition.source_reference,
     )
-
-
-def _is_true(value: Any) -> bool:
-    """Accept persisted boolean flags and their legacy string representation."""
-    return value is True or (isinstance(value, str) and value.strip().lower() == "true")
 
 
 def _build_scim_endpoint_result(
