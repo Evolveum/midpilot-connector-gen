@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -153,8 +154,12 @@ def test_all_scim_crud_generators_enable_context_only_conndev_generation():
 
 
 @pytest.mark.asyncio
-async def test_scim_crud_runs_context_only_generation_when_session_has_only_conndev_documents():
+@pytest.mark.parametrize("include_unrelated_provider_document", [False, True])
+async def test_scim_crud_runs_context_only_generation_when_selected_input_is_conndev(
+    include_unrelated_provider_document: bool,
+):
     raw_conndev_content = '{"rawConndevMarker":"must-not-reach-the-prompt"}'
+    unrelated_provider_content = "Unrelated provider documentation must not reach the selected prompt."
     conndev_chunk_id = "conndev-only-chunk"
     generated_code = 'objectClass("User") { create { } }'
     generator = CreateGenerator(
@@ -168,7 +173,7 @@ async def test_scim_crud_runs_context_only_generation_when_session_has_only_conn
     chain = AsyncMock()
     chain.ainvoke.return_value = generated_code
 
-    attributes = {
+    attributes: dict[str, Any] = {
         "attributes": {"userName": {"type": "string"}},
         "scimContext": {
             "schema": {
@@ -185,19 +190,28 @@ async def test_scim_crud_runs_context_only_generation_when_session_has_only_conn
         "scimCapabilities": {"filter": {"supported": True}},
         "endpoints": [{"method": "POST", "path": "/Users", "description": "Create User"}],
     }
+    documentation_items = [
+        {
+            "chunkId": conndev_chunk_id,
+            "content": raw_conndev_content,
+            "metadata": {"content_type": "application/com.evolveum.conndev+json"},
+        }
+    ]
+    if include_unrelated_provider_document:
+        documentation_items.append(
+            {
+                "chunkId": "unrelated-provider-chunk",
+                "content": unrelated_provider_content,
+                "metadata": {"content_type": "text/html"},
+            }
+        )
 
     with (
         patch.object(
             generator,
             "_load_documentation_items",
             new_callable=AsyncMock,
-            return_value=[
-                {
-                    "chunkId": conndev_chunk_id,
-                    "content": raw_conndev_content,
-                    "metadata": {"content_type": "application/com.evolveum.conndev+json"},
-                }
-            ],
+            return_value=documentation_items,
         ),
         patch.object(generator, "_build_llm_chain", return_value=chain),
         patch.object(
@@ -226,6 +240,7 @@ async def test_scim_crud_runs_context_only_generation_when_session_has_only_conn
     assert json.loads(prompt_vars["scim_protocol_schema_json"]) == attributes["scimContext"]["schema"]
     assert json.loads(prompt_vars["endpoints_json"]) == endpoints["endpoints"]
     assert raw_conndev_content not in json.dumps(prompt_vars)
+    assert unrelated_provider_content not in json.dumps(prompt_vars)
 
 
 def test_all_scim_operation_prompts_receive_the_separated_context_contract():
