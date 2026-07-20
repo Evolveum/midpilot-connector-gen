@@ -53,7 +53,7 @@ cp .env.test-example .env.test
 
 ```bash
 # build base image when Python, uv.lock, pyproject.toml, or Playwright changes
-docker build -f Dockerfile.base -t midpilot-connector-gen-base:python3.13-playwright1.58.0 .
+docker build -f Dockerfile.base -t midpilot-connector-gen-base:python3.13-playwright1.61.0 .
 
 # build image
 docker compose build

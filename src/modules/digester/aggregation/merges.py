@@ -517,7 +517,7 @@ def _http_endpoint_protocol_from_session(api_types: List[ApiType]) -> ApiType:
 
 def _allowed_http_endpoint_protocols(api_types: List[ApiType]) -> set[ApiType]:
     """Return HTTP endpoint protocols allowed by session-level apiType."""
-    allowed = {api_type for api_type in api_types if api_type in {ApiType.REST, ApiType.SCIM}}
+    allowed: set[ApiType] = {api_type for api_type in api_types if api_type in {ApiType.REST, ApiType.SCIM}}
     if allowed:
         return allowed
     if not api_types:
