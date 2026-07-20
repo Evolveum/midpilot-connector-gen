@@ -179,15 +179,17 @@ class BaseGroovyGenerator(ABC):
         if (
             not chunks
             and self.config.context_only_for_conndev
-            and documentation_items
-            and all(is_conndev_documentation_item(item) for item in documentation_items)
+            and self._has_relevant_conndev_contracts(
+                documentation_items=documentation_items,
+                relevant_chunk_pairs=relevant_chunk_pairs,
+            )
         ):
             chunks = [""]
             provenance_chunk_ids = [None]
             per_chunk_counts = {}
             chunk_ids_included = []
             logger.info(
-                "%s Only conndev contracts are available; running one context-only generation pass",
+                "%s No LLM text chunks remain after conndev filtering; running one SCIM context-only generation pass",
                 self.config.logger_prefix,
             )
 
@@ -291,6 +293,35 @@ class BaseGroovyGenerator(ABC):
             repo = DocumentationRepository(db)
             doc_items = await repo.get_documentation_items_by_session(session_id)
             return doc_items or []
+
+    @staticmethod
+    def _has_relevant_conndev_contracts(
+        documentation_items: List[Dict[str, Any]],
+        relevant_chunk_pairs: Optional[List[Dict[str, Any]]],
+    ) -> bool:
+        """Return whether the empty LLM input was caused by selected conndev contracts."""
+        if not documentation_items:
+            return False
+
+        conndev_chunk_ids: set[str] = set()
+        for item in documentation_items:
+            if not is_conndev_documentation_item(item):
+                continue
+            chunk_id = item.get("chunkId")
+            if isinstance(chunk_id, str):
+                conndev_chunk_ids.add(chunk_id)
+        if not conndev_chunk_ids:
+            return False
+
+        # Preserve context-only generation for sessions composed exclusively of
+        # deterministic conndev contracts, including legacy or missing relevance.
+        if all(is_conndev_documentation_item(item) for item in documentation_items):
+            return True
+
+        if relevant_chunk_pairs is None:
+            return False
+
+        return any((pair.get("chunk_id") or pair.get("chunkId")) in conndev_chunk_ids for pair in relevant_chunk_pairs)
 
     def _build_chunks(
         self,
