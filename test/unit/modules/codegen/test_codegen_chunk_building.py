@@ -55,3 +55,10 @@ def test_build_chunks_excludes_conndev_contracts_when_codegen_uses_all_documenta
     assert provenance == ["provider-chunk"]
     assert per_chunk_counts == {}
     assert selected_chunk_ids == []
+
+
+def test_mixed_session_does_not_enable_conndev_context_only_for_unrelated_selection():
+    assert not _generator()._has_relevant_conndev_contracts(
+        _documentation_items(),
+        [{"chunk_id": "provider-chunk", "doc_id": "provider-doc"}],
+    )
