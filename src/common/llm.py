@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable, Final, Literal, Optional, TypeVar, 
 
 import httpx
 from langchain_classic.output_parsers import RetryWithErrorOutputParser
+from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
 from langchain_core.prompts import BasePromptTemplate, ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel
@@ -209,7 +210,19 @@ def make_basic_chain(prompt: BasePromptTemplate, llm: ChatOpenAI, parser: BaseOu
     """
 
     async def parse_with_retry(param):
-        return await retry_parser.aparse_with_prompt(param["completion"].content, param["prompt_value"])
+        completion = param["completion"].content
+        if isinstance(parser, PydanticOutputParser):
+            repaired_completion = _repair_invalid_json_apostrophe_escapes(completion)
+            if repaired_completion != completion:
+                try:
+                    parsed = await parser.aparse(repaired_completion)
+                    logger.warning("Recovered structured LLM output containing invalid escaped apostrophes")
+                    return parsed
+                except OutputParserException:
+                    # Preserve the normal parser-retry path for outputs that have
+                    # additional syntax or schema validation errors.
+                    pass
+        return await retry_parser.aparse_with_prompt(completion, param["prompt_value"])
 
     completion_chain = prompt | llm
     retry_parser = RetryWithErrorOutputParser.from_llm(parser=parser, llm=llm)
@@ -217,6 +230,35 @@ def make_basic_chain(prompt: BasePromptTemplate, llm: ChatOpenAI, parser: BaseOu
     chain = RunnableParallel(completion=completion_chain, prompt_value=prompt) | RunnableLambda(parse_with_retry)
 
     return chain
+
+
+def _repair_invalid_json_apostrophe_escapes(value: str) -> str:
+    """Remove only invalid JSON escapes immediately preceding apostrophes.
+
+    LLMs occasionally emit ``\'`` inside double-quoted JSON strings. JSON does
+    not define that escape, while an even run of backslashes before an
+    apostrophe is valid and must remain untouched. This recovery is applied only
+    to Pydantic structured output before the existing LLM parser retry.
+    """
+    repaired: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] != "\\":
+            repaired.append(value[index])
+            index += 1
+            continue
+
+        slash_start = index
+        while index < len(value) and value[index] == "\\":
+            index += 1
+        slash_count = index - slash_start
+
+        if index < len(value) and value[index] == "'" and slash_count % 2 == 1:
+            repaired.append("\\" * (slash_count - 1))
+        else:
+            repaired.append("\\" * slash_count)
+
+    return "".join(repaired)
 
 
 def build_structured_chain(

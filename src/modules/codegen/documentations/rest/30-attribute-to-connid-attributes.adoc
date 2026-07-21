@@ -33,9 +33,9 @@ objectClass("User") {
 }
 ----
 
-In this example, we are mapping the `id` attribute from the application to the built-in `UID` attribute in ConnID, and the `name` attribute from the SCIM resource to the `NAME` attribute in ConnID.
+In this example, we are mapping the native connector attribute `id` to the built-in `UID` attribute in ConnID, and the native connector attribute `name` to the `NAME` attribute in ConnID.
 
-The `connIdAttribute` method takes two parameters: the first is the name of the built-in ConnID attribute (e.g., `UID`, `NAME`), and the second is the name of the corresponding attribute in the target resource (e.g., `id`, `name`). The `connIdAttribute` method accepts only the built-in ConnID attributes as the first parameter.
+The `connIdAttribute` method takes two parameters: the first is the name of the built-in ConnID attribute (e.g., `UID`, `NAME`), and the second is the exact native attribute name exposed by the connector schema (e.g., `id`, `Username`). For protocol mappings, this native name can differ from the SCIM wire attribute: a native `Username` may map to SCIM `userName`, while the ConnID script must still use `connIdAttribute("NAME", "Username")`. The `connIdAttribute` method accepts only the built-in ConnID attributes as the first parameter.
 
 == Aditional built-in standard attributes
 

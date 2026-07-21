@@ -18,6 +18,8 @@ Identify which attributes should be used for ConnID attributes based on the foll
     + textwrap.dedent("""\
 
 - Do not use the every ConnID attribute if you are not completely sure about it. It is not necessary to always use all ConnID attributes.
+- The second argument of `connIdAttribute` MUST exactly match the native connector attribute name from `name` in
+  <extracted_info>. When `name` and `scimAttribute` differ, use `name`; `scimAttribute` is the SCIM wire path only.
 
 OUTPUT RULES:
 - Return ONLY Groovy code, fenced as a single ```groovy code block```. No text outside the code block. 

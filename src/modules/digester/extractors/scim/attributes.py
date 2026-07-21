@@ -20,7 +20,12 @@ from src.common.documentation.content_types import is_conndev_documentation_item
 from src.common.jobs import increment_processed_documents, update_job_progress
 from src.common.llm import build_structured_chain
 from src.common.utils.coerce import as_dict_list, as_list, as_mapping
-from src.common.utils.normalize import build_relevant_documentations, normalize_chunk_pair
+from src.common.utils.normalize import (
+    build_relevant_documentations,
+    canonicalize_scim_path,
+    normalize_chunk_pair,
+    normalize_scim_path_for_lookup,
+)
 from src.modules.digester.entities.attribute_filters import normalize_readability_flags
 from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extraction.llm_execution import invoke_chunk_chain, parse_structured_result
@@ -566,7 +571,7 @@ async def extract_custom_scim_attributes(
             info_dict = info.model_dump()
             scim_attribute = info_dict.get("scimAttribute")
             if isinstance(scim_attribute, str):
-                scim_attribute = scim_attribute.strip()
+                scim_attribute = canonicalize_scim_path(scim_attribute)
 
             if not scim_attribute:
                 scim_attribute = _infer_scim_attribute_from_description(info_dict.get("description"))
@@ -693,20 +698,6 @@ def _get_attribute_root(scim_path: str) -> str:
 
     match = re.match(r"([A-Za-z_$][A-Za-z0-9_$-]*)", normalized)
     return match.group(1) if match else normalized
-
-
-def normalize_scim_path_for_lookup(scim_path: Any) -> str:
-    """
-    Normalize SCIM paths for schema-baseline lookup.
-
-    Documentation often uses indexed or filtered multi-value paths such as
-    `emails[0].value` or `emails[type eq 'work'].value`, while the SCIM schema
-    baseline uses the canonical sub-attribute path `emails.value`.
-    """
-    normalized = str(scim_path or "").strip()
-    if normalized.startswith("urn:"):
-        return normalized.lower()
-    return re.sub(r"\[[^\]]*\]", "", normalized).lower()
 
 
 def get_scim_schema_attribute_context(schemas: Dict[str, Any], object_class: str) -> Optional[Dict[str, set[str]]]:
