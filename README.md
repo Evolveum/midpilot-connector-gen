@@ -14,7 +14,7 @@ Directory structure:
 
 Important files:
 
-- [`server.py`](server.py) - uvicorn server entry point
+- [`server.py`](server.py) - Hypercorn server entry point
 - [`src/app.py`](src/app.py) - FastAPI entry point
 - [`src/config.py`](src/config.py) - project configuration
 - [`pyproject.toml`](pyproject.toml) - dependencies, tools, tasks
