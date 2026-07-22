@@ -4,6 +4,7 @@
 
 import copy
 import logging
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -30,6 +31,26 @@ def canonical_object_class_key(name: str) -> str:
     e.g. ``"Service Account"`` and ``"ServiceAccount"`` collapse to the same dedup key.
     """
     return "".join(normalize_object_class_name(name).split())
+
+
+def canonicalize_scim_path(scim_path: Any) -> str:
+    """Convert quoted bracket property access to canonical SCIM dot notation."""
+    normalized = str(scim_path or "").strip()
+    return re.sub(r"\[['\"]([A-Za-z_$][A-Za-z0-9_$-]*)['\"]\]", r".\1", normalized)
+
+
+def normalize_scim_path_for_lookup(scim_path: Any) -> str:
+    """Normalize a SCIM path for matching protocol and provider mappings.
+
+    Provider documentation often selects one item from a multi-valued attribute,
+    for example ``emails[0].value`` or ``emails[type eq 'work'].value``. SCIM
+    schema and ConnID projections normally expose the corresponding canonical
+    path ``emails.value``. Extension URNs are kept intact apart from casing.
+    """
+    normalized = canonicalize_scim_path(scim_path)
+    if normalized.startswith("urn:"):
+        return normalized.lower()
+    return re.sub(r"\[[^\]]*\]", "", normalized).lower()
 
 
 def normalize_chunk_pair(chunk: Mapping[str, Any]) -> tuple[str, str] | None:

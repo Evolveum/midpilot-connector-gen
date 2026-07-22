@@ -34,6 +34,8 @@ Use AttributeResponse with:
 
 For each mapping entry:
 - `scimAttribute` MUST contain SCIM source path (e.g., "userName", "emails[0].value", "profile.startDate")
+- Use canonical dot notation for SCIM sub-attributes (e.g., "emails[0].value"), never quoted bracket keys such as "emails[0]['value']"
+- JSON strings MUST NOT escape apostrophes. Write `'value'`, never `\\'value\\'`
 - `description` MUST summarize mapping + notes/restrictions/transforms from docs
 - `multivalue` should follow mapping evidence (true for multi-valued, false for singular)
 - other fields may be null when unknown; do not invent unsupported facts

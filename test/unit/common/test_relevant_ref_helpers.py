@@ -2,7 +2,12 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.common.utils.normalize import build_relevant_documentations, normalize_relevant_sequence
+from src.common.utils.normalize import (
+    build_relevant_documentations,
+    canonicalize_scim_path,
+    normalize_relevant_sequence,
+    normalize_scim_path_for_lookup,
+)
 
 
 def test_normalize_relevant_sequence_accepts_both_casings():
@@ -32,3 +37,9 @@ def test_build_relevant_documentations_sorts_and_dedupes():
 
 def test_build_relevant_documentations_empty():
     assert build_relevant_documentations(set()) == []
+
+
+def test_scim_path_normalization_converts_quoted_bracket_subattributes():
+    assert canonicalize_scim_path("emails[0]['value']") == "emails[0].value"
+    assert canonicalize_scim_path('addresses[primary]["locality"]') == "addresses[primary].locality"
+    assert normalize_scim_path_for_lookup("emails[0]['value']") == "emails.value"

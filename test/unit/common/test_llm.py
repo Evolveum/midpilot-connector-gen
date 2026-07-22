@@ -4,9 +4,13 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
-from src.common.llm import build_structured_chain, get_default_llm
+from src.common.llm import build_structured_chain, get_default_llm, make_basic_chain
 from src.common.web.link_classification import _link_filter_reasoning_effort
 from src.config import config
 
@@ -61,3 +65,19 @@ def test_build_structured_chain_uses_provided_llm_and_partial_variables() -> Non
     assert make_chain.call_args.args[1] is llm
     assert prompt.partial_variables["extra"] == "context"
     assert "format_instructions" in prompt.partial_variables
+
+
+@pytest.mark.asyncio
+async def test_structured_chain_recovers_invalid_escaped_apostrophes_without_llm_retry() -> None:
+    class _Response(BaseModel):
+        value: str
+
+    invalid_json = r"""{"value":"Slack field \'Username\' maps to userName"}"""
+    llm = FakeListChatModel(responses=[invalid_json])
+    parser: PydanticOutputParser[_Response] = PydanticOutputParser(pydantic_object=_Response)
+    prompt = ChatPromptTemplate.from_messages([("user", "Return JSON")])
+    chain = make_basic_chain(prompt, llm, parser)  # type: ignore[arg-type]
+
+    result = await chain.ainvoke({})
+
+    assert result == _Response(value="Slack field 'Username' maps to userName")

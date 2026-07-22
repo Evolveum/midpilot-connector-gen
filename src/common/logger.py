@@ -12,7 +12,7 @@ from src.config import config
 
 def setup_logging():
     """
-    Configure the root logger and Uvicorn loggers based on application settings.
+    Configure the root logger and Hypercorn loggers based on application settings.
     """
     level = getattr(logging, config.logging.level.value.upper(), logging.INFO)
 
@@ -41,8 +41,12 @@ def setup_logging():
         for handler in root_logger.handlers:
             handler.setFormatter(color_formatter)
 
-    uvicorn_access = logging.getLogger("uvicorn.access")
-    uvicorn_error = logging.getLogger("uvicorn.error")
+    hypercorn_access = logging.getLogger("hypercorn.access")
+    hypercorn_error = logging.getLogger("hypercorn.error")
 
-    uvicorn_access.setLevel(level)
-    uvicorn_error.setLevel(level)
+    hypercorn_access.setLevel(level)
+    hypercorn_error.setLevel(level)
+    # Unlike its access logger, Hypercorn's error logger propagates to the root logger by
+    # default, which would double-log every message through both its own stderr handler
+    # and ours.
+    hypercorn_error.propagate = False

@@ -157,6 +157,52 @@ def test_connid_mapping_prefers_scim_connector_object_class_projection():
     assert extract_scim_context(payload) == payload["scimContext"]
 
 
+def test_connid_mapping_uses_provider_native_name_for_matching_scim_attribute():
+    payload = {
+        "attributes": {
+            "Username": {
+                "type": "string",
+                "description": "Slack login name",
+                "mandatory": False,
+                "creatable": None,
+                "scimAttribute": "userName",
+            }
+        },
+        "scimContext": {
+            "connectorObjectClass": {
+                "name": "User",
+                "attributes": [
+                    {
+                        "name": "userName",
+                        "type": "string",
+                        "mandatory": True,
+                        "creatable": True,
+                        "scimAttribute": "userName",
+                        "connectorExposed": True,
+                    },
+                    {
+                        "name": "id",
+                        "type": "string",
+                        "updatable": False,
+                        "scimAttribute": "id",
+                        "connectorExposed": True,
+                    },
+                ],
+            }
+        },
+    }
+
+    records = build_connid_attribute_mapping_records(payload)
+    username = next(record for record in records if record["name"] == "Username")
+
+    assert [record["name"] for record in records] == ["id", "Username"]
+    assert username["scimAttribute"] == "userName"
+    assert username["connectorExposed"] is True
+    assert username["description"] == "Slack login name"
+    assert username["mandatory"] is False
+    assert username["creatable"] is True
+
+
 def test_connid_mapping_falls_back_when_scim_projection_is_missing():
     records = build_connid_attribute_mapping_records({"attributes": {"displayName": {"type": "string"}}})
 

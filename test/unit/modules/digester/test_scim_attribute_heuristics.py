@@ -323,7 +323,7 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
                     "City": {
                         "multivalue": False,
                         "description": "This complex SCIM sub-attribute belongs to UserAddresses.",
-                        "scimAttribute": "addresses[primary].locality",
+                        "scimAttribute": "addresses[primary]['locality']",
                     },
                     "Members": {
                         "multivalue": True,

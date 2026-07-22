@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from typing import Any, Dict, List, Mapping
 
 from src.common.utils.coerce import as_dict_list, as_mapping
+from src.common.utils.normalize import normalize_scim_path_for_lookup
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 
@@ -129,21 +130,59 @@ def _extract_endpoint_scim_capabilities(payload: EndpointsPayload | None) -> Dic
 
 def build_connid_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
     """
-    Use the connector ObjectClass projection for ConnId codegen when the SCIM export provides it.
+    Build the effective native attributes available to ConnID mapping codegen.
 
-    Falling back to the normal attribute payload preserves behavior for REST/SQL sessions and for
-    SCIM resources without a connector ObjectClass document.
+    The SCIM connector ObjectClass projection controls framework exposure, while
+    provider documentation controls the native connector name. Joining the two by
+    ``scimAttribute`` preserves technical projection flags without replacing a
+    provider-specific name such as ``Username`` with the protocol name
+    ``userName``.
+
+    Falling back to the normal attribute payload preserves behavior for REST/SQL
+    sessions and SCIM resources without a connector ObjectClass document.
     """
     scim_context = extract_scim_context(payload)
     connector_object_class = as_mapping(scim_context.get("connectorObjectClass"))
     if not connector_object_class or not isinstance(connector_object_class.get("attributes"), list):
         return build_attribute_mapping_records(payload)
 
+    provider_attributes_by_scim_path: Dict[str, tuple[str, Mapping[str, Any]]] = {}
+    for attribute_name, attribute_info in _attribute_items(payload):
+        data = _attribute_data(attribute_info)
+        native_name = data.get("name") or attribute_name
+        if not isinstance(native_name, str) or not native_name.strip():
+            continue
+        scim_path = normalize_scim_path_for_lookup(data.get("scimAttribute") or attribute_name)
+        if scim_path:
+            provider_attributes_by_scim_path.setdefault(scim_path, (native_name.strip(), data))
+
     projected_attributes: Dict[str, Dict[str, Any]] = {}
     for attribute in as_dict_list(connector_object_class.get("attributes")):
         name = attribute.get("name")
-        if isinstance(name, str) and name.strip():
-            projected_attributes[name.strip()] = attribute
+        if not isinstance(name, str) or not name.strip():
+            continue
+
+        projection_name = name.strip()
+        scim_path = normalize_scim_path_for_lookup(attribute.get("scimAttribute") or projection_name)
+        provider_attribute = provider_attributes_by_scim_path.get(scim_path)
+        if provider_attribute is None:
+            projected_attributes[projection_name] = attribute
+            continue
+
+        native_name, provider_data = provider_attribute
+        effective_attribute = dict(attribute)
+        effective_attribute.update(
+            {
+                key: value
+                for key, value in provider_data.items()
+                if value is not None and (not isinstance(value, str) or value.strip())
+            }
+        )
+        effective_attribute["name"] = native_name
+        effective_attribute["scimAttribute"] = (
+            provider_data.get("scimAttribute") or attribute.get("scimAttribute") or projection_name
+        )
+        projected_attributes[native_name] = effective_attribute
 
     return build_attribute_mapping_records({"attributes": projected_attributes})
 
