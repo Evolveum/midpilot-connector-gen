@@ -10,11 +10,20 @@ from colorlog import ColoredFormatter
 from src.config import config
 
 
-def setup_logging():
+def get_configured_log_level_name() -> str:
+    """Return the configured logging level in stdlib/Hypercorn format."""
+    return config.logging.level.value.upper()
+
+
+def setup_logging() -> logging.Logger:
     """
-    Configure the root logger and Hypercorn loggers based on application settings.
+    Configure application logging and return the prepared Hypercorn error logger.
+
+    Hypercorn accepts a ``logging.Logger`` instance for ``Config.errorlog``. Passing
+    this logger prevents Hypercorn from replacing its handlers and propagation
+    settings when its logging facade is initialized lazily.
     """
-    level = getattr(logging, config.logging.level.value.upper(), logging.INFO)
+    level = logging.getLevelNamesMapping()[get_configured_log_level_name()]
 
     # Base logger config
     logging.basicConfig(
@@ -46,7 +55,7 @@ def setup_logging():
 
     hypercorn_access.setLevel(level)
     hypercorn_error.setLevel(level)
-    # Unlike its access logger, Hypercorn's error logger propagates to the root logger by
-    # default, which would double-log every message through both its own stderr handler
-    # and ours.
-    hypercorn_error.propagate = False
+    hypercorn_error.handlers.clear()
+    hypercorn_error.propagate = True
+
+    return hypercorn_error
