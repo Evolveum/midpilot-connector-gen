@@ -26,6 +26,7 @@ def build_hypercorn_config() -> Config:
     hc_config.loglevel = get_configured_log_level_name()
     hc_config.use_reloader = config.app.live_reload
     hc_config.workers = config.app.workers if (config.app.live_reload or config.app.workers > 1) else 0
+    hc_config.daemon = False
 
     return hc_config
 

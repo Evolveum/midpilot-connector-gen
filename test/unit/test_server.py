@@ -51,3 +51,4 @@ def test_hypercorn_worker_mapping(workers, live_reload, expected_hypercorn_worke
         hypercorn_config = build_hypercorn_config()
 
     assert hypercorn_config.workers == expected_hypercorn_workers
+    assert hypercorn_config.daemon is False

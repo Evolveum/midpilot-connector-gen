@@ -23,7 +23,7 @@ from src.modules.codegen.orchestration import schedule_operation_job
 from src.modules.codegen.persistence import store_search_override
 from src.modules.codegen.schema import CodegenOperationInput, GroovyCodePayload
 
-router = APIRouter(tags=["CodeGen: Search"])
+router = APIRouter(tags=["Codegen: Search"])
 
 
 @router.post(
