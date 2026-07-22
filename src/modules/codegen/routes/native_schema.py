@@ -21,7 +21,7 @@ from src.modules.codegen.orchestration import schedule_native_schema_job
 from src.modules.codegen.persistence import store_object_class_output_override
 from src.modules.codegen.schema import CodegenRepairContext, GroovyCodePayload
 
-router = APIRouter(tags=["CodeGen: Native Schema"])
+router = APIRouter(tags=["Codegen: Native Schema"])
 
 
 @router.post(

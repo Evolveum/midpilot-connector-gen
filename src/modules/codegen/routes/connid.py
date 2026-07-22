@@ -20,7 +20,7 @@ from src.modules.codegen.orchestration import schedule_connid_job
 from src.modules.codegen.persistence import store_object_class_output_override
 from src.modules.codegen.schema import CodegenRepairContext, GroovyCodePayload
 
-router = APIRouter(tags=["CodeGen: ConnID"])
+router = APIRouter(tags=["Codegen: ConnID"])
 
 
 @router.post(

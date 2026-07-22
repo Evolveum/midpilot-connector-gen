@@ -1,6 +1,6 @@
 # Connector Generator AI Service
 
-Midpilot Connector Generator for discovery, scraping, digester and CodeGen built with FastAPI.
+Midpilot Connector Generator for discovery, scraping, digester and Codegen built with FastAPI.
 
 ## Project structure
 

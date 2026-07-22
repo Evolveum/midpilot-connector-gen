@@ -4,7 +4,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AppSettings(BaseModel):
@@ -30,13 +30,13 @@ class AppSettings(BaseModel):
 
     title: str = "Midpilot Connector Generator"
     version: str = "0.1.0"
-    description: str = "Midpilot Connector Generator - discovery, scraping, digester and CodeGen"
+    description: str = "Midpilot Connector Generator - discovery, scraping, digester and codegen"
     api_base_url: str = "/api"
 
     host: str = "0.0.0.0"
     port: int = 8090
     live_reload: bool = False
-    workers: int = 1
+    workers: int = Field(default=1, ge=1)
     root_path: str = ""
     timeout_keep_alive: int = 10
     timeout_graceful_shutdown: int = 15

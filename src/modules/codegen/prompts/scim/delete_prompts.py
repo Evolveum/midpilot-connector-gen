@@ -7,75 +7,60 @@ import textwrap
 from src.modules.codegen.prompts.scim.shared_context_prompts import (
     SCIM_CONTRACT_CONTEXT_SYSTEM_RULES,
     SCIM_CONTRACT_CONTEXT_USER_SECTION,
-    SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES,
-    SCIM_OPERATION_ENDPOINTS_USER_SECTION,
+    SCIM_NATIVE_OPERATION_DSL_SYSTEM_RULES,
 )
 
 get_scim_delete_system_prompt = (
     textwrap.dedent("""\
-You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs. Your goal is to prepare a `delete` schema in Groovy for SCIM resources. 
+You are an expert in creating connectors (ConnId and midPoint) for SCIM 2.0 APIs.
+Your goal is to prepare a native SCIM `delete` schema in Groovy for {object_class}.
 
 The input data you will receive:
-1. A fragment that was extracted in the previous step LLM from the SCIM attributes for {object_class}.
-2. A chunk of the original document (e.g., SCIM spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated, such as parameter semantics, data types, required vs optional fields, authentication hints, default values, example requests/responses, error behavior, soft delete behavior, and SCIM-specific constraints.
-3. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
-4. Optional user-provided preferred endpoints in JSON are `{preferred_endpoints_json}`.
+1. Attributes extracted from the SCIM schema for {object_class}.
+2. A chunk of provider documentation containing target-specific capabilities and constraints.
+3. Groovy output from previous chunks that you may minimally complete or edit.
+4. Separate SCIM schema, resource, connector-object-class, and service-provider capability views.
 
-Prepare a valid Groovy code for delete schema in Groovy based on the following `.adoc` documentations:
+Use the following generic SCIM `.adoc` documentation as the authority for delete DSL syntax:
 
 <delete_docs>
 {delete_docs}
 </delete_docs>
 """)
     + SCIM_CONTRACT_CONTEXT_SYSTEM_RULES
-    + SCIM_OPERATION_ENDPOINTS_SYSTEM_RULES
+    + SCIM_NATIVE_OPERATION_DSL_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
-Output rules:
-- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
-- The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
-- SCIM deletes use DELETE against the item form of the explicit resource endpoint with the documented identifier.
-  Never hardcode `/Users`; derive the collection path from <extracted_endpoints> or <scim_resource_contract>.
-- Typically returns 204 No Content with no response body.
-- Use an `active=false` soft-delete pattern only when provider documentation explicitly requires it.
-- Treat <extracted_attributes> as the primary sources of truth. Prefer them over the examples in <delete_docs>.
-- If <preferred_endpoints> are provided, prioritize endpoints from this list whenever they are compatible with SCIM behavior and docs.
-- If <preferred_endpoints> conflict with docs or SCIM semantics, prefer documented behavior and leave a short TODO comment about the mismatch.
-- Treat <result> as the current working Groovy code. Extend or minimally edit it; do not discard or rename previously correct parts.
-- Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment instead of guessing.
-- Preserve the outer objectClass and delete blocks if already present in <result>.
-- Return ONLY a valid format of the delete schema in Groovy, including the inline comments as specified. No extra explanation outside the code block.
-- The output format is just an example and may vary slightly based on the various specifications and documentations that will be available to you in the user prompt.
-- No extra commentary.
+DELETE RULES:
+- For standard SCIM delete, preserve the minimal native `delete {{ }}` block described by <delete_docs>. The SCIM
+  framework appends the resource identifier and performs DELETE; do not generate a REST endpoint or request block.
+- Never generate `endpoint(...)` anywhere in SCIM output. Resource endpoints and URLs in the supplied context are
+  framework-owned metadata and must not be rendered into Groovy.
+- Generate provider-specific delete customization only when <delete_docs> permits it and <chunk> explicitly proves
+  non-standard behavior such as soft delete. Express it using the native SCIM form documented there, never REST DSL.
+- Do not generate delete for an extension schema or embedded complex attribute without its own resource contract.
+- The target object class is "{object_class}". Keep `objectClass("{object_class}")` exactly.
+- Return ONLY valid Groovy code, with no explanation outside the code.
 """)
 )
 
 get_scim_delete_user_prompt = (
-    textwrap.dedent("""
+    textwrap.dedent("""\
 Chunk {idx}/{total} of the SCIM schema:
 Target object class: {object_class}
 
-Here is extracted object class attributes from SCIM schema wrapped into JSON from previous LLM:
+Extracted object-class attributes from the SCIM schema:
 
 <extracted_attributes>
 {attributes_json}
 </extracted_attributes>
 """)
     + SCIM_CONTRACT_CONTEXT_USER_SECTION
-    + SCIM_OPERATION_ENDPOINTS_USER_SECTION
-    + textwrap.dedent("""\
-
-Optional user-provided preferred endpoints (JSON):
-
-<preferred_endpoints>
-{preferred_endpoints_json}
-</preferred_endpoints>
-""")
     + "{repair_user_suffix}"
     + textwrap.dedent("""\
 
-Here is chunk where you have to find additional information:
+Target-specific provider documentation for this iteration:
 <chunk>
 {chunk}
 </chunk>
