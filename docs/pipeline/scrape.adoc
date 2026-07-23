@@ -1,0 +1,72 @@
+= Scrape
+:toc: left
+
+link:index.adoc[← Pipeline overview] | link:../index.adoc[Documentation index]
+
+Scrape crawls documentation pages starting from a set of URLs, follows
+relevant links, and converts the content into processed documentation chunks
+stored in the session — the input for the link:digester.adoc[digester].
+
+Module: `src/modules/scrape/` (crawling built on crawl4ai + Playwright via
+`src/common/web/`).
+
+== Endpoints
+
+[cols="2,3", options="header"]
+|===
+| Endpoint | Purpose
+
+| `POST /api/scrape/{sessionId}/scrape`
+| Enqueue a scrape job. Body: `ScrapeRequest` — `starterLinks` (required),
+  `applicationName` (required), `applicationVersion`, `skipCache`.
+
+| `GET /api/scrape/{sessionId}/scrape`
+| Poll the job status; progress is reported per scraper iteration.
+|===
+
+== Process
+
+1. *Crawl* the starter links (typically the link:discovery.adoc[discovery]
+   output) with crawl4ai/Playwright and convert pages to markdown.
+2. *Collect links* found on the scraped pages; normalize them (relative →
+   absolute, strip anchors/trailing slashes) and drop URLs containing
+   configured forbidden parts (login, pricing, changelogs, non-English
+   locales, …).
+3. *Filter* the remaining links with an LLM to keep only
+   documentation-relevant ones, then feed them into the next iteration of the
+   scraper loop. The loop runs up to
+   `+SCRAPE_AND_PROCESS__MAX_SCRAPER_ITERATIONS+` (default 4) iterations.
+4. As each page is saved, it is *chunked* (token-based,
+   `+SCRAPE_AND_PROCESS__CHUNK_LENGTH+` tokens per chunk) and each chunk is
+   *processed by an LLM* (`src/common/chunk_processor/`): cleaned up,
+   categorized (`spec_json`, `reference_api`, `tutorial`, …) and annotated
+   with metadata. Oversized preserved schemas (SQL/SCIM/OpenAPI) are split
+   into structurally valid sub-schemas instead of naive cuts.
+5. Processed chunks are persisted as `documentation_items` rows with
+   `source='scrape'`.
+
+Uploaded files (see link:../sessions-and-jobs.adoc[Sessions and jobs]) go
+through steps 4–5 of the same machinery with `source='upload'`.
+
+== Pitfalls
+
+NOTE: Scraping is the slowest and most fragile stage: it depends on the target
+site's structure, anti-bot measures, and the LLM link filtering. If you
+already have good documentation (an OpenAPI spec, an exported doc bundle),
+uploading it directly to the session is faster and more reliable than
+scraping.
+
+NOTE: `applicationVersion` matters: chunk processing tags content with the
+detected version, and version mismatch heuristics
+(`latest_version_synonyms`, `unknown_version_threshold`) influence which
+chunks are considered current.
+
+WARNING: The forbidden-URL list (`+SCRAPE_AND_PROCESS__FORBIDDEN_URL_PARTS+`)
+filters out many locale prefixes (`de`, `fr`, `es`, …) by substring. If the
+documentation you need lives under such a path, adjust the setting.
+
+== Related settings
+
+`+SCRAPE_AND_PROCESS__*+` — scraper loop bounds, chunking, concurrency, retry
+behavior, chunk categories. See link:../configuration.adoc[Configuration] and
+`src/config/scrape.py` for the full list.

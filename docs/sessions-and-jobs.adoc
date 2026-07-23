@@ -1,0 +1,101 @@
+= Sessions and jobs
+:toc: left
+
+link:index.adoc[← Documentation index]
+
+== Sessions
+
+All work happens inside a *session* — a workspace identified by a UUID that
+accumulates everything the pipeline produces: uploaded/scraped documentation,
+detected metadata, extracted object classes, generated code. A session must
+exist before any pipeline endpoint is called.
+
+[cols="2,3", options="header"]
+|===
+| Endpoint | Purpose
+
+| `POST /api/session`
+| Create a session (server-generated ID).
+
+| `POST /api/session/{sessionId}`
+| Create a session with a caller-provided ID (409 if it exists).
+
+| `GET /api/session/{sessionId}`
+| Session summary. `HEAD` variant checks existence.
+
+| `GET /api/session/{sessionId}/jobs`
+| List all jobs belonging to the session.
+
+| `DELETE /api/session/{sessionId}`
+| Delete the session and all associated data.
+|===
+
+=== Documentation in a session
+
+Documentation can enter a session two ways: via the
+link:pipeline/scrape.adoc[scrape stage], or by direct upload:
+
+[cols="2,3", options="header"]
+|===
+| Endpoint | Purpose
+
+| `POST /api/session/{sessionId}/documentation`
+| Upload a file; it is chunked and LLM-processed in a background job.
+
+| `PUT /api/session/{sessionId}/documentation`
+| Replace *all* documentation in the session with one uploaded file.
+
+| `PUT /api/session/{sessionId}/documentation/{docId}`
+| Import already-processed documentation (chunks as JSON) — no LLM involved.
+
+| `GET /api/session/{sessionId}/documentation`
+| Export all documentation grouped by document.
+
+| `GET /api/session/{sessionId}/documentation/status`
+| Status of upload processing jobs.
+
+| `DELETE .../documentation`, `DELETE .../documentation/{docId}`
+| Remove documentation.
+|===
+
+NOTE: Uploaded documentation goes through the same chunking and LLM
+chunk-processing as scraped documentation, so the digester treats both sources
+identically. The application name/version for processing is taken from the
+session's `discoveryInput` or `scrapeInput` — run (or at least record) those
+inputs first for best results.
+
+== The asynchronous job pattern
+
+Every expensive operation follows the same contract:
+
+1. `POST` to the operation endpoint *enqueues a background job* and returns
+   immediately with a `jobId`.
+2. `GET` on the same path returns the job status
+   (`queued` / `running` / `finished` / `failed`), progress stages, and — once
+   finished — the result.
+3. The `jobId` query parameter on `GET` is optional: each `POST` also persists
+   the job pointer into the session (e.g. `discoveryJobId`,
+   `objectClassesJobId`), so the status endpoint finds the latest job by
+   itself.
+4. Many resources also support `PUT` to overwrite the stored result manually
+   (e.g. correcting an extracted object class before running codegen).
+
+Job statuses and progress stages are defined centrally in
+`src/common/enums.py` (`JobStatus`, `JobStage`).
+
+== Result caching and `skipCache`
+
+Discovery, scrape, and digester jobs cache results by *normalized input*: if
+the same input was already processed (in any session) within a configured time
+window, the stored result is reused instead of re-running the LLM work.
+
+* The windows are configured per module:
+  `+SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL+`,
+  `+SCRAPE_AND_PROCESS__SCRAPE_INPUT_CHECK_INTERVAL+`,
+  `+DIGESTER__DIGESTER_INPUT_CHECK_INTERVAL+` (all default to 4 weeks).
+* Every such endpoint accepts `skipCache=true` (query parameter or request
+  field) to force a fresh run.
+
+IMPORTANT: When testing prompt or extraction changes, pass `skipCache=true` —
+otherwise you may be looking at a weeks-old cached result and wrongly conclude
+your change had no effect.

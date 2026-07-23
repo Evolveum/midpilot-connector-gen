@@ -64,6 +64,8 @@ test.cmd = "pytest"
 test.envfile = ".env.test"
 test-watch.cmd = "ptw ."
 test-watch.envfile = ".env.test"
+export-openapi.cmd = "python -m scripts.export_openapi"
+export-openapi.envfile = ".env"
 # we must ignore clearml directory in typecheck because it does have separate dependencies
 # that we dont want unless we are specifically using clearml
 typecheck = "mypy . --exclude=.venv --exclude=clearml"

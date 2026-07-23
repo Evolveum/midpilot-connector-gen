@@ -1,0 +1,73 @@
+= Midpilot Connector Generator — Documentation
+:toc: left
+:toclevels: 2
+
+Midpilot Connector Generator is a FastAPI backend that uses LLMs to generate
+https://evolveum.com/midpoint/[midPoint] connectors for third-party systems.
+Given an application name (and optionally its documentation), it discovers and
+scrapes the application's API documentation, extracts a structured model of the
+API (object classes, attributes, endpoints, authentication), and generates the
+Groovy connector code.
+
+== Documentation map
+
+[cols="1,3", options="header"]
+|===
+| Page | What it covers
+
+| link:architecture.adoc[Architecture]
+| Repository layout, module layering, common services, database, error handling.
+
+| link:pipeline/index.adoc[Generation pipeline]
+| The end-to-end process: discovery - scrape - digester - codegen, and how the stages depend on each other.
+
+| link:pipeline/discovery.adoc[Discovery]
+| Finding candidate documentation URLs via web search and LLM ranking.
+
+| link:pipeline/scrape.adoc[Scrape]
+| Crawling documentation pages, chunking and LLM processing of the content.
+
+| link:pipeline/digester.adoc[Digester]
+| Extracting the API model: metadata, auth, object classes, endpoints,
+  attributes, relations.
+
+| link:pipeline/codegen.adoc[Codegen]
+| Generating and validating the Groovy connector code.
+
+| link:sessions-and-jobs.adoc[Sessions and jobs]
+| The session-centric API model, the asynchronous job pattern, result caching.
+
+| link:api-type.adoc[API type (REST / SCIM / SQL)]
+| How the target protocol is detected, stored, overridden — and why getting it
+  wrong ruins the results.
+
+| link:configuration.adoc[Configuration]
+| Environment-variable based settings and the most important tunables.
+|===
+
+== API reference
+
+* link:api/openapi.json[OpenAPI specification] — generated file, do not edit
+  by hand; regenerate with `uv run poe export-openapi` after changing routes
+  or schemas.
+* When the service is running: http://localhost:8090/docs[Swagger UI] and
+  http://localhost:8090/redoc[ReDoc]
+
+== Running the service
+
+Installation, database setup, Docker, and QA commands are described in the
+top-level link:../README.md[README].
+
+== Extending this documentation
+
+* One page per topic; keep pages short and link between them with
+  `+link:page.adoc[Text]+` (renders correctly on GitHub, unlike `xref:`).
+* Pipeline stages live under `pipeline/`; new cross-cutting topics get a new
+  top-level page and a row in the table above.
+* `api/` holds generated artifacts (OpenAPI spec) and `images/` holds
+  diagrams; hand-written pages stay in the top level and `pipeline/`.
+* Use `NOTE:` / `IMPORTANT:` / `WARNING:` admonitions for pitfalls, so they
+  stand out when skimming.
+* Prefer linking to source files (e.g. `src/config/digester.py`) over copying
+  exhaustive lists into the docs — the code is the source of truth for
+  defaults and complete option lists.

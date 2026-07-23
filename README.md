@@ -6,6 +6,7 @@ Midpilot Connector Generator for discovery, scraping, digester and Codegen built
 
 Directory structure:
 
+- [`docs`](docs/index.adoc) - documentation
 - [`src`](src) - production source code
 - [`src/modules`](src/modules) - domain oriented modules with API routes and implementation
 - [`src/common`](src/common) - common code and utils
