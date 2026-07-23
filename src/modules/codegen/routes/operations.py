@@ -28,7 +28,7 @@ router = APIRouter()
 # Codegen Operations - Create
 @router.post(
     "/{session_id}/classes/{object_class}/create",
-    tags=["CodeGen: Create"],
+    tags=["Codegen: Create"],
     response_model=JobCreateResponse,
     summary="Generate create code for object class",
 )
@@ -69,7 +69,7 @@ async def generate_create(
 
 @router.get(
     "/{session_id}/classes/{object_class}/create",
-    tags=["CodeGen: Create"],
+    tags=["Codegen: Create"],
     response_model=JobStatusMultiDocResponse,
     summary="Get create generation status",
 )
@@ -100,7 +100,7 @@ async def get_create_status(
 
 @router.put(
     "/{session_id}/classes/{object_class}/create",
-    tags=["CodeGen: Create"],
+    tags=["Codegen: Create"],
     summary="Override create code",
 )
 async def override_create(
@@ -127,7 +127,7 @@ async def override_create(
 # Codegen Operations - Update
 @router.post(
     "/{session_id}/classes/{object_class}/update",
-    tags=["CodeGen: Update"],
+    tags=["Codegen: Update"],
     response_model=JobCreateResponse,
     summary="Generate update code for object class",
 )
@@ -168,7 +168,7 @@ async def generate_update(
 
 @router.get(
     "/{session_id}/classes/{object_class}/update",
-    tags=["CodeGen: Update"],
+    tags=["Codegen: Update"],
     response_model=JobStatusMultiDocResponse,
     summary="Get update generation status",
 )
@@ -199,7 +199,7 @@ async def get_update_status(
 
 @router.put(
     "/{session_id}/classes/{object_class}/update",
-    tags=["CodeGen: Update"],
+    tags=["Codegen: Update"],
     summary="Override update code",
 )
 async def override_update(
@@ -226,7 +226,7 @@ async def override_update(
 # Codegen Operations - Delete
 @router.post(
     "/{session_id}/classes/{object_class}/delete",
-    tags=["CodeGen: Delete"],
+    tags=["Codegen: Delete"],
     response_model=JobCreateResponse,
     summary="Generate delete code for object class",
 )
@@ -267,7 +267,7 @@ async def generate_delete(
 
 @router.get(
     "/{session_id}/classes/{object_class}/delete",
-    tags=["CodeGen: Delete"],
+    tags=["Codegen: Delete"],
     response_model=JobStatusMultiDocResponse,
     summary="Get delete generation status",
 )
@@ -298,7 +298,7 @@ async def get_delete_status(
 
 @router.put(
     "/{session_id}/classes/{object_class}/delete",
-    tags=["CodeGen: Delete"],
+    tags=["Codegen: Delete"],
     summary="Override delete code",
 )
 async def override_delete(

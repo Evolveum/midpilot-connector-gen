@@ -17,6 +17,7 @@ from src.modules.codegen.core.operations import (
     UpdateGenerator,
 )
 from src.modules.codegen.enums import SearchIntent
+from src.modules.codegen.prompts.cleanup_prompts import get_groovy_cleanup_system_prompt
 from src.modules.codegen.prompts.scim.create_prompts import (
     get_scim_create_system_prompt,
     get_scim_create_user_prompt,
@@ -261,15 +262,67 @@ def test_all_scim_operation_prompts_receive_the_separated_context_contract():
 
     for system_prompt in system_prompts:
         assert "Keep the four supplied SCIM views separate" in system_prompt
-        assert "Treat <extracted_endpoints> as deterministic" in system_prompt
         assert "<scim_service_provider_config>" in system_prompt
+        assert "SCIM VS REST DSL BOUNDARY" in system_prompt
+        assert "must never switch the output to REST DSL" in system_prompt
+        assert "<extracted_endpoints>" not in system_prompt
 
     for user_prompt in user_prompts:
         assert "{scim_protocol_schema_json}" in user_prompt
         assert "{scim_resource_contract_json}" in user_prompt
         assert "{connid_object_class_json}" in user_prompt
         assert "{scim_service_provider_config_json}" in user_prompt
-        assert "{endpoints_json}" in user_prompt
+        assert "{endpoints_json}" not in user_prompt
+        assert "{preferred_endpoints_json}" not in user_prompt
+        assert "{base_api_url}" not in user_prompt
+
+
+def test_scim_crud_prompts_enforce_operation_specific_native_dsl():
+    create_prompt = " ".join(get_scim_create_system_prompt.split())
+    update_prompt = " ".join(get_scim_update_system_prompt.split())
+    delete_prompt = " ".join(get_scim_delete_system_prompt.split())
+
+    assert "native `create {{ scim {{ ... }} }}`" in create_prompt
+    assert "do not invent a POST endpoint" in create_prompt
+    assert "Never generate `endpoint(...)` anywhere in SCIM output" in create_prompt
+
+    assert "native `update {{ scim {{ put {{ ... }} patch {{ ... }} }} }}`" in update_prompt
+    assert "Never represent PUT or PATCH as REST `endpoint(...)` blocks" in update_prompt
+    assert "Never generate `endpoint(...)` anywhere in SCIM output" in update_prompt
+
+    assert "minimal native `delete {{ }}` block" in delete_prompt
+    assert "do not generate a REST endpoint or request block" in delete_prompt
+    assert "Never generate `endpoint(...)` anywhere in SCIM output" in delete_prompt
+
+
+def test_scim_search_prompts_enforce_native_scim_dsl_without_rest_endpoint_context():
+    for system_prompt in [
+        get_scim_search_all_system_prompt,
+        get_scim_search_filter_system_prompt,
+        get_scim_search_id_system_prompt,
+    ]:
+        assert "<search_docs> is the authoritative source for Groovy DSL structure" in system_prompt
+        assert "The output is native SCIM DSL, never REST DSL" in system_prompt
+        assert "inside `scim {{ limitations {{ ... }} }}`" in system_prompt
+        assert 'objectClass("{object_class}") {{ search {{ scim {{ limitations {{ ... }} }} }} }}' in system_prompt
+        assert "Never generate `endpoint(...)` anywhere in SCIM output" in system_prompt
+        assert "<extracted_endpoints>" not in system_prompt
+
+    assert "{endpoints_json}" not in get_scim_search_user_prompt
+    assert "{preferred_endpoints_json}" not in get_scim_search_user_prompt
+    assert "{base_api_url}" not in get_scim_search_user_prompt
+
+
+def test_cleanup_prompt_distinguishes_native_scim_from_rest_dsl():
+    prompt = " ".join(get_groovy_cleanup_system_prompt.split())
+
+    assert "Never convert SCIM to REST" in prompt
+    assert "apply exactly one matching section" in prompt
+    assert "Rules from one section must never be applied to another section" in prompt
+    assert "generic SCIM DSL is authoritative" in prompt
+    assert "Native SCIM never uses `endpoint(...)`" in prompt
+    assert "unwrap it and keep `search`, `create`, `update`, or `delete` directly below `objectClass`" in prompt
+    assert "REST-only rules" in prompt
 
 
 def test_scim_filter_prompt_distinguishes_missing_and_explicitly_disabled_capability():
@@ -278,7 +331,7 @@ def test_scim_filter_prompt_distinguishes_missing_and_explicitly_disabled_capabi
     assert "explicit `filter.supported: false` forbids" in prompt
     assert "whole contract is empty" in prompt
     assert "treat filtering support as unknown" in prompt
-    assert "provider documentation in <current_chunk> explicitly proves it" in prompt
+    assert "provider documentation in <chunk>" in prompt
     assert "An explicit `filter.supported: false` disables this intent" in prompt
 
 
@@ -295,3 +348,6 @@ def test_scim_operation_prompts_do_not_introduce_an_implicit_id_template_variabl
     for system_prompt, user_prompt in prompt_pairs:
         prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", user_prompt)])
         assert "id" not in prompt.input_variables
+        assert "endpoints_json" not in prompt.input_variables
+        assert "preferred_endpoints_json" not in prompt.input_variables
+        assert "base_api_url" not in prompt.input_variables

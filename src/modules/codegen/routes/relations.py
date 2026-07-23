@@ -19,7 +19,7 @@ from src.modules.codegen.orchestration import schedule_relation_job
 from src.modules.codegen.persistence import store_relation_override
 from src.modules.codegen.schema import GroovyCodePayload
 
-router = APIRouter(tags=["CodeGen: Relations"])
+router = APIRouter(tags=["Codegen: Relations"])
 
 
 @router.post(

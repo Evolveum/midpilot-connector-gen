@@ -10,11 +10,20 @@ from colorlog import ColoredFormatter
 from src.config import config
 
 
-def setup_logging():
+def get_configured_log_level_name() -> str:
+    """Return the configured logging level in stdlib/Hypercorn format."""
+    return config.logging.level.value.upper()
+
+
+def setup_logging() -> logging.Logger:
     """
-    Configure the root logger and Uvicorn loggers based on application settings.
+    Configure application logging and return the prepared Hypercorn error logger.
+
+    Hypercorn accepts a ``logging.Logger`` instance for ``Config.errorlog``. Passing
+    this logger prevents Hypercorn from replacing its handlers and propagation
+    settings when its logging facade is initialized lazily.
     """
-    level = getattr(logging, config.logging.level.value.upper(), logging.INFO)
+    level = logging.getLevelNamesMapping()[get_configured_log_level_name()]
 
     # Base logger config
     logging.basicConfig(
@@ -41,8 +50,12 @@ def setup_logging():
         for handler in root_logger.handlers:
             handler.setFormatter(color_formatter)
 
-    uvicorn_access = logging.getLogger("uvicorn.access")
-    uvicorn_error = logging.getLogger("uvicorn.error")
+    hypercorn_access = logging.getLogger("hypercorn.access")
+    hypercorn_error = logging.getLogger("hypercorn.error")
 
-    uvicorn_access.setLevel(level)
-    uvicorn_error.setLevel(level)
+    hypercorn_access.setLevel(level)
+    hypercorn_error.setLevel(level)
+    hypercorn_error.handlers.clear()
+    hypercorn_error.propagate = True
+
+    return hypercorn_error

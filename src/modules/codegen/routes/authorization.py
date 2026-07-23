@@ -20,7 +20,7 @@ from src.modules.codegen.orchestration import schedule_authorization_job
 from src.modules.codegen.persistence import store_authorization_override
 from src.modules.codegen.schema import AuthorizationCodegenInput, GroovyCodePayload
 
-router = APIRouter(tags=["CodeGen: Authorization"])
+router = APIRouter(tags=["Codegen: Authorization"])
 
 
 @router.post(
