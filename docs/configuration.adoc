@@ -1,0 +1,90 @@
+= Configuration
+:toc: left
+
+link:index.adoc[← Documentation index]
+
+The service is configured exclusively through environment variables (or a
+`.env` file in the project root — see `.env-example`). Settings are Pydantic
+models in `src/config/`, grouped by domain and nested with the `+__+`
+delimiter:
+
+----
+LOGGING__LEVEL=error
+DATABASE__HOST=localhost
+DIGESTER__MAX_CONCURRENT_LLM_CALLS=10
+----
+
+The code in `src/config/*.py` is the source of truth for every option and its
+default — this page only maps the groups and highlights the settings you are
+most likely to touch.
+
+== Settings groups
+
+[cols="1,1,3", options="header"]
+|===
+| Prefix | File | Scope
+
+| `+APP__+` | `src/config/app.py`
+| Server: host/port (default `8090`), workers, API base path (`/api`),
+  timeouts, optional TLS (`ssl_certfile`/`ssl_keyfile`).
+
+| `+LOGGING__+` | `src/config/logging.py`
+| Log level and formatting.
+
+| `+DATABASE__+` | `src/config/database.py`
+| PostgreSQL connection (`URL`, host/ports/user/password/name, pool size).
+
+| `+LLM__+` | `src/config/llm.py`
+| LLM client: any OpenAI-compatible API (`OPENAI_API_BASE`, default
+  OpenRouter), `MODEL_NAME`, `OPENAI_API_KEY`, provider preference order,
+  optional `REASONING_EFFORT`, request timeout, connection pool, transient
+  retry policy. *Shared by all modules* — there is no per-module model
+  selection.
+
+| `+LANGFUSE__+` | `src/config/langfuse.py`
+| Tracing: `TRACING_ENABLED` (default off), project keys, environment name.
+
+| `+SEARCH__+`, `+BRAVE__+` | `src/config/search.py`
+| Discovery input-cache window; Brave Search API key/endpoint (without a key
+  the ddgs backend is used).
+
+| `+SCRAPE_AND_PROCESS__+` | `src/config/scrape.py`
+| Scraper loop bounds (`MAX_SCRAPER_ITERATIONS`, `MAX_LINKS_PER_DOCUMENTATION`,
+  `FORBIDDEN_URL_PARTS`), chunking (`CHUNK_LENGTH`,
+  `SINGLE_ITEM_SCHEMA_MAX_TOKENS`), chunk-processing concurrency and retries,
+  chunk categories, version heuristics, scrape input-cache window.
+
+| `+DIGESTER__+` | `src/config/digester.py`
+| Extraction concurrency and retries, digester input-cache window,
+  link:api-type.adoc[apiType] detection signals (scim.cloud, LLM knowledge,
+  web search — enable flags, thresholds, query templates), fuzzy
+  sequence-matching tolerances, auth criteria threshold, debug logging.
+|===
+
+== Settings you will most likely change
+
+[cols="2,1,2", options="header"]
+|===
+| Variable | Default | Why change it
+
+| `+LLM__OPENAI_API_KEY+` | — | Required for any LLM call.
+| `+LLM__OPENAI_API_BASE+` | OpenRouter | Point to a different
+  OpenAI-compatible provider.
+| `+LLM__MODEL_NAME+` | `openai/gpt-oss-120b` | Model selection (cost/quality).
+| `+DATABASE__URL+` | — | Required; asyncpg connection string.
+| `+BRAVE__API_KEY+` | empty | Better discovery/web-search results than the
+  ddgs fallback.
+| `+LANGFUSE__TRACING_ENABLED+` | `false` | Turn on request/LLM tracing during
+  development.
+| `+DIGESTER__APITYPE_SCIM_WEB_SEARCH_ENABLED+` +
+  `+DIGESTER__APITYPE_REST_WEB_SEARCH_ENABLED+` | `true` | Each metadata
+  extraction performs external web searches (and fetches result pages);
+  disable to cut latency/cost when documentation alone is sufficient.
+| `+*__*_INPUT_CHECK_INTERVAL+` | 4 weeks | Result-cache windows for
+  discovery/scrape/digester (see
+  link:sessions-and-jobs.adoc[Result caching]).
+|===
+
+NOTE: Defaults aim to be production-appropriate. Prefer adding a new explicit
+setting over hardcoding environment-specific values — every tunable above is
+defined once in `src/config/` and injected where needed.

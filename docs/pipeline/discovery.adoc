@@ -1,0 +1,75 @@
+= Discovery
+:toc: left
+
+link:index.adoc[← Pipeline overview] | link:../index.adoc[Documentation index]
+
+Discovery finds candidate documentation URLs for a named application. It is
+the entry point of the pipeline when the user does not supply documentation
+URLs or files themselves.
+
+Module: `src/modules/discovery/`
+
+== Endpoints
+
+[cols="2,3", options="header"]
+|===
+| Endpoint | Purpose
+
+| `POST /api/discovery/{sessionId}/discovery`
+| Enqueue a discovery job. Body: `CandidateLinksInput` (see below).
+
+| `GET /api/discovery/{sessionId}/discovery`
+| Poll the job status; the result contains `candidateLinks` (plus an enriched
+  variant with per-link details).
+|===
+
+== Process
+
+1. Build web-search queries for the application name/version — either from
+   templates or LLM-generated (`llmGeneratedSearchQuery`).
+2. Run the queries against the configured search backend (Brave when
+   `+BRAVE__API_KEY+` is set, ddgs otherwise; shared backend in
+   `src/common/web/search.py`).
+3. Optionally filter out irrelevant links with an LLM
+   (`enableLinkFiltering`).
+4. Optionally rank the remaining links by relevance with an LLM
+   (`enableLinkRanking`).
+5. Store the top `maxCandidateLinks` links in the session as the discovery
+   output — the natural input for the link:scrape.adoc[scrape stage].
+
+== Input fields (`CandidateLinksInput`)
+
+The most important request fields (full model:
+`src/modules/discovery/schema.py`):
+
+[cols="2,1,3", options="header"]
+|===
+| Field | Default | Meaning
+
+| `applicationName` | — | Target application (required).
+| `applicationVersion` | `latest` | Version string used in queries.
+| `integrationType` | `dummy` | Discovery protocol priority: `scim`, `rest`,
+  or `dummy` (no preference). Biases the search queries only — it is *not* the
+  digester's link:../api-type.adoc[apiType].
+| `numQueries` | 8 | Distinct search queries to run (1–8).
+| `maxResultsPerQuery` | 10 | Results fetched per query.
+| `maxCandidateLinks` | 10 | Links returned after ranking.
+| `enableLinkFiltering` / `enableLinkRanking` | `true` | LLM filter/rank steps.
+| `skipCache` | `false` | Force a fresh run (see
+  link:../sessions-and-jobs.adoc[Result caching]).
+|===
+
+== Pitfalls
+
+NOTE: `integrationType` here and `apiType` in the digester are different
+concepts. `integrationType` only steers *what is searched for*; the actual
+protocol used for extraction and code generation is detected later by the
+digester metadata step (and can be overridden there). Setting
+`integrationType=scim` does not make the pipeline generate a SCIM connector.
+
+NOTE: Discovery quality depends on the search backend. Without a Brave API key
+the ddgs fallback is used, which may return noticeably weaker results.
+
+== Related settings
+
+`+SEARCH__*+`, `+BRAVE__*+` — see link:../configuration.adoc[Configuration].

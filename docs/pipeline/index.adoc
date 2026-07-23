@@ -1,0 +1,61 @@
+= Generation pipeline
+:toc: left
+
+link:../index.adoc[← Documentation index]
+
+Connector generation is a four-stage pipeline. Each stage reads what the
+previous stages stored in the link:../sessions-and-jobs.adoc[session] and
+writes its own results back to it:
+
+image::../images/pipeline-overview.png[Pipeline overview: midPoint provides the application name, discovery finds documentation URLs, scrape produces documentation chunks, digester extracts the API model, codegen generates the Groovy scripts returned to midPoint]
+
+[cols="1,2,2", options="header"]
+|===
+| Stage | Input | Output (stored in session)
+
+| link:discovery.adoc[Discovery]
+| Application name (+ version, protocol priority)
+| Ranked candidate documentation URLs
+
+| link:scrape.adoc[Scrape]
+| Starter URLs (typically the discovery output)
+| Processed documentation chunks (`documentation_items`)
+
+| link:digester.adoc[Digester]
+| Documentation chunks
+| Metadata (incl. link:../api-type.adoc[apiType]), auth methods, object
+  classes, endpoints, attributes, relations, connectivity endpoint
+
+| link:codegen.adoc[Codegen]
+| Digester outputs + relevant chunks
+| Groovy connector code per operation (schema, search, CRUD, auth, relations)
+|===
+
+== Stage dependencies and recommended order
+
+The stages must run in order, but there are dependencies *inside* the digester
+and codegen stages too. The recommended full sequence is:
+
+1. Create a session (`POST /api/session`).
+2. *Discovery* — or skip it if you already know the documentation URLs.
+3. *Scrape* the URLs — or upload documentation files directly
+   (see link:../sessions-and-jobs.adoc[Sessions and jobs]).
+4. *Digester*, in this order:
+   a. `metadata` — detects link:../api-type.adoc[apiType] and base API URL;
+      *run this first*, later steps depend on it,
+   b. `auth`,
+   c. `classes` (object classes),
+   d. per object class: `endpoints`, then `attributes`,
+   e. `relations`, `connectivity-endpoint`.
+5. *Codegen*: `authorization`, then per object class `native-schema`,
+   `connid`, `search/{intent}`, `create`, `update`, `delete`, and
+   `relations/{relationName}`.
+
+IMPORTANT: If digester metadata extraction is skipped or detects the wrong
+protocol, every subsequent step silently uses the wrong prompt family
+(REST prompts for a SCIM API, etc.). See
+link:../api-type.adoc[API type] for how detection works and how to override it.
+
+NOTE: Every stage is exposed as an asynchronous job: `POST` starts it and
+returns a `jobId`, `GET` on the same path polls the status/result. See
+link:../sessions-and-jobs.adoc[Sessions and jobs].

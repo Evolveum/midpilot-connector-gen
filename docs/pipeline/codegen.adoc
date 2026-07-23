@@ -1,0 +1,86 @@
+= Codegen
+:toc: left
+
+link:index.adoc[← Pipeline overview] | link:../index.adoc[Documentation index]
+
+Codegen generates the Groovy code of the midPoint connector, one operation at
+a time, from the API model extracted by the link:digester.adoc[digester] plus
+the relevant documentation chunks.
+
+Module: `src/modules/codegen/`
+
+== Endpoints
+
+All paths are prefixed with `/api/codegen` and follow the
+link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
+`PUT` overwrite the stored code manually).
+
+[cols="2,3", options="header"]
+|===
+| Resource | Generates
+
+| `/{sessionId}/authorization`
+| Authentication/authorization setup code, based on the digester `auth`
+  output and the preferred authorization methods.
+
+| `/{sessionId}/classes/{objectClass}/native-schema`
+| The native schema definition for one object class.
+
+| `/{sessionId}/classes/{objectClass}/connid`
+| The ConnId schema mapping for one object class.
+
+| `/{sessionId}/classes/{objectClass}/search/{intent}`
+| Search operation; `intent` is `all` (list all), `filter` (query by
+  attribute), or `id` (lookup by identifier).
+
+| `/{sessionId}/classes/{objectClass}/create` +
+  `/{sessionId}/classes/{objectClass}/update` +
+  `/{sessionId}/classes/{objectClass}/delete`
+| The CRUD operations.
+
+| `/{sessionId}/relations/{relationName}`
+| Code for one extracted relation (e.g. group membership handling).
+|===
+
+== How generation works
+
+1. *Context assembly* — for each operation, `selection/` gathers the digester
+   outputs (endpoints, attributes, auth) and the documentation chunks recorded
+   as relevant for the operation's result key, plus required midPoint
+   connector-development reference material (`selection/docs_loader.py`).
+2. *Protocol-specific prompts* — prompts live under `prompts/`, split by
+   protocol (`rest/`, `scim/`, `sql/`) and operation. The protocol is chosen
+   by the effective link:../api-type.adoc[apiType]; SCIM additionally injects
+   a shared SCIM context so generated code follows the fixed SCIM baseline
+   contracts.
+3. *Generation and validation* — the LLM output goes through post-processing
+   and Groovy validation (`utils/groovy_validation.py`,
+   `utils/postprocess.py`). Validation failures feed a *repair* loop
+   (`repair.py`, `prompts/repair_prompts.py`) that asks the LLM to fix the
+   specific problem instead of regenerating blindly.
+4. The final script is persisted in the session under the operation's result
+   key.
+
+== Pitfalls
+
+IMPORTANT: Codegen inherits everything from the digester. Generating code for
+an object class whose endpoints/attributes were never extracted (or were
+extracted under the wrong link:../api-type.adoc[apiType]) fails or produces
+unusable code. Complete the digester sequence for the class first:
+`endpoints` → `attributes`, and run `authorization` before operations that
+need authenticated calls.
+
+NOTE: Every generation endpoint accepts an `apiType` query parameter that
+overrides the detected protocol for that request — useful when an application
+exposes several protocols (e.g. both REST and SCIM) and you want a specific
+one.
+
+NOTE: Generated code is stored per operation and can be regenerated or
+manually replaced (`PUT`) independently — you do not need to redo the whole
+class after fixing one operation.
+
+== Related settings
+
+Codegen has no dedicated settings group; it is driven by the shared `+LLM__*+`
+settings (model, retries, timeouts) — see
+link:../configuration.adoc[Configuration].
