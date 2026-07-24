@@ -7,6 +7,7 @@ from src.modules.scrape.core.citations import (
     deduplicate_links,
     process_citations_markdown,
     remove_citations,
+    update_references,
 )
 
 
@@ -44,6 +45,28 @@ def test_remove_citations_removes_reference_on_slash_variant_match():
 
     assert "⟨1⟩" not in updated.text_with_citations
     assert updated.references == []
+
+
+def test_update_references_handles_backslash_in_new_url():
+    """A new URL containing backslash sequences must be inserted literally.
+
+    Regression: the new URL was interpolated into the re.sub replacement
+    template, where sequences like '\\x' raised 're.error: bad escape' and
+    killed the whole scrape job. Such URLs occur as junk link candidates
+    extracted from rendered source files (e.g. JS with '\\x1b' escapes).
+    """
+    new_url = "https://github.com/jelhub/scimgateway/blob/master/lib/junk\\x1b[0m"
+    documentation = DocumentationReferences(
+        documentation_url="https://x/doc",
+        references=[ReferenceItem(url="junk", description="d", number=1)],
+        references_markdown="⟨1⟩ junk: d",
+        text_with_citations="foo ⟨1⟩ bar",
+    )
+
+    updated = update_references(documentation, {"junk": new_url})
+
+    assert updated.references_markdown == f"⟨1⟩ {new_url}: d"
+    assert updated.references[0].url == new_url
 
 
 def test_deduplicate_links_uses_canonical_marker_form():

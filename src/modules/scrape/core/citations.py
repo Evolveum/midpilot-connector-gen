@@ -96,7 +96,10 @@ def update_references(documentation: DocumentationReferences, url_mapping: Dict[
     updated_markdown = documentation.references_markdown
     for old_url, new_url in url_mapping.items():
         pattern = rf"(⟨\d+⟩\s+){re.escape(old_url)}(:\s+)"
-        updated_markdown = re.sub(pattern, rf"\1{new_url}\2", updated_markdown)
+        # Function replacement inserts new_url literally; a template string would parse
+        # backslash escapes and crash on URLs containing sequences like "\x" (e.g. junk
+        # links extracted from rendered source files).
+        updated_markdown = re.sub(pattern, lambda m: f"{m.group(1)}{new_url}{m.group(2)}", updated_markdown)
         documentation.references = [
             ReferenceItem(
                 number=ref.number, url=new_url if ref.url == old_url else ref.url, description=ref.description
