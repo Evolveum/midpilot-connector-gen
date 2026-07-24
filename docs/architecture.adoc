@@ -1,0 +1,139 @@
+= Architecture
+:toc: left
+
+link:index.adoc[← Documentation index]
+
+The service is a session-centric FastAPI application. All heavy work runs as
+asynchronous background jobs; HTTP endpoints only enqueue jobs and read results
+(see link:sessions-and-jobs.adoc[Sessions and jobs]).
+
+== Repository layout
+
+[cols="1,3", options="header"]
+|===
+| Path | Responsibility
+
+| `server.py`
+| Hypercorn server entry point (HTTP/1.1 + h2c, optional TLS).
+
+| `src/app.py`
+| FastAPI application factory, lifespan, exception handlers.
+
+| `src/router.py`
+| Root router; mounts module routers under `/api/session`, `/api/discovery`,
+  `/api/scrape`, `/api/digester`, `/api/codegen`.
+
+| `src/pool.py`
+| Shared `ProcessPoolExecutor` for CPU-bound work (fuzzy sequence matching).
+
+| `src/config/`
+| Pydantic settings, one file per domain
+  (see link:configuration.adoc[Configuration]).
+
+| `src/modules/`
+| The four pipeline stages: `discovery/`, `scrape/`, `digester/`, `codegen/`
+  (see link:pipeline/index.adoc[Generation pipeline]).
+
+| `src/common/`
+| Shared infrastructure used by all modules (see below).
+
+| `alembic/`
+| Database schema migrations.
+
+| `test/unit`, `test/integration`
+| Tests, mirroring the `src/` structure.
+
+
+|===
+
+== Module layering
+
+Every pipeline module follows the same layering convention. When adding code,
+keep it in the right layer:
+
+[cols="1,3", options="header"]
+|===
+| Layer | Responsibility
+
+| *router* (`router.py`, `routes/`)
+| Thin HTTP adapter only: parse the request, ensure the session exists,
+  delegate, map the response. No business logic.
+
+| *orchestration* (`orchestration.py`)
+| Request--job wiring: select input documentation, assemble the worker payload,
+  schedule the background job, persist the job pointer
+  (`{key}JobId` / `{key}Input`) via `common.jobs`.
+
+| *worker layer*
+| The actual domain work, named after the domain action — codegen uses
+  `generation.py`, digester uses `extractors/`, scrape uses `service.py` +
+  `core/`. Never a generic `service.py` god-module in new code.
+
+| *persistence* (`persistence.py`)
+| Session write-backs (result-field updates, overrides), kept out of the
+  workers.
+|===
+
+Below the router, code raises domain errors (`AppError` subclasses from
+`src/common/errors.py`) instead of `HTTPException`; centralized handlers in
+`src/common/exception_handlers.py` map them to HTTP responses.
+
+== Common services (`src/common/`)
+
+[cols="1,3", options="header"]
+|===
+| Package | Responsibility
+
+| `session/`
+| Session API (create/delete session, upload/import/export documentation) and
+  session helpers.
+
+| `jobs/`
+| Background job runner and lifecycle: scheduling, status/progress tracking,
+  result caching, session job pointers.
+
+| `database/`
+| SQLAlchemy async engine, models (`sessions`, `session_data`, `jobs`,
+  `job_progress`, `documentation_items`, `relevant_chunks`) and repositories.
+
+| `chunking/`
+| Token-based splitting of documents into chunks.
+
+| `chunk_processor/`
+| LLM processing of raw chunks: categorization, metadata extraction,
+  content cleanup. Used by both scrape and documentation upload.
+
+| `chunk_filter/`
+| Selecting the relevant subset of stored chunks before LLM context assembly.
+
+| `web/`
+| Shared web access: page fetching/scraping (crawl4ai + Playwright), web search
+  backends (Brave, ddgs), link classification.
+
+| `llm.py`
+| Shared LLM client (OpenAI-compatible API) with connection pooling,
+  transient-failure retries and structured-output validation.
+
+| `langfuse.py`
+| Tracing of API requests and LLM calls (disabled by default).
+
+| `utils/`
+| Cross-module helpers, notably `session_info_metadata.py` — reading detected
+  metadata such as link:api-type.adoc[apiType] and base API URL from a session.
+|===
+
+== Data storage
+
+PostgreSQL is the only persistent store. Everything a pipeline stage produces
+is written to the session (key-value rows in `session_data`) or to
+`documentation_items` (scraped/uploaded chunks). Jobs and their progress are
+persisted in `jobs` / `job_progress`, which makes results shareable across
+worker processes and restarts. Schema changes go through Alembic migrations.
+
+== Observability
+
+* Structured logging configured in `src/config/logging.py`.
+* Optional https://langfuse.com/[Langfuse] tracing of every API request and
+  LLM call (`+LANGFUSE__*+` settings).
+* Job progress is persisted per stage (`JobStage` in `src/common/enums.py`)
+  and exposed via the status endpoints.
