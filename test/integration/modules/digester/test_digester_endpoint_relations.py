@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
-from src.common.errors import ObjectClassesNotFoundError
+from src.modules.digester.errors import ObjectClassesNotFoundError
 from src.modules.digester.routes.relations import extract_relations, get_relations_status, override_relations
 from src.modules.digester.schemas import RelationsResponse
+from src.shared.enums import JobStatus
 
 
 # RELATIONS

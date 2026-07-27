@@ -10,21 +10,21 @@ from uuid import UUID
 
 from crawl4ai.utils import get_base_domain  # type: ignore
 
-from src.common.chunk_processor.processor import process_all_documentations
-from src.common.chunk_processor.schema import ChunkProcessingError
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.documentation_repository import DocumentationRepository
-from src.common.database.repositories.job_repository import JobRepository
-from src.common.documentation import SavedDocumentation
-from src.common.enums import JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.llm import raise_if_llm_unavailable
-from src.common.session.schema import DocumentationItem
-from src.common.utils.normalize import normalize_url
-from src.common.utils.status_response import build_group_documentation_response
 from src.config import config
+from src.core.db import async_session_maker
+from src.core.llm import raise_if_llm_unavailable
+from src.database.repositories.documentation_repository import DocumentationRepository
+from src.database.repositories.job_repository import JobRepository
+from src.documents import SavedDocumentation
+from src.documents.processing.processor import process_all_documentations
+from src.documents.processing.schema import ChunkProcessingError
+from src.jobs import append_job_error, update_job_progress
 from src.modules.scrape.core.scraper import scraper_loop
 from src.modules.scrape.schema import ScrapeRequest, ScrapeResult
+from src.session.schema import DocumentationItem
+from src.session.service import build_group_documentation_response
+from src.shared.enums import JobStage
+from src.shared.normalize import normalize_url
 
 logger = logging.getLogger(__name__)
 

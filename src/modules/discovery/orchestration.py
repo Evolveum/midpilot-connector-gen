@@ -12,8 +12,8 @@ persistence.
 
 from uuid import UUID
 
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.jobs import schedule_coroutine_job
+from src.database.repositories.session_repository import SessionRepository
+from src.jobs import schedule_coroutine_job
 from src.modules.discovery import service
 from src.modules.discovery.schema import CandidateLinksInput
 

@@ -14,11 +14,9 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from src.common.chunking.tokens import normalize_to_text
-from src.common.documentation.content_types import is_conndev_documentation_item
-from src.common.jobs import update_job_progress
-from src.common.utils.coerce import as_dict_list
-from src.common.utils.normalize import canonical_object_class_key
+from src.documents.chunking.tokens import normalize_to_text
+from src.documents.normalize import canonical_object_class_key
+from src.jobs import update_job_progress
 from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_object_classes
 from src.modules.digester.extraction.chunk_extraction import build_chunk_extraction_chain, extract_single_chunk
 from src.modules.digester.extraction.llm_execution import run_chunks_concurrently
@@ -36,6 +34,8 @@ from src.modules.digester.schemas import (
     ExtendedObjectClass,
     ObjectClassesExtendedResponse,
 )
+from src.shared.coerce import as_dict_list
+from src.shared.content_types import is_conndev_documentation_item
 
 logger = logging.getLogger(__name__)
 

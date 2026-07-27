@@ -17,11 +17,8 @@ from collections.abc import Mapping
 from typing import Any, Dict, List
 from uuid import UUID
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.documentation.content_types import is_conndev_documentation_item
-from src.common.enums import ApiType
-from src.common.jobs import update_job_progress
-from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.documents.filtering.filter import filter_documentation_items
+from src.jobs import update_job_progress
 from src.modules.digester.entities.object_classes import build_endpoint_result, extract_endpoints_from_result
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest.endpoints import extract_endpoints as _extract_rest_endpoints
@@ -36,6 +33,9 @@ from src.modules.digester.selection import (
     exclude_doc_items_by_chunk_id,
     select_doc_chunks,
 )
+from src.session.info_metadata import resolve_effective_api_type
+from src.shared.content_types import is_conndev_documentation_item
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 

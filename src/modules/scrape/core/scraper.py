@@ -7,14 +7,14 @@ from typing import Awaitable, Callable, List
 
 from pydantic import HttpUrl
 
-from src.common.documentation import DocumentationReferences, SavedDocumentation
-from src.common.schema import validate_pydantic_object
-from src.common.web import (
+from src.config import config
+from src.core.schema import validate_pydantic_object
+from src.documents import DocumentationReferences, SavedDocumentation
+from src.integrations.web import (
     get_all_content_types,
     scrape_all_data_documentations,
     scrape_urls,
 )
-from src.config import config
 from src.modules.scrape.core.citations import (
     deduplicate_links,
     process_citations_markdown,

@@ -17,9 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List
 from uuid import UUID
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.enums import ApiType
-from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.documents.filtering.filter import filter_documentation_items
 from src.modules.digester.entities.object_classes import build_attribute_result, extract_attributes_from_result
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest.attributes import extract_attributes as _extract_rest_attributes
@@ -34,6 +32,8 @@ from src.modules.digester.selection import (
     exclude_doc_items_by_chunk_id,
     select_doc_chunks,
 )
+from src.session.info_metadata import resolve_effective_api_type
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 

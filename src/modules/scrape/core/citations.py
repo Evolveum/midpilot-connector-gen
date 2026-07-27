@@ -6,7 +6,7 @@ import logging
 import re
 from typing import Dict, List
 
-from src.common.documentation import DocumentationReferences, ReferenceItem
+from src.documents import DocumentationReferences, ReferenceItem
 
 logger = logging.getLogger(__name__)
 

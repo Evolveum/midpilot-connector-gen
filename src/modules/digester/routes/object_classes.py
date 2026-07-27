@@ -10,14 +10,14 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.database.config import get_db
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import ApiType
-from src.common.schema import JobCreateResponse, JobStatusMultiDocResponse
-from src.common.session.session import ensure_session_exists, resolve_session_job_id
-from src.common.utils.status_response import build_typed_job_status_response
+from src.api.responses import build_typed_job_status_response
+from src.core.db import get_db
+from src.database.repositories.session_repository import SessionRepository
+from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.digester import orchestration, results
 from src.modules.digester.schemas import ObjectClassesResponse
+from src.session.access import ensure_session_exists, resolve_session_job_id
+from src.shared.enums import ApiType
 
 router = APIRouter(tags=["Digester: Object Classes"])
 

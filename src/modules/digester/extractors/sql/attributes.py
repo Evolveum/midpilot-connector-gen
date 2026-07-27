@@ -6,14 +6,14 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from src.common.enums import JobStage
-from src.common.jobs import update_job_progress
+from src.jobs import update_job_progress
 from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extractors.sql.schema import (
     collect_sql_tables,
     sql_type_to_attribute_type,
     tables_for_object_class,
 )
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 

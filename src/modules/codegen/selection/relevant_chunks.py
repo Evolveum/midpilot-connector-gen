@@ -14,9 +14,9 @@ import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
-from src.common.utils.normalize import normalize_object_class_name
+from src.core.db import async_session_maker
+from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.documents.normalize import normalize_object_class_name
 from src.modules.codegen.schema import AuthPayload
 from src.modules.codegen.selection.authorization import (
     has_matching_preferred_authorization,

@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
-from src.common.errors import OperationSurfaceNotFoundError
 from src.modules.codegen.routes.operations import generate_create, generate_delete, generate_update
 from src.modules.codegen.schema import CodegenOperationInput
+from src.modules.digester.errors import OperationSurfaceNotFoundError
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio

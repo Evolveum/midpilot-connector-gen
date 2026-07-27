@@ -9,13 +9,13 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
 from src.modules.digester.routes.attributes import (
     extract_class_attributes,
     get_class_attributes_status,
     override_class_attributes,
 )
 from src.modules.digester.schemas import AttributeInfoScim, AttributeResponse
+from src.shared.enums import JobStatus
 
 
 # CLASS ATTRIBUTES

@@ -9,10 +9,10 @@ from typing import List
 from crawl4ai.utils import get_base_domain  # type: ignore
 from pydantic import HttpUrl
 
-from src.common.documentation import SavedDocumentation
-from src.common.schema import validate_pydantic_object
-from src.common.web import IrrelevantLinks, classify_irrelevant_links
 from src.config import config
+from src.core.schema import validate_pydantic_object
+from src.documents import SavedDocumentation
+from src.integrations.web import IrrelevantLinks, classify_irrelevant_links
 from src.modules.scrape.core.links import is_forbidden_url
 from src.modules.scrape.prompts.prompts import get_irrelevant_filter_prompts
 

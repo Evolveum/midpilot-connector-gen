@@ -14,18 +14,18 @@ from uuid import UUID
 from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, ValidationError
 
-from src import pool
-from src.common.chunking import normalize_to_text
-from src.common.enums import JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain, is_transient_llm_error, raise_if_llm_unavailable
 from src.config import config
+from src.core import pool
+from src.core.llm import build_structured_chain, is_transient_llm_error, raise_if_llm_unavailable
+from src.core.observability.langfuse import langfuse_handler
+from src.documents.chunking import normalize_to_text
+from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.extraction.fuzzysearch_worker import fuzzy_search_worker
 from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.schemas import DocMarkerMatch, DocProcessingSequenceItem
 from src.modules.digester.selection import build_chunk_id_to_doc_id, collect_relevant_chunks
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)

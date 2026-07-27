@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.errors import RelevantChunksNotFoundError
+from src.modules.digester.errors import RelevantChunksNotFoundError
 from src.modules.digester.selection import DocumentationSelector
 
 

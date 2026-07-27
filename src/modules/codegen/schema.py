@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Mapping, Optional, TypeAlias, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from src.common.schema import CamelCaseModel
+from src.core.schema import CamelCaseModel
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
 from src.modules.digester.enums import normalize_auth_type_value
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse

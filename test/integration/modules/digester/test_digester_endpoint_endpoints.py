@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.routes.endpoints import (
     extract_class_endpoints,
@@ -17,6 +16,7 @@ from src.modules.digester.routes.endpoints import (
     override_class_endpoints,
 )
 from src.modules.digester.schemas import EndpointInfo, EndpointResponse
+from src.shared.enums import JobStatus
 
 
 # CLASS ENDPOINTS

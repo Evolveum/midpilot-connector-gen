@@ -7,10 +7,10 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, cast
 from uuid import UUID
 
-from src.common.chunking import normalize_to_text
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.llm import build_structured_chain, raise_if_llm_unavailable
-from src.common.utils.normalize import normalize_object_class_name
+from src.core.llm import build_structured_chain, raise_if_llm_unavailable
+from src.documents.chunking import normalize_to_text
+from src.documents.normalize import normalize_object_class_name
+from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.merges import merge_relations_results
 from src.modules.digester.entities.relations import deduplicate_semantic_relations
 from src.modules.digester.enums import ConfidenceLevel

@@ -5,8 +5,8 @@
 import re
 from typing import Dict, List, Optional, Tuple
 
-from src.common.utils.normalize import normalize_object_class_name
 from src.config import config
+from src.documents.normalize import normalize_object_class_name
 from src.modules.digester.schemas import RelationRecord
 
 

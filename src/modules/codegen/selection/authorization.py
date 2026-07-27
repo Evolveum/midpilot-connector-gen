@@ -4,9 +4,9 @@
 
 from typing import Any, Dict, List, Mapping, Optional
 
-from src.common.utils.coerce import as_list, as_mapping
 from src.modules.codegen.schema import AuthPayload, PreferredAuthorizations
 from src.modules.digester.enums import auth_type_match_key, normalize_auth_type_value
+from src.shared.coerce import as_list, as_mapping
 
 ANALYSIS_SUPPORT_FIELD = "analysisSupport"
 ANALYSIS_SUPPORT_SUPPORTED = "supported"

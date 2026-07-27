@@ -6,7 +6,7 @@ import re
 from enum import StrEnum
 from typing import Any
 
-from src.common.utils.coerce import as_str
+from src.shared.coerce import as_str
 
 
 class ConfidenceLevel(StrEnum):

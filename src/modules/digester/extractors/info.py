@@ -7,9 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from src.common.enums import ApiType, DetectionSource
-from src.common.jobs import update_job_progress
-from src.common.utils.coerce import as_str
+from src.jobs import update_job_progress
 from src.modules.digester.aggregation.merges import merge_api_type, merge_info_metadata
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_doc_extractors_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
@@ -30,6 +28,8 @@ from src.modules.digester.schemas import (
     ScimAvailabilityInfo,
 )
 from src.modules.digester.selection import build_chunk_id_to_doc_id, resolve_relevant_chunk_ref
+from src.shared.coerce import as_str
+from src.shared.enums import ApiType, DetectionSource
 
 logger = logging.getLogger(__name__)
 

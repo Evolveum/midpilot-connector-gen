@@ -8,13 +8,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.database.config import get_db
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.schema import JobCreateResponse, JobStatusStageResponse
-from src.common.session.session import ensure_session_exists, resolve_session_job_id
-from src.common.utils.status_response import build_stage_status_response
+from src.api.responses import build_stage_status_response
+from src.core.db import get_db
+from src.database.repositories.session_repository import SessionRepository
+from src.jobs.schema import JobCreateResponse, JobStatusStageResponse
 from src.modules.discovery import orchestration
 from src.modules.discovery.schema import CandidateLinksInput
+from src.session.access import ensure_session_exists, resolve_session_job_id
 
 router = APIRouter()
 

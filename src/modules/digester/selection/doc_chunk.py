@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from uuid import UUID
 
-from src.common.chunking import normalize_to_text
+from src.documents.chunking import normalize_to_text
 from src.modules.digester.schemas.common import ChunkReference
 
 logger = logging.getLogger(__name__)

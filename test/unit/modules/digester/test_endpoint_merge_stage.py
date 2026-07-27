@@ -7,9 +7,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStage
 from src.modules.digester.aggregation.merges import merge_endpoint_candidates
 from src.modules.digester.schemas import ExtractedEndpointInfo
+from src.shared.enums import JobStage
 
 
 @pytest.mark.asyncio

@@ -15,9 +15,7 @@ import logging
 from typing import Any, Dict, List
 from uuid import UUID
 
-from src.common.enums import ApiType
-from src.common.utils.normalize import canonical_object_class_key
-from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.documents.normalize import canonical_object_class_key
 from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_object_classes
 from src.modules.digester.extraction.chunk_extraction import run_doc_extractors_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
@@ -28,6 +26,8 @@ from src.modules.digester.extractors.rest.object_class import (
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
 from src.modules.digester.extractors.sql.object_class import extract_sql_object_classes
 from src.modules.digester.selection import build_chunk_id_to_doc_id
+from src.session.info_metadata import resolve_effective_api_type
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 

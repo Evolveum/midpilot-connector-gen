@@ -9,14 +9,14 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType, JobStatus
-from src.common.errors import AttributesNotFoundError
 from src.modules.codegen.routes.native_schema import (
     generate_native_schema,
     get_native_schema_status,
     override_native_schema,
 )
 from src.modules.codegen.schema import CodegenRepairContext, GroovyCodePayload
+from src.modules.digester.errors import AttributesNotFoundError
+from src.shared.enums import ApiType, JobStatus
 
 
 # NATIVE SCHEMA

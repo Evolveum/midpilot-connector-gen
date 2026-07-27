@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.common.enums import ApiType, ProtocolAvailability
 from src.modules.digester.extractors.apitype.knowledge import lookup_api_type_knowledge
 from src.modules.digester.schemas import ApiTypeSignalResult
+from src.shared.enums import ApiType, ProtocolAvailability
 
 
 @pytest.mark.asyncio

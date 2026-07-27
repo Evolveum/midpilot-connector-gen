@@ -8,7 +8,6 @@ Helpers that select prompts and docs based on API protocol.
 
 from typing import Mapping
 
-from src.common.enums import ApiType
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.authorization_prompts import (
     get_authorization_system_prompt,
@@ -50,6 +49,7 @@ from src.modules.codegen.prompts.sql.search_prompts import (
 )
 from src.modules.codegen.prompts.sql.update_prompts import get_sql_update_system_prompt, get_sql_update_user_prompt
 from src.modules.codegen.schema import OperationAssets
+from src.shared.enums import ApiType
 
 PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
     "create": {

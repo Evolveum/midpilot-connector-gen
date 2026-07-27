@@ -9,13 +9,13 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.codegen.routes.authorization import (
     generate_authorization,
     get_authorization_status,
     override_authorization,
 )
 from src.modules.codegen.schema import AuthorizationCodegenInput, GroovyCodePayload
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio

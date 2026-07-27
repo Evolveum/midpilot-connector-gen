@@ -6,9 +6,9 @@ from typing import Annotated, Any, Dict, List
 
 from pydantic import BaseModel, BeforeValidator, Field, field_serializer, field_validator
 
-from src.common.schema import CamelCaseModel
-from src.common.utils.normalize import normalize_relevant_documentation_refs
+from src.core.schema import CamelCaseModel
 from src.modules.digester.enums import EndpointMethod
+from src.shared.normalize import normalize_relevant_documentation_refs
 
 
 def normalize_http_method(value: Any) -> Any:
