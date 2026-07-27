@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Respon
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.common.auth.context import AuthContext
+from src.common.auth.dependencies import get_auth_context
 from src.common.database.config import get_db
 from src.common.database.repositories.documentation_repository import DocumentationRepository
 from src.common.database.repositories.job_repository import JobRepository
@@ -214,13 +216,17 @@ async def check_documentation_item(
     status_code=status.HTTP_201_CREATED,
     summary="Create a new session",
 )
-async def create_session(db: AsyncSession = Depends(get_db)) -> SessionCreateResponse:
+async def create_session(
+    db: AsyncSession = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+) -> SessionCreateResponse:
     """
     Create a new session and return the session ID.
+    The session is owned by the API key that created it (if any).
     """
     repo = SessionRepository(db)
     try:
-        session_id = await repo.create_session()
+        session_id = await repo.create_session(api_key_id=auth.api_key_id)
     except Exception as e:
         logger.error(f"Failed to create session: {e}")
         raise HTTPException(status_code=500, detail="Unable to create session")
@@ -239,9 +245,11 @@ async def create_session(db: AsyncSession = Depends(get_db)) -> SessionCreateRes
 async def create_session_with_id(
     session_id: UUID = Path(..., description="Session ID"),
     db: AsyncSession = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> SessionCreateResponse:
     """
     Create a new session using the provided session ID.
+    The session is owned by the API key that created it (if any).
     Returns 409 if the session already exists.
     """
     repo = SessionRepository(db)
@@ -250,7 +258,7 @@ async def create_session_with_id(
         raise SessionAlreadyExistsError(session_id)
 
     try:
-        created_id = await repo.create_session_with_id(session_id)
+        created_id = await repo.create_session_with_id(session_id, api_key_id=auth.api_key_id)
     except ValueError as e:
         logger.error(f"Failed to create session with ID {session_id}: {e}")
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))

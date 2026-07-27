@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
@@ -13,6 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.database.models import Session, SessionData
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SessionOwner:
+    """Existence + ownership snapshot of a session used for access checks."""
+
+    session_id: UUID
+    api_key_id: Optional[UUID]
 
 
 class SessionRepository:
@@ -31,27 +40,30 @@ class SessionRepository:
         """Return current UTC timestamp as ISO formatted string."""
         return datetime.now(timezone.utc).isoformat()
 
-    async def create_session(self) -> UUID:
+    async def create_session(self, api_key_id: Optional[UUID] = None) -> UUID:
         """
         Create a new session and return its unique ID.
 
+        :param api_key_id: Owning API key, or None for an ownerless session
+            (accessible only with the master key when auth is enforced)
         :return: Session ID (UUID)
         """
-        session = Session()
+        session = Session(api_key_id=api_key_id)
         self.db.add(session)
         await self.db.flush()
         logger.info(f"Created new session: {session.session_id}")
         return session.session_id
 
-    async def create_session_with_id(self, session_id: UUID) -> UUID:
+    async def create_session_with_id(self, session_id: UUID, api_key_id: Optional[UUID] = None) -> UUID:
         """
         Create a new session with a provided ID.
         If the session already exists, raises ValueError.
 
         :param session_id: The UUID to use for the session
+        :param api_key_id: Owning API key, or None for an ownerless session
         :return: Session ID
         """
-        session = Session(session_id=session_id)
+        session = Session(session_id=session_id, api_key_id=api_key_id)
         self.db.add(session)
         await self.db.flush()
         logger.info(f"Created new session with provided ID: {session_id}")
@@ -179,6 +191,21 @@ class SessionRepository:
         await self.db.flush()
         logger.info(f"Deleted session: {session_id}")
         return True
+
+    async def get_session_owner(self, session_id: UUID) -> Optional[SessionOwner]:
+        """
+        Fetch existence and ownership of a session in a single query.
+
+        :param session_id: The session ID to look up
+        :return: SessionOwner (api_key_id is None for ownerless sessions),
+            or None if the session does not exist
+        """
+        query = select(Session.session_id, Session.api_key_id).where(Session.session_id == session_id)
+        result = await self.db.execute(query)
+        row = result.one_or_none()
+        if row is None:
+            return None
+        return SessionOwner(session_id=row.session_id, api_key_id=row.api_key_id)
 
     async def session_exists(self, session_id: UUID) -> bool:
         """

@@ -5,9 +5,10 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
 from src import pool
+from src.common.auth.dependencies import authenticate_request
 from src.common.exception_handlers import register_exception_handlers
 from src.common.jobs import recover_stale_running_jobs
 from src.common.llm import aclose_llm_http_client
@@ -48,7 +49,12 @@ def create_api() -> FastAPI:
 
     register_exception_handlers(app)
 
-    app.include_router(root_router, prefix=f"{config.app.api_base_url}/v1")
+    # API key auth + session ownership run for every API route; /health stays open.
+    app.include_router(
+        root_router,
+        prefix=f"{config.app.api_base_url}/v1",
+        dependencies=[Depends(authenticate_request)],
+    )
 
     @app.get("/health")
     async def health() -> dict:

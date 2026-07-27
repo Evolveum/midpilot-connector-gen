@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from src.common.database.models.api_key import ApiKey
 from src.common.database.models.base import Base, utc_now
 from src.common.database.models.documentation_item import DocumentationItem
 from src.common.database.models.job import Job
@@ -11,6 +12,7 @@ from src.common.database.models.session import Session
 from src.common.database.models.session_data import SessionData
 
 __all__ = [
+    "ApiKey",
     "Base",
     "utc_now",
     "Session",

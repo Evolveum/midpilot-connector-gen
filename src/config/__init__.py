@@ -5,6 +5,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.config.app import AppSettings
+from src.config.auth import AuthSettings
 from src.config.database import DatabaseSettings
 from src.config.digester import DigesterSettings
 from src.config.langfuse import LangfuseSettings
@@ -33,6 +34,7 @@ class Settings(BaseSettings):
     )
 
     app: AppSettings = AppSettings()
+    auth: AuthSettings = AuthSettings()
     logging: LoggingSettings = LoggingSettings()
     llm: LLMSettings = LLMSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
@@ -47,6 +49,7 @@ config = Settings()
 
 __all__ = [
     "AppSettings",
+    "AuthSettings",
     "BraveSettings",
     "DatabaseSettings",
     "DigesterSettings",

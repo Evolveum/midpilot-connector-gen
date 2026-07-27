@@ -3,10 +3,10 @@
 # Licensed under the EUPL-1.2 or later.
 
 from datetime import datetime
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Index, text
+from sqlalchemy import ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.common.database.models.base import Base, utc_now
 
 if TYPE_CHECKING:
+    from src.common.database.models.api_key import ApiKey
     from src.common.database.models.documentation_item import DocumentationItem
     from src.common.database.models.job import Job
     from src.common.database.models.relevant_chunk import RelevantChunk
@@ -44,8 +45,16 @@ class Session(Base):
         server_default=text("NOW()"),
         onupdate=utc_now,
     )
+    # Owning API key; NULL means the session has no owner (created with auth
+    # disabled or by the master key) and is accessible only with the master key.
+    api_key_id: Mapped[Optional[UUID]] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("api_keys.api_key_id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # Relationships
+    api_key: Mapped[Optional["ApiKey"]] = relationship("ApiKey", back_populates="sessions")
     jobs: Mapped[List["Job"]] = relationship("Job", back_populates="session", cascade="all, delete-orphan")
     documentation_items: Mapped[List["DocumentationItem"]] = relationship(
         "DocumentationItem", back_populates="session", cascade="all, delete-orphan"
@@ -60,4 +69,5 @@ class Session(Base):
     __table_args__ = (
         Index("idx_sessions_created_at", "created_at"),
         Index("idx_sessions_updated_at", "updated_at"),
+        Index("idx_sessions_api_key_id", "api_key_id"),
     )

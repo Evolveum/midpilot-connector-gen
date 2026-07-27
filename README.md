@@ -43,6 +43,24 @@ cp .env-example .env
 cp .env.test-example .env.test
 ```
 
+### API key authentication
+
+The service supports two operating modes controlled by `.env`:
+
+- `AUTH__API_KEY_REQUIRED=false` (default) - no authentication, for development.
+- `AUTH__API_KEY_REQUIRED=true` - every request must send a valid key in the
+  `X-API-Key` header. `AUTH__MASTER_API_KEY` must be configured in this mode.
+
+The master key accesses all sessions and is the only key allowed to manage API
+keys via the `/api/v1/apiKeys` endpoints (issue with `POST`, list with `GET`,
+revoke with `DELETE /{apiKeyId}`). The full key value is returned only once, in
+the issue response - only its SHA-256 hash is stored.
+
+Each session is owned by the API key that created it and is accessible only
+with that key (or the master key). Sessions without an owner (created while
+auth was disabled, or by the master key) are accessible only with the master
+key.
+
 ## Running with Docker
 
 ### Requirements

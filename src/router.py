@@ -4,6 +4,7 @@
 
 from fastapi import APIRouter
 
+from src.common.auth.router import router as api_keys_router
 from src.common.session.router import router as session_router
 from src.modules.codegen.router import router as codegen_router
 from src.modules.digester.router import router as digester_router
@@ -15,6 +16,9 @@ root_router = APIRouter()
 """
 Root API router that aggregates all sub-module routers under their respective prefixes and tags.
 """
+
+# API key management (master key only)
+root_router.include_router(api_keys_router, prefix="/apiKeys", tags=["API Keys"])
 
 # Session management
 root_router.include_router(session_router, prefix="/session", tags=["Session"])
