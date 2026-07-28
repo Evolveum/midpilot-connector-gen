@@ -11,12 +11,17 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from src.config import config
+from src.config.llm import ReasoningEffort
 from src.core.llm import build_structured_chain, get_default_llm, make_basic_chain
 from src.integrations.web.link_classification import _link_filter_reasoning_effort
 
 
+def _set_reasoning_effort(monkeypatch, value: ReasoningEffort | None) -> None:
+    monkeypatch.setattr(config.llm, "reasoning_effort", value)
+
+
 def test_get_default_llm_uses_configured_reasoning_effort(monkeypatch):
-    monkeypatch.setattr(config.llm, "reasoning_effort", "high")
+    _set_reasoning_effort(monkeypatch, "high")
 
     with patch("src.core.llm.ChatOpenAI") as chat_openai:
         get_default_llm()
@@ -25,7 +30,7 @@ def test_get_default_llm_uses_configured_reasoning_effort(monkeypatch):
 
 
 def test_get_default_llm_explicit_none_disables_reasoning_effort(monkeypatch):
-    monkeypatch.setattr(config.llm, "reasoning_effort", "high")
+    _set_reasoning_effort(monkeypatch, "high")
 
     with patch("src.core.llm.ChatOpenAI") as chat_openai:
         get_default_llm(reasoning_effort=None)
@@ -34,10 +39,10 @@ def test_get_default_llm_explicit_none_disables_reasoning_effort(monkeypatch):
 
 
 def test_irrelevant_links_reasoning_effort_uses_medium_only_when_global_reasoning_is_enabled(monkeypatch):
-    monkeypatch.setattr(config.llm, "reasoning_effort", None)
+    _set_reasoning_effort(monkeypatch, None)
     assert _link_filter_reasoning_effort() is None
 
-    monkeypatch.setattr(config.llm, "reasoning_effort", "high")
+    _set_reasoning_effort(monkeypatch, "high")
     assert _link_filter_reasoning_effort() == "medium"
 
 

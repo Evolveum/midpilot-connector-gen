@@ -15,6 +15,7 @@ broke embedded-class and attribute derivation.
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -198,8 +199,11 @@ async def _load_bundle(items: list[dict]):
     repo.get_conndev_documentation_items_by_session = AsyncMock(return_value=items)
 
     with (
-        patch(f"{_MODULE}.async_session_maker", return_value=_NoopAsyncSession()),
-        patch(f"{_MODULE}.DocumentationRepository", return_value=repo),
+        patch(
+            "src.modules.digester.extractors.scim.baseline.async_session_maker",
+            return_value=_NoopAsyncSession(),
+        ),
+        patch("src.modules.digester.extractors.scim.baseline.DocumentationRepository", return_value=repo),
     ):
         return await load_session_scim_baseline(uuid4())
 
@@ -238,7 +242,7 @@ async def test_loader_keeps_the_four_conndev_contracts_apart(reverse_order):
 
 @pytest.mark.asyncio
 async def test_loader_supports_arbitrary_schema_resource_and_object_class_names():
-    device_schema = {
+    device_schema: dict[str, Any] = {
         "id": "urn:example:params:scim:schemas:core:2.0:Device",
         "name": "Device",
         "attributes": [
@@ -287,12 +291,12 @@ async def test_loader_supports_arbitrary_schema_resource_and_object_class_names(
 
 
 def test_codegen_context_preserves_differences_between_schema_resource_and_connid_views():
-    standalone_schema = {
+    standalone_schema: dict[str, Any] = {
         "id": "urn:example:Device",
         "name": "Device",
         "attributes": [{"name": "serialNumber", "type": "string", "required": True}],
     }
-    resource_schema = {
+    resource_schema: dict[str, Any] = {
         "id": "urn:example:Device",
         "name": "Device",
         "attributes": [{"name": "serialNumber", "type": "integer", "required": False}],

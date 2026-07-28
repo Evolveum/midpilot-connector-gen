@@ -11,6 +11,14 @@ from src.core.errors import LLMUnavailableError
 from src.modules.scrape.core.llms import get_relevant_links_from_text
 
 
+# PyCharm's monkeypatch inspection does not resolve pydantic model fields as attribute names
+# (mypy resolves them correctly), so the field-name string arguments are suppressed here once.
+# noinspection PyUnresolvedReferences
+def _set_chunk_llm_retry(monkeypatch, *, attempts: int, base_delay_seconds: float) -> None:
+    monkeypatch.setattr(config.scrape_and_process, "chunk_llm_retry_attempts", attempts)
+    monkeypatch.setattr(config.scrape_and_process, "chunk_llm_retry_base_delay_seconds", base_delay_seconds)
+
+
 class _FailingChain:
     def __init__(self, exc: Exception):
         self._exc = exc
@@ -24,8 +32,7 @@ class _FailingChain:
 @pytest.mark.asyncio
 async def test_relevant_links_raises_when_llm_unreachable(monkeypatch):
     """A connection outage during link extraction must fail the scrape, not silently return None."""
-    monkeypatch.setattr(config.scrape_and_process, "chunk_llm_retry_attempts", 2)
-    monkeypatch.setattr(config.scrape_and_process, "chunk_llm_retry_base_delay_seconds", 0)
+    _set_chunk_llm_retry(monkeypatch, attempts=2, base_delay_seconds=0)
 
     chain = _FailingChain(Exception("Connection error."))
     with (
@@ -41,8 +48,7 @@ async def test_relevant_links_raises_when_llm_unreachable(monkeypatch):
 @pytest.mark.asyncio
 async def test_relevant_links_returns_none_on_non_outage_error(monkeypatch):
     """A one-off, non-connectivity error skips the page's link suggestions without failing the job."""
-    monkeypatch.setattr(config.scrape_and_process, "chunk_llm_retry_attempts", 2)
-    monkeypatch.setattr(config.scrape_and_process, "chunk_llm_retry_base_delay_seconds", 0)
+    _set_chunk_llm_retry(monkeypatch, attempts=2, base_delay_seconds=0)
 
     chain = _FailingChain(ValueError("unparseable output"))
     with (

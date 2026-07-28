@@ -13,6 +13,13 @@ from src.modules.digester.extraction import llm_execution
 from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
 
 
+# PyCharm's monkeypatch inspection does not resolve pydantic model fields as attribute names
+# (mypy resolves them correctly), so the field-name string argument is suppressed here once.
+# noinspection PyUnresolvedReferences
+def _set_max_concurrent_llm_calls(monkeypatch, value: int) -> None:
+    monkeypatch.setattr(config.digester, "max_concurrent_llm_calls", value)
+
+
 class _TrackedChain:
     def __init__(self) -> None:
         self.active = 0
@@ -28,7 +35,7 @@ class _TrackedChain:
 
 @pytest.mark.asyncio
 async def test_run_chunks_concurrently_respects_configured_limit(monkeypatch):
-    monkeypatch.setattr(config.digester, "max_concurrent_llm_calls", 2)
+    _set_max_concurrent_llm_calls(monkeypatch, 2)
     monkeypatch.setattr(llm_execution, "_digester_llm_semaphore", None)
     monkeypatch.setattr(llm_execution, "_digester_llm_semaphore_limit", None)
     active = 0
@@ -60,7 +67,7 @@ async def test_run_chunks_concurrently_respects_configured_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_llm_respects_configured_limit(monkeypatch):
-    monkeypatch.setattr(config.digester, "max_concurrent_llm_calls", 3)
+    _set_max_concurrent_llm_calls(monkeypatch, 3)
     monkeypatch.setattr(llm_execution, "_digester_llm_semaphore", None)
     monkeypatch.setattr(llm_execution, "_digester_llm_semaphore_limit", None)
 
@@ -74,7 +81,7 @@ async def test_invoke_llm_respects_configured_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_nested_digester_llm_limit_does_not_deadlock(monkeypatch):
-    monkeypatch.setattr(config.digester, "max_concurrent_llm_calls", 1)
+    _set_max_concurrent_llm_calls(monkeypatch, 1)
     monkeypatch.setattr(llm_execution, "_digester_llm_semaphore", None)
     monkeypatch.setattr(llm_execution, "_digester_llm_semaphore_limit", None)
     chain = _TrackedChain()
