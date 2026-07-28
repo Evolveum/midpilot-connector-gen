@@ -193,6 +193,8 @@ async def test_get_relation_code_status_found():
     """Test getting relation code generation status when job exists."""
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_job_repo = MagicMock()
+    mock_job_repo.get_job_for_session = AsyncMock(return_value=MagicMock())
 
     fake_status = MagicMock(
         jobId=ANY,
@@ -204,6 +206,7 @@ async def test_get_relation_code_status_found():
 
     with (
         patch("src.modules.codegen.routes.relations.SessionRepository", return_value=mock_repo),
+        patch("src.session.access.JobRepository", return_value=mock_job_repo),
         patch(
             "src.modules.codegen.routes.relations.build_multi_doc_status_response",
             new_callable=AsyncMock,
@@ -218,4 +221,5 @@ async def test_get_relation_code_status_found():
         assert response.status == JobStatus.finished
         assert response.result == "mocked relation code"
         mock_repo.session_exists.assert_awaited_once_with(session_id)
+        mock_job_repo.get_job_for_session.assert_awaited_once_with(job_id, session_id)
         mock_builder.assert_awaited_once_with(job_id)

@@ -20,6 +20,7 @@ from pydantic import SecretStr
 
 from src.app import api
 from src.auth.keys import generate_api_key, hash_api_key
+from src.auth.router import revoke_api_key
 from src.config import config
 from src.core.db import get_db
 from src.database.repositories.session_repository import SessionOwner
@@ -29,7 +30,9 @@ MASTER_KEY = "unit-test-master-key"
 
 @pytest.fixture()
 def client():
-    api.dependency_overrides[get_db] = lambda: MagicMock()
+    db = MagicMock()
+    db.commit = AsyncMock()
+    api.dependency_overrides[get_db] = lambda: db
     try:
         yield TestClient(api)
     finally:
@@ -276,3 +279,18 @@ def test_revoke_api_key_returns_revocation_time(client, enforced_auth):
     body = response.json()
     assert body["apiKeyId"] == str(record.api_key_id)
     assert body["revokedAt"] is not None
+
+
+@pytest.mark.asyncio
+async def test_revoke_api_key_commits_before_returning_success() -> None:
+    record = _api_key_record(revoked_at=datetime.now(timezone.utc))
+    api_key_repo = MagicMock()
+    api_key_repo.revoke_api_key = AsyncMock(return_value=record)
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    with patch("src.auth.router.ApiKeyRepository", return_value=api_key_repo):
+        response = await revoke_api_key(record.api_key_id, db)
+
+    db.commit.assert_awaited_once_with()
+    assert response.api_key_id == record.api_key_id

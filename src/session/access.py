@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.db import async_session_maker
 from src.database.repositories.documentation_repository import DocumentationRepository
+from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs.errors import JobNotFoundError
 from src.session.documentation_upload import read_uploaded_documentation
@@ -102,7 +103,9 @@ async def resolve_session_job_id(
     job_label: str,
     not_found_detail: str | None = None,
 ) -> UUID:
-    if job_id:
+    if isinstance(job_id, UUID):
+        if await JobRepository(repo.db).get_job_for_session(job_id, session_id) is None:
+            raise JobNotFoundError(job_label, session_id, detail=not_found_detail)
         return job_id
 
     job_id_value = await repo.get_session_data(session_id, session_key)

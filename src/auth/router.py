@@ -95,7 +95,9 @@ async def revoke_api_key(
     if record is None:
         raise ApiKeyNotFoundError(api_key_id)
 
-    assert record.revoked_at is not None  # set by revoke_api_key
+    await db.commit()
+
+    assert record.revoked_at is not None
     return ApiKeyRevokeResponse(
         api_key_id=record.api_key_id,
         revoked_at=record.revoked_at,

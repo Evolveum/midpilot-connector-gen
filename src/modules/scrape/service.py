@@ -34,7 +34,7 @@ async def _run_scrape_async(
 ) -> ScrapeResult:
     if not scrape_request.skip_cache and session_id:
         logger.info(
-            "[Scrape] Job %s (session %s): skipCache is false, checking for existing documentation items in all sessions for the same input",
+            "[Scrape] Job %s (session %s): skipCache is false, checking for existing documentation items in tenant sessions for the same input",
             str(job_id),
             str(session_id),
         )
@@ -43,7 +43,10 @@ async def _run_scrape_async(
             created_at_limits = datetime.now() - config.scrape_and_process.scrape_input_check_interval
             normalized_input = scrape_request.model_dump(by_alias=True, exclude={"skip_cache"})
             latest_job = await job_repo.get_job_by_input(
-                "scrape.getRelevantDocumentation", normalized_input, created_at_limits
+                "scrape.getRelevantDocumentation",
+                normalized_input,
+                created_at_limits,
+                requesting_session_id=session_id,
             )
             if latest_job:
                 logger.info(

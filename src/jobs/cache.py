@@ -70,6 +70,7 @@ async def reuse_or_run(
             job_type,
             normalized_input,
             created_at_limits,
+            requesting_session_id=session_id,
         )
         if not (latest_job and latest_job.result):
             logger.info(
