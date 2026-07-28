@@ -3,8 +3,8 @@ import logging
 import re
 from uuid import UUID
 
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.documentation_repository import DocumentationRepository
+from src.core.db import async_session_maker
+from src.database.repositories.documentation_repository import DocumentationRepository
 
 logger = logging.getLogger(__name__)
 

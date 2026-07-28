@@ -11,24 +11,22 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.chunking import normalize_to_text
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.documentation_repository import DocumentationRepository
-from src.common.documentation.content_types import is_conndev_documentation_item
-from src.common.enums import JobStage
-from src.common.jobs import (
-    append_job_error,
-    increment_processed_documents,
-    update_job_progress,
-)
-from src.common.langfuse import langfuse_handler
-from src.common.llm import (
+from src.config import config
+from src.core.db import async_session_maker
+from src.core.llm import (
     get_default_llm,
     make_basic_chain,
     raise_if_llm_unavailable,
     retry_on_transient_llm_error,
 )
-from src.config import config
+from src.core.observability.langfuse import langfuse_handler
+from src.database.repositories.documentation_repository import DocumentationRepository
+from src.documents.chunking import normalize_to_text
+from src.jobs import (
+    append_job_error,
+    increment_processed_documents,
+    update_job_progress,
+)
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
     get_groovy_cleanup_user_prompt,
@@ -39,6 +37,8 @@ from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import coerce_llm_text, strip_markdown_fences
 from src.modules.codegen.utils.prompt_records import strip_relevant_documentation_refs
 from src.modules.digester.schemas import EndpointResponse
+from src.shared.content_types import is_conndev_documentation_item
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 

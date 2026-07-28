@@ -12,9 +12,9 @@ from langchain_core.callbacks.base import Callbacks
 from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel
 
-from src.common.jobs import increment_processed_documents, update_job_progress
-from src.common.langfuse import langfuse_handler
 from src.config import config
+from src.core.observability.langfuse import langfuse_handler
+from src.jobs import increment_processed_documents, update_job_progress
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 
 logger = logging.getLogger(__name__)

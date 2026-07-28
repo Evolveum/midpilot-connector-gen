@@ -6,9 +6,9 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import Field, field_validator
 
-from src.common.enums import ApiType, DetectionSource, ProtocolAvailability
-from src.common.schema import CamelCaseModel
+from src.core.schema import CamelCaseModel
 from src.modules.digester.enums import EndpointType
+from src.shared.enums import ApiType, DetectionSource, ProtocolAvailability
 
 # Shared alias table for canonicalizing API technology types from upstream sources.
 API_TYPE_ALIASES: Dict[str, ApiType] = {

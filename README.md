@@ -4,21 +4,31 @@ Midpilot Connector Generator for discovery, scraping, digester and Codegen built
 
 ## Project structure
 
-Directory structure:
+The source tree is layered by purpose and import direction: an item may import
+anything below it in the list, never above. The layering is enforced by
+import-linter (`uv run poe importcheck`, configured in `pyproject.toml`).
 
 - [`docs`](docs/index.adoc) - documentation
-- [`src`](src) - production source code
-- [`src/modules`](src/modules) - domain oriented modules with API routes and implementation
-- [`src/common`](src/common) - common code and utils
-- [`test/unit`](test/unit) - unit tests
-- [`test/integration`](test/integration) - integration tests
+- [`src/app.py`](src/app.py), [`src/router.py`](src/router.py) - composition root (FastAPI app, route aggregation)
+- [`src/modules`](src/modules) - feature pipelines (discovery, scrape, digester, codegen)
+- [`src/session`](src/session) - session context: routes, documentation upload/processing, ownership check
+- [`src/auth`](src/auth) - API key authentication and key management endpoints
+- [`src/api`](src/api) - shared HTTP edge: exception handlers, job status response builders
+- [`src/jobs`](src/jobs) - background job framework (runner, lifecycle, caching, persistence)
+- [`src/documents`](src/documents) - documentation toolkit: chunking, LLM processing, filtering, relevance
+- [`src/integrations`](src/integrations) - adapters for external services (web fetch and search)
+- [`src/database`](src/database) - SQLAlchemy models and repositories (single shared schema)
+- [`src/core`](src/core) - technical foundations: LLM client, observability, DB engine, base errors/schema
+- [`src/shared`](src/shared) - pure helpers and product-wide vocabulary (no imports from other src packages)
+- [`src/config`](src/config) - settings loaded from environment
+- [`test/unit`](test/unit), [`test/integration`](test/integration) - tests, mirroring the src layout
 
 Important files:
 
 - [`server.py`](server.py) - Hypercorn server entry point
 - [`src/app.py`](src/app.py) - FastAPI entry point
-- [`src/config.py`](src/config.py) - project configuration
-- [`pyproject.toml`](pyproject.toml) - dependencies, tools, tasks
+- [`src/config`](src/config) - project configuration
+- [`pyproject.toml`](pyproject.toml) - dependencies, tools, tasks, import-linter contracts
 - [`Dockerfile`](Dockerfile) - docker file
 - [`Dockerfile.base`](Dockerfile.base) - reusable Python + Playwright base image
 
@@ -42,6 +52,24 @@ cp .env-example .env
 # copy and use configuration for unit/integration tests
 cp .env.test-example .env.test
 ```
+
+### API key authentication
+
+The service supports two operating modes controlled by `.env`:
+
+- `AUTH__API_KEY_REQUIRED=false` (default) - no authentication, for development.
+- `AUTH__API_KEY_REQUIRED=true` - every request must send a valid key in the
+  `X-API-Key` header. `AUTH__MASTER_API_KEY` must be configured in this mode.
+
+The master key accesses all sessions and is the only key allowed to manage API
+keys via the `/api/v1/apiKeys` endpoints (issue with `POST`, list with `GET`,
+revoke with `DELETE /{apiKeyId}`). The full key value is returned only once, in
+the issue response - only its SHA-256 hash is stored.
+
+Each session is owned by the API key that created it and is accessible only
+with that key (or the master key). Sessions without an owner (created while
+auth was disabled, or by the master key) are accessible only with the master
+key.
 
 ## Running with Docker
 

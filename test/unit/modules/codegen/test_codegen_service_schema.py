@@ -10,7 +10,6 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.codegen import generation
 from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_system_prompt,
@@ -20,6 +19,7 @@ from src.modules.codegen.prompts.scim.native_schema_prompts import (
     get_scim_native_schema_system_prompt,
     get_scim_native_schema_user_prompt,
 )
+from src.shared.enums import ApiType
 
 
 def test_protocol_neutral_native_schema_prompts_contain_no_scim_context():

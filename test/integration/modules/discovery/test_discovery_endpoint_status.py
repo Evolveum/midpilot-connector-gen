@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.errors import JobNotFoundError
+from src.jobs.errors import JobNotFoundError
 from src.modules.discovery.router import get_discovery_status
 
 

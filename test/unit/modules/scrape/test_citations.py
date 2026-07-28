@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.common.documentation import DocumentationReferences, ReferenceItem
+from src.documents import DocumentationReferences, ReferenceItem
 from src.modules.scrape.core.citations import (
     deduplicate_links,
     process_citations_markdown,

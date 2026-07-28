@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.codegen import generation
 from src.modules.codegen.core.operations import build_authorization_scaffold, build_other_authorization_scaffold
 from src.modules.codegen.selection.authorization import (
@@ -15,6 +14,7 @@ from src.modules.codegen.selection.authorization import (
     ANALYSIS_SUPPORT_SUPPORTED,
     ANALYSIS_SUPPORT_UNSUPPORTED,
 )
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,47 @@
+# Copyright (C) 2010-2026 Evolveum and contributors
+#
+# Licensed under the EUPL-1.2 or later.
+
+from src.modules.discovery.schema import CandidateLinksInput
+from src.modules.scrape.schema import ScrapeRequest
+from src.shared.normalize import normalize_input
+
+
+def test_normalize_input_ignores_skip_cache_for_job_identity() -> None:
+    assert normalize_input({"applicationName": "Demo", "skipCache": True}) == {"applicationName": "Demo"}
+    assert normalize_input({"applicationName": "Demo", "skipCache": False}) == {"applicationName": "Demo"}
+
+
+def test_cache_control_defaults_to_reuse_for_request_models() -> None:
+    discovery_input = CandidateLinksInput(application_name="Demo")
+    scrape_input = ScrapeRequest(starter_links=["https://example.com/docs"], application_name="Demo")
+
+    assert discovery_input.skip_cache is False
+    assert discovery_input.model_dump(by_alias=True)["skipCache"] is False
+    assert scrape_input.skip_cache is False
+    assert scrape_input.model_dump(by_alias=True)["skipCache"] is False
+
+
+def test_normalize_input_handles_missing_relevant_documentations() -> None:
+    normalized = normalize_input(
+        {
+            "skipCache": True,
+            "relevantObjectClasses": {
+                "objectClasses": [
+                    {"name": "User"},
+                    {
+                        "name": "Group",
+                        "relevantDocumentations": [{"docId": "doc-1", "chunkId": "chunk-1"}],
+                    },
+                    {"name": "Role", "relevant_chunk_indices": [0, 1]},
+                ]
+            },
+        }
+    )
+
+    assert "skipCache" not in normalized
+    assert normalized["relevantObjectClasses"]["objectClasses"] == [
+        {"name": "User"},
+        {"name": "Group"},
+        {"name": "Role"},
+    ]

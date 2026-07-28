@@ -26,8 +26,8 @@ from typing import List, Optional
 import httpx
 from pydantic import BaseModel, Field
 
-from src.common.utils.coerce import as_mapping
 from src.config import config
+from src.shared.coerce import as_mapping
 
 logger = logging.getLogger(__name__)
 

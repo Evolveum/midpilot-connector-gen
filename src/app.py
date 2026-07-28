@@ -5,14 +5,16 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
-from src import pool
-from src.common.exception_handlers import register_exception_handlers
-from src.common.jobs import recover_stale_running_jobs
-from src.common.llm import aclose_llm_http_client
+from src.api.exception_handlers import register_exception_handlers
+from src.auth.dependencies import authenticate_request
 from src.config import config
+from src.core import pool
+from src.core.llm import aclose_llm_http_client
+from src.jobs import recover_stale_running_jobs
 from src.router import root_router
+from src.session.ownership import enforce_session_ownership
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,13 @@ def create_api() -> FastAPI:
 
     register_exception_handlers(app)
 
-    app.include_router(root_router, prefix=f"{config.app.api_base_url}/v1")
+    # API key auth + session ownership run for every API route; /health stays open.
+    # Order matters: authentication stores the AuthContext the ownership check reads.
+    app.include_router(
+        root_router,
+        prefix=f"{config.app.api_base_url}/v1",
+        dependencies=[Depends(authenticate_request), Depends(enforce_session_ownership)],
+    )
 
     @app.get("/health")
     async def health() -> dict:

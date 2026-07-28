@@ -6,11 +6,6 @@ import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from src.common.enums import ApiType
-from src.common.utils.session_info_metadata import (
-    get_session_base_api_url,
-    get_session_connection_target,
-)
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.core.operations import (
     AuthorizationGenerator,
@@ -43,6 +38,11 @@ from src.modules.codegen.utils.prompt_records import (
     build_scim_contract_prompt_vars,
 )
 from src.modules.digester.schemas import RelationsResponse
+from src.session.info_metadata import (
+    get_session_base_api_url,
+    get_session_connection_target,
+)
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 

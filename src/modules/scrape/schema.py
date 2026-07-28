@@ -6,8 +6,8 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
-from src.common.schema import CamelCaseModel
-from src.common.session.schema import Documentation
+from src.core.schema import CamelCaseModel
+from src.session.schema import Documentation
 
 __all__ = [
     "RelevantLinks",

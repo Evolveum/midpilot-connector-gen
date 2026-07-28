@@ -9,9 +9,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
-from src.common.errors import SessionNotFoundError
 from src.modules.digester.routes.object_classes import extract_object_classes, get_object_classes_status
+from src.session.errors import SessionNotFoundError
+from src.shared.enums import JobStatus
 
 # CLASSES (object classes)
 
@@ -95,7 +95,7 @@ async def test_get_object_classes_status_found():
 
     with (
         patch("src.modules.digester.routes.object_classes.SessionRepository", return_value=mock_repo),
-        patch("src.common.utils.status_response.get_job_status", new_callable=AsyncMock, return_value=mock_status),
+        patch("src.api.responses.get_job_status", new_callable=AsyncMock, return_value=mock_status),
     ):
         session_id = uuid4()
         response = await get_object_classes_status(session_id, db=MagicMock())

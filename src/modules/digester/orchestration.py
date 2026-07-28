@@ -20,12 +20,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import ApiType
-from src.common.errors import ObjectClassesNotFoundError, SessionNotFoundError
-from src.common.jobs import persist_job_pointer, schedule_coroutine_job
-from src.common.utils.session_info_metadata import get_session_base_api_url
+from src.database.repositories.session_repository import SessionRepository
+from src.documents.filtering.filter import filter_documentation_items
+from src.jobs import persist_job_pointer, schedule_coroutine_job
+from src.modules.digester.errors import ObjectClassesNotFoundError
 from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.extractors.auth import extract_auth
 from src.modules.digester.extractors.connectivity_endpoint import extract_connectivity_endpoint
@@ -41,6 +39,9 @@ from src.modules.digester.selection import (
     connectivity_endpoint_input,
     metadata_input,
 )
+from src.session.errors import SessionNotFoundError
+from src.session.info_metadata import get_session_base_api_url
+from src.shared.enums import ApiType
 
 _DOCUMENTATION_WAIT_TIMEOUT_SECONDS = 750
 

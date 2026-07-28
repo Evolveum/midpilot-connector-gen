@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
-from src.common.schema import CamelCaseModel
+from src.core.schema import CamelCaseModel
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.schemas.common import RelevantDocumentationsMixin
 

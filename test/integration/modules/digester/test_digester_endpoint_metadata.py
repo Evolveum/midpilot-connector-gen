@@ -10,10 +10,10 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from src.common.enums import JobStatus
 from src.modules.digester.extractors.info import extract_info_metadata as extract_info_metadata_worker
 from src.modules.digester.routes.metadata import extract_metadata, get_metadata_status, restore_metadata
 from src.modules.digester.schemas import InfoResponse
+from src.shared.enums import JobStatus
 
 
 # METADATA

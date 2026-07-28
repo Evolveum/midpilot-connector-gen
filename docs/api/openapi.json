@@ -5,6 +5,129 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/apiKeys": {
+      "get": {
+        "tags": [
+          "API Keys"
+        ],
+        "summary": "List API keys",
+        "description": "List all API key records (active and revoked), without key values.",
+        "operationId": "list_api_keys_api_v1_apiKeys_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyListResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "API Keys"
+        ],
+        "summary": "Issue a new API key",
+        "description": "Generate and persist a new API key. The full key value is returned only in\nthis response and cannot be retrieved again - only its hash is stored.",
+        "operationId": "create_api_key_api_v1_apiKeys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/apiKeys/{api_key_id}": {
+      "delete": {
+        "tags": [
+          "API Keys"
+        ],
+        "summary": "Revoke an API key",
+        "description": "Revoke an API key (soft delete). The key stops authenticating immediately;\nthe record is kept for auditing. Sessions owned by the key become\naccessible only with the master key. Idempotent for already revoked keys.",
+        "operationId": "revoke_api_key_api_v1_apiKeys__api_key_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api_key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "API key ID",
+              "title": "Api Key Id"
+            },
+            "description": "API key ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyRevokeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/session/{session_id}": {
       "get": {
         "tags": [
@@ -13,6 +136,11 @@
         "summary": "Get session summary",
         "description": "Retrieve a top-level summary of session data by session ID.",
         "operationId": "get_session_summary_api_v1_session__session_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -59,6 +187,11 @@
         "summary": "Check if session exists",
         "description": "Check if a session exists by session ID.\nReturns 204 No Content if exists, 404 Not Found if not.",
         "operationId": "check_session_exists_api_v1_session__session_id__head",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -94,8 +227,13 @@
           "Session"
         ],
         "summary": "Create a new session with provided Session ID",
-        "description": "Create a new session using the provided session ID.\nReturns 409 if the session already exists.",
+        "description": "Create a new session using the provided session ID.\nThe session is owned by the API key that created it (if any).\nReturns 409 if the session already exists.",
         "operationId": "create_session_with_id_api_v1_session__session_id__post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -140,6 +278,11 @@
         "summary": "Delete a session",
         "description": "Delete a session and all associated data.",
         "operationId": "delete_session_api_v1_session__session_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -188,6 +331,11 @@
         "summary": "List all jobs in session",
         "description": "List all jobs associated with this session.\nReturns job IDs and their current status.",
         "operationId": "list_session_jobs_api_v1_session__session_id__jobs_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -228,6 +376,33 @@
         }
       }
     },
+    "/api/v1/session": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Create a new session",
+        "description": "Create a new session and return the session ID.\nThe session is owned by the API key that created it (if any).",
+        "operationId": "create_session_api_v1_session_post",
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCreateResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
     "/api/v1/session/{session_id}/documentation/status": {
       "get": {
         "tags": [
@@ -236,6 +411,11 @@
         "summary": "Get documentation upload processing status",
         "description": "Get the status of all documentation upload jobs for this session.\nReturns information about queued, running, completed, and failed uploads.",
         "operationId": "get_documentation_upload_status_api_v1_session__session_id__documentation_status_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -284,6 +464,11 @@
         "summary": "Get documentation from session",
         "description": "Retrieve all documentation items stored in the session grouped by document.\nReturns list of document bundles with docId and all its chunks.",
         "operationId": "get_documentation_api_v1_session__session_id__documentation_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -332,6 +517,11 @@
         "summary": "Upload documentation to session",
         "description": "Upload, chunk, and process documentation in the session.\nCreates a job and queues it for processing - returns immediately with job_id.\nEach chunk becomes a separate DocumentationItem with source='upload'.\nApplication name and version are loaded from session's discoveryInput or scrapeInput.",
         "operationId": "upload_documentation_api_v1_session__session_id__documentation_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -388,6 +578,11 @@
         "summary": "Replace all documentation in session",
         "description": "Replace all existing documentation in the session with a single uploaded file.\nThis clears all previously scraped and uploaded documentation.\nChunks and processes the documentation with LLM - returns immediately with job_id.",
         "operationId": "replace_documentation_api_v1_session__session_id__documentation_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -456,6 +651,11 @@
         "summary": "Delete all documentation from session",
         "description": "Remove all documentation (both scraped and uploaded) from the session.",
         "operationId": "delete_documentation_api_v1_session__session_id__documentation_delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -504,6 +704,11 @@
         "summary": "Get documentation by document ID",
         "description": "Retrieve all chunks for a single documentation document (doc_id).\nReturns one document bundle in the same shape as export, scoped to one doc_id.",
         "operationId": "get_documentation_by_id_api_v1_session__session_id__documentation__documentation_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -560,6 +765,11 @@
         "summary": "Checks if documentation item exists by documentation_id",
         "description": "Checks a single documentation item from the session by its UUID.\nReturns 404 if the session or the documentation item is not found.",
         "operationId": "check_documentation_item_api_v1_session__session_id__documentation__documentation_id__head",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -612,6 +822,11 @@
         "summary": "Upload documentation to session by doc_id",
         "description": "Process uploaded documentation file using LLM.\nCreates a job and queues it for processing - returns immediately with job_id.\nEach chunk becomes a separate DocumentationItem with source='upload' and the provided documentation_id as doc_id.\nApplication name and version are loaded from session's discoveryInput or scrapeInput.",
         "operationId": "upload_documentation_by_id_api_v1_session__session_id__documentation__documentation_id__post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -692,6 +907,11 @@
         "summary": "Import documentation preprocessed by LLM",
         "description": "Replace one documentation document (doc_id) with provided chunks.\nOther documents in the session remain unchanged.",
         "operationId": "import_documentation_by_id_api_v1_session__session_id__documentation__documentation_id__put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -760,6 +980,11 @@
         "summary": "Delete all documentation chunks by UUID",
         "description": "Delete all documentation chunks with the specified doc_id from the session.\nSince uploaded documentation is chunked, this removes all chunks belonging to the same document.\nReturns 404 if the session or any documentation with that doc_id is not found.",
         "operationId": "delete_documentation_item_api_v1_session__session_id__documentation__documentation_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -812,28 +1037,6 @@
         }
       }
     },
-    "/api/v1/session": {
-      "post": {
-        "tags": [
-          "Session"
-        ],
-        "summary": "Create a new session",
-        "description": "Create a new session and return the session ID.",
-        "operationId": "create_session_api_v1_session_post",
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionCreateResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/discovery/{session_id}/discovery": {
       "post": {
         "tags": [
@@ -842,6 +1045,11 @@
         "summary": "Discover candidate documentation URLs",
         "description": "Enqueue a job to discover candidate documentation URLs for the given application.\nThe discovered URLs will be stored in the session.",
         "operationId": "discover_candidate_links_api_v1_discovery__session_id__discovery_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -896,6 +1104,11 @@
         "summary": "Get discovery job status",
         "description": "Get the status of candidate links discovery job.",
         "operationId": "get_discovery_status_api_v1_discovery__session_id__discovery_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -961,6 +1174,11 @@
         "summary": "Scrape documentation from URLs",
         "description": "Enqueue a job to scrape documentation from provided URLs.\nThe scraped documentation will be stored in the session.",
         "operationId": "scrape_documentation_api_v1_scrape__session_id__scrape_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1015,6 +1233,11 @@
         "summary": "Get scrape job status",
         "description": "Get the status of documentation scraping job.",
         "operationId": "get_scrape_status_api_v1_scrape__session_id__scrape_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1080,6 +1303,11 @@
         "summary": "Extract object classes from documentation",
         "description": "Extract object classes from documentation stored in or uploaded to the session.\nReturns all extracted object classes enriched with confidence (high/medium/low)\nordered from highest to lowest confidence.\nReturns jobId to poll for results.",
         "operationId": "extract_object_classes_api_v1_digester__session_id__classes_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1154,6 +1382,11 @@
         "summary": "Get object classes extraction status",
         "description": "Get the status of object classes extraction job.\nIf jobId is not provided, retrieves the job from session.\nReturns the current session data (which may include endpoints added after job completion).",
         "operationId": "get_object_classes_status_api_v1_digester__session_id__classes_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1217,6 +1450,11 @@
         "summary": "Upload all object classes to session",
         "description": "Upload all object classes to the session.\nExpects a JSON body with objectClasses array.\nReplaces existing object classes in the session.",
         "operationId": "upload_all_object_classes_api_v1_digester__session_id__classes_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1274,6 +1512,11 @@
         "summary": "Get a specific object class",
         "description": "Get a specific object class by name from the session.\nReturns the object class with all its data including endpoints and attributes.",
         "operationId": "get_specific_object_class_api_v1_digester__session_id__classes__object_class__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1331,6 +1574,11 @@
         "summary": "Upload one object class to session",
         "description": "Upload or update a specific object class in the session.\nIf the object class already exists, it will be updated.\nIf it doesn't exist, it will be added to the objectClasses array.",
         "operationId": "upload_one_object_class_api_v1_digester__session_id__classes__object_class__put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1399,6 +1647,11 @@
         "summary": "Extract attributes for object class",
         "description": "Extract attributes schema for a specific object class.\nOnly processes chunks that are relevant to the object class (from relevantDocumentations).\nUpdates both {object_class}AttributesOutput and the attributes field in the specific object class.\n\nNOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.",
         "operationId": "extract_class_attributes_api_v1_digester__session_id__classes__object_class__attributes_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1484,6 +1737,11 @@
         "summary": "Get attributes extraction status",
         "description": "Get the status of attributes extraction job for the specified object class.\nReturns the current session data (which may have been updated after job completion).",
         "operationId": "get_class_attributes_status_api_v1_digester__session_id__classes__object_class__attributes_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1558,6 +1816,11 @@
         "summary": "Override attributes for object class",
         "description": "Manually override the attributes for an object class.",
         "operationId": "override_class_attributes_api_v1_digester__session_id__classes__object_class__attributes_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1626,6 +1889,11 @@
         "summary": "Extract endpoints for object class",
         "description": "Extract API endpoints for a specific object class.\nAutomatically loads base API URL from session metadata if available.\nUpdates both {object_class}EndpointsOutput and the endpoints field in the specific object class.\nOnly processes chunks that are relevant to the object class (from relevantDocumentations).\n\nNOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.",
         "operationId": "extract_class_endpoints_api_v1_digester__session_id__classes__object_class__endpoints_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1711,6 +1979,11 @@
         "summary": "Get endpoints extraction status",
         "description": "Get the status of endpoints extraction job for the specified object class.",
         "operationId": "get_class_endpoints_status_api_v1_digester__session_id__classes__object_class__endpoints_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1785,6 +2058,11 @@
         "summary": "Override endpoints for object class",
         "description": "Manually override the endpoints for an object class.",
         "operationId": "override_class_endpoints_api_v1_digester__session_id__classes__object_class__endpoints_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1853,6 +2131,11 @@
         "summary": "Extract relations between object classes",
         "description": "Extract relations between object classes from documentation.\nLoads object classes from session.\n\nNOTE: We dont need to await documentation here, as it should have already been awaited during object class extraction.",
         "operationId": "extract_relations_api_v1_digester__session_id__relations_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1909,6 +2192,11 @@
         "summary": "Get relations extraction status",
         "description": "Get the status of relations extraction job.",
         "operationId": "get_relations_status_api_v1_digester__session_id__relations_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -1972,6 +2260,11 @@
         "summary": "Override relations data",
         "description": "Manually override the relations data.",
         "operationId": "override_relations_api_v1_digester__session_id__relations_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2027,6 +2320,11 @@
         "summary": "Extract connectivity test endpoint",
         "description": "Extract one documented endpoint suitable for testing connectivity to the target application.",
         "operationId": "extract_connectivity_endpoint_api_v1_digester__session_id__connectivity_endpoint_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2083,6 +2381,11 @@
         "summary": "Get connectivity endpoint extraction status",
         "description": "Get the status of connectivity endpoint extraction job.\nReturns current session data when the job has finished, including manual overrides.",
         "operationId": "get_connectivity_endpoint_status_api_v1_digester__session_id__connectivity_endpoint_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2146,6 +2449,11 @@
         "summary": "Override connectivity test endpoint",
         "description": "Manually override the selected connectivity endpoint in the session.",
         "operationId": "override_connectivity_endpoint_api_v1_digester__session_id__connectivity_endpoint_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2201,6 +2509,11 @@
         "summary": "Extract authentication information",
         "description": "Extract authentication information from documentation.",
         "operationId": "extract_auth_api_v1_digester__session_id__auth_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2257,6 +2570,11 @@
         "summary": "Get auth extraction status",
         "description": "Get the status of auth extraction job.",
         "operationId": "get_auth_status_api_v1_digester__session_id__auth_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2322,6 +2640,11 @@
         "summary": "Extract metadata information",
         "description": "Extract API metadata from documentation.",
         "operationId": "extract_metadata_api_v1_digester__session_id__metadata_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2378,6 +2701,11 @@
         "summary": "Get metadata extraction status",
         "description": "Get the status of metadata extraction job.",
         "operationId": "get_metadata_status_api_v1_digester__session_id__metadata_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2441,6 +2769,11 @@
         "summary": "Restore metadata information",
         "description": "Restore metadataOutput in session from provided infoMetadata payload.",
         "operationId": "restore_metadata_api_v1_digester__session_id__metadata_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2496,6 +2829,11 @@
         "summary": "Generate authorization code",
         "description": "Generate connector-level Groovy authentication/authorization code from digester auth output.",
         "operationId": "generate_authorization_api_v1_codegen__session_id__authorization_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2580,6 +2918,11 @@
         "summary": "Get authorization generation status",
         "description": "Get the status of authorization code generation job.",
         "operationId": "get_authorization_status_api_v1_codegen__session_id__authorization_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2643,6 +2986,11 @@
         "summary": "Override authorization code",
         "description": "Manually override the authorization code.",
         "operationId": "override_authorization_api_v1_codegen__session_id__authorization_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2698,6 +3046,11 @@
         "summary": "Generate native schema for object class",
         "description": "Generate native Groovy schema from attributes.\nLoads attributes from session automatically.",
         "operationId": "generate_native_schema_api_v1_codegen__session_id__classes__object_class__native_schema_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2800,6 +3153,11 @@
         "summary": "Get native schema generation status",
         "description": "Get the status of native schema generation job.",
         "operationId": "get_native_schema_status_api_v1_codegen__session_id__classes__object_class__native_schema_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2874,6 +3232,11 @@
         "summary": "Override native schema",
         "description": "Manually override the native schema for an object class.",
         "operationId": "override_native_schema_api_v1_codegen__session_id__classes__object_class__native_schema_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -2940,6 +3303,11 @@
         "summary": "Generate ConnID for object class",
         "description": "Generate ConnID Groovy code from attributes.\nLoads attributes from session automatically.",
         "operationId": "generate_connid_api_v1_codegen__session_id__classes__object_class__connid_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3024,6 +3392,11 @@
         "summary": "Get ConnID generation status",
         "description": "Get the status of ConnID generation job.",
         "operationId": "get_connid_status_api_v1_codegen__session_id__classes__object_class__connid_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3098,6 +3471,11 @@
         "summary": "Override ConnID",
         "description": "Manually override the ConnID for an object class.",
         "operationId": "override_connid_api_v1_codegen__session_id__classes__object_class__connid_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3164,6 +3542,11 @@
         "summary": "Generate search code for object class",
         "description": "Generate Groovy search code for the given object class.\nLoads attributes and endpoints from session automatically.",
         "operationId": "generate_search_api_v1_codegen__session_id__classes__object_class__search__intent__post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3276,6 +3659,11 @@
         "summary": "Get search generation status",
         "description": "Get the status of search code generation job.",
         "operationId": "get_search_status_api_v1_codegen__session_id__classes__object_class__search__intent__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3360,6 +3748,11 @@
         "summary": "Override search code",
         "description": "Manually override the search code for an object class.",
         "operationId": "override_search_api_v1_codegen__session_id__classes__object_class__search__intent__put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3436,6 +3829,11 @@
         "summary": "Generate create code for object class",
         "description": "Generate Groovy create code for the given object class.\nLoads attributes and endpoints from session automatically.",
         "operationId": "generate_create_api_v1_codegen__session_id__classes__object_class__create_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3538,6 +3936,11 @@
         "summary": "Get create generation status",
         "description": "Get the status of create code generation job.",
         "operationId": "get_create_status_api_v1_codegen__session_id__classes__object_class__create_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3612,6 +4015,11 @@
         "summary": "Override create code",
         "description": "Manually override the create code for an object class.",
         "operationId": "override_create_api_v1_codegen__session_id__classes__object_class__create_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3678,6 +4086,11 @@
         "summary": "Generate update code for object class",
         "description": "Generate Groovy update code for the given object class.\nLoads attributes and endpoints from session automatically.",
         "operationId": "generate_update_api_v1_codegen__session_id__classes__object_class__update_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3780,6 +4193,11 @@
         "summary": "Get update generation status",
         "description": "Get the status of update code generation job.",
         "operationId": "get_update_status_api_v1_codegen__session_id__classes__object_class__update_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3854,6 +4272,11 @@
         "summary": "Override update code",
         "description": "Manually override the update code for an object class.",
         "operationId": "override_update_api_v1_codegen__session_id__classes__object_class__update_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -3920,6 +4343,11 @@
         "summary": "Generate delete code for object class",
         "description": "Generate Groovy delete code for the given object class.\nLoads attributes and endpoints from session automatically.",
         "operationId": "generate_delete_api_v1_codegen__session_id__classes__object_class__delete_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -4022,6 +4450,11 @@
         "summary": "Get delete generation status",
         "description": "Get the status of delete code generation job.",
         "operationId": "get_delete_status_api_v1_codegen__session_id__classes__object_class__delete_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -4096,6 +4529,11 @@
         "summary": "Override delete code",
         "description": "Manually override the delete code for an object class.",
         "operationId": "override_delete_api_v1_codegen__session_id__classes__object_class__delete_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -4162,6 +4600,11 @@
         "summary": "Generate relation code",
         "description": "Generate Groovy relation code.\nLoads relations from session automatically.",
         "operationId": "generate_relation_code_api_v1_codegen__session_id__relations__relation_name__post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -4229,6 +4672,11 @@
         "summary": "Get relation code generation status",
         "description": "Get the status of relation code generation job.",
         "operationId": "get_relation_code_status_api_v1_codegen__session_id__relations__relation_name__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -4303,6 +4751,11 @@
         "summary": "Override relation code",
         "description": "Manually override the relation code.",
         "operationId": "override_relation_code_api_v1_codegen__session_id__relations__relation_name__put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "session_id",
@@ -4385,6 +4838,175 @@
   },
   "components": {
     "schemas": {
+      "ApiKeyCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "description": "Descriptive name for the API key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ApiKeyCreateRequest"
+      },
+      "ApiKeyCreateResponse": {
+        "properties": {
+          "apiKeyId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apikeyid",
+            "description": "Unique identifier of the API key record"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Descriptive name of the API key"
+          },
+          "keyPrefix": {
+            "type": "string",
+            "title": "Keyprefix",
+            "description": "First characters of the key value, for identification"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat",
+            "description": "When the key was issued"
+          },
+          "revokedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revokedat",
+            "description": "When the key was revoked; null if active"
+          },
+          "apiKey": {
+            "type": "string",
+            "title": "Apikey",
+            "description": "Full API key value. Shown only once - it cannot be retrieved again."
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apiKeyId",
+          "name",
+          "keyPrefix",
+          "createdAt",
+          "apiKey",
+          "message"
+        ],
+        "title": "ApiKeyCreateResponse"
+      },
+      "ApiKeyInfo": {
+        "properties": {
+          "apiKeyId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apikeyid",
+            "description": "Unique identifier of the API key record"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Descriptive name of the API key"
+          },
+          "keyPrefix": {
+            "type": "string",
+            "title": "Keyprefix",
+            "description": "First characters of the key value, for identification"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat",
+            "description": "When the key was issued"
+          },
+          "revokedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revokedat",
+            "description": "When the key was revoked; null if active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apiKeyId",
+          "name",
+          "keyPrefix",
+          "createdAt"
+        ],
+        "title": "ApiKeyInfo",
+        "description": "Public representation of an API key record. Never contains the key value."
+      },
+      "ApiKeyListResponse": {
+        "properties": {
+          "apiKeys": {
+            "items": {
+              "$ref": "#/components/schemas/ApiKeyInfo"
+            },
+            "type": "array",
+            "title": "Apikeys"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of API key records"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apiKeys",
+          "total"
+        ],
+        "title": "ApiKeyListResponse"
+      },
+      "ApiKeyRevokeResponse": {
+        "properties": {
+          "apiKeyId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Apikeyid"
+          },
+          "revokedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Revokedat"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "apiKeyId",
+          "revokedAt",
+          "message"
+        ],
+        "title": "ApiKeyRevokeResponse"
+      },
       "ApiType": {
         "type": "string",
         "enum": [
@@ -5752,6 +6374,14 @@
           "type"
         ],
         "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "description": "API key issued by this service (or the master key).",
+        "in": "header",
+        "name": "X-API-Key"
       }
     }
   }

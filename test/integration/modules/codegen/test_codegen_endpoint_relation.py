@@ -9,9 +9,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
-from src.common.errors import InvalidRelationsOutputError, RelationNotFoundError
 from src.modules.codegen.routes.relations import generate_relation_code, get_relation_code_status
+from src.modules.digester.errors import InvalidRelationsOutputError, RelationNotFoundError
+from src.shared.enums import JobStatus
 
 
 # RELATION
