@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any, Dict, Optional, Union
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -113,9 +113,11 @@ class JobRepository:
         :param job_type: Type of job to look for
         :param input_payload: Input payload dict to match
         :param date_since: Earliest acceptable job creation time
-        :param requesting_session_id: Session requesting reuse. Owned sessions
-            may reuse jobs from other sessions with the same API-key owner;
-            ownerless sessions are restricted to themselves.
+        :param requesting_session_id: Session requesting reuse. Sessions reuse
+            jobs from other sessions with the same API-key owner. Ownerless
+            sessions (``api_key_id`` NULL) form a single tenant and reuse each
+            other's jobs; when ``AUTH__API_KEY_REQUIRED`` is off every session
+            is ownerless, so this yields deployment-wide reuse.
         :return: Job model or None
         """
         candidate_session = aliased(Session)
@@ -127,10 +129,7 @@ class JobRepository:
         )
         tenant_scope = or_(
             Job.session_id == requesting_session_id,
-            and_(
-                requesting_owner_id.is_not(None),
-                candidate_session.api_key_id == requesting_owner_id,
-            ),
+            candidate_session.api_key_id.is_not_distinct_from(requesting_owner_id),
         )
         query = (
             select(Job)

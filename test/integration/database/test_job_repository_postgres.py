@@ -131,7 +131,9 @@ async def test_job_lookup_enforces_session_and_tenant_boundaries() -> None:
             assert owner_a_match is not None and owner_a_match.job_id == owner_a_job_id
             assert owner_b_match is not None and owner_b_match.job_id == owner_b_job_id
             assert ownerless_match is not None and ownerless_match.job_id == ownerless_job_id
-            assert other_ownerless_match is None
+            # Ownerless sessions form one tenant: a different ownerless session
+            # reuses the ownerless job even though it did not create it.
+            assert other_ownerless_match is not None and other_ownerless_match.job_id == ownerless_job_id
             assert await repo.get_job_for_session(owner_a_job_id, owner_a_source_session_id) is not None
             assert await repo.get_job_for_session(owner_a_job_id, owner_a_requesting_session_id) is None
     finally:

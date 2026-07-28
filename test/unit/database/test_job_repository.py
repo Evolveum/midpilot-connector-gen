@@ -17,7 +17,7 @@ def _compile_postgres(query):
 
 
 @pytest.mark.asyncio
-async def test_reusable_job_query_is_scoped_to_session_or_non_null_matching_owner() -> None:
+async def test_reusable_job_query_is_scoped_to_session_or_matching_owner() -> None:
     db = MagicMock()
     result = MagicMock()
     result.scalars.return_value.first.return_value = None
@@ -36,7 +36,8 @@ async def test_reusable_job_query_is_scoped_to_session_or_non_null_matching_owne
     assert "JOIN sessions AS sessions_1 ON sessions_1.session_id = jobs.session_id" in sql
     assert "jobs.session_id = %(session_id_1)s::UUID OR" in sql
     assert "sessions_2.session_id = %(session_id_2)s::UUID" in sql
-    assert "IS NOT NULL AND sessions_1.api_key_id =" in sql
+    # NULL owner must match NULL owner, so ownerless sessions form one tenant.
+    assert "sessions_1.api_key_id IS NOT DISTINCT FROM" in sql
     assert list(compiled.params.values()).count(requesting_session_id) == 2
 
 
