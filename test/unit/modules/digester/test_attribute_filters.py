@@ -29,7 +29,7 @@ def test_filter_ignored_attributes():
 
     filtered = filter_ignored_attributes(attributes)
 
-    assert set(filtered) == set(["username"])
+    assert set(filtered) == {"username"}
 
 
 def test_normalize_readability_flags():
