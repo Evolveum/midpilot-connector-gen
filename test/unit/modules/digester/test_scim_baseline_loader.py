@@ -76,6 +76,39 @@ def _connid_document(name: str, namespace: str, locator: str, attributes: list[d
     return {"namespace": namespace, "attributes": attributes, "locator": locator, "name": name, "uid": name}
 
 
+def _shadow_connid_document(name: str, schema_urn: str, attributes: list[dict]) -> dict:
+    """Newer conndev ObjectClass contract: the same export wrapped in midPoint shadows."""
+
+    def _attribute_shadow(attribute: dict) -> dict:
+        connid_flags = {key: value for key, value in attribute.items() if key not in ("name", "scimPath")}
+        return {
+            "type": "c:ShadowType",
+            "object": {
+                "objectClass": "ri:conndev_Attribute",
+                "exists": True,
+                "attributes": {
+                    "scim": {"path": attribute.get("scimPath", attribute["name"])},
+                    "connId": connid_flags,
+                    "name": attribute["name"],
+                },
+            },
+        }
+
+    return {
+        "attributes": [_attribute_shadow(attribute) for attribute in attributes],
+        "scim": {
+            "type": "c:ShadowType",
+            "object": {
+                "objectClass": "ri:conndev_scim",
+                "exists": True,
+                "attributes": {"schemaUri": schema_urn, "name": name},
+            },
+        },
+        "name": name,
+        "uid": name,
+    }
+
+
 def _service_provider_document(
     *,
     patch_supported: bool = True,
@@ -418,6 +451,72 @@ async def test_loader_rejects_invalid_service_provider_config_contract(caplog):
 
     assert bundle.service_provider_config is None
     assert "invalid contract" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_loader_parses_shadow_wrapped_connid_object_class():
+    """Newer conndev exports deliver the ConnId object class contract wrapped in midPoint shadows."""
+    entitlement_urn = "urn:ietf:params:scim:schemas:custom:2.0:Entitlement"
+    items = [
+        _conndev_item(
+            _shadow_connid_document(
+                "Entitlement",
+                entitlement_urn,
+                [
+                    {"name": "displayName", "type": "string", "creatable": False, "updateable": False},
+                    {"name": "id", "type": "string", "creatable": False, "updateable": False, "required": True},
+                    {"name": "type", "type": "string", "creatable": False, "updateable": False},
+                ],
+            ),
+            "upload://conndev_ObjectClass_Entitlement.json",
+        ),
+    ]
+
+    bundle = await _load_bundle(items)
+
+    assert set(bundle.connid_classes) == {"Entitlement"}
+    definition = bundle.connid_classes["Entitlement"]
+    assert definition.namespace == entitlement_urn
+    assert definition.uid == "Entitlement"
+    assert [attribute["name"] for attribute in definition.attributes] == ["displayName", "id", "type"]
+
+    context = build_scim_codegen_context(bundle, "entitlement")
+    projected = context["connectorObjectClass"]["attributes"]
+    assert [attribute["name"] for attribute in projected] == ["displayName", "id", "type"]
+    assert projected[0]["creatable"] is False
+    assert projected[0]["updatable"] is False
+    assert projected[0]["scimAttribute"] == "displayName"
+    assert projected[1]["mandatory"] is True
+
+
+@pytest.mark.asyncio
+async def test_shadow_wrapped_connid_class_coexists_with_dedicated_schema_document():
+    """The shadow-wrapped ConnId view must not overwrite the raw schema registered under the same name."""
+    items = [
+        _conndev_item(_schema_document(USER_SCHEMA), "upload://conndev_ScimSchema_User.json"),
+        _conndev_item(
+            _shadow_connid_document(
+                "User",
+                USER_SCHEMA["id"],
+                [{"name": "manager", "scimPath": "manager.value", "type": "string", "updateable": True}],
+            ),
+            "upload://conndev_ObjectClass_User.json",
+        ),
+    ]
+
+    bundle = await _load_bundle(items)
+
+    assert bundle.schemas["User"] == USER_SCHEMA
+    assert set(bundle.connid_classes) == {"User"}
+    assert bundle.connid_classes["User"].attributes == [
+        {"type": "string", "updateable": True, "scimPath": "manager.value", "name": "manager"}
+    ]
+
+    context = build_scim_codegen_context(bundle, "user")
+    projected = context["connectorObjectClass"]["attributes"]
+    assert projected[0]["scimAttribute"] == "manager.value"
+    assert projected[0]["updatable"] is True
+    assert len(get_scim_class_document_references(bundle, "User")) == 2
 
 
 @pytest.mark.asyncio
