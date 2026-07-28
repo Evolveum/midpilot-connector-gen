@@ -6,7 +6,9 @@ from src.documents import SavedDocumentation
 
 
 def test_saved_documentation_accepts_content_type_alias_and_serializes_camel_case() -> None:
-    documentation = SavedDocumentation(url="https://example.com/docs", contentType="application/json")
+    documentation = SavedDocumentation.model_validate(
+        {"url": "https://example.com/docs", "contentType": "application/json"}
+    )
 
     assert documentation.content_type == "application/json"
     assert documentation.model_dump(by_alias=True)["contentType"] == "application/json"

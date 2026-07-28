@@ -189,7 +189,7 @@ async def test_parse_uploaded_documentation_offloads_docx_parsing_to_thread():
         content_hash="hash",
     )
 
-    with patch.object(upload_utils.asyncio, "to_thread", new_callable=AsyncMock) as mock_to_thread:
+    with patch("src.session.documentation_upload.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         mock_to_thread.return_value = ("Connector documentation", {"docx_paragraphs": 1, "docx_tables": 0})
 
         uploaded = await upload_utils.parse_uploaded_documentation(raw_upload)

@@ -39,17 +39,20 @@ def client():
         api.dependency_overrides.pop(get_db, None)
 
 
+def _override_auth(monkeypatch, *, api_key_required: bool, master_api_key: SecretStr | None) -> None:
+    monkeypatch.setattr(config.auth, "api_key_required", api_key_required)
+    monkeypatch.setattr(config.auth, "master_api_key", master_api_key)
+
+
 @pytest.fixture()
 def enforced_auth(monkeypatch):
-    monkeypatch.setattr(config.auth, "api_key_required", True)
-    monkeypatch.setattr(config.auth, "master_api_key", SecretStr(MASTER_KEY))
+    _override_auth(monkeypatch, api_key_required=True, master_api_key=SecretStr(MASTER_KEY))
 
 
 @pytest.fixture()
 def master_key_only(monkeypatch):
     """Auth disabled but master key configured (pre-provisioning scenario)."""
-    monkeypatch.setattr(config.auth, "api_key_required", False)
-    monkeypatch.setattr(config.auth, "master_api_key", SecretStr(MASTER_KEY))
+    _override_auth(monkeypatch, api_key_required=False, master_api_key=SecretStr(MASTER_KEY))
 
 
 def _api_key_record(api_key_id=None, name="test key", revoked_at=None):
@@ -88,7 +91,7 @@ def test_disabled_mode_allows_requests_without_key(client):
 
 
 def test_management_unavailable_without_configured_master_key(client, monkeypatch):
-    monkeypatch.setattr(config.auth, "master_api_key", None)
+    _override_auth(monkeypatch, api_key_required=False, master_api_key=None)
 
     response = client.get("/api/v1/apiKeys")
 

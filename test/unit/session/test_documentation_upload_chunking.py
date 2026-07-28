@@ -62,6 +62,8 @@ def test_chunk_uploaded_documentation_splits_oversized_single_item_schema():
     )
 
     max_tokens = 200
+    # PyCharm does not resolve pydantic model fields inside a patch() target string (mypy does).
+    # noinspection PyUnresolvedReferences
     with patch(
         "src.session.documentation_upload.config.scrape_and_process.single_item_schema_max_tokens",
         max_tokens,
