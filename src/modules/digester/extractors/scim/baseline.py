@@ -15,7 +15,11 @@ never chunked). The contract shapes are fixed by the midPoint/connector-scimrest
   which schemas are standalone resources, their real endpoints, and which extension schemas
   (e.g. EnterpriseUser) attach to which resource.
 - **ConnId object class** — ``{"namespace": <URN>, "attributes", "locator", "name", "uid"}``.
-  The final object class as exposed by connector-scimrest.
+  The final object class as exposed by connector-scimrest. Newer exports deliver the same
+  contract wrapped in midPoint shadows: ``{"name", "uid", "scim": <shadow>, "attributes":
+  [<shadow>, ...]}`` where the ``scim`` shadow (objectClass ``ri:conndev_scim``) carries the
+  schema URN and each attribute shadow (objectClass ``ri:conndev_Attribute``) carries the
+  ConnId flags under ``connId`` and the SCIM wire path under ``scim.path``.
 - **SCIM service-provider configuration** — ``{"name": "ServiceProviderConfig",
   "content": "<raw ServiceProviderConfig JSON>", "id": "ServiceProviderConfig"}``.
   Session-wide protocol capabilities such as PATCH, filtering, sorting, ETags and bulk limits.
@@ -299,6 +303,92 @@ def _parse_connid_object_class(
     )
 
 
+def _shadow_object_attributes(value: Any) -> Optional[Dict[str, Any]]:
+    """Unwrap a midPoint shadow wrapper (``{"object": {"attributes": {...}}}``) to its attributes."""
+    if not isinstance(value, dict):
+        return None
+    shadow_object = value.get("object")
+    if not isinstance(shadow_object, dict):
+        return None
+    attributes = shadow_object.get("attributes")
+    return attributes if isinstance(attributes, dict) else None
+
+
+def _flatten_shadow_connid_attribute(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Flatten one ``ri:conndev_Attribute`` shadow into the flat ConnId attribute shape.
+
+    The ConnId flags (``type``, ``creatable``, ``updateable``, ``required``) live under
+    ``connId``; the SCIM wire path lives under ``scim.path`` and is kept as ``scimPath``.
+    """
+    attributes = _shadow_object_attributes(entry)
+    if attributes is None:
+        return None
+
+    connid_flags = attributes.get("connId")
+    flattened: Dict[str, Any] = dict(connid_flags) if isinstance(connid_flags, dict) else {}
+
+    scim_binding = attributes.get("scim")
+    scim_path = scim_binding.get("path") if isinstance(scim_binding, dict) else None
+    if isinstance(scim_path, str) and scim_path.strip():
+        flattened["scimPath"] = scim_path.strip()
+
+    name = attributes.get("name")
+    if isinstance(name, str) and name.strip():
+        flattened["name"] = name.strip()
+    elif "scimPath" in flattened:
+        flattened["name"] = flattened["scimPath"]
+    else:
+        return None
+
+    return flattened
+
+
+def _parse_shadow_connid_object_class(
+    doc: Dict[str, Any],
+    *,
+    session_id: UUID,
+    doc_id: Any,
+    source_reference: Optional[ChunkReference] = None,
+) -> Optional[ConnIdObjectClassDefinition]:
+    """Parse the shadow-wrapped ConnId object class contract into the common definition."""
+    scim_binding = _shadow_object_attributes(doc.get("scim")) or {}
+
+    name = doc.get("name")
+    if not isinstance(name, str) or not name.strip():
+        name = scim_binding.get("name")
+    if not isinstance(name, str) or not name.strip():
+        logger.warning(
+            "[SCIM:Baseline] Skipping ConnId object class document %s for session %s: no name",
+            doc_id,
+            session_id,
+        )
+        return None
+
+    attributes: List[Dict[str, Any]] = []
+    for entry in as_dict_list(doc.get("attributes")):
+        flattened = _flatten_shadow_connid_attribute(entry)
+        if flattened is None:
+            logger.warning(
+                "[SCIM:Baseline] Ignoring malformed attribute shadow in ConnId object class document %s "
+                "for session %s (class %s)",
+                doc_id,
+                session_id,
+                name.strip(),
+            )
+            continue
+        attributes.append(flattened)
+
+    return ConnIdObjectClassDefinition(
+        name=name.strip(),
+        namespace=str(scim_binding.get("schemaUri") or ""),
+        locator="",
+        uid=str(doc.get("uid") or ""),
+        attributes=attributes,
+        source_reference=source_reference,
+    )
+
+
 def _get_service_provider_config_payload(doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     raw_config = _parse_embedded_json(doc.get("content"))
     if not isinstance(raw_config, dict):
@@ -391,8 +481,8 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
 
     Only persisted documents marked with a conndev metadata content type are considered. Those
     documents are then classified by contract shape (``schemaContent`` / ``endpoint`` +
-    ``primarySchema`` / ``locator`` + ``uid`` / ServiceProviderConfig ``content``); unrecognized
-    conndev documents are logged and skipped. Raw SCIM schemas come from the dedicated schema
+    ``primarySchema`` / ``locator`` + ``uid`` / shadow-wrapped ``scim`` + ``uid`` /
+    ServiceProviderConfig ``content``); unrecognized conndev documents are logged and skipped. Raw SCIM schemas come from the dedicated schema
     documents; resource-embedded copies only fill in classes that have no dedicated document.
     """
     async with async_session_maker() as db:
@@ -480,6 +570,15 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
                     fallback_schemas.append((extension, "schemaExtensions", doc_id, source_reference))
         elif "locator" in doc and "uid" in doc:
             connid_class = _parse_connid_object_class(
+                doc,
+                session_id=session_id,
+                doc_id=doc_id,
+                source_reference=source_reference,
+            )
+            if connid_class is not None:
+                _set_case_insensitive(connid_classes, connid_class.name, connid_class)
+        elif "scim" in doc and "uid" in doc:
+            connid_class = _parse_shadow_connid_object_class(
                 doc,
                 session_id=session_id,
                 doc_id=doc_id,
@@ -790,9 +889,10 @@ def _build_connector_attribute_projection(
         if not isinstance(name, str) or not name.strip():
             continue
 
+        scim_path = raw_attribute.get("scimPath")
         item: Dict[str, Any] = {}
         item["name"] = name.strip()
-        item["scimAttribute"] = name.strip()
+        item["scimAttribute"] = scim_path.strip() if isinstance(scim_path, str) and scim_path.strip() else name.strip()
         item["connectorExposed"] = True
 
         connector_type = raw_attribute.get("type")

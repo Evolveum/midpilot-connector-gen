@@ -22,7 +22,6 @@ from src.modules.digester.extractors.scim.baseline import (
 from src.modules.digester.schemas import ScimServiceProviderConfig
 from src.modules.digester.schemas.common import ChunkReference
 
-_MODULE = scim_endpoints.__name__
 _SCHEMA_DIR = Path(__file__).parent / "scim_schemas"
 
 
@@ -152,10 +151,10 @@ async def _run_pregenerate(
     )
 
     with (
-        patch(f"{_MODULE}.update_job_progress", new_callable=AsyncMock),
-        patch(f"{_MODULE}.increment_processed_documents", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.scim.endpoints.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.scim.endpoints.increment_processed_documents", new_callable=AsyncMock),
         patch(
-            f"{_MODULE}.load_session_scim_baseline",
+            "src.modules.digester.extractors.scim.endpoints.load_session_scim_baseline",
             new_callable=AsyncMock,
             return_value=bundle,
         ),
