@@ -43,7 +43,7 @@ Extensions allow you to reference attributes from SCIM schema extensions.
 
 == Path-based attribute mapping
 
-SCIM uses nested attribute paths (e.g., `name.givenName`). Map these to flat native schema attributes:
+SCIM uses nested attribute paths (e.g., `name.givenName`). Map these to flat ConnId attributes:
 
 [source,groovy]
 ----
@@ -85,6 +85,20 @@ attribute("primaryEmail") {
 
 This maps the `value` field from the email object where `primary` is `true`.
 
+== ConnId attribute mapping
+
+Map SCIM attributes to ConnId built-in attributes:
+
+[source,groovy]
+----
+objectClass("User") {
+    connIdAttribute("UID", "id")
+    connIdAttribute("NAME", "userName")
+}
+----
+
+The ConnId framework requires `UID` and `NAME` attributes. Map them to the appropriate SCIM attributes.
+
 == SCIM-specific schema blocks
 
 The `scim` block supports:
@@ -105,6 +119,9 @@ objectClass("User") {
     scim {
         extension("enterprise", "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User")
     }
+
+    connIdAttribute("UID", "id")
+    connIdAttribute("NAME", "userName")
 
     attribute("givenName") {
         scim {
