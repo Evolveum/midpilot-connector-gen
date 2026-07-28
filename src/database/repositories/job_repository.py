@@ -8,10 +8,11 @@ from enum import Enum
 from typing import Any, Dict, Optional, Union
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from src.database.models import Job, JobProgress
+from src.database.models import Job, JobProgress, Session
 from src.shared.enums import JobStage, JobStatus
 from src.shared.normalize import normalize_input
 
@@ -93,54 +94,59 @@ class JobRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
+    async def get_job_for_session(self, job_id: UUID, session_id: UUID) -> Optional[Job]:
+        """Get a job only when it belongs to the specified session."""
+        query = select(Job).where(Job.job_id == job_id, Job.session_id == session_id)
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
+
     async def get_job_by_input(
-        self, job_type: str, input_payload: Dict[str, Any], date_since: datetime
+        self,
+        job_type: str,
+        input_payload: Dict[str, Any],
+        date_since: datetime,
+        *,
+        requesting_session_id: UUID,
     ) -> Optional[Job]:
-        """
-        Get a job by its input payload.
+        """Get a reusable job by input within the requesting session's tenant.
 
         :param job_type: Type of job to look for
         :param input_payload: Input payload dict to match
+        :param date_since: Earliest acceptable job creation time
+        :param requesting_session_id: Session requesting reuse. Owned sessions
+            may reuse jobs from other sessions with the same API-key owner;
+            ownerless sessions are restricted to themselves.
         :return: Job model or None
         """
+        candidate_session = aliased(Session)
+        requesting_session = aliased(Session)
+        requesting_owner_id = (
+            select(requesting_session.api_key_id)
+            .where(requesting_session.session_id == requesting_session_id)
+            .scalar_subquery()
+        )
+        tenant_scope = or_(
+            Job.session_id == requesting_session_id,
+            and_(
+                requesting_owner_id.is_not(None),
+                candidate_session.api_key_id == requesting_owner_id,
+            ),
+        )
         query = (
             select(Job)
+            .join(candidate_session, candidate_session.session_id == Job.session_id)
             .where(
                 Job.job_type == job_type,
                 Job.normalized_input == to_jsonable(input_payload),
                 Job.created_at >= date_since,
                 Job.status == "finished",
+                tenant_scope,
             )
             .order_by(Job.created_at.desc())
         )
         result = await self.db.execute(query)
 
         return result.scalars().first()
-
-    # async def get_discovery_job_by_input(self, discovery_input: Dict[str, Any], date_since: datetime) -> Optional[Job]:
-    #     """
-    #     Get a discovery job by its input payload.
-
-    #     :param discovery_input: Input payload dict to match
-    #     :param date_since: Only include jobs created at or after this timestamp
-    #     :return: Job model or None
-    #     """
-    #     # skipCache should not influence whether discovery output can be reused.
-    #     alternate_discovery_input = discovery_input.copy()
-    #     alternate_discovery_input["skipCache"] = False
-    #     query = (
-    #         select(Job)
-    #         .where(
-    #             Job.job_type == "discovery.getCandidateLinks",
-    #             (Job.input == to_jsonable(discovery_input)) | (Job.input == to_jsonable(alternate_discovery_input)),
-    #             Job.created_at >= date_since,
-    #             Job.status == "finished",
-    #         )
-    #         .order_by(Job.created_at.desc())
-    #     )
-    #     result = await self.db.execute(query)
-
-    #     return result.scalars().first()
 
     async def set_running(self, job_id: UUID) -> Dict[str, Any]:
         """

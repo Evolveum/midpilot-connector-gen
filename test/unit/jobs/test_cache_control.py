@@ -2,9 +2,26 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+import pytest
+
+from src.jobs.cache import reuse_or_run
 from src.modules.discovery.schema import CandidateLinksInput
 from src.modules.scrape.schema import ScrapeRequest
 from src.shared.normalize import normalize_input
+
+
+class _AsyncSessionContext:
+    def __init__(self, db):
+        self.db = db
+
+    async def __aenter__(self):
+        return self.db
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
 
 
 def test_normalize_input_ignores_skip_cache_for_job_identity() -> None:
@@ -45,3 +62,27 @@ def test_normalize_input_handles_missing_relevant_documentations() -> None:
         {"name": "Group"},
         {"name": "Role"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_cache_lookup_is_scoped_by_requesting_session() -> None:
+    session_id = uuid4()
+    job_repo = MagicMock()
+    job_repo.get_job_by_input = AsyncMock(return_value=None)
+    run_normal_worker = AsyncMock(return_value={"candidateLinks": []})
+
+    with (
+        patch("src.jobs.cache.async_session_maker", return_value=_AsyncSessionContext(MagicMock())),
+        patch("src.jobs.cache.JobRepository", return_value=job_repo),
+    ):
+        result = await reuse_or_run(
+            job_type="discovery.getCandidateLinks",
+            job_id=uuid4(),
+            session_id=session_id,
+            input_payload={"applicationName": "Demo"},
+            run_normal_worker=run_normal_worker,
+        )
+
+    assert result == {"candidateLinks": []}
+    assert job_repo.get_job_by_input.await_args.kwargs == {"requesting_session_id": session_id}
+    run_normal_worker.assert_awaited_once_with()
