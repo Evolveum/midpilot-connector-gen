@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.extractors.connectivity_endpoint import (
     extract_connectivity_endpoint as extract_connectivity_endpoint_worker,
@@ -20,6 +19,7 @@ from src.modules.digester.routes.connectivity_endpoint import (
     override_connectivity_endpoint,
 )
 from src.modules.digester.schemas import ConnectivityEndpointResponse
+from src.shared.enums import JobStatus
 
 
 @pytest.mark.asyncio
@@ -119,7 +119,7 @@ async def test_get_connectivity_endpoint_status_uses_session_output_when_finishe
 
     with (
         patch("src.modules.digester.routes.connectivity_endpoint.SessionRepository", return_value=mock_repo),
-        patch("src.common.utils.relevance.RelevantChunkRepository", return_value=mock_relevant_repo),
+        patch("src.documents.relevance.persistence.RelevantChunkRepository", return_value=mock_relevant_repo),
         patch(
             "src.modules.digester.routes.connectivity_endpoint.build_typed_job_status_response",
             new_callable=AsyncMock,

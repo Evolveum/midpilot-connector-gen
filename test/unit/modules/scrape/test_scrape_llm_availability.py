@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from src.common.errors import LLMUnavailableError
 from src.config import config
+from src.core.errors import LLMUnavailableError
 from src.modules.scrape.core.llms import get_relevant_links_from_text
 
 

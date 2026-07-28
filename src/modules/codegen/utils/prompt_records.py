@@ -6,10 +6,10 @@ import json
 from collections.abc import Iterator
 from typing import Any, Dict, List, Mapping
 
-from src.common.utils.coerce import as_dict_list, as_mapping
-from src.common.utils.normalize import normalize_scim_path_for_lookup
+from src.documents.normalize import normalize_scim_path_for_lookup
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
+from src.shared.coerce import as_dict_list, as_mapping
 
 
 def _attribute_items(payload: AttributesPayload) -> Iterator[tuple[str, Any]]:

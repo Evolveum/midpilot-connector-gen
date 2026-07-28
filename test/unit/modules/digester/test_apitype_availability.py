@@ -2,9 +2,9 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.common.enums import DetectionSource, ProtocolAvailability
 from src.modules.digester.extractors.apitype.availability import summarize_scim_availability
 from src.modules.digester.schemas import ApiTypeSignalResult
+from src.shared.enums import DetectionSource, ProtocolAvailability
 
 
 def test_empty_signals_summarize_to_unknown():

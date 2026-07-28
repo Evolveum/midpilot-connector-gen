@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from pydantic import Field, model_validator
 
-from src.common.schema import CamelCaseModel
+from src.core.schema import CamelCaseModel
 
 SCIM_SERVICE_PROVIDER_CONFIG_URN = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
 

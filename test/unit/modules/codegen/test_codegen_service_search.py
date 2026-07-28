@@ -9,9 +9,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.codegen import generation
 from src.modules.codegen.enums import SearchIntent
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio

@@ -16,16 +16,9 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
-from src.common.documentation.content_types import is_conndev_documentation_item
-from src.common.jobs import increment_processed_documents, update_job_progress
-from src.common.llm import build_structured_chain
-from src.common.utils.coerce import as_dict_list, as_list, as_mapping
-from src.common.utils.normalize import (
-    build_relevant_documentations,
-    canonicalize_scim_path,
-    normalize_chunk_pair,
-    normalize_scim_path_for_lookup,
-)
+from src.core.llm import build_structured_chain
+from src.documents.normalize import canonicalize_scim_path, normalize_scim_path_for_lookup
+from src.jobs import increment_processed_documents, update_job_progress
 from src.modules.digester.entities.attribute_filters import normalize_readability_flags
 from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extraction.llm_execution import invoke_chunk_chain, parse_structured_result
@@ -43,6 +36,9 @@ from src.modules.digester.prompts.scim.attributes_prompts import (
     get_scim_attributes_user_prompt,
 )
 from src.modules.digester.schemas import AttributeInfoScim, ExtractedAttributeResponseSCIM
+from src.shared.coerce import as_dict_list, as_list, as_mapping
+from src.shared.content_types import is_conndev_documentation_item
+from src.shared.normalize import build_relevant_documentations, normalize_chunk_pair
 
 logger = logging.getLogger(__name__)
 

@@ -9,11 +9,11 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
 from src.modules.digester.enums import AuthType
 from src.modules.digester.extractors.auth import extract_auth as extract_auth_worker
 from src.modules.digester.routes.auth import extract_auth, get_auth_status
 from src.modules.digester.schemas import AuthInfo, AuthResponse
+from src.shared.enums import JobStatus
 
 
 # AUTH

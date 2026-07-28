@@ -23,18 +23,9 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import ApiType
-from src.common.errors import (
-    AttributesNotFoundError,
-    InvalidRelationsOutputError,
-    OperationSurfaceNotFoundError,
-    RelationNotFoundError,
-    RelationsNotFoundError,
-)
-from src.common.jobs import persist_job_pointer, schedule_coroutine_job
-from src.common.utils.relevance import hydrate_auth_sequences_from_relevance
-from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.database.repositories.session_repository import SessionRepository
+from src.documents.relevance import hydrate_auth_sequences_from_relevance
+from src.jobs import persist_job_pointer, schedule_coroutine_job
 from src.modules.codegen import generation
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
@@ -42,7 +33,16 @@ from src.modules.codegen.schema import (
     CodegenRepairContext,
 )
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
+from src.modules.digester.errors import (
+    AttributesNotFoundError,
+    InvalidRelationsOutputError,
+    OperationSurfaceNotFoundError,
+    RelationNotFoundError,
+    RelationsNotFoundError,
+)
 from src.modules.digester.schemas import RelationsResponse
+from src.session.info_metadata import resolve_effective_api_type
+from src.shared.enums import ApiType
 
 # Shared preparing-stage metadata for the search/create/update/delete jobs.
 _INITIAL_STAGE = "preparing"

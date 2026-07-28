@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from src.common.schema import CamelCaseModel
+from src.core.schema import CamelCaseModel
 
 # --- Relation ---
 

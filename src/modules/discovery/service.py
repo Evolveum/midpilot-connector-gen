@@ -8,8 +8,7 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from src.common.enums import JobStage
-from src.common.jobs import update_job_progress
+from src.jobs import update_job_progress
 from src.modules.discovery.prompts.prompts import (
     get_discovery_fetch_sys_prompt,
     get_discovery_fetch_user_prompt,
@@ -29,6 +28,7 @@ from src.modules.discovery.utils.discovery_helpers import (
     select_links_by_query,
 )
 from src.modules.discovery.utils.filter_helpers import filter_candidate_links, rank_candidate_links
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 

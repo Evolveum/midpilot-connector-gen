@@ -14,11 +14,10 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.enums import JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain, get_default_llm, make_basic_chain
-from src.common.utils.normalize import canonical_object_class_key
+from src.core.llm import build_structured_chain, get_default_llm, make_basic_chain
+from src.core.observability.langfuse import langfuse_handler
+from src.documents.normalize import canonical_object_class_key
+from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.merges import merge_object_classes
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extraction.llm_execution import invoke_llm
@@ -39,6 +38,7 @@ from src.modules.digester.schemas import (
     ObjectClassesResponse,
     RankedObjectClass,
 )
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 

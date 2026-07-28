@@ -6,11 +6,11 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.utils.coerce import as_dict_list, as_list
-from src.common.utils.normalize import normalize_object_class_name
+from src.core.db import async_session_maker
+from src.database.repositories.session_repository import SessionRepository
+from src.documents.normalize import normalize_object_class_name
 from src.modules.digester.enums import ConfidenceLevel
+from src.shared.coerce import as_dict_list, as_list
 
 logger = logging.getLogger(__name__)
 

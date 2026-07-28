@@ -7,7 +7,7 @@ import re
 from collections import OrderedDict
 from typing import Any, Iterable
 
-from src.common.chunking import normalize_to_text
+from src.documents.chunking import normalize_to_text
 from src.modules.digester.selection import build_chunk_references_from_doc_items
 
 _CREATE_TABLE_RE = re.compile(

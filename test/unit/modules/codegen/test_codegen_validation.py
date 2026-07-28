@@ -8,8 +8,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.errors import LLMUnavailableError
 from src.config import config
+from src.core.errors import LLMUnavailableError
 from src.modules.codegen.core.base import BaseGroovyGenerator, OperationConfig
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.schema import CodegenRepairContext

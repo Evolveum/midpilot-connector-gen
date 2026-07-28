@@ -6,7 +6,6 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from src.common.enums import ApiType
 from src.modules.codegen.core.base import (
     BaseGroovyGenerator,
     endpoints_to_records,
@@ -20,6 +19,7 @@ from src.modules.codegen.utils.prompt_records import (
     build_scim_contract_prompt_vars,
 )
 from src.modules.digester.schemas import RelationsResponse
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 

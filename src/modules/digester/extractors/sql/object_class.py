@@ -7,10 +7,8 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from src.common.enums import JobStage
-from src.common.jobs import update_job_progress
-from src.common.llm import build_structured_chain, raise_if_llm_unavailable
-from src.common.utils.coerce import as_list
+from src.core.llm import build_structured_chain, raise_if_llm_unavailable
+from src.jobs import update_job_progress
 from src.modules.digester.entities.object_classes import confidence_order_key
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, object_class_name_from_table
@@ -20,6 +18,8 @@ from src.modules.digester.prompts.sql.object_class_prompts import (
 )
 from src.modules.digester.schemas import ExtendedObjectClass, FinalObjectClass, ObjectClassesExtendedResponse
 from src.modules.digester.selection import build_relevant_chunks_from_doc_items
+from src.shared.coerce import as_list
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 

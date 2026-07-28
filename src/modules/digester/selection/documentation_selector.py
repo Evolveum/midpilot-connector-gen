@@ -8,25 +8,16 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
-from src.common.enums import ApiType
-from src.common.errors import (
+from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.documents.filtering.filter import filter_documentation_items
+from src.documents.normalize import normalize_object_class_name
+from src.modules.digester.entities.object_classes import find_object_class
+from src.modules.digester.errors import (
     InvalidObjectClassesOutputError,
     ObjectClassesNotFoundError,
     ObjectClassNotFoundError,
     RelevantChunksNotFoundError,
 )
-from src.common.session.session import get_session_documentation
-from src.common.utils.coerce import is_true
-from src.common.utils.normalize import normalize_object_class_name
-from src.common.utils.session_info_metadata import (
-    get_session_api_types,
-    get_session_base_api_url,
-    is_scim_api,
-    is_sql_api,
-)
-from src.modules.digester.entities.object_classes import find_object_class
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, tables_for_object_class
 from src.modules.digester.schemas.common import ChunkReference
 from src.modules.digester.selection.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
@@ -34,6 +25,15 @@ from src.modules.digester.selection.doc_chunk import (
     build_chunk_references_from_doc_items,
     build_chunk_references_from_mappings,
 )
+from src.session.access import get_session_documentation
+from src.session.info_metadata import (
+    get_session_api_types,
+    get_session_base_api_url,
+    is_scim_api,
+    is_sql_api,
+)
+from src.shared.coerce import is_true
+from src.shared.enums import ApiType
 
 
 @dataclass(frozen=True)

@@ -7,9 +7,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.errors import SessionNotFoundError
 from src.modules.discovery.router import discover_candidate_links
 from src.modules.discovery.schema import CandidateLinksInput
+from src.session.errors import SessionNotFoundError
 
 
 @pytest.mark.asyncio

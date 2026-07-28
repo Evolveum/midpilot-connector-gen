@@ -11,20 +11,20 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.enums import JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
-from src.common.llm import (
+from src.config import config
+from src.core.llm import (
     get_default_llm,
     make_basic_chain,
     raise_if_llm_unavailable,
     retry_on_transient_llm_error,
 )
-from src.config import config
+from src.core.observability.langfuse import langfuse_handler
+from src.jobs import append_job_error, update_job_progress
 from src.modules.codegen.repair import build_repair_prompt_vars
 from src.modules.codegen.schema import CodegenRepairContext
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import coerce_llm_text, strip_markdown_fences
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 

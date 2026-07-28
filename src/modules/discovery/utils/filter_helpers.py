@@ -10,9 +10,9 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.langfuse import langfuse_handler
-from src.common.llm import get_default_llm, make_basic_chain
-from src.common.web import classify_irrelevant_links
+from src.core.llm import get_default_llm, make_basic_chain
+from src.core.observability.langfuse import langfuse_handler
+from src.integrations.web import classify_irrelevant_links
 from src.modules.discovery.prompts.prompts import get_irrelevant_filter_prompts, get_rank_links_prompts
 from src.modules.discovery.schema import DiscoveryIntegrationType, RankedLinks
 

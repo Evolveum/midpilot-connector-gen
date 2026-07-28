@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from langchain_openai import ChatOpenAI
 
 from src.app import api
-from src.common.web import SearchResult
+from src.integrations.web import SearchResult
 
 # Common fixtures
 
@@ -26,7 +26,7 @@ def test_client():
 @pytest.fixture
 def mock_llm():
     """Default mock LLM for testing."""
-    with patch("src.common.llm.get_default_llm") as mock_llm:
+    with patch("src.core.llm.get_default_llm") as mock_llm:
         mock_llm.return_value = MagicMock(spec=ChatOpenAI)
         yield mock_llm
 
@@ -34,7 +34,7 @@ def mock_llm():
 @pytest.fixture
 def mock_llm_eval():
     """Mock LLM for evaluation."""
-    with patch("src.common.llm.get_default_llm") as mock_llm:
+    with patch("src.core.llm.get_default_llm") as mock_llm:
         mock_llm.return_value = MagicMock(spec=ChatOpenAI)
         yield mock_llm
 

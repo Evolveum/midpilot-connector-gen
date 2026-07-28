@@ -9,11 +9,10 @@ from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.enums import ApiType, JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
-from src.common.utils.normalize import canonical_object_class_key, normalize_endpoint_key
 from src.config import config
+from src.core.observability.langfuse import langfuse_handler
+from src.documents.normalize import canonical_object_class_key, normalize_endpoint_key
+from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
 from src.modules.digester.enums import EndpointMethod, EndpointType
 from src.modules.digester.extraction.llm_execution import invoke_llm
@@ -35,6 +34,7 @@ from src.modules.digester.schemas import (
     ScimAvailabilityInfo,
     SqlAvailabilityInfo,
 )
+from src.shared.enums import ApiType, JobStage
 
 logger = logging.getLogger(__name__)
 

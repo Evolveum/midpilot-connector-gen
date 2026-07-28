@@ -7,12 +7,12 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.digester.extractors.object_class import extract_object_classes
 from src.modules.digester.extractors.sql.attributes import extract_sql_attributes
 from src.modules.digester.extractors.sql.schema import collect_sql_tables
 from src.modules.digester.extractors.sql.tables import extract_sql_tables
 from src.modules.digester.schemas import ExtendedObjectClass, ObjectClassesExtendedResponse
+from src.shared.enums import ApiType
 
 
 def _sql_doc(content: str) -> dict:

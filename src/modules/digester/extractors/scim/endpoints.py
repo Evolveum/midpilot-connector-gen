@@ -15,8 +15,7 @@ from collections.abc import Mapping
 from typing import Any, Dict
 from uuid import UUID
 
-from src.common.jobs import increment_processed_documents, update_job_progress
-from src.common.utils.coerce import is_true
+from src.jobs import increment_processed_documents, update_job_progress
 from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.extractors.scim.baseline import (
     ScimBaselineBundle,
@@ -27,6 +26,7 @@ from src.modules.digester.extractors.scim.baseline import (
     load_session_scim_baseline,
 )
 from src.modules.digester.schemas.common import ChunkReference
+from src.shared.coerce import is_true
 
 logger = logging.getLogger(__name__)
 

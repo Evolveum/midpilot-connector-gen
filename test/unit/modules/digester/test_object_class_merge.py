@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.common.utils.normalize import canonical_object_class_key
+from src.documents.normalize import canonical_object_class_key
 from src.modules.digester.aggregation.merges import merge_object_classes
 from src.modules.digester.schemas import ExtendedObjectClass
 

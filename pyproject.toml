@@ -53,6 +53,7 @@ dev = [
     "requests>=2.34.2",
     "types-requests>=2.33.0.20260712",
     "types-urllib3>=1.26.25.14",
+    "import-linter>=2.13",
 ]
 
 # until uv implements task runner we use poethepoet
@@ -71,11 +72,53 @@ export-openapi.envfile = ".env"
 typecheck = "mypy . --exclude=.venv --exclude=clearml"
 stylecheck = "ruff format --diff"
 lint = "ruff check"
+importcheck = "lint-imports"
 fix = [
   { cmd = "ruff check  --fix" },
   { cmd = "ruff format" },
 ]
-qa = ["typecheck", "lint", "stylecheck", "test test/unit"]
+qa = ["typecheck", "lint", "stylecheck", "importcheck", "test test/unit"]
+
+# Architecture enforcement: layered imports. Run with `uv run poe importcheck`.
+# Layers are top-down: an item may import anything below it, never above.
+# Items separated by "|" are independent siblings and must not import each other.
+[tool.importlinter]
+root_packages = ["src"]
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+containers = ["src"]
+layers = [
+  "app",
+  "router",
+  "modules",
+  "session",
+  "auth | api",
+  "jobs",
+  "documents | integrations",
+  "database",
+  "core",
+  "shared",
+  "config",
+]
+
+[[tool.importlinter.contracts]]
+name = "Feature modules do not import each other (codegen -> digester is the one allowed edge)"
+type = "forbidden"
+source_modules = ["src.modules.discovery", "src.modules.scrape", "src.modules.digester"]
+forbidden_modules = ["src.modules.codegen"]
+
+[[tool.importlinter.contracts]]
+name = "Discovery, scrape and digester stay mutually independent"
+type = "independence"
+modules = ["src.modules.discovery", "src.modules.scrape", "src.modules.digester"]
+
+[[tool.importlinter.contracts]]
+name = "Codegen only reaches digester among the feature modules"
+type = "forbidden"
+source_modules = ["src.modules.codegen"]
+forbidden_modules = ["src.modules.discovery", "src.modules.scrape"]
 
 [tool.ruff]
 line-length = 120

@@ -34,15 +34,15 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.documentation_repository import DocumentationRepository
-from src.common.documentation.content_types import is_conndev_documentation_item
-from src.common.utils.coerce import as_dict_list
+from src.core.db import async_session_maker
+from src.database.repositories.documentation_repository import DocumentationRepository
 from src.modules.digester.schemas.common import ChunkReference
 from src.modules.digester.schemas.scim import (
     SCIM_SERVICE_PROVIDER_CONFIG_URN,
     ScimServiceProviderConfig,
 )
+from src.shared.coerce import as_dict_list
+from src.shared.content_types import is_conndev_documentation_item
 
 logger = logging.getLogger(__name__)
 

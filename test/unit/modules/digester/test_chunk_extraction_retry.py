@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
-from src.common.errors import LLMUnavailableError
 from src.config import config
+from src.core.errors import LLMUnavailableError
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
 
 

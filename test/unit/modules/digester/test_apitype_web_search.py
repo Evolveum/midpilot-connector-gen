@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pydantic
 import pytest
 
-from src.common.enums import ApiType, ProtocolAvailability
-from src.common.web import SearchResult
 from src.config import DigesterSettings
+from src.integrations.web import SearchResult
 from src.modules.digester.extractors.apitype import web_search
 from src.modules.digester.extractors.apitype.web_search import lookup_api_type_web_search
 from src.modules.digester.schemas import ApiTypeSignalResult
+from src.shared.enums import ApiType, ProtocolAvailability
 
 
 def _enable_web_search(mock_config: MagicMock, *, fetch_pages: bool = False) -> None:

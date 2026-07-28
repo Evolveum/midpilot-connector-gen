@@ -15,8 +15,8 @@ from its own signals) but share the same precedence rule.
 from dataclasses import dataclass
 from typing import Mapping, Tuple
 
-from src.common.enums import DetectionSource, ProtocolAvailability
 from src.modules.digester.schemas import ApiTypeSignalResult, RestSignalResult
+from src.shared.enums import DetectionSource, ProtocolAvailability
 
 # Availability precedence shared by both protocol summaries: paid > available > unknown.
 _AVAILABILITY_RANK: dict[ProtocolAvailability, int] = {

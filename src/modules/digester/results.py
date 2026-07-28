@@ -19,18 +19,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import JobStatus
-from src.common.errors import (
-    InvalidObjectClassesOutputError,
-    ObjectClassesNotFoundError,
-    ObjectClassNotFoundError,
-)
-from src.common.schema import JobStatusMultiDocResponse
-from src.common.session.session import get_session_documentation
-from src.common.utils.normalize import normalize_object_class_name
-from src.common.utils.relevance import (
+from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.database.repositories.session_repository import SessionRepository
+from src.documents.normalize import normalize_object_class_name
+from src.documents.relevance import (
     build_chunk_to_doc_map,
     extract_attribute_relevance_rows,
     extract_endpoint_relevance_rows,
@@ -43,13 +35,21 @@ from src.common.utils.relevance import (
     strip_endpoints_relevance,
     strip_object_class_relevance,
 )
+from src.jobs.schema import JobStatusMultiDocResponse
 from src.modules.digester.entities.object_classes import find_object_class, upsert_object_class
+from src.modules.digester.errors import (
+    InvalidObjectClassesOutputError,
+    ObjectClassesNotFoundError,
+    ObjectClassNotFoundError,
+)
 from src.modules.digester.schemas import (
     AttributeResponse,
     ConnectivityEndpointResponse,
     EndpointResponse,
     ObjectClassesResponse,
 )
+from src.session.access import get_session_documentation
+from src.shared.enums import JobStatus
 
 logger = logging.getLogger(__name__)
 
