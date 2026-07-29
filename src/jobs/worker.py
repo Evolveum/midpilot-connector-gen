@@ -82,40 +82,37 @@ class JobWorker:
                 pass
 
     async def _run(self) -> None:
-        try:
-            while not self._stop_event.is_set():
-                self._active = {task for task in self._active if not task.done()}
-                claimed_any = False
-                while len(self._active) < config.jobs.max_concurrent_jobs and not self._stop_event.is_set():
-                    try:
-                        claimed = await self._claim_one()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        logger.exception("Worker %s failed to claim a job", self.worker_id)
-                        break
-                    if claimed is None:
-                        break
-                    claimed_any = True
-                    task = asyncio.create_task(
-                        execute_claimed_job(claimed),
-                        name=f"job:{claimed.job_id}",
-                    )
-                    self._active.add(task)
-                    task.add_done_callback(self._log_task_failure)
-
-                if claimed_any:
-                    await asyncio.sleep(0)
-                    continue
+        while not self._stop_event.is_set():
+            self._active = {task for task in self._active if not task.done()}
+            claimed_any = False
+            while len(self._active) < config.jobs.max_concurrent_jobs and not self._stop_event.is_set():
                 try:
-                    await asyncio.wait_for(
-                        self._stop_event.wait(),
-                        timeout=config.jobs.poll_interval_seconds,
-                    )
-                except asyncio.TimeoutError:
-                    pass
-        except asyncio.CancelledError:
-            raise
+                    claimed = await self._claim_one()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Worker %s failed to claim a job", self.worker_id)
+                    break
+                if claimed is None:
+                    break
+                claimed_any = True
+                task = asyncio.create_task(
+                    execute_claimed_job(claimed),
+                    name=f"job:{claimed.job_id}",
+                )
+                self._active.add(task)
+                task.add_done_callback(self._log_task_failure)
+
+            if claimed_any:
+                await asyncio.sleep(0)
+                continue
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=config.jobs.poll_interval_seconds,
+                )
+            except asyncio.TimeoutError:
+                pass
 
     @staticmethod
     def _log_task_failure(task: asyncio.Task[None]) -> None:

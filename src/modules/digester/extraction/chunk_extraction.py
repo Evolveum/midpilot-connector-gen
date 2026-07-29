@@ -172,7 +172,12 @@ async def _find_best_fuzzy_literal(
     )
 
     matches = await asyncio.get_event_loop().run_in_executor(
-        pool.process_pool, fuzzy_search_worker, collapsed_text, collapsed_marker, start_pos, max_errors
+        pool.require_process_pool(),
+        fuzzy_search_worker,
+        collapsed_text,
+        collapsed_marker,
+        start_pos,
+        max_errors,
     )
     duration = time.time() - started
     if duration > 2:
@@ -248,7 +253,7 @@ async def _find_closest_best_fuzzy_literal(
     )
 
     matches = await asyncio.get_event_loop().run_in_executor(
-        pool.process_pool,
+        pool.require_process_pool(),
         fuzzy_search_worker,
         collapsed_text,
         collapsed_marker,

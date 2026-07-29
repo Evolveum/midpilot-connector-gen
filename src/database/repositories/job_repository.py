@@ -5,8 +5,7 @@
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from enum import Enum
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Union
 from uuid import UUID, uuid4
 
@@ -14,9 +13,10 @@ from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from src.core.errors import JobClaimLostError
+from src.core.errors import ExecutionOwnershipLostError
 from src.database.models import Job, JobArtifact, JobProgress, Session
 from src.shared.enums import JobStage, JobStatus
+from src.shared.json_values import to_jsonable
 from src.shared.normalize import normalized_input_fingerprint
 
 logger = logging.getLogger(__name__)
@@ -34,25 +34,6 @@ class ClaimedJob:
     worker_id: str
     execution_token: UUID
     attempt_count: int
-
-
-def to_jsonable(obj: Any) -> Any:
-    """Make obj safe to store in JSON/JSONB (UUID, datetime, Enum, Pydantic, nested)."""
-    if obj is None:
-        return None
-    if isinstance(obj, UUID):
-        return str(obj)
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    if isinstance(obj, Enum):
-        return obj.value
-    if hasattr(obj, "model_dump"):  # pydantic v2
-        return obj.model_dump(by_alias=True, mode="json")
-    if isinstance(obj, dict):
-        return {k: to_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple, set)):
-        return [to_jsonable(v) for v in obj]
-    return obj
 
 
 class JobRepository:
@@ -84,10 +65,13 @@ class JobRepository:
         :param input_payload: Job input data
         :param job_type: Type of job
         :param session_id: Associated session ID
+        :param documentation_wait_timeout_seconds: Pre-claim queue wait budget,
+            measured from durable job creation
         :return: Job ID
         """
 
-        normalized_input = normalized_input_fingerprint(input_payload)
+        json_input = to_jsonable(input_payload)
+        normalized_input = normalized_input_fingerprint(json_input)
 
         now = datetime.now(timezone.utc)
         documentation_wait_until = (
@@ -99,7 +83,7 @@ class JobRepository:
             session_id=session_id,
             job_type=job_type,
             status=JobStatus.queued.value,
-            input=to_jsonable(input_payload),
+            input=json_input,
             normalized_input=to_jsonable(normalized_input),
             execution_payload=execution_payload,
             waits_for_documentation=waits_for_documentation,
@@ -176,7 +160,7 @@ class JobRepository:
             .join(candidate_session, candidate_session.session_id == Job.session_id)
             .where(
                 Job.job_type == job_type,
-                Job.normalized_input == to_jsonable(normalized_input_fingerprint(input_payload)),
+                Job.normalized_input == normalized_input_fingerprint(to_jsonable(input_payload)),
                 Job.created_at >= date_since,
                 Job.status == "finished",
                 tenant_scope,
@@ -211,7 +195,7 @@ class JobRepository:
             worker_id=worker_id,
             execution_token=execution_token,
         ):
-            raise JobClaimLostError(job_id)
+            raise ExecutionOwnershipLostError(job_id)
 
     async def append_job_error(
         self,
@@ -241,7 +225,7 @@ class JobRepository:
                 .values(updated_at=now)
             )
             if not bool(getattr(await self.db.execute(statement), "rowcount", 0)):
-                raise JobClaimLostError(job_id)
+                raise ExecutionOwnershipLostError(job_id)
         job = await self.get_job(job_id)
         if job is None:
             return
@@ -265,7 +249,7 @@ class JobRepository:
         processing_completed: Optional[int] = None,
         worker_id: Optional[str] = None,
         execution_token: Optional[UUID] = None,
-    ) -> bool:
+    ) -> None:
         """
         Update progress information for a running job.
 
@@ -289,7 +273,7 @@ class JobRepository:
                 .values(updated_at=now)
             )
             if not bool(getattr(await self.db.execute(statement), "rowcount", 0)):
-                raise JobClaimLostError(job_id)
+                raise ExecutionOwnershipLostError(job_id)
 
         query = select(JobProgress).where(JobProgress.job_id == job_id)
         result = await self.db.execute(query)
@@ -315,7 +299,6 @@ class JobRepository:
                 job.updated_at = now
 
         await self.db.flush()
-        return True
 
     async def update_job_input(
         self,
@@ -348,12 +331,15 @@ class JobRepository:
         else:
             job = await self.get_job(job_id)
         if job is None:
-            raise JobClaimLostError(job_id)
+            if worker_id is not None and execution_token is not None:
+                raise ExecutionOwnershipLostError(job_id)
+            raise FileNotFoundError(f"Job {job_id} not found")
 
-        normalized_input = normalized_input_fingerprint(new_input)
+        json_input = to_jsonable(new_input)
+        normalized_input = normalized_input_fingerprint(json_input)
 
-        job.input = to_jsonable(new_input)
-        job.normalized_input = to_jsonable(normalized_input)
+        job.input = json_input
+        job.normalized_input = normalized_input
         job.updated_at = datetime.now(timezone.utc)
 
         await self.db.flush()
@@ -388,7 +374,7 @@ class JobRepository:
                 .values(updated_at=now)
             )
             if not bool(getattr(await self.db.execute(statement), "rowcount", 0)):
-                raise JobClaimLostError(job_id)
+                raise ExecutionOwnershipLostError(job_id)
         else:
             await self.db.execute(update(Job).where(Job.job_id == job_id).values(updated_at=now))
 
@@ -527,6 +513,36 @@ class JobRepository:
         job = (await self.db.execute(query)).scalar_one_or_none()
         if job is None or job.execution_payload is None:
             return None
+
+        if (
+            job.waits_for_documentation
+            and job.documentation_wait_until is not None
+            and job.documentation_wait_until <= now
+        ):
+            pending_documentation_job_id = (
+                await self.db.execute(
+                    select(documentation_job.job_id)
+                    .where(
+                        documentation_job.session_id == job.session_id,
+                        documentation_job.job_id != job.job_id,
+                        documentation_job.job_type.in_(
+                            ("scrape.getRelevantDocumentation", "documentation.processUpload")
+                        ),
+                        documentation_job.status.not_in((JobStatus.finished.value, JobStatus.failed.value)),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if pending_documentation_job_id is not None:
+                timeout_message = (
+                    "Timed out waiting for documentation processing; continuing while "
+                    f"documentation job {pending_documentation_job_id} is still unfinished."
+                )
+                logger.warning("Job %s: %s", job.job_id, timeout_message)
+                errors = list(job.errors or [])
+                if timeout_message not in errors:
+                    errors.append(timeout_message)
+                    job.errors = errors
 
         # Side-effect transactions hold the shared variant. Waiting here
         # establishes a strict boundary: after this takeover acquires the

@@ -154,6 +154,7 @@ async def test_extract_single_chunk_validated_sequences_keep_matched_text():
     with (
         patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extraction.chunk_extraction.append_job_error") as append_job_error,
+        patch("src.modules.digester.extraction.chunk_extraction.pool.require_process_pool", return_value=None),
     ):
         items, has_relevant_data = await extract_single_chunk(
             schema="Prefix. User object includes id string and email string. Suffix.",

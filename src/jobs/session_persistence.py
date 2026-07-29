@@ -14,7 +14,6 @@ from typing import Any, Dict
 from uuid import UUID
 
 from src.core.db import async_session_maker
-from src.core.errors import JobClaimLostError
 from src.core.job_execution import get_current_execution
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import JobRepository
@@ -33,6 +32,7 @@ from src.documents.relevance import (
     unwrap_result_payload as _unwrap_result_payload,
 )
 from src.jobs import lifecycle
+from src.jobs.errors import JobClaimLostError
 
 logger = logging.getLogger(__name__)
 

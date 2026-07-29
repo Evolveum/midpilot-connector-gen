@@ -11,14 +11,35 @@ from uuid import UUID
 
 from sqlalchemy import case, func, select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
+from src.core.errors import ExecutionOwnershipLostError
 from src.core.job_execution import get_current_execution
 from src.database.models import DocumentationItem
 from src.database.repositories.job_repository import JobRepository
 from src.shared.content_types import CONNDEV_CONTENT_TYPES
 
 logger = logging.getLogger(__name__)
+
+
+class DocumentationWriteBatch:
+    """Commit documentation writes in bounded transactions."""
+
+    def __init__(self, db: AsyncSession, batch_size: int):
+        self.db = db
+        self.batch_size = batch_size
+        self.pending_writes = 0
+
+    async def record_write(self) -> None:
+        self.pending_writes += 1
+        if self.pending_writes >= self.batch_size:
+            await self.commit_pending()
+
+    async def commit_pending(self) -> None:
+        if self.pending_writes == 0:
+            return
+        await self.db.commit()
+        self.pending_writes = 0
 
 
 class DocumentationRepository:
@@ -31,16 +52,28 @@ class DocumentationRepository:
         :param db: SQLAlchemy AsyncSession
         """
         self.db = db
+        self._fenced_transaction: AsyncSessionTransaction | None = None
+        self._fenced_execution: tuple[UUID, str, UUID] | None = None
 
     async def _assert_current_execution(self, job_id: UUID) -> None:
         execution = get_current_execution()
         if execution is None:
             return
+        if execution.job_id != job_id:
+            raise ExecutionOwnershipLostError(job_id)
+
+        current_transaction = self.db.get_transaction()
+        execution_identity = (job_id, execution.worker_id, execution.execution_token)
+        if current_transaction is self._fenced_transaction and execution_identity == self._fenced_execution:
+            return
+
         await JobRepository(self.db).acquire_execution_fence(
             job_id,
             worker_id=execution.worker_id,
             execution_token=execution.execution_token,
         )
+        self._fenced_transaction = self.db.get_transaction()
+        self._fenced_execution = execution_identity
 
     @staticmethod
     def _build_origin_key(

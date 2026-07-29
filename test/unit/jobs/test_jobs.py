@@ -7,8 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.core.errors import JobClaimLostError
 from src.database.repositories.job_repository import ClaimedJob
+from src.jobs.errors import JobClaimLostError
 from src.jobs.lifecycle import increment_processed_documents
 from src.jobs.payload import build_execution_payload
 from src.jobs.runner import _resolve_dynamic_input, _run_claimed_job, schedule_coroutine_job

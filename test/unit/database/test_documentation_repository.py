@@ -2,13 +2,15 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.dialects import postgresql
 
-from src.database.repositories.documentation_repository import DocumentationRepository
+from src.core.errors import ExecutionOwnershipLostError
+from src.core.job_execution import JobExecutionContext
+from src.database.repositories.documentation_repository import DocumentationRepository, DocumentationWriteBatch
 
 
 def _build_repo() -> tuple[DocumentationRepository, MagicMock]:
@@ -120,3 +122,59 @@ async def test_idempotent_chunk_upsert_preserves_other_job_links() -> None:
     assert "CASE WHEN" in sql
     assert "scrape_job_ids" in sql
     assert "||" in sql
+
+
+@pytest.mark.asyncio
+async def test_execution_fence_is_acquired_once_per_transaction() -> None:
+    repo, db = _build_repo()
+    transaction = object()
+    db.get_transaction = MagicMock(side_effect=[None, transaction, transaction])
+    execution = JobExecutionContext(job_id=uuid4(), worker_id="worker-a", execution_token=uuid4())
+
+    with (
+        patch(
+            "src.database.repositories.documentation_repository.get_current_execution",
+            return_value=execution,
+        ),
+        patch(
+            "src.database.repositories.documentation_repository.JobRepository.acquire_execution_fence",
+            new_callable=AsyncMock,
+        ) as acquire_fence,
+    ):
+        await repo._assert_current_execution(execution.job_id)
+        await repo._assert_current_execution(execution.job_id)
+
+    acquire_fence.assert_awaited_once_with(
+        execution.job_id,
+        worker_id=execution.worker_id,
+        execution_token=execution.execution_token,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execution_fence_rejects_a_different_ambient_job() -> None:
+    repo, _ = _build_repo()
+    execution = JobExecutionContext(job_id=uuid4(), worker_id="worker-a", execution_token=uuid4())
+
+    with patch(
+        "src.database.repositories.documentation_repository.get_current_execution",
+        return_value=execution,
+    ):
+        with pytest.raises(ExecutionOwnershipLostError):
+            await repo._assert_current_execution(uuid4())
+
+
+@pytest.mark.asyncio
+async def test_documentation_write_batch_commits_at_limit_and_flushes_remainder() -> None:
+    db = MagicMock()
+    db.commit = AsyncMock()
+    batch = DocumentationWriteBatch(db, batch_size=2)
+
+    await batch.record_write()
+    db.commit.assert_not_awaited()
+    await batch.record_write()
+    db.commit.assert_awaited_once()
+
+    await batch.record_write()
+    await batch.commit_pending()
+    assert db.commit.await_count == 2

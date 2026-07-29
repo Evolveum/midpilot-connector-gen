@@ -15,7 +15,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from src.core.errors import JobClaimLostError
+from src.jobs.errors import JobClaimLostError
 from src.modules.digester.entities.object_classes import ObjectClassResultField, update_object_class_field_in_session
 
 logger = logging.getLogger(__name__)

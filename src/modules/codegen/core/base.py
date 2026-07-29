@@ -14,7 +14,6 @@ from langchain_core.runnables.config import RunnableConfig
 
 from src.config import config
 from src.core.db import async_session_maker
-from src.core.errors import JobClaimLostError
 from src.core.llm import (
     get_default_llm,
     make_basic_chain,
@@ -29,6 +28,7 @@ from src.jobs import (
     increment_processed_documents,
     update_job_progress,
 )
+from src.jobs.errors import JobClaimLostError
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
     get_groovy_cleanup_user_prompt,

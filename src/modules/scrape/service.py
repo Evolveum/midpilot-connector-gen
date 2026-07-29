@@ -13,7 +13,7 @@ from crawl4ai.utils import get_base_domain  # type: ignore
 from src.config import config
 from src.core.db import async_session_maker
 from src.core.llm import raise_if_llm_unavailable
-from src.database.repositories.documentation_repository import DocumentationRepository
+from src.database.repositories.documentation_repository import DocumentationRepository, DocumentationWriteBatch
 from src.database.repositories.job_repository import JobRepository
 from src.documents import SavedDocumentation
 from src.documents.processing.processor import process_all_documentations
@@ -73,7 +73,7 @@ async def _run_scrape_async(
                     }
                     new_docs = [item for item in doc_items if normalize_url(item.get("url")) not in existing_docs_urls]
                     inserted_chunks_count = 0
-                    pending_writes = 0
+                    write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
                     for chunk in new_docs:
                         chunk_id = await doc_repo.create_documentation_item(
                             session_id=session_id,
@@ -87,10 +87,7 @@ async def _run_scrape_async(
                         )
                         if chunk_id:
                             inserted_chunks_count += 1
-                        pending_writes += 1
-                        if pending_writes >= config.jobs.documentation_write_batch_size:
-                            await db.commit()
-                            pending_writes = 0
+                        await write_batch.record_write()
                     for chunk in existing_docs_loaded:
                         raw_chunk_id = chunk.get("chunkId")
                         if not raw_chunk_id:
@@ -112,10 +109,8 @@ async def _run_scrape_async(
                                     chunk_id,
                                     job_id,
                                 )
-                            pending_writes += 1
-                            if pending_writes >= config.jobs.documentation_write_batch_size:
-                                await db.commit()
-                                pending_writes = 0
+                            else:
+                                await write_batch.record_write()
                         else:
                             logger.warning(
                                 "[Scrape] Job %s: Existing documentation item in session is missing ID, cannot link to job %s",
@@ -123,7 +118,7 @@ async def _run_scrape_async(
                                 job_id,
                             )
 
-                    await db.commit()
+                    await write_batch.commit_pending()
                     logger.info(
                         "[Scrape] Job %s: Saved %s chunks to session",
                         job_id,
@@ -376,7 +371,7 @@ async def _run_scrape_async(
     if session_id:
         async with async_session_maker() as db:
             doc_repo = DocumentationRepository(db)
-            pending_writes = 0
+            write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
 
             for chunk in existing_documentation_chunks:
                 raw_chunk_id = chunk.get("chunkId")
@@ -391,10 +386,7 @@ async def _run_scrape_async(
                 chunk_id = UUID(str(raw_chunk_id))
                 update_res = await doc_repo.update_documentation_item(chunk_id=chunk_id, original_job_id=job_id)
                 if update_res:
-                    pending_writes += 1
-                    if pending_writes >= config.jobs.documentation_write_batch_size:
-                        await db.commit()
-                        pending_writes = 0
+                    await write_batch.record_write()
                 else:
                     logger.warning(
                         "[Scrape] Job %s: Failed to update existing documentation item with ID %s to link to job %s",
@@ -425,20 +417,16 @@ async def _run_scrape_async(
                     )
                     if chunk_id:
                         saved_chunks_count += 1
-                    pending_writes += 1
-                    if pending_writes >= config.jobs.documentation_write_batch_size:
-                        await db.commit()
-                        pending_writes = 0
-                await db.commit()
-                pending_writes = 0
+                    await write_batch.record_write()
+                await write_batch.commit_pending()
 
                 logger.info(
                     "[Scrape] Job %s: Saved %s chunks to session",
                     job_id,
                     saved_chunks_count,
                 )
-            elif pending_writes > 0:
-                await db.commit()
+            else:
+                await write_batch.commit_pending()
 
             doc_rows_for_export = await doc_repo.get_scraped_documentation_items_for_export_by_origin_job(
                 session_id,

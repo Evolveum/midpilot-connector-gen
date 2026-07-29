@@ -18,8 +18,7 @@ from uuid import UUID
 
 from src.config import config
 from src.core.db import async_session_maker
-from src.core.errors import JobClaimLostError
-from src.database.repositories.documentation_repository import DocumentationRepository
+from src.database.repositories.documentation_repository import DocumentationRepository, DocumentationWriteBatch
 from src.database.repositories.job_repository import JobRepository
 from src.documents.relevance import (
     build_chunk_ref_remap as _build_chunk_ref_remap,
@@ -28,6 +27,7 @@ from src.documents.relevance import (
     remap_reused_output_relevance as _remap_reused_output_relevance,
 )
 from src.jobs import lifecycle
+from src.jobs.errors import JobClaimLostError
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,8 @@ async def reuse_or_run(
                     total_processing=len(latest_job_doc_items),
                     processing_completed=0,
                 )
-                for index, item in enumerate(latest_job_doc_items, start=1):
+                write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
+                for item in latest_job_doc_items:
                     await doc_repo.create_documentation_item(
                         session_id=session_id,
                         source="upload",
@@ -146,9 +147,8 @@ async def reuse_or_run(
                             "character_count": item["metadata"].get("character_count"),
                         },
                     )
-                    if index % config.jobs.documentation_write_batch_size == 0:
-                        await db.commit()
-                await db.commit()
+                    await write_batch.record_write()
+                await write_batch.commit_pending()
                 await lifecycle.update_job_progress(
                     job_id,
                     processing_completed=len(latest_job_doc_items),
@@ -190,9 +190,7 @@ async def reuse_or_run(
             )
             raise _CacheReuseUnavailable
 
-    except JobClaimLostError:
-        raise
-    except Exception as exc:
+    except _CacheReuseUnavailable as exc:
         logger.warning(
             "[%s] Job %s: Previous job %s cannot be reused (%s), running fresh worker",
             job_type,
@@ -201,3 +199,13 @@ async def reuse_or_run(
             str(exc),
         )
         return await run_normal_worker()
+    except JobClaimLostError:
+        raise
+    except Exception:
+        logger.exception(
+            "[%s] Job %s: Unexpected failure while reusing output from job %s",
+            job_type,
+            str(job_id),
+            str(latest_job.job_id),
+        )
+        raise

@@ -28,6 +28,7 @@ from src.jobs.payload import (
     build_execution_payload,
     deserialize_call,
     resolve_callable,
+    validate_call_arguments,
     validate_execution_payload,
 )
 from src.shared.enums import JobStage
@@ -159,6 +160,7 @@ async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
 
     if "job_id" in inspect.signature(worker).parameters:
         kwargs.setdefault("job_id", claimed_job.job_id)
+    validate_call_arguments(worker, args, kwargs)
 
     async def run_normal_worker() -> Dict[str, Any]:
         result = await worker(*args, **kwargs)

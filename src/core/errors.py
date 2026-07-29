@@ -47,8 +47,8 @@ class LLMUnavailableError(AppError):
         )
 
 
-class JobClaimLostError(RuntimeError):
-    """Signal that a durable-job execution no longer owns the current claim."""
+class ExecutionOwnershipLostError(RuntimeError):
+    """Signal that an execution no longer owns the fenced database operation."""
 
     def __init__(self, job_id: object):
         super().__init__(f"Execution claim for job {job_id} is no longer current")

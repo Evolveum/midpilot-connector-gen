@@ -20,3 +20,10 @@ def create_pool(max_workers: int) -> ProcessPoolExecutor:
 
 
 process_pool: ProcessPoolExecutor | None = None
+
+
+def require_process_pool() -> ProcessPoolExecutor:
+    """Return the configured CPU pool or fail instead of using asyncio's thread pool."""
+    if process_pool is None:
+        raise RuntimeError("CPU process pool is not initialized in this worker process")
+    return process_pool

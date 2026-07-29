@@ -9,6 +9,7 @@ import pytest
 
 from src.documents.processing.processor import build_chunk_metadata
 from src.documents.processing.schema import LlmChunkOutput
+from src.jobs.payload import BinaryArtifactReference
 from src.session.documentation_upload import (
     PreparedDocumentationUpload,
     RawUploadedDocumentation,
@@ -138,7 +139,12 @@ async def test_queue_documentation_upload_job_schedules_raw_upload_without_stori
     assert "chunks" not in input_payload
     assert input_payload["content_hash"] == "content-hash"
     assert input_payload["size_bytes"] == len(raw_upload.data)
-    assert worker_kwargs["raw_upload"] is raw_upload
+    assert worker_kwargs["raw_upload"] == {
+        "data": BinaryArtifactReference(name="raw-upload"),
+        "filename": raw_upload.filename,
+        "content_type": raw_upload.content_type,
+        "content_hash": raw_upload.content_hash,
+    }
     assert "chunks" not in worker_kwargs
     assert repo.updated_session_payloads == [
         (session_id, {f"documentation.processUpload_{doc_id}_job_id": str(job_id)})

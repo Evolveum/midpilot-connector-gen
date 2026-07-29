@@ -20,7 +20,7 @@ from pypdf import PdfReader
 from src.config import config
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.chunking import count_tokens, split_single_item_schema, split_text_with_token_overlap
-from src.jobs import schedule_coroutine_job
+from src.jobs import binary_artifact_reference, schedule_coroutine_job
 from src.session.schema import (
     PreparedDocumentationUpload,
     RawUploadedDocumentation,
@@ -449,7 +449,12 @@ async def queue_documentation_upload_job(
         worker=process_documentation_worker,
         worker_kwargs={
             "session_id": session_id,
-            "raw_upload": raw_upload,
+            "raw_upload": {
+                "data": binary_artifact_reference("raw-upload"),
+                "filename": raw_upload.filename,
+                "content_type": raw_upload.content_type,
+                "content_hash": raw_upload.content_hash,
+            },
             "doc_id": doc_id,
             "app": context.app,
             "app_version": context.app_version,

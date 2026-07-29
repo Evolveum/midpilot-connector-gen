@@ -12,13 +12,14 @@ from src.jobs.lifecycle import (
     set_finished,
     update_job_progress,
 )
-from src.jobs.payload import job_input_reference
+from src.jobs.payload import binary_artifact_reference, job_input_reference
 from src.jobs.runner import schedule_coroutine_job
 from src.jobs.session_persistence import persist_job_pointer
 from src.jobs.worker import JobWorker
 
 __all__ = [
     "append_job_error",
+    "binary_artifact_reference",
     "get_job_status",
     "increment_processed_documents",
     "JobWorker",

@@ -9,6 +9,7 @@ import copy
 import dataclasses
 import importlib
 import inspect
+from collections.abc import Collection
 from datetime import date, datetime
 from enum import Enum
 from typing import Any, Callable, Mapping, Sequence, get_type_hints
@@ -34,9 +35,23 @@ class JobInputReference:
     path: tuple[str | int, ...]
 
 
+@dataclasses.dataclass(frozen=True)
+class BinaryArtifactReference:
+    """Reference a named binary value stored outside the JSONB payload."""
+
+    name: str
+
+
 def job_input_reference(*path: str | int) -> JobInputReference:
     """Build a typed reference to the job input root or one of its descendants."""
     return JobInputReference(path=tuple(path))
+
+
+def binary_artifact_reference(name: str) -> BinaryArtifactReference:
+    """Build an explicit reference to a named durable-job artifact."""
+    if not name:
+        raise InvalidJobPayloadError("Binary artifact reference name must not be empty")
+    return BinaryArtifactReference(name=name)
 
 
 def callable_reference(callable_: Callable[..., Any]) -> str:
@@ -65,7 +80,7 @@ def resolve_callable(reference: str) -> Callable[..., Any]:
 def serialize_value(
     value: Any,
     *,
-    artifact_ids: Mapping[int, str] | None = None,
+    artifact_names: Collection[str] = (),
 ) -> Any:
     """Convert an execution argument to a JSONB-safe value."""
     if isinstance(value, JobInputReference):
@@ -73,15 +88,16 @@ def serialize_value(
             _TYPE_TAG: _JOB_INPUT_TYPE,
             "path": list(value.path),
         }
+    if isinstance(value, BinaryArtifactReference):
+        if value.name not in artifact_names:
+            raise InvalidJobPayloadError(f"Missing binary job artifact {value.name!r}")
+        return {
+            _TYPE_TAG: _ARTIFACT_TYPE,
+            "name": value.name,
+        }
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, bytes):
-        artifact_name = artifact_ids.get(id(value)) if artifact_ids is not None else None
-        if artifact_name is not None:
-            return {
-                _TYPE_TAG: _ARTIFACT_TYPE,
-                "name": artifact_name,
-            }
         return {
             _TYPE_TAG: _BYTES_TYPE,
             "data": base64.b64encode(value).decode("ascii"),
@@ -91,18 +107,18 @@ def serialize_value(
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, Enum):
-        return serialize_value(value.value, artifact_ids=artifact_ids)
+        return serialize_value(value.value, artifact_names=artifact_names)
     if isinstance(value, BaseModel):
-        return serialize_value(value.model_dump(by_alias=True, mode="python"), artifact_ids=artifact_ids)
+        return serialize_value(value.model_dump(by_alias=True, mode="python"), artifact_names=artifact_names)
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {
-            field.name: serialize_value(getattr(value, field.name), artifact_ids=artifact_ids)
+            field.name: serialize_value(getattr(value, field.name), artifact_names=artifact_names)
             for field in dataclasses.fields(value)
         }
     if isinstance(value, Mapping):
-        return {str(key): serialize_value(item, artifact_ids=artifact_ids) for key, item in value.items()}
+        return {str(key): serialize_value(item, artifact_names=artifact_names) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [serialize_value(item, artifact_ids=artifact_ids) for item in value]
+        return [serialize_value(item, artifact_names=artifact_names) for item in value]
     raise InvalidJobPayloadError(f"Unsupported background-job argument type: {type(value).__qualname__}")
 
 
@@ -165,12 +181,12 @@ def build_execution_payload(
     binary_artifacts: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
     """Build the versioned JSONB execution contract stored with a job."""
-    artifact_ids = {id(data): name for name, data in (binary_artifacts or {}).items()}
+    artifact_names = frozenset((binary_artifacts or {}).keys())
     return {
         "version": _PAYLOAD_VERSION,
         "worker": callable_reference(worker),
-        "args": serialize_value(worker_args, artifact_ids=artifact_ids),
-        "kwargs": serialize_value(worker_kwargs, artifact_ids=artifact_ids),
+        "args": serialize_value(worker_args, artifact_names=artifact_names),
+        "kwargs": serialize_value(worker_kwargs, artifact_names=artifact_names),
         "dynamicInputProvider": (
             callable_reference(dynamic_input_provider) if dynamic_input_provider is not None else None
         ),
@@ -230,3 +246,17 @@ def deserialize_call(
             ) from exc
 
     return tuple(bound.args), dict(bound.kwargs)
+
+
+def validate_call_arguments(
+    callable_: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+) -> None:
+    """Validate the complete call after runtime arguments have been added."""
+    try:
+        inspect.signature(callable_).bind(*args, **kwargs)
+    except TypeError as exc:
+        raise InvalidJobPayloadError(
+            f"Persisted arguments do not provide a complete call to {callable_reference(callable_)}"
+        ) from exc

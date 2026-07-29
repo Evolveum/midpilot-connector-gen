@@ -89,3 +89,15 @@ async def test_progress_update_propagates_database_errors_to_transaction_owner()
 
     with pytest.raises(RuntimeError, match="serialization failure"):
         await JobRepository(db).update_job_progress(uuid4(), stage="queue")
+
+
+@pytest.mark.asyncio
+async def test_update_job_input_distinguishes_a_missing_job_from_a_lost_claim() -> None:
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result)
+    job_id = uuid4()
+
+    with pytest.raises(FileNotFoundError, match=str(job_id)):
+        await JobRepository(db).update_job_input(job_id, {"value": "updated"})

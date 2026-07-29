@@ -14,9 +14,9 @@ from typing import Any, Dict, Optional, Union
 from uuid import UUID
 
 from src.core.db import async_session_maker
-from src.core.errors import JobClaimLostError
 from src.core.job_execution import get_current_execution
 from src.database.repositories.job_repository import JobRepository
+from src.jobs.errors import JobClaimLostError
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)

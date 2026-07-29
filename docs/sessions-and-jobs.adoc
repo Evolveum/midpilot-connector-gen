@@ -116,7 +116,11 @@ ambiguous network/process failure.
 
 Documentation dependencies are part of the PostgreSQL claim predicate. A
 digester job stays queued without occupying a concurrency slot while scrape or
-upload processing is active in the same session. Uploaded source bytes are
+upload processing is active in the same session. The dependency timeout is an
+enqueue-time budget measured from durable job creation, rather than from the
+later worker claim. If it expires while a producer is still unfinished, the
+worker logs a warning and records the degraded continuation in the job's
+non-fatal errors before claiming it. Uploaded source bytes are
 stored in the shared `job_artifacts` table (`BYTEA`) and the small versioned
 execution payload contains only a named reference. Artifacts and the execution
 payload are cleared on finish/failure. Deployments with very large upload

@@ -4,7 +4,9 @@
 
 from uuid import UUID
 
-from src.core.errors import AppError, JobClaimLostError
+from src.core.errors import AppError, ExecutionOwnershipLostError
+
+JobClaimLostError = ExecutionOwnershipLostError
 
 
 class JobNotFoundError(AppError):
