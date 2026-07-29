@@ -17,6 +17,11 @@ down_revision: Union[str, Sequence[str], None] = "006"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+_SCRAPE_JOB_IDS_COMMENT = (
+    "List of scrape job IDs that created or needed this documentation item, "
+    "WARNING: ids are stored as strings in JSONB for easier querying"
+)
+
 
 def upgrade() -> None:
     op.add_column("jobs", sa.Column("execution_payload", postgresql.JSONB(astext_type=sa.Text()), nullable=True))
@@ -110,17 +115,47 @@ def upgrade() -> None:
         ["job_id"],
         ondelete="SET NULL",
     )
-    op.create_index("idx_doc_items_origin_job_id", "documentation_items", ["origin_job_id"], unique=False)
+    op.create_index(
+        "ix_documentation_items_origin_job_id",
+        "documentation_items",
+        ["origin_job_id"],
+        unique=False,
+    )
     op.create_unique_constraint(
         "uq_doc_items_job_origin",
         "documentation_items",
         ["session_id", "origin_job_id", "origin_key"],
     )
 
+    op.execute(
+        """
+        UPDATE documentation_items
+        SET scrape_job_ids = '[]'::jsonb
+        WHERE scrape_job_ids IS NULL
+        """
+    )
+    op.alter_column(
+        "documentation_items",
+        "scrape_job_ids",
+        existing_type=postgresql.JSONB(astext_type=sa.Text()),
+        nullable=False,
+        comment=_SCRAPE_JOB_IDS_COMMENT,
+        existing_server_default=sa.text("'[]'::jsonb"),
+    )
+
 
 def downgrade() -> None:
+    op.alter_column(
+        "documentation_items",
+        "scrape_job_ids",
+        existing_type=postgresql.JSONB(astext_type=sa.Text()),
+        nullable=True,
+        comment=None,
+        existing_comment=_SCRAPE_JOB_IDS_COMMENT,
+        existing_server_default=sa.text("'[]'::jsonb"),
+    )
     op.drop_constraint("uq_doc_items_job_origin", "documentation_items", type_="unique")
-    op.drop_index("idx_doc_items_origin_job_id", table_name="documentation_items")
+    op.drop_index("ix_documentation_items_origin_job_id", table_name="documentation_items")
     op.drop_constraint("fk_documentation_items_origin_job_id", "documentation_items", type_="foreignkey")
     op.drop_column("documentation_items", "origin_key")
     op.drop_column("documentation_items", "origin_job_id")
@@ -129,10 +164,10 @@ def downgrade() -> None:
     op.drop_index("idx_jobs_claimable", table_name="jobs")
     op.drop_constraint("check_job_max_attempts", "jobs", type_="check")
     op.drop_constraint("check_job_attempt_count", "jobs", type_="check")
-    op.drop_column("jobs", "max_attempts")
-    op.drop_column("jobs", "attempt_count")
     op.drop_column("jobs", "documentation_wait_until")
     op.drop_column("jobs", "waits_for_documentation")
+    op.drop_column("jobs", "max_attempts")
+    op.drop_column("jobs", "attempt_count")
     op.drop_column("jobs", "available_at")
     op.drop_column("jobs", "heartbeat_at")
     op.drop_column("jobs", "claim_expires_at")
