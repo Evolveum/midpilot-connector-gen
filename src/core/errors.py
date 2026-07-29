@@ -45,3 +45,11 @@ class LLMUnavailableError(AppError):
             "This is usually a temporary connectivity problem with the server "
             "Please verify the connection and try again."
         )
+
+
+class JobClaimLostError(RuntimeError):
+    """Signal that a durable-job execution no longer owns the current claim."""
+
+    def __init__(self, job_id: object):
+        super().__init__(f"Execution claim for job {job_id} is no longer current")
+        self.job_id = job_id

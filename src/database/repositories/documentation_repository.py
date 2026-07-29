@@ -2,15 +2,20 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.job_execution import get_current_execution
 from src.database.models import DocumentationItem
+from src.database.repositories.job_repository import JobRepository
 from src.shared.content_types import CONNDEV_CONTENT_TYPES
 
 logger = logging.getLogger(__name__)
@@ -27,6 +32,32 @@ class DocumentationRepository:
         """
         self.db = db
 
+    async def _assert_current_execution(self, job_id: UUID) -> None:
+        execution = get_current_execution()
+        if execution is None:
+            return
+        await JobRepository(self.db).acquire_execution_fence(
+            job_id,
+            worker_id=execution.worker_id,
+            execution_token=execution.execution_token,
+        )
+
+    @staticmethod
+    def _build_origin_key(
+        *,
+        source: str,
+        content: str,
+        url: Optional[str],
+        metadata: Dict[str, Any],
+    ) -> str:
+        identity = {
+            "source": source,
+            "url": url,
+            "chunk_number": metadata.get("chunk_number"),
+            "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+        return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
     @staticmethod
     def _to_item_dict(item: DocumentationItem) -> Dict[str, Any]:
         """Map a documentation row to the dict shape shared by the read queries."""
@@ -38,6 +69,15 @@ class DocumentationRepository:
             "summary": item.summary,
             "content": item.content,
             "metadata": item.doc_metadata,
+        }
+
+    @classmethod
+    def _to_export_item_dict(cls, item: DocumentationItem) -> Dict[str, Any]:
+        """Map a documentation row to the complete export/API response shape."""
+        return {
+            **cls._to_item_dict(item),
+            "createdAt": item.created_at.isoformat(),
+            "scrapeJobIds": list(item.scrape_job_ids or []),
         }
 
     async def create_documentation_item(
@@ -65,10 +105,58 @@ class DocumentationRepository:
         :param metadata: Optional metadata dict
         :return: Documentation item ID
         """
+        if original_job_id is not None:
+            await self._assert_current_execution(original_job_id)
+            doc_metadata = metadata or {}
+            origin_key = self._build_origin_key(
+                source=source,
+                content=content,
+                url=url,
+                metadata=doc_metadata,
+            )
+            statement = (
+                insert(DocumentationItem)
+                .values(
+                    session_id=session_id,
+                    doc_id=doc_id,
+                    scrape_job_ids=[str(original_job_id)],
+                    origin_job_id=original_job_id,
+                    origin_key=origin_key,
+                    source=source,
+                    url=url,
+                    summary=summary,
+                    content=content,
+                    doc_metadata=doc_metadata,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_doc_items_job_origin",
+                    set_={
+                        "doc_id": doc_id,
+                        "scrape_job_ids": case(
+                            (
+                                DocumentationItem.scrape_job_ids.contains([str(original_job_id)]),
+                                DocumentationItem.scrape_job_ids,
+                            ),
+                            else_=DocumentationItem.scrape_job_ids.concat([str(original_job_id)]),
+                        ),
+                        "source": source,
+                        "url": url,
+                        "summary": summary,
+                        "content": content,
+                        "metadata": doc_metadata,
+                    },
+                )
+                .returning(DocumentationItem.chunk_id)
+            )
+            chunk_id = (await self.db.execute(statement)).scalar_one()
+            await self.db.flush()
+            logger.info("Upserted chunk_id %s for session %s and job %s", chunk_id, session_id, original_job_id)
+            return chunk_id
+
         doc_item = DocumentationItem(
             session_id=session_id,
             doc_id=doc_id,
-            scrape_job_ids=[str(original_job_id)] if original_job_id else [],
+            scrape_job_ids=[],
             source=source,
             url=url,
             summary=summary,
@@ -149,14 +237,7 @@ class DocumentationRepository:
         )
 
         items = (await self.db.execute(query)).scalars().all()
-        return [
-            {
-                **self._to_item_dict(item),
-                "createdAt": item.created_at.isoformat(),
-                "scrapeJobIds": list(item.scrape_job_ids or []),
-            }
-            for item in items
-        ]
+        return [self._to_export_item_dict(item) for item in items]
 
     async def get_documentation_items_for_export(self, session_id: UUID) -> List[Dict[str, Any]]:
         """
@@ -176,14 +257,30 @@ class DocumentationRepository:
         result = await self.db.execute(query)
         items = result.scalars().all()
 
-        return [
-            {
-                **self._to_item_dict(item),
-                "createdAt": item.created_at.isoformat(),
-                "scrapeJobIds": list(item.scrape_job_ids or []),
-            }
-            for item in items
-        ]
+        return [self._to_export_item_dict(item) for item in items]
+
+    async def get_scraped_documentation_items_for_export_by_origin_job(
+        self,
+        session_id: UUID,
+        job_id: UUID,
+    ) -> List[Dict[str, Any]]:
+        """Get scraper chunks created by one job, including rows committed by an earlier execution attempt."""
+        query = (
+            select(DocumentationItem)
+            .where(
+                DocumentationItem.session_id == session_id,
+                DocumentationItem.origin_job_id == job_id,
+                DocumentationItem.source == "scraper",
+            )
+            .order_by(
+                DocumentationItem.doc_id,
+                DocumentationItem.created_at,
+                DocumentationItem.chunk_id,
+            )
+        )
+
+        items = (await self.db.execute(query)).scalars().all()
+        return [self._to_export_item_dict(item) for item in items]
 
     @staticmethod
     def _parse_iso_datetime(value: str) -> datetime:
@@ -276,7 +373,9 @@ class DocumentationRepository:
         :param metadata: Optional new metadata dict
         :return: True if update was successful, False if item not found
         """
-        query = select(DocumentationItem).where(DocumentationItem.chunk_id == chunk_id)
+        if original_job_id is not None:
+            await self._assert_current_execution(original_job_id)
+        query = select(DocumentationItem).where(DocumentationItem.chunk_id == chunk_id).with_for_update()
         result = await self.db.execute(query)
         item = result.scalar_one_or_none()
 

@@ -15,7 +15,8 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from src.modules.digester.entities.object_classes import update_object_class_field_in_session
+from src.core.errors import JobClaimLostError
+from src.modules.digester.entities.object_classes import ObjectClassResultField, update_object_class_field_in_session
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 async def persist_object_class_field(
     session_id: UUID,
     object_class: str,
-    field_name: str,
+    field_name: ObjectClassResultField,
     field_value: Any,
     logger_scope: str,
 ) -> None:
@@ -43,5 +44,7 @@ async def persist_object_class_field(
         )
         if not updated:
             logger.warning("[%s] Failed to update objectClassesOutput for %s", logger_scope, object_class)
+    except JobClaimLostError:
+        raise
     except Exception:
         logger.exception("[%s] Failed to persist %s for %s", logger_scope, field_name, object_class)

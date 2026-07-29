@@ -58,3 +58,34 @@ async def test_session_job_query_constrains_both_job_and_session_ids() -> None:
     assert "jobs.session_id = %(session_id_1)s::UUID" in sql
     assert job_id in compiled.params.values()
     assert session_id in compiled.params.values()
+
+
+@pytest.mark.asyncio
+async def test_claim_query_keeps_documentation_dependent_jobs_out_of_worker_slots() -> None:
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result)
+
+    claimed = await JobRepository(db).claim_next_job(
+        worker_id="worker-a",
+        claim_timeout_seconds=60,
+    )
+
+    assert claimed is None
+    compiled = _compile_postgres(db.execute.await_args_list[0].args[0])
+    sql = " ".join(str(compiled).split())
+    assert "jobs.waits_for_documentation IS false" in sql
+    assert "jobs.documentation_wait_until <=" in sql
+    assert "NOT (EXISTS (SELECT jobs_1.job_id" in sql
+    list_params = [value for value in compiled.params.values() if isinstance(value, list)]
+    assert ["scrape.getRelevantDocumentation", "documentation.processUpload"] in list_params
+
+
+@pytest.mark.asyncio
+async def test_progress_update_propagates_database_errors_to_transaction_owner() -> None:
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=RuntimeError("serialization failure"))
+
+    with pytest.raises(RuntimeError, match="serialization failure"):
+        await JobRepository(db).update_job_progress(uuid4(), stage="queue")

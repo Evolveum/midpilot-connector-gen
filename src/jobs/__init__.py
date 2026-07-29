@@ -4,31 +4,28 @@
 
 """Public background job API."""
 
-from src.jobs.futures import _job_futures as _job_futures
 from src.jobs.lifecycle import (
     append_job_error,
-    create_job,
     get_job_status,
     increment_processed_documents,
-    recover_stale_running_jobs,
     set_failed,
     set_finished,
-    set_running,
     update_job_progress,
 )
+from src.jobs.payload import job_input_reference
 from src.jobs.runner import schedule_coroutine_job
 from src.jobs.session_persistence import persist_job_pointer
+from src.jobs.worker import JobWorker
 
 __all__ = [
     "append_job_error",
-    "create_job",
     "get_job_status",
     "increment_processed_documents",
+    "JobWorker",
+    "job_input_reference",
     "persist_job_pointer",
-    "recover_stale_running_jobs",
     "schedule_coroutine_job",
     "set_failed",
     "set_finished",
-    "set_running",
     "update_job_progress",
 ]

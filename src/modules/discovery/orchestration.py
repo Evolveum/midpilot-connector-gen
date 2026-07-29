@@ -13,7 +13,7 @@ persistence.
 from uuid import UUID
 
 from src.database.repositories.session_repository import SessionRepository
-from src.jobs import schedule_coroutine_job
+from src.jobs import job_input_reference, schedule_coroutine_job
 from src.modules.discovery import service
 from src.modules.discovery.schema import CandidateLinksInput
 
@@ -27,10 +27,11 @@ async def schedule_candidate_link_discovery(
     input_payload = request.model_dump(by_alias=True)
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="discovery.getCandidateLinks",
         input_payload=input_payload,
         worker=service.discover_candidate_links,
-        worker_args=(request, session_id),
+        worker_args=(job_input_reference(), session_id),
         initial_stage="queue",
         initial_message="Queued candidate links discovery",
         session_id=session_id,

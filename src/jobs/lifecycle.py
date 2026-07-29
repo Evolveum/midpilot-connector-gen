@@ -4,19 +4,19 @@
 
 """Job lifecycle operations: thin async wrappers over :class:`JobRepository`.
 
-These functions own job state transitions (create/running/finished/failed),
-progress updates and status reads. They wrap the persistence layer and keep the
-in-process completion futures (see :mod:`src.jobs.futures`) in sync.
+These functions own terminal state transitions, progress updates, and status
+reads. Worker-originated writes are automatically
+fenced by the execution identity stored in the current context.
 """
 
-import asyncio
 import logging
 from typing import Any, Dict, Optional, Union
 from uuid import UUID
 
 from src.core.db import async_session_maker
+from src.core.errors import JobClaimLostError
+from src.core.job_execution import get_current_execution
 from src.database.repositories.job_repository import JobRepository
-from src.jobs import futures
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
@@ -34,49 +34,41 @@ async def update_job_progress(
     try:
         async with async_session_maker() as db:
             repo = JobRepository(db)
+            execution = get_current_execution()
             await repo.update_job_progress(
                 job_id,
                 stage=stage,
                 message=message,
                 total_processing=total_processing,
                 processing_completed=processing_completed,
+                worker_id=execution.worker_id if execution else None,
+                execution_token=execution.execution_token if execution else None,
             )
             await db.commit()
     except Exception as e:
-        logger.debug("Job progress update failed", exc_info=e)
+        if isinstance(e, JobClaimLostError):
+            raise
+        logger.warning("Job progress update failed for %s", job_id, exc_info=e)
 
 
 async def increment_processed_documents(job_id: UUID, delta: int = 1) -> None:
-    async with async_session_maker() as db:
-        repo = JobRepository(db)
-        await repo.increment_processed_documents(job_id, delta)
-        await db.commit()
-
-
-async def create_job(input_payload: Dict[str, Any], job_type: str, session_id: UUID) -> UUID:
-    """Create a queued job and return job_id."""
     try:
         async with async_session_maker() as db:
             repo = JobRepository(db)
-            job_id = await repo.create_job(input_payload, job_type, session_id)
+            execution = get_current_execution()
+            await repo.increment_processed_documents(
+                job_id,
+                delta,
+                worker_id=execution.worker_id if execution else None,
+                execution_token=execution.execution_token if execution else None,
+            )
             await db.commit()
-            return job_id
-    except Exception as e:
-        logger.error("Create job failed.", exc_info=e)
+    except JobClaimLostError:
         raise
-
-
-async def set_running(job_id: UUID) -> Dict[str, Any]:
-    """Transition a queued job to running state and return the updated job record."""
-    try:
-        async with async_session_maker() as db:
-            repo = JobRepository(db)
-            data = await repo.set_running(job_id)
-            await db.commit()
-            return data
-    except Exception as e:
-        logger.debug("Set job running failed.", exc_info=e)
-        return {}
+    except Exception:
+        # Progress accounting must not turn an otherwise valid LLM result into
+        # a failed job during a transient observability/database incident.
+        logger.warning("Failed to increment progress for job %s", job_id, exc_info=True)
 
 
 async def set_finished(job_id: UUID, result: Dict[str, Any]) -> Dict[str, Any]:
@@ -84,10 +76,18 @@ async def set_finished(job_id: UUID, result: Dict[str, Any]) -> Dict[str, Any]:
     try:
         async with async_session_maker() as db:
             repo = JobRepository(db)
-            data = await repo.set_finished(job_id, result)
+            execution = get_current_execution()
+            if execution is None:
+                raise RuntimeError("Finishing a job requires an active execution context")
+            data = await repo.finish_claimed_job(
+                job_id,
+                result,
+                worker_id=execution.worker_id,
+                execution_token=execution.execution_token,
+            )
+            if data is None:
+                raise JobClaimLostError(job_id)
             await db.commit()
-
-        futures.resolve_future(job_id)
 
         return data
     except Exception as e:
@@ -100,10 +100,18 @@ async def set_failed(job_id: UUID, error: str) -> Dict[str, Any]:
     try:
         async with async_session_maker() as db:
             repo = JobRepository(db)
-            data = await repo.set_failed(job_id, error)
+            execution = get_current_execution()
+            if execution is None:
+                raise RuntimeError("Failing a job requires an active execution context")
+            data = await repo.fail_claimed_job(
+                job_id,
+                error,
+                worker_id=execution.worker_id,
+                execution_token=execution.execution_token,
+            )
+            if data is None:
+                raise JobClaimLostError(job_id)
             await db.commit()
-
-        futures.resolve_future(job_id)
 
         return data
     except Exception as e:
@@ -114,7 +122,13 @@ async def set_failed(job_id: UUID, error: str) -> Dict[str, Any]:
 async def _append_job_error_now(job_id: UUID, message: str) -> None:
     async with async_session_maker() as db:
         repo = JobRepository(db)
-        await repo.append_job_error(job_id, message)
+        execution = get_current_execution()
+        await repo.append_job_error(
+            job_id,
+            message,
+            worker_id=execution.worker_id if execution else None,
+            execution_token=execution.execution_token if execution else None,
+        )
         await db.commit()
 
 
@@ -131,46 +145,15 @@ async def get_job_status(job_id: UUID | None) -> Dict[str, Any]:
         return {"jobId": str(job_id), "status": "not_found"}
 
 
-def append_job_error(job_id: UUID, message: str) -> None:
+async def append_job_error(job_id: UUID, message: str) -> None:
     """
     Append a non-fatal error message to the job record without changing its status.
     Used to surface partial/chunk errors while allowing the job to finish successfully.
     """
 
-    async def _append() -> None:
-        try:
-            await _append_job_error_now(job_id, message)
-        except Exception as e:
-            logger.debug(f"Append job error failed for {job_id}", exc_info=e)
-
     try:
-        futures.spawn_background_task(_append())
-    except RuntimeError:
-        # No running loop - try to get or create one
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(_append())
-            else:
-                loop.run_until_complete(_append())
-        except Exception as ex:
-            logger.debug(f"Append job error failed - no event loop: {ex}")
-
-
-async def recover_stale_running_jobs(note: Optional[str] = None) -> int:
-    """
-    Move all jobs left in 'running' to 'failed'.
-    This is intended to be called on service startup to recover from crashes or hard stops (e.g., CTRL+C).
-
-    :param note: Optional message to include in the error list.
-    :return: number of recovered jobs.
-    """
-    try:
-        async with async_session_maker() as db:
-            repo = JobRepository(db)
-            count = await repo.recover_stale_running_jobs(note)
-            await db.commit()
-            return count
-    except Exception as e:
-        logger.error(f"Failed to recover stale running jobs: {e}")
-        return 0
+        await _append_job_error_now(job_id, message)
+    except JobClaimLostError:
+        raise
+    except Exception:
+        logger.error("Append job error failed for %s", job_id, exc_info=True)

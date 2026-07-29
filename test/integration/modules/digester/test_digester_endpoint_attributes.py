@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.jobs import job_input_reference
 from src.modules.digester.routes.attributes import (
     extract_class_attributes,
     get_class_attributes_status,
@@ -86,7 +87,9 @@ async def test_extract_class_attributes_success():
         mock_schedule.assert_awaited_once()
         schedule_kwargs = mock_schedule.call_args.kwargs
         assert schedule_kwargs["input_payload"]["objectClass"] == "user"
+        assert schedule_kwargs["worker_args"][0] == job_input_reference("documentationItems")
         assert schedule_kwargs["worker_args"][1] == "user"
+        assert schedule_kwargs["worker_args"][3] == job_input_reference("relevantDocumentations")
         assert schedule_kwargs["session_result_key"] == "userAttributesOutput"
         mock_repo.update_session.assert_awaited_once()
 
@@ -154,7 +157,7 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
     mock_schedule.assert_awaited_once()
     schedule_kwargs = mock_schedule.call_args.kwargs
     assert schedule_kwargs["worker_args"][1] == "userphonenumbers"
-    assert schedule_kwargs["worker_args"][3] == [{"doc_id": doc_id, "chunk_id": chunk_id}]
+    assert schedule_kwargs["worker_args"][3] == job_input_reference("relevantDocumentations")
     mock_relevance_repo.get_relevant_chunks_grouped_by_entity.assert_awaited_once_with(
         session_id=session_id,
         result_key="objectClassesOutput",

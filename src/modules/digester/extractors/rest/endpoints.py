@@ -253,7 +253,7 @@ async def extract_endpoints(
                 raise_if_llm_unavailable(exc, context="extracting endpoints")
                 error_message = f"[Digester:Endpoints] Failed to process chunk {chunk_id}: {exc}"
                 logger.exception(error_message)
-                append_job_error(job_id, error_message)
+                await append_job_error(job_id, error_message)
                 return []
 
         tasks = [_process_chunk(i, chunk_text) for i, chunk_text in enumerate(chunks_for_chunk_id)]

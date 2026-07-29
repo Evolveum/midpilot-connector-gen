@@ -443,6 +443,7 @@ async def queue_documentation_upload_job(
         input_payload["skipCache"] = skip_cache
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="documentation.processUpload",
         input_payload=input_payload,
         worker=process_documentation_worker,
@@ -456,6 +457,7 @@ async def queue_documentation_upload_job(
         initial_stage=JobStage.queue,
         initial_message="Queued uploaded documentation for processing",
         session_id=session_id,
+        binary_artifacts={"raw-upload": raw_upload.data},
     )
 
     job_key = f"documentation.processUpload_{doc_id}_job_id"

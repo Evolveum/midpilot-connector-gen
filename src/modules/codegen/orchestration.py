@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.relevance import hydrate_auth_sequences_from_relevance
-from src.jobs import persist_job_pointer, schedule_coroutine_job
+from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
 from src.modules.codegen import generation
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
@@ -117,10 +117,10 @@ async def schedule_operation_job(
         job_input["preferredEndpoints"] = preferred_endpoints
 
     worker_kwargs: dict[str, Any] = {
-        "attributes": attrs,
+        "attributes": job_input_reference("attributes"),
         "session_id": session_id,
         "object_class": object_class,
-        "preferred_endpoints": preferred_endpoints,
+        "preferred_endpoints": (job_input_reference("preferredEndpoints") if preferred_endpoints is not None else None),
         "protocol": protocol,
     }
     worker_kwargs.update(extra_worker_kwargs or {})
@@ -128,9 +128,10 @@ async def schedule_operation_job(
         worker_kwargs["repair_context"] = repair_context
     if eps is not None:
         job_input["endpoints"] = eps
-        worker_kwargs["endpoints"] = eps
+        worker_kwargs["endpoints"] = job_input_reference("endpoints")
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type=job_type,
         input_payload=job_input,
         worker=worker,
@@ -205,8 +206,10 @@ async def schedule_authorization_job(
         job_input["preferredAuthorizations"] = preferred_authorizations
 
     worker_kwargs: dict[str, Any] = {
-        "auth_payload": auth_output,
-        "preferred_authorizations": preferred_authorizations,
+        "auth_payload": job_input_reference("auth"),
+        "preferred_authorizations": (
+            job_input_reference("preferredAuthorizations") if preferred_authorizations is not None else None
+        ),
         "session_id": session_id,
         "protocol": protocol,
     }
@@ -214,6 +217,7 @@ async def schedule_authorization_job(
         worker_kwargs["repair_context"] = repair_context
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="codegen.getAuthorization",
         input_payload=job_input,
         worker=generation.generate_authorization_code,
@@ -268,10 +272,11 @@ async def schedule_native_schema_job(
         worker_kwargs["repair_context"] = repair_context
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="codegen.getNativeSchema",
         input_payload=job_input,
         worker=generation.generate_native_schema_code,
-        worker_args=(attrs, object_class),
+        worker_args=(job_input_reference("attributes"), object_class),
         worker_kwargs=worker_kwargs,
         initial_stage="queue",
         initial_message="Queued code generation",
@@ -321,10 +326,11 @@ async def schedule_connid_job(
         worker_kwargs["repair_context"] = repair_context
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="codegen.getConnID",
         input_payload=job_input,
         worker=generation.generate_conn_id_code,
-        worker_args=(attrs, object_class),
+        worker_args=(job_input_reference("attributes"), object_class),
         worker_kwargs=worker_kwargs,
         initial_stage="queue",
         initial_message="Queued code generation",
@@ -376,6 +382,7 @@ async def schedule_relation_job(
     relations_payload = selected_relations_model.model_dump(by_alias=True, mode="json")
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="codegen.getRelation",
         input_payload={
             "relations": relations_payload,
@@ -385,7 +392,7 @@ async def schedule_relation_job(
         },
         worker=generation.generate_relation_code,
         worker_kwargs={
-            "relations": selected_relations_model,
+            "relations": job_input_reference("relations"),
             "relation_name": relation_name,
             "session_id": session_id,
         },

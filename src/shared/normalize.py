@@ -3,6 +3,8 @@
 #  Licensed under the EUPL-1.2 or later.
 
 import copy
+import hashlib
+import json
 import logging
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -120,3 +122,21 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
     if "relevantDocumentations" in normalized_input:
         normalized_input.pop("relevantDocumentations")
     return normalized_input
+
+
+def normalized_input_fingerprint(input_payload: dict[str, Any]) -> dict[str, str]:
+    """Return a compact, deterministic cache identity for a job input.
+
+    The full input remains in ``jobs.input`` for execution and diagnostics. The
+    normalized column stores only this digest, avoiding another copy of large
+    documentation corpora while preserving exact cache equality semantics.
+    """
+    normalized = normalize_input(input_payload)
+    canonical = json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+    return {"sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}

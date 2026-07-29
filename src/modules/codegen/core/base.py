@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
+import sys
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Mapping, Optional, cast
 from uuid import UUID
@@ -13,6 +14,7 @@ from langchain_core.runnables.config import RunnableConfig
 
 from src.config import config
 from src.core.db import async_session_maker
+from src.core.errors import JobClaimLostError
 from src.core.llm import (
     get_default_llm,
     make_basic_chain,
@@ -237,7 +239,7 @@ class BaseGroovyGenerator(ABC):
         if validation_error is not None:
             error_message = f"{self.config.logger_prefix} Final generated Groovy is invalid: {validation_error}"
             logger.warning(error_message)
-            append_job_error(job_id, error_message)
+            await append_job_error(job_id, error_message)
             return fallback_result
 
         return strip_markdown_fences(result)
@@ -276,7 +278,7 @@ class BaseGroovyGenerator(ABC):
             if validation_error is not None:
                 error_message = f"{self.config.logger_prefix} Cleanup pass produced invalid Groovy: {validation_error}"
                 logger.warning(error_message)
-                append_job_error(job_id, error_message)
+                await append_job_error(job_id, error_message)
                 return code
 
             return candidate
@@ -284,7 +286,7 @@ class BaseGroovyGenerator(ABC):
         except Exception as exc:
             error_message = f"{self.config.logger_prefix} Cleanup pass failed: {exc}"
             logger.exception(error_message)
-            append_job_error(job_id, error_message)
+            await append_job_error(job_id, error_message)
             return code
 
     async def _load_documentation_items(self, session_id: UUID) -> List[Dict[str, Any]]:
@@ -473,24 +475,34 @@ class BaseGroovyGenerator(ABC):
                             f"{validation_error}"
                         )
                         logger.warning(error_message)
-                        append_job_error(job_id, error_message)
+                        await append_job_error(job_id, error_message)
 
             except Exception as exc:
                 raise_if_llm_unavailable(exc, context="generating connector code")
                 error_message = f"[{self.config.logger_prefix}] Failed to process chunk {idx}/{total_chunks}: {exc}"
                 logger.exception(error_message)
-                append_job_error(job_id, error_message)
+                await append_job_error(job_id, error_message)
                 continue
 
             finally:
-                # Handle progress tracking based on mode
-                if per_chunk_counts and chunk_ids_included and isinstance(chunk_id, str):
-                    # Selected-chunk mode: increment when this group is complete
-                    current_group_chunks_remaining = max(0, current_group_chunks_remaining - 1)
-                    if current_group_chunks_remaining == 0:
+                active_exception = sys.exception()
+                try:
+                    # Handle progress tracking based on mode
+                    if per_chunk_counts and chunk_ids_included and isinstance(chunk_id, str):
+                        # Selected-chunk mode: increment when this group is complete
+                        current_group_chunks_remaining = max(0, current_group_chunks_remaining - 1)
+                        if current_group_chunks_remaining == 0:
+                            await increment_processed_documents(job_id, delta=1)
+                    else:
                         await increment_processed_documents(job_id, delta=1)
-                else:
-                    await increment_processed_documents(job_id, delta=1)
+                except JobClaimLostError:
+                    if active_exception is None:
+                        raise
+                    logger.warning(
+                        "%s Job claim was lost while recording progress; preserving the active error: %s",
+                        self.config.logger_prefix,
+                        active_exception,
+                    )
 
         return result
 

@@ -173,7 +173,7 @@ async def build_auth_items(auth_info: List[AuthProcessingInfo], job_id: UUID) ->
         return built_auth_items
     except Exception as e:
         await update_job_progress(job_id, stage=JobStage.building_failed, message=f"Auth item building failed: {e}")
-        append_job_error(job_id, f"[Digester:Auth] Building failed: {e}")
+        await append_job_error(job_id, f"[Digester:Auth] Building failed: {e}")
         return []
 
 
@@ -389,7 +389,7 @@ async def deduplicate_auth(
     except Exception as e:
         logger.error("[Digester:Auth] Deduplication LLM call failed. Error: %s", e)
         await update_job_progress(job_id, stage=JobStage.deduplication_failed, message=f"Deduplication failed: {e}")
-        append_job_error(job_id, f"[Digester:Auth] Deduplication LLM call failed: {e}")
+        await append_job_error(job_id, f"[Digester:Auth] Deduplication LLM call failed: {e}")
         return auth_list
 
 
@@ -458,7 +458,7 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
     except Exception as e:
         logger.error("[Digester:Auth] Sorting pass failed. Error: %s", e)
         await update_job_progress(job_id, stage=JobStage.sorting_failed, message=f"Sorting failed: {e}")
-        append_job_error(job_id, f"[Digester:Auth] Sorting failed: {e}")
+        await append_job_error(job_id, f"[Digester:Auth] Sorting failed: {e}")
 
         return AuthResponse[AuthInfo](auth=dedup_list)
 

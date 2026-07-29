@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.jobs import job_input_reference
 from src.modules.scrape.router import scrape_documentation
 from src.modules.scrape.schema import ScrapeRequest
 
@@ -37,10 +38,11 @@ async def test_scrape_documentation_uses_explicit_application_version():
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_repo.get_session_data.assert_not_awaited()
         mock_schedule.assert_awaited_once_with(
+            db=mock_repo.db,
             job_type="scrape.getRelevantDocumentation",
             input_payload=request.model_dump(by_alias=True),
             worker=ANY,
-            worker_args=(request, session_id),
+            worker_args=(job_input_reference(), session_id),
             initial_stage="queue",
             initial_message="Queued scraping job",
             session_id=session_id,

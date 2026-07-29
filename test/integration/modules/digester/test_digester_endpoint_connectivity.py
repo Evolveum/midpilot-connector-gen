@@ -52,6 +52,7 @@ async def test_extract_connectivity_endpoint_success():
     assert response.jobId == job_id
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_schedule.assert_awaited_once_with(
+        db=mock_repo.db,
         job_type="digester.getConnectivityEndpoint",
         input_payload={
             "baseApiUrl": base_api_url,

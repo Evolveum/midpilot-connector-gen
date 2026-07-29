@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -44,6 +44,13 @@ class DocumentationItem(Base):
         server_default=text("'[]'::jsonb"),
         comment="List of scrape job IDs that created or needed this documentation item, WARNING: ids are stored as strings in JSONB for easier querying",
     )
+    origin_job_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("jobs.job_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    origin_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     source: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -78,4 +85,10 @@ class DocumentationItem(Base):
         Index("idx_doc_items_source", "source"),
         Index("idx_doc_items_created_at", "created_at"),
         Index("idx_doc_items_metadata_gin", "metadata", postgresql_using="gin"),  # GIN index for JSONB queries
+        UniqueConstraint(
+            "session_id",
+            "origin_job_id",
+            "origin_key",
+            name="uq_doc_items_job_origin",
+        ),
     )

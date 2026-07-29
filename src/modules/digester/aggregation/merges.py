@@ -344,7 +344,7 @@ async def merge_attribute_candidates(
             stage=JobStage.deduplication_failed,
             message=f"Attribute deduplication failed: {exc}",
         )
-        append_job_error(job_id, f"[Digester:Attributes] Deduplication LLM call failed: {exc}")
+        await append_job_error(job_id, f"[Digester:Attributes] Deduplication LLM call failed: {exc}")
         return merged
 
 

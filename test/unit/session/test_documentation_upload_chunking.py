@@ -21,6 +21,7 @@ from src.session.documentation_upload import (
 
 class _FakeSessionRepository:
     def __init__(self) -> None:
+        self.db = object()
         self.updated_session_payloads: list[tuple[object, dict[str, str]]] = []
 
     async def update_session(self, session_id: object, data: dict[str, str]) -> None:

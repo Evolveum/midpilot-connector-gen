@@ -1,4 +1,3 @@
-import os
 import signal
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -13,9 +12,9 @@ def init_worker():
     signal.signal(signal.SIGINT, handle_sigint)
 
 
-def create_pool() -> ProcessPoolExecutor:
+def create_pool(max_workers: int) -> ProcessPoolExecutor:
     return ProcessPoolExecutor(
-        max_workers=os.cpu_count(),
+        max_workers=max_workers,
         initializer=init_worker,
     )
 

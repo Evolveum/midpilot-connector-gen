@@ -23,8 +23,8 @@ asynchronous background jobs; HTTP endpoints only enqueue jobs and read results
 | Root router; mounts module routers under `/api/session`, `/api/discovery`,
   `/api/scrape`, `/api/digester`, `/api/codegen`.
 
-| `src/pool.py`
-| Shared `ProcessPoolExecutor` for CPU-bound work (fuzzy sequence matching).
+| `src/core/pool.py`
+| Per-job-worker `ProcessPoolExecutor` for CPU-bound work (fuzzy sequence matching).
 
 | `src/config/`
 | Pydantic settings, one file per domain
@@ -62,7 +62,7 @@ keep it in the right layer:
 | *orchestration* (`orchestration.py`)
 | Request--job wiring: select input documentation, assemble the worker payload,
   schedule the background job, persist the job pointer
-  (`{key}JobId` / `{key}Input`) via `common.jobs`.
+  (`{key}JobId` / `{key}Input`) via `src.jobs`.
 
 | *worker layer*
 | The actual domain work, named after the domain action — codegen uses
@@ -74,11 +74,11 @@ keep it in the right layer:
   workers.
 |===
 
-Below the router, code raises domain errors (`AppError` subclasses from
-`src/common/errors.py`) instead of `HTTPException`; centralized handlers in
-`src/common/exception_handlers.py` map them to HTTP responses.
+Below the router, code raises domain errors (`AppError` subclasses) instead of
+`HTTPException`; centralized handlers in `src/api/exception_handlers.py` map
+them to HTTP responses.
 
-== Common services (`src/common/`)
+== Shared application services
 
 [cols="1,3", options="header"]
 |===
@@ -89,12 +89,13 @@ Below the router, code raises domain errors (`AppError` subclasses from
   session helpers.
 
 | `jobs/`
-| Background job runner and lifecycle: scheduling, status/progress tracking,
-  result caching, session job pointers.
+| PostgreSQL-backed queue, claiming worker, scheduling, status/progress tracking,
+  result caching, fencing, and session job pointers.
 
 | `database/`
 | SQLAlchemy async engine, models (`sessions`, `session_data`, `jobs`,
-  `job_progress`, `documentation_items`, `relevant_chunks`) and repositories.
+  `job_progress`, `job_artifacts`, `documentation_items`, `relevant_chunks`)
+  and repositories.
 
 | `chunking/`
 | Token-based splitting of documents into chunks.
@@ -127,13 +128,15 @@ Below the router, code raises domain errors (`AppError` subclasses from
 PostgreSQL is the only persistent store. Everything a pipeline stage produces
 is written to the session (key-value rows in `session_data`) or to
 `documentation_items` (scraped/uploaded chunks). Jobs and their progress are
-persisted in `jobs` / `job_progress`, which makes results shareable across
-worker processes and restarts. Schema changes go through Alembic migrations.
+persisted in `jobs` / `job_progress`. Versioned execution payloads, atomic
+claims, heartbeats, and execution tokens make jobs resumable and safe
+across worker processes and pod restarts. Schema changes go through Alembic
+migrations.
 
 == Observability
 
 * Structured logging configured in `src/config/logging.py`.
 * Optional https://langfuse.com/[Langfuse] tracing of every API request and
   LLM call (`+LANGFUSE__*+` settings).
-* Job progress is persisted per stage (`JobStage` in `src/common/enums.py`)
+* Job progress is persisted per stage (`JobStage` in `src/shared/enums.py`)
   and exposed via the status endpoints.

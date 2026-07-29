@@ -2,23 +2,34 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Background job orchestration.
-
-:func:`schedule_coroutine_job` creates a job record and spawns a background coroutine that
-optionally waits for documentation jobs, resolves dynamic input, reuses cached output,
-runs the worker, persists the result to the session, and finalizes the job state.
-"""
+"""Durable background-job scheduling and execution."""
 
 import asyncio
 import inspect
 import logging
+from collections.abc import Mapping
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, Union
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.config import config
 from src.core.db import async_session_maker
-from src.database.repositories.job_repository import JobRepository
+from src.core.job_execution import (
+    JobExecutionContext,
+    reset_current_execution,
+    set_current_execution,
+)
+from src.database.repositories.job_repository import ClaimedJob, JobRepository
 from src.database.repositories.session_repository import SessionRepository
-from src.jobs import cache, futures, lifecycle, session_persistence
+from src.jobs import cache, lifecycle, session_persistence
+from src.jobs.errors import JobClaimLostError
+from src.jobs.payload import (
+    build_execution_payload,
+    deserialize_call,
+    resolve_callable,
+    validate_execution_payload,
+)
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
@@ -26,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 async def schedule_coroutine_job(
     *,
+    db: AsyncSession,
     job_type: str,
     input_payload: Dict[str, Any],
     dynamic_input_enabled: bool = False,
@@ -39,122 +51,233 @@ async def schedule_coroutine_job(
     session_result_key: Optional[str] = None,
     await_documentation: bool = False,
     await_documentation_timeout: Optional[float] = None,
+    binary_artifacts: Mapping[str, bytes] | None = None,
 ) -> UUID:
+    """Persist a queued job in the caller's database transaction.
+
+    The API transaction also writes the session's job pointer. A worker can see
+    the job only after both records commit, which removes the schedule/pointer
+    race present in the former process-local task implementation.
     """
-    Create a job record and schedule `worker` coroutine to process it in background.
-    The worker must accept the job_id as the last positional argument or via kwarg `job_id` if desired.
+    if dynamic_input_enabled and dynamic_input_provider is None:
+        raise ValueError("dynamic_input_provider is required when dynamic_input_enabled is true")
 
-    If session_result_key is provided, the result will be automatically
-    stored in the session under the given key when the job completes.
-
-    :param session_id: Required session ID for the job
-    """
-
-    # Create job in database
-    job_id = await lifecycle.create_job(input_payload, job_type, session_id)
-
-    if initial_stage or initial_message:
-        await lifecycle.update_job_progress(job_id, stage=initial_stage, message=initial_message)
-
-    futures.register_future(job_id)
-
-    async def _runner() -> None:
-        try:
-            if await_documentation:
-                await lifecycle.update_job_progress(
-                    job_id, stage="queue", message="Waiting for documentation processing to complete."
-                )
-                async with async_session_maker() as db:
-                    repo_doc = JobRepository(db)
-                    not_finished_jobs_ids = await repo_doc.get_not_finished_documentation_jobs_ids(session_id)
-                    if not_finished_jobs_ids:
-                        pending = futures.futures_for(not_finished_jobs_ids)
-                        if pending:
-                            try:
-                                await asyncio.wait_for(asyncio.gather(*pending), timeout=await_documentation_timeout)
-                            except asyncio.TimeoutError:
-                                logger.warning(f"Job {job_id} timed out waiting for documentation jobs to complete")
-
-            dynamic_input = {}
-            if dynamic_input_enabled and dynamic_input_provider:
-                async with async_session_maker() as db:
-                    provider_kwargs: Dict[str, Any] = {"session_id": session_id, "db": db}
-                    accepts_input_payload = False
-                    try:
-                        accepts_input_payload = "input_payload" in inspect.signature(dynamic_input_provider).parameters
-                    except (TypeError, ValueError):
-                        pass
-                    if accepts_input_payload:
-                        provider_kwargs["input_payload"] = input_payload
-                    dynamic_input = await dynamic_input_provider(**provider_kwargs)
-                    # Update Job input in Jobs table
-                    input_payload.update(dynamic_input.get("jobInput", {}))
-                    repo_job = JobRepository(db)
-                    await repo_job.update_job_input(job_id, input_payload)
-                    # Update operation input in Sessions table
-                    repo_session = SessionRepository(db)
-                    await repo_session.update_session(session_id, dynamic_input.get("sessionInput", {}))
-                    await db.commit()
-
-            await lifecycle.set_running(job_id)
-            args = tuple(worker_args or ())
-
-            if dynamic_input_enabled and dynamic_input_provider:
-                args += dynamic_input.get("args", ())
-
-            kwargs = dict(worker_kwargs or {})
-
-            # Prefer explicit kwarg if caller wants to pass it
-            if "job_id" in worker.__code__.co_varnames:  # type: ignore[attr-defined]
-                kwargs.setdefault("job_id", job_id)
-
-            async def run_normal_worker() -> Dict[str, Any]:
-                result = await worker(*args, **kwargs)
-                # Auto-serialize result
-                if hasattr(result, "model_dump"):
-                    return result.model_dump(by_alias=True, mode="json")  # type: ignore[attr-defined, no-any-return]
-                if isinstance(result, dict):
-                    return result
-                return {"value": repr(result)}
-
-            # TODO: implement caching also for codegen, move scraper implementation here
-            if "scrape" not in job_type and not input_payload.get("skipCache", False):
-                result_dict = await cache.reuse_or_run(
-                    job_type=job_type,
-                    job_id=job_id,
-                    session_id=session_id,
-                    input_payload=input_payload,
-                    run_normal_worker=run_normal_worker,
-                )
-            else:
-                result_dict = await run_normal_worker()
-
-            # Store result in session if requested (before saving to job)
-            if session_result_key:
-                await session_persistence.persist_result_to_session(
-                    job_id=job_id,
-                    session_id=session_id,
-                    session_result_key=session_result_key,
-                    result_dict=result_dict,
-                    input_payload=input_payload,
-                )
-
-            # Prepare job result (exclude large chunks array, keep only metadata)
-            job_result_dict = result_dict.copy() if isinstance(result_dict, dict) else result_dict
-            if isinstance(job_result_dict, dict) and "chunks" in job_result_dict:
-                # Remove the large chunks array from job result, keep metadata
-                del job_result_dict["chunks"]
-                # metadata already contains summary info about chunks
-
-            await lifecycle.set_finished(job_id, result=job_result_dict)
-        except asyncio.CancelledError as cancel_exc:  # graceful cancellation (e.g., shutdown)
-            try:
-                await lifecycle.set_failed(job_id, error=f"Job cancelled/interrupted: {cancel_exc}")
-            except Exception:
-                pass
-            raise
-        except Exception as exc:
-            await lifecycle.set_failed(job_id, error=str(exc))
-
-    futures.spawn_background_task(_runner())
+    execution_payload = build_execution_payload(
+        worker=worker,
+        worker_args=tuple(worker_args or ()),
+        worker_kwargs=dict(worker_kwargs or {}),
+        dynamic_input_provider=dynamic_input_provider if dynamic_input_enabled else None,
+        session_result_key=session_result_key,
+        await_documentation=await_documentation,
+        await_documentation_timeout=await_documentation_timeout,
+        binary_artifacts=binary_artifacts,
+    )
+    repo = JobRepository(db)
+    job_id = await repo.create_job(
+        input_payload,
+        job_type,
+        session_id,
+        execution_payload=execution_payload,
+        binary_artifacts=binary_artifacts,
+        waits_for_documentation=await_documentation,
+        documentation_wait_timeout_seconds=await_documentation_timeout,
+        max_attempts=config.jobs.max_attempts,
+    )
+    if await_documentation:
+        await repo.update_job_progress(
+            job_id,
+            stage=JobStage.queue,
+            message="Waiting for documentation processing to complete.",
+        )
+    elif initial_stage or initial_message:
+        await repo.update_job_progress(job_id, stage=initial_stage, message=initial_message)
     return job_id
+
+
+async def _resolve_dynamic_input(
+    claimed_job: ClaimedJob,
+    provider_reference: str,
+    input_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    provider = resolve_callable(provider_reference)
+    async with async_session_maker() as db:
+        provider_kwargs: Dict[str, Any] = {"session_id": claimed_job.session_id, "db": db}
+        try:
+            if "input_payload" in inspect.signature(provider).parameters:
+                provider_kwargs["input_payload"] = input_payload
+        except (TypeError, ValueError):
+            pass
+
+        dynamic_input = await provider(**provider_kwargs)
+        if not isinstance(dynamic_input, dict):
+            raise TypeError(f"Dynamic input provider {provider_reference} must return a dict")
+
+        job_input = dynamic_input.get("jobInput", {})
+        session_input = dynamic_input.get("sessionInput", {})
+        if not isinstance(job_input, dict) or not isinstance(session_input, dict):
+            raise TypeError(f"Dynamic input provider {provider_reference} returned invalid persistence payloads")
+
+        input_payload.update(job_input)
+        repo_job = JobRepository(db)
+        await repo_job.update_job_input(
+            claimed_job.job_id,
+            input_payload,
+            worker_id=claimed_job.worker_id,
+            execution_token=claimed_job.execution_token,
+        )
+        # The locked job row fences this session metadata write against a
+        # concurrent claim takeover.
+        await SessionRepository(db).update_session(claimed_job.session_id, session_input)
+        await db.commit()
+        return dynamic_input
+
+
+async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
+    payload = validate_execution_payload(claimed_job.execution_payload)
+    input_payload = dict(claimed_job.input_payload)
+
+    dynamic_input: Dict[str, Any] = {}
+    provider_reference = payload.get("dynamicInputProvider")
+    if isinstance(provider_reference, str):
+        dynamic_input = await _resolve_dynamic_input(claimed_job, provider_reference, input_payload)
+
+    worker = resolve_callable(str(payload["worker"]))
+    async with async_session_maker() as db:
+        artifacts = await JobRepository(db).get_job_artifacts(claimed_job.job_id)
+    args, kwargs = deserialize_call(
+        worker,
+        payload["args"],
+        payload["kwargs"],
+        job_input=input_payload,
+        artifacts=artifacts,
+    )
+    if provider_reference:
+        dynamic_args = dynamic_input.get("args", ())
+        if not isinstance(dynamic_args, (list, tuple)):
+            raise TypeError(f"Dynamic input provider {provider_reference} returned invalid args")
+        args += tuple(dynamic_args)
+
+    if "job_id" in inspect.signature(worker).parameters:
+        kwargs.setdefault("job_id", claimed_job.job_id)
+
+    async def run_normal_worker() -> Dict[str, Any]:
+        result = await worker(*args, **kwargs)
+        if hasattr(result, "model_dump"):
+            return result.model_dump(by_alias=True, mode="json")  # type: ignore[attr-defined, no-any-return]
+        if isinstance(result, dict):
+            return result
+        return {"value": repr(result)}
+
+    if "scrape" not in claimed_job.job_type and not input_payload.get("skipCache", False):
+        result_dict = await cache.reuse_or_run(
+            job_type=claimed_job.job_type,
+            job_id=claimed_job.job_id,
+            session_id=claimed_job.session_id,
+            input_payload=input_payload,
+            run_normal_worker=run_normal_worker,
+        )
+    else:
+        result_dict = await run_normal_worker()
+
+    session_result_key = payload.get("sessionResultKey")
+    if isinstance(session_result_key, str) and session_result_key:
+        published_to_session = await session_persistence.persist_result_to_session(
+            job_id=claimed_job.job_id,
+            session_id=claimed_job.session_id,
+            session_result_key=session_result_key,
+            result_dict=result_dict,
+            input_payload=input_payload,
+        )
+        if not published_to_session:
+            message = (
+                f"Result from job {claimed_job.job_id} was not published because the session points to a newer job."
+            )
+            logger.info(message)
+            await lifecycle.append_job_error(claimed_job.job_id, message)
+
+    job_result = result_dict.copy()
+    job_result.pop("chunks", None)
+    await lifecycle.set_finished(claimed_job.job_id, result=job_result)
+
+
+async def _heartbeat(claimed_job: ClaimedJob) -> None:
+    while True:
+        await asyncio.sleep(config.jobs.heartbeat_interval_seconds)
+        try:
+            async with async_session_maker() as db:
+                refreshed = await JobRepository(db).refresh_claim(
+                    claimed_job.job_id,
+                    worker_id=claimed_job.worker_id,
+                    execution_token=claimed_job.execution_token,
+                    claim_timeout_seconds=config.jobs.claim_timeout_seconds,
+                )
+                await db.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A transient DB outage may recover before the current claim
+            # expires. Conditional finalization still protects against a
+            # takeover, so retry on the next heartbeat.
+            logger.exception("Failed to refresh claim for job %s", claimed_job.job_id)
+            continue
+        if not refreshed:
+            raise JobClaimLostError(claimed_job.job_id)
+
+
+async def _release_interrupted_claim(claimed_job: ClaimedJob) -> None:
+    try:
+        async with async_session_maker() as db:
+            await JobRepository(db).release_claim(
+                claimed_job.job_id,
+                worker_id=claimed_job.worker_id,
+                execution_token=claimed_job.execution_token,
+            )
+            await db.commit()
+    except Exception:
+        logger.exception("Failed to return interrupted job %s to the queue", claimed_job.job_id)
+
+
+async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
+    """Execute one claimed job while heartbeating and fencing all writes."""
+    context_token = set_current_execution(
+        JobExecutionContext(
+            job_id=claimed_job.job_id,
+            worker_id=claimed_job.worker_id,
+            execution_token=claimed_job.execution_token,
+        )
+    )
+    execution_task = asyncio.create_task(_run_claimed_job(claimed_job))
+    heartbeat_task = asyncio.create_task(_heartbeat(claimed_job))
+    try:
+        done, _ = await asyncio.wait(
+            {execution_task, heartbeat_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        # A successful finalization clears the claim, so a simultaneous
+        # heartbeat can legitimately report "not refreshed". Prefer the completed
+        # execution result in that race.
+        if execution_task in done:
+            await execution_task
+        else:
+            heartbeat_task.result()
+            await execution_task
+    except asyncio.CancelledError:
+        execution_task.cancel()
+        heartbeat_task.cancel()
+        await asyncio.gather(execution_task, heartbeat_task, return_exceptions=True)
+        await _release_interrupted_claim(claimed_job)
+        raise
+    except JobClaimLostError:
+        execution_task.cancel()
+        await asyncio.gather(execution_task, return_exceptions=True)
+        logger.warning("Stopped stale execution of job %s after its claim was lost", claimed_job.job_id)
+    except Exception as exc:
+        logger.exception("Job %s failed during execution", claimed_job.job_id)
+        try:
+            await lifecycle.set_failed(claimed_job.job_id, error=str(exc))
+        except JobClaimLostError:
+            logger.warning("Could not fail job %s because its claim was already lost", claimed_job.job_id)
+    finally:
+        heartbeat_task.cancel()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
+        reset_current_execution(context_token)

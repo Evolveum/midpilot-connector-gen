@@ -18,6 +18,7 @@ from uuid import UUID
 
 from src.config import config
 from src.core.db import async_session_maker
+from src.core.errors import JobClaimLostError
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import JobRepository
 from src.documents.relevance import (
@@ -28,11 +29,14 @@ from src.documents.relevance import (
 )
 from src.jobs import lifecycle
 from src.shared.enums import JobStage
-from src.shared.normalize import normalize_input
 
 logger = logging.getLogger(__name__)
 
 RunNormalWorker = Callable[[], Awaitable[Dict[str, Any]]]
+
+
+class _CacheReuseUnavailable(RuntimeError):
+    pass
 
 
 async def reuse_or_run(
@@ -57,31 +61,31 @@ async def reuse_or_run(
         str(session_id),
     )
 
+    created_at_limits = (
+        datetime.now() - config.digester.digester_input_check_interval
+        if "digester" in job_type
+        else datetime.now() - config.search.discovery_input_check_interval
+    )
     async with async_session_maker() as db:
-        job_repo = JobRepository(db)
-        doc_repo = DocumentationRepository(db)
-        created_at_limits = (
-            datetime.now() - config.digester.digester_input_check_interval
-            if "digester" in job_type
-            else datetime.now() - config.search.discovery_input_check_interval
-        )
-        normalized_input = normalize_input(input_payload)
-        latest_job = await job_repo.get_job_by_input(
+        latest_job = await JobRepository(db).get_job_by_input(
             job_type,
-            normalized_input,
+            input_payload,
             created_at_limits,
             requesting_session_id=session_id,
         )
-        if not (latest_job and latest_job.result):
-            logger.info(
-                "[%s] Job %s: No previous finished job found with same input since %s",
-                job_type,
-                str(job_id),
-                datetime.isoformat(created_at_limits),
-            )
-            return await run_normal_worker()
 
-        try:
+    if not (latest_job and latest_job.result):
+        logger.info(
+            "[%s] Job %s: No previous finished job found with same input since %s",
+            job_type,
+            str(job_id),
+            datetime.isoformat(created_at_limits),
+        )
+        return await run_normal_worker()
+
+    try:
+        async with async_session_maker() as db:
+            doc_repo = DocumentationRepository(db)
             await lifecycle.update_job_progress(
                 job_id,
                 stage=JobStage.processing,
@@ -110,7 +114,7 @@ async def reuse_or_run(
                         str(latest_job.job_id),
                         str(job_id),
                     )
-                    return await run_normal_worker()
+                    raise _CacheReuseUnavailable
 
                 await lifecycle.update_job_progress(
                     job_id,
@@ -122,7 +126,7 @@ async def reuse_or_run(
                     total_processing=len(latest_job_doc_items),
                     processing_completed=0,
                 )
-                for item in latest_job_doc_items:
+                for index, item in enumerate(latest_job_doc_items, start=1):
                     await doc_repo.create_documentation_item(
                         session_id=session_id,
                         source="upload",
@@ -142,6 +146,8 @@ async def reuse_or_run(
                             "character_count": item["metadata"].get("character_count"),
                         },
                     )
+                    if index % config.jobs.documentation_write_batch_size == 0:
+                        await db.commit()
                 await db.commit()
                 await lifecycle.update_job_progress(
                     job_id,
@@ -182,14 +188,16 @@ async def reuse_or_run(
                 str(latest_job.job_id),
                 str(job_id),
             )
-            return await run_normal_worker()
+            raise _CacheReuseUnavailable
 
-        except Exception as exc:
-            logger.warning(
-                "[%s] Job %s: Previous job %s has invalid result payload (%s), running fresh discovery",
-                job_type,
-                str(job_id),
-                str(latest_job.job_id),
-                str(exc),
-            )
-            return await run_normal_worker()
+    except JobClaimLostError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "[%s] Job %s: Previous job %s cannot be reused (%s), running fresh worker",
+            job_type,
+            str(job_id),
+            str(latest_job.job_id),
+            str(exc),
+        )
+        return await run_normal_worker()

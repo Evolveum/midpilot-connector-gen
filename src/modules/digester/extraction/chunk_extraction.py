@@ -626,7 +626,7 @@ async def extract_single_chunk(
             if chunk_id:
                 error_message = f"{error_message} (chunk_id: {chunk_id})"
             logger.warning(error_message)
-            append_job_error(job_id, error_message)
+            await append_job_error(job_id, error_message)
             return [], False
 
         # Parse structured output
@@ -638,7 +638,7 @@ async def extract_single_chunk(
             if chunk_id:
                 error_message = f"{error_message} (chunk_id: {chunk_id})"
             logger.exception(error_message)
-            append_job_error(job_id, error_message)
+            await append_job_error(job_id, error_message)
             return [], False
 
         if enabled_sequence_checking:
@@ -682,7 +682,7 @@ async def extract_single_chunk(
         if chunk_id:
             error_message = f"{error_message} (chunk_id: {chunk_id})"
         logger.exception(error_message)
-        append_job_error(job_id, error_message)
+        await append_job_error(job_id, error_message)
         return [], False
 
 
@@ -724,7 +724,7 @@ async def run_item_build_parallel(
         if not result:
             logger.warning("%sEmpty LLM response.", logger_prefix)
             error_msg = f"{logger_prefix}Empty LLM response."
-            append_job_error(job_id, error_msg)
+            await append_job_error(job_id, error_msg)
             return None
 
         # Parse structured output
@@ -734,7 +734,7 @@ async def run_item_build_parallel(
             logger.info("%sJSON parse failed. Error: %s", logger_prefix, e)
             snippet = _result_snippet(result)
             error_msg = f"{logger_prefix}Parse failed: {e}. LLM output: {snippet}"
-            append_job_error(job_id, error_msg)
+            await append_job_error(job_id, error_msg)
             return None
 
         return new_item
@@ -742,7 +742,7 @@ async def run_item_build_parallel(
         raise_if_llm_unavailable(e, context="building extracted items")
         logger.error("%sItem building failed. Error: %s", logger_prefix, e)
         error_msg = f"{logger_prefix}Item building call failed: {e}"
-        append_job_error(job_id, error_msg)
+        await append_job_error(job_id, error_msg)
         return None
 
 

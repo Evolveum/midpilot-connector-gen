@@ -3,10 +3,12 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 from uuid import UUID
 
 from src.core.db import async_session_maker
+from src.core.job_execution import get_current_execution
+from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.modules.digester.enums import ConfidenceLevel
@@ -18,6 +20,11 @@ CONFIDENCE_PRIORITY: Dict[ConfidenceLevel, int] = {
     ConfidenceLevel.HIGH: 0,
     ConfidenceLevel.MEDIUM: 1,
     ConfidenceLevel.LOW: 2,
+}
+ObjectClassResultField = Literal["attributes", "endpoints"]
+_POINTER_SUFFIX_BY_FIELD: dict[ObjectClassResultField, str] = {
+    "attributes": "Attributes",
+    "endpoints": "Endpoints",
 }
 
 
@@ -165,7 +172,7 @@ def build_endpoint_result(
 async def update_object_class_field_in_session(
     session_id: UUID,
     object_class: str,
-    field_name: str,
+    field_name: ObjectClassResultField,
     field_value: Any,
 ) -> bool:
     """
@@ -176,7 +183,27 @@ async def update_object_class_field_in_session(
     """
     async with async_session_maker() as db:
         repo = SessionRepository(db)
-        object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
+        execution = get_current_execution()
+        if execution is not None:
+            await JobRepository(db).acquire_execution_fence(
+                execution.job_id,
+                worker_id=execution.worker_id,
+                execution_token=execution.execution_token,
+            )
+        if not await repo.lock_session(session_id):
+            return False
+
+        if execution is not None:
+            pointer_key = f"{object_class}{_POINTER_SUFFIX_BY_FIELD[field_name]}JobId"
+            if not await repo.is_current_job_pointer(
+                session_id=session_id,
+                pointer_key=pointer_key,
+                job_id=execution.job_id,
+                lock=True,
+            ):
+                return False
+
+        object_classes_output = await repo.get_session_value(session_id, "objectClassesOutput")
         if not isinstance(object_classes_output, dict):
             return False
 
@@ -190,7 +217,8 @@ async def update_object_class_field_in_session(
 
         target[field_name] = field_value
         object_classes_output["objectClasses"] = sort_object_class_dicts(object_classes)
-        await repo.update_session(session_id, {"objectClassesOutput": object_classes_output})
+        await repo.update_locked_session(session_id, {"objectClassesOutput": object_classes_output})
+        await db.commit()
         logger.info(
             "[Digester:ObjectClasses] Updated '%s' field for object class '%s'",
             field_name,

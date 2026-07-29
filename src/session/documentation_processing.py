@@ -11,6 +11,7 @@ from uuid import UUID
 
 from src.config import config
 from src.core.db import async_session_maker
+from src.core.errors import JobClaimLostError
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.documents.processing.llms import get_llm_processed_chunk
 from src.documents.processing.processor import build_chunk_metadata
@@ -132,6 +133,8 @@ async def process_documentation_worker(
                     filename=uploaded.filename,
                     chunk=chunk,
                 )
+            except JobClaimLostError:
+                raise
             except Exception as e:
                 logger.error(
                     "[Upload:Job] Failed to persist chunk %s for session %s (job %s): %s",
@@ -153,6 +156,11 @@ async def process_documentation_worker(
                     await _try_persist(chunk_to_persist)
                     next_chunk_to_persist += 1
 
+        except JobClaimLostError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         except Exception:
             for task in tasks:
                 task.cancel()

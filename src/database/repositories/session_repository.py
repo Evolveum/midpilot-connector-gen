@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import Session, SessionData
@@ -110,7 +111,7 @@ class SessionRepository:
         :return: True if successful, False otherwise
         """
         # Check if session exists
-        query = select(Session).where(Session.session_id == session_id)
+        query = select(Session).where(Session.session_id == session_id).with_for_update()
         result = await self.db.execute(query)
         session = result.scalar_one_or_none()
 
@@ -121,25 +122,122 @@ class SessionRepository:
         # Update session timestamp
         session.updated_at = datetime.now(timezone.utc)
 
-        # Update or insert session_data records
+        # Atomic PostgreSQL upserts avoid unique-key races when multiple jobs
+        # update different or identical session fields concurrently.
         for key, value in data.items():
-            # Check if key exists
-            query = select(SessionData).where(SessionData.session_id == session_id, SessionData.key == key)
-            data_result = await self.db.execute(query)
-            session_data = data_result.scalar_one_or_none()
-
-            if session_data:
-                # Update existing
-                session_data.value = value
-                session_data.updated_at = datetime.now(timezone.utc)
-            else:
-                # Create new
-                session_data = SessionData(session_id=session_id, key=key, value=value)
-                self.db.add(session_data)
+            await self._upsert_session_data(session_id, key, value)
 
         await self.db.flush()
         logger.info(f"Updated session: {session_id}")
         return True
+
+    async def lock_session(self, session_id: UUID) -> bool:
+        """Serialize a read-modify-write sequence for one session."""
+        query = select(Session.session_id).where(Session.session_id == session_id).with_for_update()
+        return (await self.db.execute(query)).scalar_one_or_none() is not None
+
+    async def update_locked_session(self, session_id: UUID, data: Dict[str, Any]) -> bool:
+        """Update data after the caller has already locked the session row."""
+        now = datetime.now(timezone.utc)
+        result = await self.db.execute(update(Session).where(Session.session_id == session_id).values(updated_at=now))
+        if not bool(getattr(result, "rowcount", 0)):
+            return False
+        for key, value in data.items():
+            await self._upsert_session_data(session_id, key, value)
+        await self.db.flush()
+        return True
+
+    async def _upsert_session_data(self, session_id: UUID, key: str, value: Any) -> None:
+        now = datetime.now(timezone.utc)
+        statement = (
+            insert(SessionData)
+            .values(
+                session_id=session_id,
+                key=key,
+                value=value,
+                updated_at=now,
+            )
+            .on_conflict_do_update(
+                constraint="uq_session_data_session_key",
+                set_={
+                    "value": value,
+                    "updated_at": now,
+                },
+            )
+        )
+        await self.db.execute(statement)
+
+    async def update_result_if_current_job(
+        self,
+        *,
+        session_id: UUID,
+        result_key: str,
+        job_id: UUID,
+        value: Any,
+    ) -> bool:
+        """Write a result only while the session still points at this job.
+
+        Locking the job-pointer row serializes a result write with a concurrent
+        request scheduling a newer job for the same output key.
+        """
+        if not result_key.endswith("Output"):
+            raise ValueError(f"Session result key {result_key!r} does not follow the *Output convention")
+        pointer_key = f"{result_key[: -len('Output')]}JobId"
+        session = (
+            await self.db.execute(select(Session).where(Session.session_id == session_id).with_for_update())
+        ).scalar_one_or_none()
+        if session is None:
+            return False
+        if not await self.is_current_job_pointer(
+            session_id=session_id,
+            pointer_key=pointer_key,
+            job_id=job_id,
+            lock=True,
+        ):
+            return False
+
+        await self._upsert_session_data(session_id, result_key, value)
+        session.updated_at = datetime.now(timezone.utc)
+        await self.db.flush()
+        return True
+
+    async def is_current_job_pointer(
+        self,
+        *,
+        session_id: UUID,
+        pointer_key: str,
+        job_id: UUID,
+        lock: bool = False,
+    ) -> bool:
+        """Check an explicit session job pointer, optionally locking its row."""
+        pointer_query = select(SessionData).where(
+            SessionData.session_id == session_id,
+            SessionData.key == pointer_key,
+        )
+        if lock:
+            pointer_query = pointer_query.with_for_update()
+        pointer = (await self.db.execute(pointer_query)).scalar_one_or_none()
+        if pointer is None or str(pointer.value) != str(job_id):
+            logger.warning(
+                "Skipped stale write from job %s for session %s pointer %s; current pointer is %s",
+                job_id,
+                session_id,
+                pointer_key,
+                pointer.value if pointer else None,
+            )
+            return False
+        return True
+
+    async def get_session_value(self, session_id: UUID, key: str) -> Optional[Any]:
+        """Read one session-data value without loading every key in the session."""
+        return (
+            await self.db.execute(
+                select(SessionData.value).where(
+                    SessionData.session_id == session_id,
+                    SessionData.key == key,
+                )
+            )
+        ).scalar_one_or_none()
 
     async def get_session_data(self, session_id: UUID, key: Optional[Union[str, List[str]]] = None) -> Optional[Any]:
         """

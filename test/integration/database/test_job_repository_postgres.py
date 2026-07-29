@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.database.models import ApiKey, Base, Job, Session
 from src.database.repositories.job_repository import JobRepository
+from src.shared.normalize import normalized_input_fingerprint
 
 
 @pytest.mark.asyncio
@@ -74,7 +75,7 @@ async def test_job_lookup_enforces_session_and_tenant_boundaries() -> None:
                         job_type=job_type,
                         status="finished",
                         input=normalized_input,
-                        normalized_input=normalized_input,
+                        normalized_input=normalized_input_fingerprint(normalized_input),
                         result={"owner": "a"},
                         created_at=now,
                     ),
@@ -84,7 +85,7 @@ async def test_job_lookup_enforces_session_and_tenant_boundaries() -> None:
                         job_type=job_type,
                         status="finished",
                         input=normalized_input,
-                        normalized_input=normalized_input,
+                        normalized_input=normalized_input_fingerprint(normalized_input),
                         result={"owner": "b"},
                         created_at=now + timedelta(seconds=1),
                     ),
@@ -94,7 +95,7 @@ async def test_job_lookup_enforces_session_and_tenant_boundaries() -> None:
                         job_type=job_type,
                         status="finished",
                         input=normalized_input,
-                        normalized_input=normalized_input,
+                        normalized_input=normalized_input_fingerprint(normalized_input),
                         result={"owner": None},
                         created_at=now + timedelta(seconds=2),
                     ),
