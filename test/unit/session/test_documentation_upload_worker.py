@@ -4,13 +4,59 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from src.session.documentation_processing import process_documentation_worker
+from src.config import config
+from src.session.documentation_processing import (
+    _persist_processed_documentation_batch,
+    process_documentation_worker,
+)
 from src.session.documentation_upload import RawUploadedDocumentation, UploadedDocumentation
+from src.session.schema import ProcessedDocumentationChunk
+
+
+class _AsyncSessionContext:
+    def __init__(self, db):
+        self.db = db
+
+    async def __aenter__(self):
+        return self.db
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_upload_persistence_uses_configured_transaction_batch_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = MagicMock()
+    db.commit = AsyncMock()
+    repository = MagicMock()
+    repository.create_documentation_item = AsyncMock(return_value=uuid4())
+    chunks = [
+        ProcessedDocumentationChunk(index=index, text=f"chunk-{index}", summary="summary", metadata={})
+        for index in range(3)
+    ]
+    monkeypatch.setattr(config.jobs, "documentation_write_batch_size", 2)
+
+    with (
+        patch("src.session.documentation_processing.async_session_maker", return_value=_AsyncSessionContext(db)),
+        patch("src.session.documentation_processing.DocumentationRepository", return_value=repository),
+    ):
+        await _persist_processed_documentation_batch(
+            session_id=uuid4(),
+            doc_id=uuid4(),
+            job_id=uuid4(),
+            filename="docs.md",
+            chunks=chunks,
+        )
+
+    assert repository.create_documentation_item.await_count == 3
+    assert db.commit.await_count == 2
 
 
 @pytest.mark.asyncio

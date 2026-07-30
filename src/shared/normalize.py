@@ -3,11 +3,14 @@
 #  Licensed under the EUPL-1.2 or later.
 
 import copy
+import hashlib
+import json
 import logging
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.shared.coerce import as_dict_list, as_list, as_mapping
+from src.shared.json_values import to_jsonable
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +89,8 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
         normalized_input.pop("skipCache")
     if "chunks" in normalized_input:
         normalized_input["chunks"] = sorted(
-            normalized_input["chunks"], key=lambda x: x[0] if isinstance(x, tuple) and len(x) > 0 else ""
+            normalized_input["chunks"],
+            key=lambda x: str(x[0]) if isinstance(x, (list, tuple)) and len(x) > 0 else "",
         )
     if "documentationItems" in normalized_input:
         for doc_item in normalized_input["documentationItems"]:
@@ -120,3 +124,20 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
     if "relevantDocumentations" in normalized_input:
         normalized_input.pop("relevantDocumentations")
     return normalized_input
+
+
+def normalized_input_fingerprint(input_payload: dict[str, Any]) -> dict[str, str]:
+    """Return a compact, deterministic cache identity for a job input.
+
+    The full input remains in ``jobs.input`` for execution and diagnostics. The
+    normalized column stores only this digest, avoiding another copy of large
+    documentation corpora while preserving exact cache equality semantics.
+    """
+    normalized = normalize_input(to_jsonable(input_payload))
+    canonical = json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return {"sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}

@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.jobs import job_input_reference
 from src.modules.codegen.routes.operations import generate_create, generate_delete, generate_update
 from src.modules.codegen.schema import CodegenOperationInput
 from src.modules.digester.errors import OperationSurfaceNotFoundError
@@ -97,7 +98,7 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
     assert mock_repo.get_session_data.await_args_list[0].args[1] == "userAttributesOutput"
     assert mock_repo.get_session_data.await_args_list[1].args[1] == "userEndpointsOutput"
     assert schedule_kwargs["input_payload"]["preferredEndpoints"] == preferred_endpoints
-    assert schedule_kwargs["worker_kwargs"]["preferred_endpoints"] == preferred_endpoints
+    assert schedule_kwargs["worker_kwargs"]["preferred_endpoints"] == job_input_reference("preferredEndpoints")
 
     update_args = mock_repo.update_session.call_args[0]
     inputs = update_args[1]

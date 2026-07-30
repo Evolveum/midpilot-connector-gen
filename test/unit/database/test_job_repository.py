@@ -42,6 +42,29 @@ async def test_reusable_job_query_is_scoped_to_session_or_matching_owner() -> No
 
 
 @pytest.mark.asyncio
+async def test_reusable_job_query_transfers_only_the_newest_row_without_its_input() -> None:
+    """Reuse needs one row and never its input, so neither may be materialized."""
+    db = MagicMock()
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = None
+    db.execute = AsyncMock(return_value=result)
+
+    await JobRepository(db).get_job_by_input(
+        "digester.getObjectClasses",
+        {"applicationName": "Demo"},
+        datetime.now(timezone.utc) - timedelta(days=1),
+        requesting_session_id=uuid4(),
+    )
+
+    compiled = _compile_postgres(db.execute.await_args.args[0])
+    sql = " ".join(str(compiled).split())
+    assert sql.endswith("ORDER BY jobs.created_at DESC LIMIT %(param_1)s")
+    assert compiled.params["param_1"] == 1
+    assert "jobs.input" not in sql
+    assert "jobs.result" in sql
+
+
+@pytest.mark.asyncio
 async def test_session_job_query_constrains_both_job_and_session_ids() -> None:
     db = MagicMock()
     result = MagicMock()
@@ -58,3 +81,46 @@ async def test_session_job_query_constrains_both_job_and_session_ids() -> None:
     assert "jobs.session_id = %(session_id_1)s::UUID" in sql
     assert job_id in compiled.params.values()
     assert session_id in compiled.params.values()
+
+
+@pytest.mark.asyncio
+async def test_claim_query_keeps_documentation_dependent_jobs_out_of_worker_slots() -> None:
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result)
+
+    claimed = await JobRepository(db).claim_next_job(
+        worker_id="worker-a",
+        claim_timeout_seconds=60,
+    )
+
+    assert claimed is None
+    compiled = _compile_postgres(db.execute.await_args_list[0].args[0])
+    sql = " ".join(str(compiled).split())
+    assert "jobs.waits_for_documentation IS false" in sql
+    assert "jobs.documentation_wait_until <=" in sql
+    assert "NOT (EXISTS (SELECT jobs_1.job_id" in sql
+    list_params = [value for value in compiled.params.values() if isinstance(value, list)]
+    assert ["scrape.getRelevantDocumentation", "documentation.processUpload"] in list_params
+
+
+@pytest.mark.asyncio
+async def test_progress_update_propagates_database_errors_to_transaction_owner() -> None:
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=RuntimeError("serialization failure"))
+
+    with pytest.raises(RuntimeError, match="serialization failure"):
+        await JobRepository(db).update_job_progress(uuid4(), stage="queue")
+
+
+@pytest.mark.asyncio
+async def test_update_job_input_distinguishes_a_missing_job_from_a_lost_claim() -> None:
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result)
+    job_id = uuid4()
+
+    with pytest.raises(FileNotFoundError, match=str(job_id)):
+        await JobRepository(db).update_job_input(job_id, {"value": "updated"})

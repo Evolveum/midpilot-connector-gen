@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.jobs import job_input_reference
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.routes.endpoints import (
     extract_class_endpoints,
@@ -94,10 +95,9 @@ async def test_extract_class_endpoints_success():
             "abstract": False,
         }
         assert schedule_kwargs["worker_args"][1] == "user"
-        assert schedule_kwargs["worker_kwargs"]["object_class_flags"] == {
-            "embedded": False,
-            "abstract": False,
-        }
+        assert schedule_kwargs["worker_args"][0] == job_input_reference("documentationItems")
+        assert schedule_kwargs["worker_args"][3] == job_input_reference("relevantDocumentations")
+        assert schedule_kwargs["worker_kwargs"]["object_class_flags"] == job_input_reference("objectClassFlags")
         assert schedule_kwargs["session_result_key"] == "userEndpointsOutput"
         mock_repo.update_session.assert_awaited_once()
 

@@ -6,6 +6,7 @@ from src.database.models.api_key import ApiKey
 from src.database.models.base import Base, utc_now
 from src.database.models.documentation_item import DocumentationItem
 from src.database.models.job import Job
+from src.database.models.job_artifact import JobArtifact
 from src.database.models.job_progress import JobProgress
 from src.database.models.relevant_chunk import RelevantChunk
 from src.database.models.session import Session
@@ -17,6 +18,7 @@ __all__ = [
     "utc_now",
     "Session",
     "Job",
+    "JobArtifact",
     "JobProgress",
     "DocumentationItem",
     "SessionData",

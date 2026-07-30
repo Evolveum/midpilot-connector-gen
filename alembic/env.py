@@ -13,7 +13,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from src.core.db import Base
+from src.database.models import Base
 
 # Load .env file
 env_path = Path(__file__).parent.parent / ".env"

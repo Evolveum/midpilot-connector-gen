@@ -13,7 +13,7 @@ job-pointer persistence.
 from uuid import UUID
 
 from src.database.repositories.session_repository import SessionRepository
-from src.jobs import schedule_coroutine_job
+from src.jobs import job_input_reference, schedule_coroutine_job
 from src.modules.scrape import service
 from src.modules.scrape.schema import ScrapeRequest
 
@@ -52,10 +52,11 @@ async def schedule_scrape_documentation(
     input_payload = resolved_request.model_dump(by_alias=True)
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="scrape.getRelevantDocumentation",
         input_payload=input_payload,
         worker=service.fetch_relevant_documentation,
-        worker_args=(resolved_request, session_id),
+        worker_args=(job_input_reference(), session_id),
         initial_stage="queue",
         initial_message="Queued scraping job",
         session_id=session_id,

@@ -1,4 +1,3 @@
-import os
 import signal
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -13,11 +12,18 @@ def init_worker():
     signal.signal(signal.SIGINT, handle_sigint)
 
 
-def create_pool() -> ProcessPoolExecutor:
+def create_pool(max_workers: int) -> ProcessPoolExecutor:
     return ProcessPoolExecutor(
-        max_workers=os.cpu_count(),
+        max_workers=max_workers,
         initializer=init_worker,
     )
 
 
 process_pool: ProcessPoolExecutor | None = None
+
+
+def require_process_pool() -> ProcessPoolExecutor:
+    """Return the configured CPU pool or fail instead of using asyncio's thread pool."""
+    if process_pool is None:
+        raise RuntimeError("CPU process pool is not initialized in this worker process")
+    return process_pool

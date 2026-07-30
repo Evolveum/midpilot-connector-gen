@@ -11,12 +11,13 @@ from uuid import UUID
 
 from src.config import config
 from src.core.db import async_session_maker
-from src.database.repositories.documentation_repository import DocumentationRepository
+from src.database.repositories.documentation_repository import DocumentationRepository, DocumentationWriteBatch
 from src.documents.processing.llms import get_llm_processed_chunk
 from src.documents.processing.processor import build_chunk_metadata
 from src.documents.processing.prompts import get_llm_chunk_process_prompt
 from src.documents.processing.schema import LlmChunkOutput
 from src.jobs import increment_processed_documents, update_job_progress
+from src.jobs.errors import JobClaimLostError
 from src.session.documentation_upload import (
     chunk_uploaded_documentation,
     parse_uploaded_documentation,
@@ -33,25 +34,47 @@ _UPLOAD_WORKER_SEMAPHORE = asyncio.Semaphore(_UPLOAD_WORKER_LIMIT)
 
 async def _persist_processed_documentation_chunk(
     *,
+    repository: DocumentationRepository,
     session_id: UUID,
     doc_id: UUID,
     job_id: UUID,
     filename: str,
     chunk: ProcessedDocumentationChunk,
 ) -> None:
+    await repository.create_documentation_item(
+        session_id=session_id,
+        source="upload",
+        content=chunk.text,
+        doc_id=doc_id,
+        original_job_id=job_id,
+        url=f"upload://{filename}",
+        summary=chunk.summary,
+        metadata=chunk.metadata,
+    )
+
+
+async def _persist_processed_documentation_batch(
+    *,
+    session_id: UUID,
+    doc_id: UUID,
+    job_id: UUID,
+    filename: str,
+    chunks: list[ProcessedDocumentationChunk],
+) -> None:
     async with async_session_maker() as db:
-        doc_repo = DocumentationRepository(db)
-        await doc_repo.create_documentation_item(
-            session_id=session_id,
-            source="upload",
-            content=chunk.text,
-            doc_id=doc_id,
-            original_job_id=job_id,
-            url=f"upload://{filename}",
-            summary=chunk.summary,
-            metadata=chunk.metadata,
-        )
-        await db.commit()
+        repository = DocumentationRepository(db)
+        write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
+        for chunk in chunks:
+            await _persist_processed_documentation_chunk(
+                repository=repository,
+                session_id=session_id,
+                doc_id=doc_id,
+                job_id=job_id,
+                filename=filename,
+                chunk=chunk,
+            )
+            await write_batch.record_write()
+        await write_batch.commit_pending()
 
 
 async def process_documentation_worker(
@@ -122,25 +145,32 @@ async def process_documentation_worker(
         next_chunk_to_persist = 0
         tasks = [asyncio.create_task(process_chunk(i, ch)) for i, ch in enumerate(chunks)]
         persist_errors: list[tuple[int, Exception]] = []
+        persistence_buffer: list[ProcessedDocumentationChunk] = []
 
-        async def _try_persist(chunk: ProcessedDocumentationChunk) -> None:
+        async def _flush_persistence_buffer() -> None:
+            if not persistence_buffer:
+                return
+            chunks_to_persist = list(persistence_buffer)
+            persistence_buffer.clear()
             try:
-                await _persist_processed_documentation_chunk(
+                await _persist_processed_documentation_batch(
                     session_id=session_id,
                     doc_id=doc_id,
                     job_id=job_id,
                     filename=uploaded.filename,
-                    chunk=chunk,
+                    chunks=chunks_to_persist,
                 )
+            except JobClaimLostError:
+                raise
             except Exception as e:
                 logger.error(
-                    "[Upload:Job] Failed to persist chunk %s for session %s (job %s): %s",
-                    chunk.index,
+                    "[Upload:Job] Failed to persist chunk batch %s for session %s (job %s): %s",
+                    [chunk.index for chunk in chunks_to_persist],
                     session_id,
                     job_id,
                     e,
                 )
-                persist_errors.append((chunk.index, e))
+                persist_errors.extend((chunk.index, e) for chunk in chunks_to_persist)
 
         try:
             for completed_task in asyncio.as_completed(tasks):
@@ -150,15 +180,24 @@ async def process_documentation_worker(
 
                 while next_chunk_to_persist in completed_chunks:
                     chunk_to_persist = completed_chunks.pop(next_chunk_to_persist)
-                    await _try_persist(chunk_to_persist)
+                    persistence_buffer.append(chunk_to_persist)
                     next_chunk_to_persist += 1
+                    if len(persistence_buffer) >= config.jobs.documentation_write_batch_size:
+                        await _flush_persistence_buffer()
 
+            await _flush_persistence_buffer()
+
+        except JobClaimLostError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         except Exception:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            for buffered_chunk in sorted(completed_chunks.values(), key=lambda c: c.index):
-                await _try_persist(buffered_chunk)
+            persistence_buffer.extend(sorted(completed_chunks.values(), key=lambda c: c.index))
+            await _flush_persistence_buffer()
             raise
 
         if persist_errors:

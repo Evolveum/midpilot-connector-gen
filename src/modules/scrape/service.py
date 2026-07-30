@@ -13,7 +13,7 @@ from crawl4ai.utils import get_base_domain  # type: ignore
 from src.config import config
 from src.core.db import async_session_maker
 from src.core.llm import raise_if_llm_unavailable
-from src.database.repositories.documentation_repository import DocumentationRepository
+from src.database.repositories.documentation_repository import DocumentationRepository, DocumentationWriteBatch
 from src.database.repositories.job_repository import JobRepository
 from src.documents import SavedDocumentation
 from src.documents.processing.processor import process_all_documentations
@@ -73,6 +73,7 @@ async def _run_scrape_async(
                     }
                     new_docs = [item for item in doc_items if normalize_url(item.get("url")) not in existing_docs_urls]
                     inserted_chunks_count = 0
+                    write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
                     for chunk in new_docs:
                         chunk_id = await doc_repo.create_documentation_item(
                             session_id=session_id,
@@ -86,6 +87,7 @@ async def _run_scrape_async(
                         )
                         if chunk_id:
                             inserted_chunks_count += 1
+                        await write_batch.record_write()
                     for chunk in existing_docs_loaded:
                         raw_chunk_id = chunk.get("chunkId")
                         if not raw_chunk_id:
@@ -107,6 +109,8 @@ async def _run_scrape_async(
                                     chunk_id,
                                     job_id,
                                 )
+                            else:
+                                await write_batch.record_write()
                         else:
                             logger.warning(
                                 "[Scrape] Job %s: Existing documentation item in session is missing ID, cannot link to job %s",
@@ -114,7 +118,7 @@ async def _run_scrape_async(
                                 job_id,
                             )
 
-                    await db.commit()
+                    await write_batch.commit_pending()
                     logger.info(
                         "[Scrape] Job %s: Saved %s chunks to session",
                         job_id,
@@ -179,7 +183,6 @@ async def _run_scrape_async(
 
     existing_documentation_chunks: List[Dict[str, Any]] = []
     existing_documentation_chunks_urls: set[str] = set()
-    updated_existing_chunks_count = 0
     doc_rows_for_export: List[Dict[str, Any]] = []
     if session_id:
         async with async_session_maker() as db:
@@ -342,7 +345,7 @@ async def _run_scrape_async(
                     documentation.url,
                     exc_info=batch,
                 )
-                append_job_error(job_id, f"Documentation processing failed for {documentation.url}: {batch}")
+                await append_job_error(job_id, f"Documentation processing failed for {documentation.url}: {batch}")
                 continue
 
             chunks, chunk_errors = batch
@@ -355,7 +358,7 @@ async def _run_scrape_async(
                     chunk_error.url,
                     chunk_error.error,
                 )
-                append_job_error(
+                await append_job_error(
                     job_id,
                     f"Chunk {chunk_error.chunk_index} of {chunk_error.url} skipped after failure: {chunk_error.error}",
                 )
@@ -368,6 +371,7 @@ async def _run_scrape_async(
     if session_id:
         async with async_session_maker() as db:
             doc_repo = DocumentationRepository(db)
+            write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
 
             for chunk in existing_documentation_chunks:
                 raw_chunk_id = chunk.get("chunkId")
@@ -382,7 +386,7 @@ async def _run_scrape_async(
                 chunk_id = UUID(str(raw_chunk_id))
                 update_res = await doc_repo.update_documentation_item(chunk_id=chunk_id, original_job_id=job_id)
                 if update_res:
-                    updated_existing_chunks_count += 1
+                    await write_batch.record_write()
                 else:
                     logger.warning(
                         "[Scrape] Job %s: Failed to update existing documentation item with ID %s to link to job %s",
@@ -413,31 +417,28 @@ async def _run_scrape_async(
                     )
                     if chunk_id:
                         saved_chunks_count += 1
-                await db.commit()
+                    await write_batch.record_write()
+                await write_batch.commit_pending()
 
                 logger.info(
                     "[Scrape] Job %s: Saved %s chunks to session",
                     job_id,
                     saved_chunks_count,
                 )
-            elif updated_existing_chunks_count > 0:
-                await db.commit()
-
-            doc_rows_for_export = await doc_repo.get_documentation_items_for_export(session_id)
-            if scheduled_documentation_urls:
-                doc_rows_for_export = [
-                    item
-                    for item in doc_rows_for_export
-                    if normalize_url(item.get("url")) in scheduled_documentation_urls
-                ]
             else:
-                doc_rows_for_export = []
+                await write_batch.commit_pending()
 
+            doc_rows_for_export = await doc_repo.get_scraped_documentation_items_for_export_by_origin_job(
+                session_id,
+                job_id,
+            )
+
+    grouped_documentations = build_group_documentation_response(doc_rows_for_export)
     result = ScrapeResult(
         finish_reason=finish_reason,
-        saved_documentations_count=len(scheduled_documentations),
-        saved_chunks_count=len(documentation_chunks),
-        saved_documentations=build_group_documentation_response(doc_rows_for_export),
+        saved_documentations_count=len(grouped_documentations) if session_id else len(scheduled_documentations),
+        saved_chunks_count=len(doc_rows_for_export) if session_id else len(documentation_chunks),
+        saved_documentations=grouped_documentations,
     )
 
     logger.info(

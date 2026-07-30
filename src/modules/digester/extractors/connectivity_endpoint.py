@@ -202,7 +202,7 @@ async def rank_connectivity_candidates(
     except Exception as exc:
         error_msg = f"[Digester:ConnectivityEndpoint] Ranking LLM call failed: {exc}"
         logger.exception(error_msg)
-        append_job_error(job_id, error_msg)
+        await append_job_error(job_id, error_msg)
         return candidates
 
 

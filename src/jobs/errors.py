@@ -4,7 +4,9 @@
 
 from uuid import UUID
 
-from src.core.errors import AppError
+from src.core.errors import AppError, ExecutionOwnershipLostError
+
+JobClaimLostError = ExecutionOwnershipLostError
 
 
 class JobNotFoundError(AppError):
@@ -15,3 +17,6 @@ class JobNotFoundError(AppError):
 
     def __init__(self, job_label: str, session_id: UUID, detail: str | None = None):
         super().__init__(detail or f"No {job_label} job found in session {session_id}")
+
+
+__all__ = ["JobClaimLostError", "JobNotFoundError"]

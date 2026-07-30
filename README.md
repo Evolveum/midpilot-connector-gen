@@ -14,7 +14,8 @@ import-linter (`uv run poe importcheck`, configured in `pyproject.toml`).
 - [`src/session`](src/session) - session context: routes, documentation upload/processing, ownership check
 - [`src/auth`](src/auth) - API key authentication and key management endpoints
 - [`src/api`](src/api) - shared HTTP edge: exception handlers, job status response builders
-- [`src/jobs`](src/jobs) - background job framework (runner, lifecycle, caching, persistence)
+- [`src/jobs`](src/jobs) - durable PostgreSQL job queue (claiming worker, runner,
+  lifecycle, caching, fencing, persistence)
 - [`src/documents`](src/documents) - documentation toolkit: chunking, LLM processing, filtering, relevance
 - [`src/integrations`](src/integrations) - adapters for external services (web fetch and search)
 - [`src/database`](src/database) - SQLAlchemy models and repositories (single shared schema)
@@ -193,6 +194,11 @@ uv run alembic upgrade head --sql
 ### Run the app
 
 ```bash
+# after pulling a version with schema changes
+uv run alembic upgrade head
+
+# APP__WORKERS can be raised when live reload is disabled; all processes
+# coordinate through the same PostgreSQL job queue
 uv run poe start
 # access the service at http://localhost:8090
 # e.g. `curl http://0.0.0.0:8090/health`

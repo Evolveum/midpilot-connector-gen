@@ -78,7 +78,10 @@ async def test_extract_single_chunk_does_not_retry_non_transient_error(monkeypat
 
     with (
         patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.extraction.chunk_extraction.append_job_error", Mock()) as append_job_error,
+        patch(
+            "src.modules.digester.extraction.chunk_extraction.append_job_error",
+            new_callable=AsyncMock,
+        ) as append_job_error,
     ):
         items, has_relevant_data = await extract_single_chunk(
             schema="User resource documentation",
@@ -107,7 +110,10 @@ async def test_extract_single_chunk_raises_when_llm_unreachable(monkeypatch):
 
     with (
         patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.extraction.chunk_extraction.append_job_error", Mock()) as append_job_error,
+        patch(
+            "src.modules.digester.extraction.chunk_extraction.append_job_error",
+            new_callable=AsyncMock,
+        ) as append_job_error,
     ):
         with pytest.raises(LLMUnavailableError):
             await extract_single_chunk(
@@ -148,6 +154,7 @@ async def test_extract_single_chunk_validated_sequences_keep_matched_text():
     with (
         patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extraction.chunk_extraction.append_job_error") as append_job_error,
+        patch("src.modules.digester.extraction.chunk_extraction.pool.require_process_pool", return_value=None),
     ):
         items, has_relevant_data = await extract_single_chunk(
             schema="Prefix. User object includes id string and email string. Suffix.",

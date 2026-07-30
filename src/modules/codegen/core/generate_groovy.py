@@ -80,7 +80,7 @@ async def generate_groovy(
         if validation_error is not None:
             error_message = f"[Codegen:{logger_prefix}] Generated invalid Groovy: {validation_error}"
             logger.warning(error_message)
-            append_job_error(job_id, error_message)
+            await append_job_error(job_id, error_message)
             return f'objectClass("{object_class}") {{}}'
         return code
 
@@ -88,5 +88,5 @@ async def generate_groovy(
         raise_if_llm_unavailable(exc, context=f"generating code for {object_class}")
         error_message = f"[Codegen:{logger_prefix}] Generation failed: {exc}"
         logger.exception(error_message)
-        append_job_error(job_id, error_message)
+        await append_job_error(job_id, error_message)
         return f'objectClass("{object_class}") {{}}'

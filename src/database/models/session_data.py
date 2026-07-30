@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, text
@@ -35,7 +35,7 @@ class SessionData(Base):
         index=True,
     )
     key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    value: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    value: Mapped[Any] = mapped_column(JSONB, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

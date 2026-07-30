@@ -14,7 +14,9 @@ from typing import Any, Dict
 from uuid import UUID
 
 from src.core.db import async_session_maker
+from src.core.job_execution import get_current_execution
 from src.database.repositories.documentation_repository import DocumentationRepository
+from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.relevance import (
@@ -30,6 +32,7 @@ from src.documents.relevance import (
     unwrap_result_payload as _unwrap_result_payload,
 )
 from src.jobs import lifecycle
+from src.jobs.errors import JobClaimLostError
 
 logger = logging.getLogger(__name__)
 
@@ -64,16 +67,23 @@ async def persist_result_to_session(
     session_result_key: str,
     result_dict: Any,
     input_payload: Dict[str, Any],
-) -> None:
+) -> bool:
     """Store the job result under ``session_result_key`` and refresh relevant-chunk rows.
 
-    Errors are caught, logged and appended to the job's error list so the job can still be
-    marked finished.
+    Failures are recorded on the job and re-raised so the execution cannot be
+    reported as finished without its promised session result.
     """
     try:
         async with async_session_maker() as db:
             repo = SessionRepository(db)
             relevant_repo = RelevantChunkRepository(db)
+            execution = get_current_execution()
+            if execution is not None:
+                await JobRepository(db).acquire_execution_fence(
+                    job_id,
+                    worker_id=execution.worker_id,
+                    execution_token=execution.execution_token,
+                )
 
             if isinstance(result_dict, dict):
                 session_payload: Any
@@ -86,7 +96,15 @@ async def persist_result_to_session(
                     session_payload,
                     result_key=session_result_key,
                 )
-                await repo.update_session(session_id, {session_result_key: session_payload})
+                persisted = await repo.update_result_if_current_job(
+                    session_id=session_id,
+                    result_key=session_result_key,
+                    job_id=job_id,
+                    value=session_payload,
+                )
+                if not persisted:
+                    await db.rollback()
+                    return False
 
                 chunk_to_doc = _build_chunk_to_doc_map(input_payload.get("documentationItems"))
                 if not chunk_to_doc:
@@ -106,13 +124,27 @@ async def persist_result_to_session(
                     chunks=relevant_rows,
                 )
             else:
-                await repo.update_session(session_id, {session_result_key: result_dict})
+                persisted = await repo.update_result_if_current_job(
+                    session_id=session_id,
+                    result_key=session_result_key,
+                    job_id=job_id,
+                    value=result_dict,
+                )
+                if not persisted:
+                    await db.rollback()
+                    return False
 
             await db.commit()
+            return True
+    except JobClaimLostError:
+        raise
     except Exception as e:
         error_msg = f"Session persistence failed for job {job_id} in session {session_id}: {e}"
         logger.error(error_msg, exc_info=e)
         try:
             await lifecycle._append_job_error_now(job_id, error_msg)
+        except JobClaimLostError:
+            raise
         except Exception:
             logger.error("Failed to record session persistence error for job %s", job_id, exc_info=True)
+        raise

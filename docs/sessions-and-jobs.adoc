@@ -24,7 +24,8 @@ exist before any pipeline endpoint is called.
 | Session summary. `HEAD` variant checks existence.
 
 | `GET /api/session/{sessionId}/jobs`
-| List all jobs belonging to the session.
+| List all jobs belonging to the session. Running rows include worker,
+  heartbeat, claim expiry, and attempt metadata for operational visibility.
 
 | `DELETE /api/session/{sessionId}`
 | Delete the session and all associated data.
@@ -81,13 +82,70 @@ Every expensive operation follows the same contract:
    (e.g. correcting an extracted object class before running codegen).
 
 Job statuses and progress stages are defined centrally in
-`src/common/enums.py` (`JobStatus`, `JobStage`).
+`src/shared/enums.py` (`JobStatus`, `JobStage`).
+
+== Durable multi-worker execution
+
+The job row contains a versioned execution payload, ownership token, attempt
+counter, heartbeat, and claim expiry. Every enabled FastAPI process runs a
+consumer which claims work with PostgreSQL `FOR UPDATE SKIP LOCKED`; two
+workers therefore cannot receive the same execution token.
+
+While a job runs, its worker refreshes the claim. A hard-stopped process leaves
+the job in `running`; after the claim expires another process can reclaim it.
+All final state and session-result writes are fenced by the execution token,
+so the old process cannot overwrite the new worker even if it resumes late.
+Graceful shutdown returns interrupted work directly to `queued`.
+
+For independent Kubernetes scaling, run API pods with
+`JOBS__ENABLED=false` and worker-only pods with:
+
+[source,shell]
+----
+python -m src.jobs.runtime
+----
+
+The standalone process uses the same per-process concurrency, claim timeout,
+heartbeat, CPU-pool and shutdown settings as the embedded FastAPI consumer.
+
+Execution is *at least once*: if a process dies after an external LLM provider
+accepted a request but before the result was persisted, the reclaimed attempt
+may repeat that LLM call. Database side effects are fenced/idempotent, but an
+exactly-once guarantee cannot be imposed on an external API across an
+ambiguous network/process failure.
+
+Documentation dependencies are part of the PostgreSQL claim predicate. A
+digester job stays queued without occupying a concurrency slot while scrape or
+upload processing is active in the same session. The dependency timeout is an
+enqueue-time budget measured from durable job creation, rather than from the
+later worker claim. If it expires while a producer is still unfinished, the
+worker logs a warning and records the degraded continuation in the job's
+non-fatal errors before claiming it. Uploaded source bytes are
+stored in the shared `job_artifacts` table (`BYTEA`) and the small versioned
+execution payload contains only a named reference. Artifacts and the execution
+payload are cleared on finish/failure. Deployments with very large upload
+retention or throughput can replace this table with shared object storage
+without changing the worker-call contract.
+
+The job and its `{key}JobId` session pointer are inserted in the same request
+transaction. A consumer sees neither until both commit. Result persistence
+checks that the pointer still references the completing job, preventing an
+older parallel job from overwriting a newer result. The older computation
+remains a finished historical job, but its `errors` list explicitly records
+that the result was not published to the session.
+
+Run `uv run alembic upgrade head` before starting the updated application.
+Migration `007` marks pre-migration queued/running jobs as failed because they
+do not contain a resumable execution payload. The same migration adds
+idempotency keys for documentation chunks.
 
 == Result caching and `skipCache`
 
 Discovery, scrape, and digester jobs cache results by *normalized input*: if
-the same input was already processed (in any session) within a configured time
-window, the stored result is reused instead of re-running the LLM work.
+the same input was already processed in the same session or API-key tenant
+within a configured time window, the stored result is reused instead of
+re-running the LLM work. With authentication disabled, ownerless sessions form
+one cache tenant; production deployments should enable API-key authentication.
 
 * The windows are configured per module:
   `+SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL+`,

@@ -242,7 +242,7 @@ async def deduplicate_and_sort_object_classes(
         confidence_assignment_failed = True
         error_message = f"[Digester:ObjectClasses] Confidence assignment failed: {exc}"
         logger.exception(error_message)
-        append_job_error(job_id, error_message)
+        await append_job_error(job_id, error_message)
         await update_job_progress(
             job_id,
             stage=JobStage.relevancy_filtering_finished,
@@ -304,7 +304,7 @@ async def deduplicate_and_sort_object_classes(
     except Exception as exc:
         error_message = f"[Digester:ObjectClasses] Sorting failed, using deterministic fallback: {exc}"
         logger.exception(error_message)
-        append_job_error(job_id, error_message)
+        await append_job_error(job_id, error_message)
 
     fallback_ranked = sorted(
         ranked_list,

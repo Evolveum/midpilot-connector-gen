@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.jobs import job_input_reference
 from src.modules.codegen.routes.relations import generate_relation_code, get_relation_code_status
 from src.modules.digester.errors import InvalidRelationsOutputError, RelationNotFoundError
 from src.shared.enums import JobStatus
@@ -55,7 +56,7 @@ async def test_generate_relation_code_success():
         assert [item["name"] for item in schedule_kwargs["input_payload"]["relations"]["relations"]] == [
             "user_to_group"
         ]
-        assert schedule_kwargs["worker_kwargs"]["relations"].relations[0].name == "user_to_group"
+        assert schedule_kwargs["worker_kwargs"]["relations"] == job_input_reference("relations")
         assert schedule_kwargs["worker_kwargs"]["relation_name"] == "user_to_group"
         mock_repo.update_session.assert_awaited_once()
 
@@ -115,8 +116,7 @@ async def test_generate_relation_code_selects_relation_by_name():
             }
         ]
     }
-    assert len(schedule_kwargs["worker_kwargs"]["relations"].relations) == 1
-    assert schedule_kwargs["worker_kwargs"]["relations"].relations[0].name == "principal_to_membership"
+    assert schedule_kwargs["worker_kwargs"]["relations"] == job_input_reference("relations")
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,7 @@ from pypdf import PdfReader
 from src.config import config
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.chunking import count_tokens, split_single_item_schema, split_text_with_token_overlap
-from src.jobs import schedule_coroutine_job
+from src.jobs import binary_artifact_reference, schedule_coroutine_job
 from src.session.schema import (
     PreparedDocumentationUpload,
     RawUploadedDocumentation,
@@ -443,12 +443,18 @@ async def queue_documentation_upload_job(
         input_payload["skipCache"] = skip_cache
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="documentation.processUpload",
         input_payload=input_payload,
         worker=process_documentation_worker,
         worker_kwargs={
             "session_id": session_id,
-            "raw_upload": raw_upload,
+            "raw_upload": {
+                "data": binary_artifact_reference("raw-upload"),
+                "filename": raw_upload.filename,
+                "content_type": raw_upload.content_type,
+                "content_hash": raw_upload.content_hash,
+            },
             "doc_id": doc_id,
             "app": context.app,
             "app_version": context.app_version,
@@ -456,6 +462,7 @@ async def queue_documentation_upload_job(
         initial_stage=JobStage.queue,
         initial_message="Queued uploaded documentation for processing",
         session_id=session_id,
+        binary_artifacts={"raw-upload": raw_upload.data},
     )
 
     job_key = f"documentation.processUpload_{doc_id}_job_id"
