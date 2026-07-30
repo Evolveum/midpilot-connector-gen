@@ -20,6 +20,7 @@ class JobsSettings(BaseModel):
     heartbeat_interval_seconds: float = Field(default=30.0, gt=0)
     max_attempts: int = Field(default=3, ge=1)
     shutdown_grace_seconds: float = Field(default=10.0, ge=0)
+    claim_release_timeout_seconds: float = Field(default=3.0, gt=0)
     documentation_write_batch_size: int = Field(default=20, ge=1)
     cpu_processes: int = Field(default=1, ge=1)
 

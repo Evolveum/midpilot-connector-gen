@@ -2,12 +2,15 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from src.config import config
 from src.database.repositories.job_repository import ClaimedJob
+from src.jobs import runner
 from src.jobs.errors import JobClaimLostError
 from src.jobs.lifecycle import increment_processed_documents
 from src.jobs.payload import build_execution_payload
@@ -231,3 +234,33 @@ async def test_progress_increment_ignores_transient_db_error_but_propagates_lost
     ):
         with pytest.raises(JobClaimLostError):
             await increment_processed_documents(job_id)
+
+
+@pytest.mark.asyncio
+async def test_release_interrupted_claim_gives_up_when_the_database_does_not_answer(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Shutdown cancels executions, so releasing a claim must be time-boxed."""
+    monkeypatch.setattr(config.jobs, "claim_release_timeout_seconds", 0.02)
+    release_started = asyncio.Event()
+
+    async def never_answers(claimed_job: ClaimedJob) -> None:
+        release_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(runner, "_release_claim", never_answers)
+    claimed_job = ClaimedJob(
+        job_id=uuid4(),
+        session_id=uuid4(),
+        job_type="digester.test",
+        input_payload={},
+        execution_payload={},
+        worker_id="test-worker",
+        execution_token=uuid4(),
+        attempt_count=1,
+    )
+
+    # The bound is asserted by the timeout: an unbounded wait would hang here.
+    await asyncio.wait_for(runner._release_interrupted_claim(claimed_job), timeout=5)
+
+    assert release_started.is_set()

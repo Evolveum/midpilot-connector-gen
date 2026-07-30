@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, defer
 
 from src.core.errors import ExecutionOwnershipLostError
 from src.database.models import Job, JobArtifact, JobProgress, Session
@@ -166,6 +166,8 @@ class JobRepository:
                 tenant_scope,
             )
             .order_by(Job.created_at.desc())
+            .limit(1)
+            .options(defer(Job.input, raiseload=True))
         )
         result = await self.db.execute(query)
 

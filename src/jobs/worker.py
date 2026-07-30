@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import socket
+import time
 from uuid import uuid4
 
 from src.config import config
@@ -123,32 +124,73 @@ class JobWorker:
             logger.error("Unhandled job task failure", exc_info=exception)
 
     async def stop(self) -> None:
+        """Stop the worker within one bounded shutdown budget.
+
+        ``shutdown_grace_seconds`` is a single deadline shared by every step:
+        draining the coordinator and reaper, letting active jobs finish, and the
+        claim release their cancellation performs, for which
+        ``claim_release_timeout_seconds`` is reserved at the end. No step waits
+        on the database indefinitely, so an unreachable or overloaded database
+        can no longer hold the process past its termination grace period. A
+        claim that cannot be released in time expires on its own and is requeued
+        by the reaper.
+        """
         self._stop_event.set()
+        deadline = time.monotonic() + config.jobs.shutdown_grace_seconds
         background_tasks = [task for task in (self._coordinator, self._reaper) if task is not None]
         try:
-            if background_tasks:
-                results = await asyncio.gather(*background_tasks, return_exceptions=True)
-                for result in results:
-                    if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
-                        logger.error(
-                            "Background coordinator failed while stopping worker %s: %s",
-                            self.worker_id,
-                            result,
-                        )
+            await self._drain_background_tasks(background_tasks, deadline)
         finally:
             self._coordinator = None
             self._reaper = None
-            if self._active and config.jobs.shutdown_grace_seconds > 0:
-                _, pending = await asyncio.wait(
-                    self._active,
-                    timeout=config.jobs.shutdown_grace_seconds,
-                )
-            else:
-                pending = set(self._active)
-
-            for task in pending:
-                task.cancel()
-            if self._active:
-                await asyncio.gather(*self._active, return_exceptions=True)
+            await self._drain_active_jobs(deadline)
             self._active.clear()
             logger.info("Stopped database job worker %s", self.worker_id)
+
+    async def _drain_background_tasks(self, tasks: list[asyncio.Task[None]], deadline: float) -> None:
+        """Let the coordinator and reaper observe the stop signal, then cancel stragglers."""
+        if not tasks:
+            return
+        done, pending = await asyncio.wait(tasks, timeout=max(0.0, deadline - time.monotonic()))
+        for task in done:
+            if task.cancelled():
+                continue
+            error = task.exception()
+            if error is not None:
+                logger.error(
+                    "Background task %s failed while stopping worker %s: %s",
+                    task.get_name(),
+                    self.worker_id,
+                    error,
+                )
+        for task in pending:
+            logger.warning(
+                "Cancelling background task %s of worker %s that did not stop within the shutdown budget",
+                task.get_name(),
+                self.worker_id,
+            )
+            task.cancel()
+
+    async def _drain_active_jobs(self, deadline: float) -> None:
+        """Let running jobs finish, then cancel them and bound their claim release."""
+        if not self._active:
+            return
+        job_deadline = deadline - config.jobs.claim_release_timeout_seconds
+        _, pending = await asyncio.wait(self._active, timeout=max(0.0, job_deadline - time.monotonic()))
+        if not pending:
+            return
+        logger.warning(
+            "Cancelling %s job(s) of worker %s that outlived the shutdown grace period",
+            len(pending),
+            self.worker_id,
+        )
+        for task in pending:
+            task.cancel()
+        _, unfinished = await asyncio.wait(pending, timeout=max(0.0, deadline - time.monotonic()))
+        if unfinished:
+            logger.error(
+                "%s cancelled job(s) of worker %s did not confirm cleanup, their claims expire after %ss",
+                len(unfinished),
+                self.worker_id,
+                config.jobs.claim_timeout_seconds,
+            )

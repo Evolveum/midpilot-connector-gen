@@ -45,6 +45,12 @@ def _override_auth(monkeypatch, *, api_key_required: bool, master_api_key: Secre
 
 
 @pytest.fixture()
+def disabled_auth(monkeypatch):
+    """Auth fully off. Pinned explicitly so a configured .env cannot change the mode."""
+    _override_auth(monkeypatch, api_key_required=False, master_api_key=None)
+
+
+@pytest.fixture()
 def enforced_auth(monkeypatch):
     _override_auth(monkeypatch, api_key_required=True, master_api_key=SecretStr(MASTER_KEY))
 
@@ -82,7 +88,7 @@ def _patch_auth_repos(active_record=None, session_owner=None):
 # --- Disabled mode (default) ---
 
 
-def test_disabled_mode_allows_requests_without_key(client):
+def test_disabled_mode_allows_requests_without_key(client, disabled_auth):
     session_id = uuid4()
     with patch("src.session.routes.sessions.ensure_session_exists", AsyncMock()):
         response = client.head(f"/api/v1/session/{session_id}")
@@ -90,9 +96,7 @@ def test_disabled_mode_allows_requests_without_key(client):
     assert response.status_code == 204
 
 
-def test_management_unavailable_without_configured_master_key(client, monkeypatch):
-    _override_auth(monkeypatch, api_key_required=False, master_api_key=None)
-
+def test_management_unavailable_without_configured_master_key(client, disabled_auth):
     response = client.get("/api/v1/apiKeys")
 
     assert response.status_code == 403

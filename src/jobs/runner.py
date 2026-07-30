@@ -217,26 +217,50 @@ async def _heartbeat(claimed_job: ClaimedJob) -> None:
         except asyncio.CancelledError:
             raise
         except Exception:
-            # A transient DB outage may recover before the current claim
-            # expires. Conditional finalization still protects against a
-            # takeover, so retry on the next heartbeat.
             logger.exception("Failed to refresh claim for job %s", claimed_job.job_id)
             continue
         if not refreshed:
             raise JobClaimLostError(claimed_job.job_id)
 
 
+async def _release_claim(claimed_job: ClaimedJob) -> None:
+    async with async_session_maker() as db:
+        await JobRepository(db).release_claim(
+            claimed_job.job_id,
+            worker_id=claimed_job.worker_id,
+            execution_token=claimed_job.execution_token,
+        )
+        await db.commit()
+
+
 async def _release_interrupted_claim(claimed_job: ClaimedJob) -> None:
-    try:
-        async with async_session_maker() as db:
-            await JobRepository(db).release_claim(
-                claimed_job.job_id,
-                worker_id=claimed_job.worker_id,
-                execution_token=claimed_job.execution_token,
-            )
-            await db.commit()
-    except Exception:
-        logger.exception("Failed to return interrupted job %s to the queue", claimed_job.job_id)
+    """Return an interrupted claim to the queue within a bounded window.
+
+    Executions are cancelled during shutdown, so this must not outlive the
+    process grace period. The release therefore runs as a separate task that is
+    abandoned once the budget is spent: rolling back and closing a cancelled
+    database session can block for as long as the statement it replaces. A claim
+    that stays unreleased expires after ``claim_timeout_seconds`` and is requeued
+    by the reaper.
+    """
+    release_task = asyncio.create_task(_release_claim(claimed_job))
+    done, _ = await asyncio.wait({release_task}, timeout=config.jobs.claim_release_timeout_seconds)
+    if not done:
+        release_task.cancel()
+        logger.error(
+            "Timed out after %ss returning interrupted job %s to the queue, its claim expires after %ss",
+            config.jobs.claim_release_timeout_seconds,
+            claimed_job.job_id,
+            config.jobs.claim_timeout_seconds,
+        )
+        return
+    error = release_task.exception()
+    if error is not None:
+        logger.error(
+            "Failed to return interrupted job %s to the queue",
+            claimed_job.job_id,
+            exc_info=error,
+        )
 
 
 async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
@@ -255,9 +279,6 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
             {execution_task, heartbeat_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
-        # A successful finalization clears the claim, so a simultaneous
-        # heartbeat can legitimately report "not refreshed". Prefer the completed
-        # execution result in that race.
         if execution_task in done:
             await execution_task
         else:

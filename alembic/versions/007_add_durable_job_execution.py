@@ -94,16 +94,6 @@ def upgrade() -> None:
           AND execution_payload IS NULL
         """
     )
-    # From this version onward normalized_input is a compact SHA-256 identity.
-    # Existing cache rows cannot be reconstructed with the application
-    # normalizer inside SQL, so retain a compact legacy identity instead of a
-    # second copy of potentially very large documentation input.
-    op.execute(
-        """
-        UPDATE jobs
-        SET normalized_input = jsonb_build_object('legacyMd5', md5(normalized_input::text))
-        """
-    )
 
     op.add_column("documentation_items", sa.Column("origin_job_id", sa.UUID(), nullable=True))
     op.add_column("documentation_items", sa.Column("origin_key", sa.String(length=64), nullable=True))

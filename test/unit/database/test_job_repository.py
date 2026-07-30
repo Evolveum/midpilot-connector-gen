@@ -42,6 +42,29 @@ async def test_reusable_job_query_is_scoped_to_session_or_matching_owner() -> No
 
 
 @pytest.mark.asyncio
+async def test_reusable_job_query_transfers_only_the_newest_row_without_its_input() -> None:
+    """Reuse needs one row and never its input, so neither may be materialized."""
+    db = MagicMock()
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = None
+    db.execute = AsyncMock(return_value=result)
+
+    await JobRepository(db).get_job_by_input(
+        "digester.getObjectClasses",
+        {"applicationName": "Demo"},
+        datetime.now(timezone.utc) - timedelta(days=1),
+        requesting_session_id=uuid4(),
+    )
+
+    compiled = _compile_postgres(db.execute.await_args.args[0])
+    sql = " ".join(str(compiled).split())
+    assert sql.endswith("ORDER BY jobs.created_at DESC LIMIT %(param_1)s")
+    assert compiled.params["param_1"] == 1
+    assert "jobs.input" not in sql
+    assert "jobs.result" in sql
+
+
+@pytest.mark.asyncio
 async def test_session_job_query_constrains_both_job_and_session_ids() -> None:
     db = MagicMock()
     result = MagicMock()
