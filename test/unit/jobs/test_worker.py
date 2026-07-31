@@ -68,6 +68,35 @@ async def test_stop_returns_within_budget_when_job_cleanup_hangs(
 
 
 @pytest.mark.asyncio
+async def test_stop_reserves_the_release_budget_when_a_background_task_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A coordinator stuck on the database must not spend the claim-release window."""
+    worker = JobWorker(worker_id="test-worker")
+    monkeypatch.setattr(config.jobs, "shutdown_grace_seconds", 0.2)
+    monkeypatch.setattr(config.jobs, "claim_release_timeout_seconds", 0.1)
+    claim_released = asyncio.Event()
+
+    async def block_on_the_database() -> None:
+        await asyncio.Event().wait()
+
+    async def job_releasing_its_claim_on_cancel() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.01)
+            claim_released.set()
+
+    worker._coordinator = asyncio.create_task(block_on_the_database(), name="job-worker:test-worker")
+    active = asyncio.create_task(job_releasing_its_claim_on_cancel())
+    worker._active.add(active)
+
+    await asyncio.wait_for(worker.stop(), timeout=5)
+
+    assert claim_released.is_set()
+
+
+@pytest.mark.asyncio
 async def test_stop_cancels_background_task_that_never_observes_the_stop_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

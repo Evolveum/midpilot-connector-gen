@@ -10,6 +10,7 @@ from typing import Any, Dict
 from uuid import UUID
 
 from src.config import config
+from src.core.concurrency import TaskScope
 from src.core.db import async_session_maker
 from src.database.repositories.documentation_repository import DocumentationRepository, DocumentationWriteBatch
 from src.documents.processing.llms import get_llm_processed_chunk
@@ -143,7 +144,6 @@ async def process_documentation_worker(
 
         completed_chunks: dict[int, ProcessedDocumentationChunk] = {}
         next_chunk_to_persist = 0
-        tasks = [asyncio.create_task(process_chunk(i, ch)) for i, ch in enumerate(chunks)]
         persist_errors: list[tuple[int, Exception]] = []
         persistence_buffer: list[ProcessedDocumentationChunk] = []
 
@@ -172,33 +172,31 @@ async def process_documentation_worker(
                 )
                 persist_errors.extend((chunk.index, e) for chunk in chunks_to_persist)
 
-        try:
-            for completed_task in asyncio.as_completed(tasks):
-                processed_chunk = await completed_task
-                completed_chunks[processed_chunk.index] = processed_chunk
-                await increment_processed_documents(job_id, delta=1)
+        async with TaskScope(f"upload-chunks:{job_id}") as chunk_scope:
+            tasks = [chunk_scope.start(process_chunk(i, ch)) for i, ch in enumerate(chunks)]
+            try:
+                for completed_task in asyncio.as_completed(tasks):
+                    processed_chunk = await completed_task
+                    completed_chunks[processed_chunk.index] = processed_chunk
+                    await increment_processed_documents(job_id, delta=1)
 
-                while next_chunk_to_persist in completed_chunks:
-                    chunk_to_persist = completed_chunks.pop(next_chunk_to_persist)
-                    persistence_buffer.append(chunk_to_persist)
-                    next_chunk_to_persist += 1
-                    if len(persistence_buffer) >= config.jobs.documentation_write_batch_size:
-                        await _flush_persistence_buffer()
+                    while next_chunk_to_persist in completed_chunks:
+                        chunk_to_persist = completed_chunks.pop(next_chunk_to_persist)
+                        persistence_buffer.append(chunk_to_persist)
+                        next_chunk_to_persist += 1
+                        if len(persistence_buffer) >= config.jobs.documentation_write_batch_size:
+                            await _flush_persistence_buffer()
 
-            await _flush_persistence_buffer()
+                await _flush_persistence_buffer()
 
-        except JobClaimLostError:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
-        except Exception:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            persistence_buffer.extend(sorted(completed_chunks.values(), key=lambda c: c.index))
-            await _flush_persistence_buffer()
-            raise
+            except JobClaimLostError:
+                await chunk_scope.aclose()
+                raise
+            except Exception:
+                await chunk_scope.aclose()
+                persistence_buffer.extend(sorted(completed_chunks.values(), key=lambda c: c.index))
+                await _flush_persistence_buffer()
+                raise
 
         if persist_errors:
             failed_indices = sorted(idx for idx, _ in persist_errors)

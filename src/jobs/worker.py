@@ -124,26 +124,17 @@ class JobWorker:
             logger.error("Unhandled job task failure", exc_info=exception)
 
     async def stop(self) -> None:
-        """Stop the worker within one bounded shutdown budget.
-
-        ``shutdown_grace_seconds`` is a single deadline shared by every step:
-        draining the coordinator and reaper, letting active jobs finish, and the
-        claim release their cancellation performs, for which
-        ``claim_release_timeout_seconds`` is reserved at the end. No step waits
-        on the database indefinitely, so an unreachable or overloaded database
-        can no longer hold the process past its termination grace period. A
-        claim that cannot be released in time expires on its own and is requeued
-        by the reaper.
-        """
+        """Stop the worker within one bounded shutdown budget."""
         self._stop_event.set()
         deadline = time.monotonic() + config.jobs.shutdown_grace_seconds
+        job_deadline = deadline - config.jobs.claim_release_timeout_seconds
         background_tasks = [task for task in (self._coordinator, self._reaper) if task is not None]
         try:
-            await self._drain_background_tasks(background_tasks, deadline)
+            await self._drain_background_tasks(background_tasks, job_deadline)
         finally:
             self._coordinator = None
             self._reaper = None
-            await self._drain_active_jobs(deadline)
+            await self._drain_active_jobs(deadline, job_deadline)
             self._active.clear()
             logger.info("Stopped database job worker %s", self.worker_id)
 
@@ -171,11 +162,10 @@ class JobWorker:
             )
             task.cancel()
 
-    async def _drain_active_jobs(self, deadline: float) -> None:
+    async def _drain_active_jobs(self, deadline: float, job_deadline: float) -> None:
         """Let running jobs finish, then cancel them and bound their claim release."""
         if not self._active:
             return
-        job_deadline = deadline - config.jobs.claim_release_timeout_seconds
         _, pending = await asyncio.wait(self._active, timeout=max(0.0, job_deadline - time.monotonic()))
         if not pending:
             return
