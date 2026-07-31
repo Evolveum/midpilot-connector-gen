@@ -39,7 +39,13 @@ async def test_get_conndev_documentation_items_builds_normalized_postgres_filter
 
 
 @pytest.mark.asyncio
-async def test_get_scraped_documentation_items_for_export_by_origin_job_filters_by_creator() -> None:
+async def test_get_scraped_documentation_items_for_export_by_job_covers_created_and_linked_chunks() -> None:
+    """A job's own result must include chunks it linked, not only chunks it created.
+
+    Regression: filtering on ``origin_job_id`` alone dropped every chunk that was
+    already present in the session and merely linked to this job through
+    ``scrape_job_ids``, so the scrape response under-reported its documentation.
+    """
     repo, db = _build_repo()
     result = MagicMock()
     result.scalars.return_value.all.return_value = []
@@ -47,18 +53,24 @@ async def test_get_scraped_documentation_items_for_export_by_origin_job_filters_
     session_id = uuid4()
     job_id = uuid4()
 
-    assert await repo.get_scraped_documentation_items_for_export_by_origin_job(session_id, job_id) == []
+    assert await repo.get_scraped_documentation_items_for_export_by_job(session_id, job_id) == []
 
-    query = db.execute.await_args.args[0]
-    compiled = str(query.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    compiled = db.execute.await_args.args[0].compile(dialect=postgresql.dialect())
+    sql = " ".join(str(compiled).split())
+    params = compiled.params
 
-    assert f"documentation_items.session_id = '{session_id}'" in compiled
-    assert f"documentation_items.origin_job_id = '{job_id}'" in compiled
-    assert "documentation_items.source = 'scraper'" in compiled
-    assert "scrape_job_ids @>" not in compiled
+    assert "documentation_items.session_id = %(session_id_1)s::UUID" in sql
     assert (
-        "ORDER BY documentation_items.doc_id, documentation_items.created_at, documentation_items.chunk_id" in compiled
+        "(documentation_items.origin_job_id = %(origin_job_id_1)s::UUID "
+        "OR (documentation_items.scrape_job_ids @> %(scrape_job_ids_1)s::JSONB))" in sql
     )
+    assert "documentation_items.source = %(source_1)s" in sql
+    assert params["session_id_1"] == session_id
+    assert params["origin_job_id_1"] == job_id
+    # The job id is stored as a string inside the JSONB array, so containment must match that shape.
+    assert params["scrape_job_ids_1"] == [str(job_id)]
+    assert params["source_1"] == "scraper"
+    assert "ORDER BY documentation_items.doc_id, documentation_items.created_at, documentation_items.chunk_id" in sql
 
 
 @pytest.mark.asyncio

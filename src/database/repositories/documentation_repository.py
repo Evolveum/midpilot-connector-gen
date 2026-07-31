@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
@@ -292,17 +292,20 @@ class DocumentationRepository:
 
         return [self._to_export_item_dict(item) for item in items]
 
-    async def get_scraped_documentation_items_for_export_by_origin_job(
+    async def get_scraped_documentation_items_for_export_by_job(
         self,
         session_id: UUID,
         job_id: UUID,
     ) -> List[Dict[str, Any]]:
-        """Get scraper chunks created by one job, including rows committed by an earlier execution attempt."""
+        """Get every scraper chunk one job is responsible for, for that job's own result payload."""
         query = (
             select(DocumentationItem)
             .where(
                 DocumentationItem.session_id == session_id,
-                DocumentationItem.origin_job_id == job_id,
+                or_(
+                    DocumentationItem.origin_job_id == job_id,
+                    DocumentationItem.scrape_job_ids.contains([str(job_id)]),
+                ),
                 DocumentationItem.source == "scraper",
             )
             .order_by(
@@ -522,29 +525,3 @@ class DocumentationRepository:
         await self.db.flush()
         logger.info(f"Deleted {count} documentation items for session {session_id}")
         return count
-
-    async def bulk_create_documentation_items(self, session_id: UUID, items: List[Dict[str, Any]]) -> List[UUID]:
-        """
-        Bulk create documentation items for efficiency.
-
-        :param session_id: Session ID
-        :param items: List of item dicts with keys: source, content, doc_id, url, summary, metadata
-        :return: List of created documentation item IDs
-        """
-        ids = []
-        for item_data in items:
-            doc_item = DocumentationItem(
-                session_id=session_id,
-                doc_id=item_data.get("doc_id"),
-                source=item_data["source"],
-                url=item_data.get("url"),
-                summary=item_data.get("summary"),
-                content=item_data["content"],
-                doc_metadata=item_data.get("metadata", {}),
-            )
-            self.db.add(doc_item)
-            ids.append(doc_item.chunk_id)
-
-        await self.db.flush()
-        logger.info(f"Bulk created {len(ids)} documentation items for session {session_id}")
-        return ids

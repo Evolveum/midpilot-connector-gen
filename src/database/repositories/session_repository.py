@@ -243,32 +243,34 @@ class SessionRepository:
         """
         Get data from a session.
 
+        Only a keyless call needs the whole session. A single key, or the root of
+        a nested path, is read as one row so callers do not materialize every
+        stored ``*Output`` payload just to reach one of them.
+
         :param session_id: The session ID
         :param key: Optional key to retrieve specific data, can be str or list of str for nested keys
         :return: The requested data or None if not found
         """
-        session = await self.get_session(session_id)
-        if session is None:
+        if key is None:
+            session = await self.get_session(session_id)
+            return None if session is None else session.get("data", {})
+
+        if isinstance(key, str):
+            return await self.get_session_value(session_id, key)
+
+        if not key:
             return None
 
-        data = session.get("data", {})
-        if key is None:
-            return data
-
-        if isinstance(key, list):
-            # Navigate nested keys
-            idx = 0
-            while idx < len(key) - 1:
-                data = data.get(key[idx])
-                if not isinstance(data, dict):
-                    logger.warning(
-                        f"Expected dict while traversing session data for session {session_id}, got {type(data)}"
-                    )
-                    return None
-                idx += 1
-            return data.get(key[-1])
-        else:
-            return data.get(key)
+        # Navigate nested keys, loading only the root key of the path
+        value = await self.get_session_value(session_id, key[0])
+        for step in key[1:]:
+            if not isinstance(value, dict):
+                logger.warning(
+                    f"Expected dict while traversing session data for session {session_id}, got {type(value)}"
+                )
+                return None
+            value = value.get(step)
+        return value
 
     async def delete_session(self, session_id: UUID) -> bool:
         """

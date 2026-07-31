@@ -12,6 +12,7 @@ from src.config import config
 from src.core import pool
 from src.core.db import close_db
 from src.core.llm import aclose_llm_http_client
+from src.core.observability.logging import setup_logging
 from src.jobs.worker import JobWorker
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ async def run_worker_until_stopped() -> None:
 
 def main() -> None:
     """CLI entry point used by a worker-only container command."""
+    setup_logging()
     logger.info("Starting standalone durable-job worker")
     asyncio.run(run_worker_until_stopped())
 

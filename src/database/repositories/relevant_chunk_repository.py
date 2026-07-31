@@ -80,7 +80,21 @@ class RelevantChunkRepository:
         }
 
     @staticmethod
-    def _serialize_chunk(chunk: RelevantChunk) -> Dict[str, Any]:
+    def _serialize_relevant_sequence(chunk: RelevantChunk) -> Dict[str, Any]:
+        """Return ``{"relevantSequence": ...}`` for a row that carries both boundaries, else ``{}``."""
+        sequence = chunk.relevant_sequence or {}
+        if isinstance(sequence, dict) and sequence.get("startSequence") and sequence.get("endSequence"):
+            return {
+                "relevantSequence": {
+                    "startSequence": str(sequence["startSequence"]),
+                    "endSequence": str(sequence["endSequence"]),
+                }
+            }
+        return {}
+
+    @classmethod
+    def _serialize_chunk(cls, chunk: RelevantChunk) -> Dict[str, Any]:
+        """Serialize one relevant chunk, including the result key it was extracted for."""
         payload: Dict[str, Any] = {
             "resultKey": chunk.result_key,
             "docId": str(chunk.doc_id),
@@ -89,14 +103,13 @@ class RelevantChunkRepository:
         if chunk.entity_key:
             payload["entityKey"] = chunk.entity_key
 
-        sequence = chunk.relevant_sequence or {}
-        if isinstance(sequence, dict) and sequence.get("startSequence") and sequence.get("endSequence"):
-            payload["relevantSequence"] = {
-                "startSequence": str(sequence["startSequence"]),
-                "endSequence": str(sequence["endSequence"]),
-            }
-
+        payload.update(cls._serialize_relevant_sequence(chunk))
         return payload
+
+    @classmethod
+    def _serialize_chunk_ref(cls, chunk: RelevantChunk) -> Dict[str, Any]:
+        """Serialize one relevant chunk without ``resultKey``, for payloads already grouped by result."""
+        return {key: value for key, value in cls._serialize_chunk(chunk).items() if key != "resultKey"}
 
     async def add_relevant_chunk(
         self,
@@ -201,51 +214,6 @@ class RelevantChunkRepository:
         await self.db.flush()
         return len(normalized)
 
-    async def bulk_add_relevant_chunks(
-        self,
-        *,
-        session_id: UUID,
-        chunks: List[Dict[str, Any]],
-    ) -> int:
-        """
-        Bulk add relevant chunks.
-
-        Expected chunk keys:
-          - result_key/resultKey
-          - doc_id/docId
-          - chunk_id/chunkId
-          - optional entity_key/entityKey
-          - optional relevant_sequence/relevantSequence
-        """
-        if not chunks:
-            return 0
-
-        inserted = 0
-        for chunk_info in chunks:
-            if not isinstance(chunk_info, Mapping):
-                continue
-
-            normalized_chunk = self._normalize_chunk(
-                chunk_info,
-                default_result_key=None,
-                default_entity_key=None,
-            )
-            if not normalized_chunk:
-                continue
-
-            added = await self.add_relevant_chunk(
-                session_id=session_id,
-                result_key=normalized_chunk["result_key"],
-                entity_key=normalized_chunk["entity_key"],
-                doc_id=normalized_chunk["doc_id"],
-                chunk_id=normalized_chunk["chunk_id"],
-                relevant_sequence=normalized_chunk["relevant_sequence"],
-            )
-            if added:
-                inserted += 1
-
-        return inserted
-
     async def get_relevant_chunks(
         self,
         *,
@@ -278,15 +246,7 @@ class RelevantChunkRepository:
     async def get_relevant_chunks_for_result(self, session_id: UUID, result_key: str) -> List[Dict[str, Any]]:
         """Get relevant chunks for one result_key."""
         rows = await self.get_relevant_chunks(session_id=session_id, result_key=result_key)
-        return [
-            {
-                "docId": item["docId"],
-                "chunkId": item["chunkId"],
-                **({"entityKey": item["entityKey"]} if "entityKey" in item else {}),
-                **({"relevantSequence": item["relevantSequence"]} if "relevantSequence" in item else {}),
-            }
-            for item in rows
-        ]
+        return [{key: value for key, value in item.items() if key != "resultKey"} for item in rows]
 
     async def get_relevant_chunks_map(
         self,
@@ -311,16 +271,7 @@ class RelevantChunkRepository:
         rows = (await self.db.execute(stmt)).scalars().all()
         mapping: Dict[str, List[Dict[str, Any]]] = {}
         for row in rows:
-            serialized = self._serialize_chunk(row)
-            payload: Dict[str, Any] = {
-                "docId": serialized["docId"],
-                "chunkId": serialized["chunkId"],
-            }
-            if "entityKey" in serialized:
-                payload["entityKey"] = serialized["entityKey"]
-            if "relevantSequence" in serialized:
-                payload["relevantSequence"] = serialized["relevantSequence"]
-            mapping.setdefault(row.result_key, []).append(payload)
+            mapping.setdefault(row.result_key, []).append(self._serialize_chunk_ref(row))
 
         return mapping
 
@@ -346,18 +297,13 @@ class RelevantChunkRepository:
         rows = (await self.db.execute(stmt)).scalars().all()
         mapping: Dict[str, List[Dict[str, Any]]] = {}
         for row in rows:
-            entity_key = row.entity_key or ""
+            # entity_key is the mapping key here, so it is deliberately not repeated in the payload
             payload: Dict[str, Any] = {
                 "docId": str(row.doc_id),
                 "chunkId": str(row.chunk_id),
+                **self._serialize_relevant_sequence(row),
             }
-            sequence = row.relevant_sequence or {}
-            if isinstance(sequence, dict) and sequence.get("startSequence") and sequence.get("endSequence"):
-                payload["relevantSequence"] = {
-                    "startSequence": str(sequence["startSequence"]),
-                    "endSequence": str(sequence["endSequence"]),
-                }
-            mapping.setdefault(entity_key, []).append(payload)
+            mapping.setdefault(row.entity_key or "", []).append(payload)
         return mapping
 
     async def delete_by_session(self, session_id: UUID) -> int:
