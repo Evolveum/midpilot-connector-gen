@@ -594,6 +594,22 @@ async def extract_single_chunk(
         if marker_word_cutoff_length is not None
         else digester_config.marker_word_cutoff_length
     )
+    min_start_sequence_length = (
+        min_start_sequence_length
+        if min_start_sequence_length is not None
+        else digester_config.min_start_sequence_length
+    )
+    max_start_sequence_length = (
+        max_start_sequence_length
+        if max_start_sequence_length is not None
+        else digester_config.max_start_sequence_length
+    )
+    min_end_sequence_length = (
+        min_end_sequence_length if min_end_sequence_length is not None else digester_config.min_end_sequence_length
+    )
+    max_end_sequence_length = (
+        max_end_sequence_length if max_end_sequence_length is not None else digester_config.max_end_sequence_length
+    )
 
     # Progress: start processing
     await update_job_progress(
@@ -660,10 +676,10 @@ async def extract_single_chunk(
                         fuzzy_start_marker_error_ratio,
                         fuzzy_end_marker_error_ratio,
                         sequence_max_length,
-                        min_start_sequence_length if min_start_sequence_length is not None else 10,
-                        max_start_sequence_length if max_start_sequence_length is not None else 2000,
-                        min_end_sequence_length if min_end_sequence_length is not None else 10,
-                        max_end_sequence_length if max_end_sequence_length is not None else 2000,
+                        min_start_sequence_length,
+                        max_start_sequence_length,
+                        min_end_sequence_length,
+                        max_end_sequence_length,
                         marker_word_cutoff_length,
                     )
                     for item in items

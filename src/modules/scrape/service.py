@@ -422,7 +422,7 @@ async def _run_scrape_async(
             else:
                 await write_batch.commit_pending()
 
-            doc_rows_for_export = await doc_repo.get_scraped_documentation_items_for_export_by_origin_job(
+            doc_rows_for_export = await doc_repo.get_scraped_documentation_items_for_export_by_job(
                 session_id,
                 job_id,
             )

@@ -44,7 +44,7 @@ async def test_reclaimed_scrape_reconstructs_result_from_rows_created_by_job() -
     doc_repo = MagicMock()
     doc_repo.get_documentation_items_by_session = AsyncMock(return_value=[persisted_chunk])
     doc_repo.update_documentation_item = AsyncMock(return_value=True)
-    doc_repo.get_scraped_documentation_items_for_export_by_origin_job = AsyncMock(return_value=[persisted_chunk])
+    doc_repo.get_scraped_documentation_items_for_export_by_job = AsyncMock(return_value=[persisted_chunk])
 
     db = MagicMock()
     db.commit = AsyncMock()
@@ -81,7 +81,7 @@ async def test_reclaimed_scrape_reconstructs_result_from_rows_created_by_job() -
     assert len(result.saved_documentations) == 1
     assert result.saved_documentations[0].doc_id == doc_id
     assert result.saved_documentations[0].chunks[0].chunk_id == chunk_id
-    doc_repo.get_scraped_documentation_items_for_export_by_origin_job.assert_awaited_once_with(
+    doc_repo.get_scraped_documentation_items_for_export_by_job.assert_awaited_once_with(
         session_id,
         job_id,
     )

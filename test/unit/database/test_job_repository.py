@@ -124,3 +124,47 @@ async def test_update_job_input_distinguishes_a_missing_job_from_a_lost_claim() 
 
     with pytest.raises(FileNotFoundError, match=str(job_id)):
         await JobRepository(db).update_job_input(job_id, {"value": "updated"})
+
+
+@pytest.mark.asyncio
+async def test_job_status_propagates_database_failures_instead_of_reporting_not_found() -> None:
+    """A DB outage must not be reported to the client as a job that never existed."""
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=RuntimeError("connection pool exhausted"))
+
+    with pytest.raises(RuntimeError, match="connection pool exhausted"):
+        await JobRepository(db).get_job_status(uuid4())
+
+
+@pytest.mark.asyncio
+async def test_job_status_reports_not_found_for_a_genuinely_missing_job() -> None:
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result)
+    job_id = uuid4()
+
+    assert await JobRepository(db).get_job_status(job_id) == {"jobId": str(job_id), "status": "not_found"}
+
+
+@pytest.mark.asyncio
+async def test_claim_ownership_predicate_is_shared_by_every_fenced_statement() -> None:
+    """All ownership-fenced statements must compile the same five conditions."""
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    result.rowcount = 0
+    db.execute = AsyncMock(return_value=result)
+    repo = JobRepository(db)
+    job_id = uuid4()
+    worker_id = "worker-1"
+    execution_token = uuid4()
+
+    await repo.is_execution_current(job_id, worker_id=worker_id, execution_token=execution_token)
+    sql = " ".join(str(_compile_postgres(db.execute.await_args.args[0])).split())
+
+    assert "jobs.job_id = %(job_id_1)s::UUID" in sql
+    assert "jobs.status = %(status_1)s" in sql
+    assert "jobs.worker_id = %(worker_id_1)s" in sql
+    assert "jobs.execution_token = %(execution_token_1)s::UUID" in sql
+    assert "jobs.claim_expires_at > %(claim_expires_at_1)s" in sql

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Union
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, case, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, and_, case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, defer
 
@@ -178,6 +178,62 @@ class JobRepository:
         """Map a UUID to a stable signed key for PostgreSQL advisory locks."""
         return int.from_bytes(job_id.bytes[:8], byteorder="big", signed=True)
 
+    @staticmethod
+    def _owned_claim_filter(
+        job_id: UUID,
+        *,
+        worker_id: str,
+        execution_token: UUID,
+        now: datetime,
+    ) -> tuple[ColumnElement[bool], ...]:
+        """Match a job row only while this execution still owns its live claim.
+
+        This is the single definition of "the claim is mine and has not expired";
+        every ownership-fenced read, write and finalization builds its predicate
+        from here so the conditions cannot drift apart.
+        """
+        return (
+            Job.job_id == job_id,
+            Job.status == JobStatus.running.value,
+            Job.worker_id == worker_id,
+            Job.execution_token == execution_token,
+            Job.claim_expires_at > now,
+        )
+
+    async def _fence_claimed_write(
+        self,
+        job_id: UUID,
+        *,
+        worker_id: Optional[str],
+        execution_token: Optional[UUID],
+        now: datetime,
+    ) -> bool:
+        """Fence a side-effect write behind the caller's execution claim.
+
+        Returns ``True`` when the write was fenced, meaning the caller passed a
+        claim and still owns it, so ``jobs.updated_at`` has already been bumped.
+        Returns ``False`` when the caller holds no claim at all and therefore owns
+        refreshing ``updated_at`` itself. Raises ``ExecutionOwnershipLostError``
+        when a claim was passed but has since been taken over or expired.
+        """
+        if worker_id is None or execution_token is None:
+            return False
+        statement = (
+            update(Job)
+            .where(
+                *self._owned_claim_filter(
+                    job_id,
+                    worker_id=worker_id,
+                    execution_token=execution_token,
+                    now=now,
+                )
+            )
+            .values(updated_at=now)
+        )
+        if not bool(getattr(await self.db.execute(statement), "rowcount", 0)):
+            raise ExecutionOwnershipLostError(job_id)
+        return True
+
     async def acquire_execution_fence(
         self,
         job_id: UUID,
@@ -214,20 +270,7 @@ class JobRepository:
         :param message: Error message to append
         """
         now = datetime.now(timezone.utc)
-        if worker_id is not None and execution_token is not None:
-            statement = (
-                update(Job)
-                .where(
-                    Job.job_id == job_id,
-                    Job.status == JobStatus.running.value,
-                    Job.worker_id == worker_id,
-                    Job.execution_token == execution_token,
-                    Job.claim_expires_at > now,
-                )
-                .values(updated_at=now)
-            )
-            if not bool(getattr(await self.db.execute(statement), "rowcount", 0)):
-                raise ExecutionOwnershipLostError(job_id)
+        await self._fence_claimed_write(job_id, worker_id=worker_id, execution_token=execution_token, now=now)
         job = await self.get_job(job_id)
         if job is None:
             return
@@ -262,20 +305,12 @@ class JobRepository:
         :param processing_completed: Number of processed documents
         """
         now = datetime.now(timezone.utc)
-        if worker_id is not None and execution_token is not None:
-            statement = (
-                update(Job)
-                .where(
-                    Job.job_id == job_id,
-                    Job.status == JobStatus.running.value,
-                    Job.worker_id == worker_id,
-                    Job.execution_token == execution_token,
-                    Job.claim_expires_at > now,
-                )
-                .values(updated_at=now)
-            )
-            if not bool(getattr(await self.db.execute(statement), "rowcount", 0)):
-                raise ExecutionOwnershipLostError(job_id)
+        fenced = await self._fence_claimed_write(
+            job_id,
+            worker_id=worker_id,
+            execution_token=execution_token,
+            now=now,
+        )
 
         query = select(JobProgress).where(JobProgress.job_id == job_id)
         result = await self.db.execute(query)
@@ -295,7 +330,7 @@ class JobRepository:
             progress.processing_completed = processing_completed
 
         progress.updated_at = now
-        if worker_id is None or execution_token is None:
+        if not fenced:
             job = await self.get_job(job_id)
             if job:
                 job.updated_at = now
@@ -321,11 +356,12 @@ class JobRepository:
                 await self.db.execute(
                     select(Job)
                     .where(
-                        Job.job_id == job_id,
-                        Job.status == JobStatus.running.value,
-                        Job.worker_id == worker_id,
-                        Job.execution_token == execution_token,
-                        Job.claim_expires_at > datetime.now(timezone.utc),
+                        *self._owned_claim_filter(
+                            job_id,
+                            worker_id=worker_id,
+                            execution_token=execution_token,
+                            now=datetime.now(timezone.utc),
+                        )
                     )
                     .with_for_update()
                 )
@@ -363,21 +399,12 @@ class JobRepository:
         """
 
         now = datetime.now(timezone.utc)
-        if worker_id is not None and execution_token is not None:
-            statement = (
-                update(Job)
-                .where(
-                    Job.job_id == job_id,
-                    Job.status == JobStatus.running.value,
-                    Job.worker_id == worker_id,
-                    Job.execution_token == execution_token,
-                    Job.claim_expires_at > now,
-                )
-                .values(updated_at=now)
-            )
-            if not bool(getattr(await self.db.execute(statement), "rowcount", 0)):
-                raise ExecutionOwnershipLostError(job_id)
-        else:
+        if not await self._fence_claimed_write(
+            job_id,
+            worker_id=worker_id,
+            execution_token=execution_token,
+            now=now,
+        ):
             await self.db.execute(update(Job).where(Job.job_id == job_id).values(updated_at=now))
 
         query = (
@@ -400,64 +427,64 @@ class JobRepository:
         """
         Return a public job status dict.
 
-        :param job_id: Job IDx
+        A missing job is a normal result and reports ``not_found``. Database and
+        mapping failures propagate: reporting them as a missing job tells the
+        client the job never existed and hides the outage from the caller.
+
+        :param job_id: Job ID
         :return: Job status dict
         """
-        try:
-            job = await self.get_job(job_id)
-            if job is None:
-                return {"jobId": str(job_id), "status": "not_found"}
+        job = await self.get_job(job_id)
+        if job is None:
+            return {"jobId": str(job_id), "status": "not_found"}
 
-            # Get progress
-            query = select(JobProgress).where(JobProgress.job_id == job_id)
-            result = await self.db.execute(query)
-            progress = result.scalar_one_or_none()
+        # Get progress
+        query = select(JobProgress).where(JobProgress.job_id == job_id)
+        result = await self.db.execute(query)
+        progress = result.scalar_one_or_none()
 
-            out: Dict[str, Any] = {
-                "jobId": str(job.job_id),
-                "status": job.status,
-                "createdAt": job.created_at.isoformat(),
-                "updatedAt": job.updated_at.isoformat(),
-            }
+        out: Dict[str, Any] = {
+            "jobId": str(job.job_id),
+            "status": job.status,
+            "createdAt": job.created_at.isoformat(),
+            "updatedAt": job.updated_at.isoformat(),
+        }
 
-            if job.started_at:
-                out["startedAt"] = job.started_at.isoformat()
+        if job.started_at:
+            out["startedAt"] = job.started_at.isoformat()
 
-            # Add progress details
-            if progress:
-                progress_dict: Dict[str, Union[str, int]] = {}
-                if progress.stage:
-                    progress_dict["stage"] = progress.stage
-                if progress.message:
-                    progress_dict["message"] = progress.message
+        # Add progress details
+        if progress:
+            progress_dict: Dict[str, Union[str, int]] = {}
+            if progress.stage:
+                progress_dict["stage"] = progress.stage
+            if progress.message:
+                progress_dict["message"] = progress.message
 
-                # Use different field names based on job type
-                if job.job_type == "scrape.getRelevantDocumentation":
-                    # Scraper uses iterations (matching IterationProgress schema)
-                    if progress.total_processing is not None:
-                        progress_dict["totalIterations"] = progress.total_processing
-                    if progress.processing_completed is not None:
-                        progress_dict["completedIterations"] = progress.processing_completed
-                else:
-                    # Other jobs use documents
-                    if progress.total_processing is not None:
-                        progress_dict["totalDocuments"] = progress.total_processing
-                    if progress.processing_completed is not None:
-                        progress_dict["processedDocuments"] = progress.processing_completed
+            # Use different field names based on job type
+            if job.job_type == "scrape.getRelevantDocumentation":
+                # Scraper uses iterations (matching IterationProgress schema)
+                if progress.total_processing is not None:
+                    progress_dict["totalIterations"] = progress.total_processing
+                if progress.processing_completed is not None:
+                    progress_dict["completedIterations"] = progress.processing_completed
+            else:
+                # Other jobs use documents
+                if progress.total_processing is not None:
+                    progress_dict["totalDocuments"] = progress.total_processing
+                if progress.processing_completed is not None:
+                    progress_dict["processedDocuments"] = progress.processing_completed
 
-                if progress_dict:
-                    out["progress"] = progress_dict
+            if progress_dict:
+                out["progress"] = progress_dict
 
-            if job.status == JobStatus.finished.value and job.result:
-                out["result"] = job.result
+        if job.status == JobStatus.finished.value and job.result:
+            out["result"] = job.result
 
-            if job.errors:
-                out["errors"] = job.errors
+        if job.errors:
+            out["errors"] = job.errors
 
-            return out
-        except Exception as e:
-            logger.debug(f"Get job status failed for {job_id}", exc_info=e)
-            return {}
+        return out
 
     async def claim_next_job(
         self,
@@ -603,11 +630,12 @@ class JobRepository:
         statement = (
             update(Job)
             .where(
-                Job.job_id == job_id,
-                Job.status == JobStatus.running.value,
-                Job.worker_id == worker_id,
-                Job.execution_token == execution_token,
-                Job.claim_expires_at > now,
+                *self._owned_claim_filter(
+                    job_id,
+                    worker_id=worker_id,
+                    execution_token=execution_token,
+                    now=now,
+                )
             )
             .values(
                 heartbeat_at=now,
@@ -627,11 +655,12 @@ class JobRepository:
     ) -> bool:
         """Check execution ownership, including claim validity."""
         query = select(Job.job_id).where(
-            Job.job_id == job_id,
-            Job.status == JobStatus.running.value,
-            Job.worker_id == worker_id,
-            Job.execution_token == execution_token,
-            Job.claim_expires_at > datetime.now(timezone.utc),
+            *self._owned_claim_filter(
+                job_id,
+                worker_id=worker_id,
+                execution_token=execution_token,
+                now=datetime.now(timezone.utc),
+            )
         )
         return (await self.db.execute(query)).scalar_one_or_none() is not None
 
@@ -647,11 +676,12 @@ class JobRepository:
         query = (
             select(Job)
             .where(
-                Job.job_id == job_id,
-                Job.status == JobStatus.running.value,
-                Job.worker_id == worker_id,
-                Job.execution_token == execution_token,
-                Job.claim_expires_at > datetime.now(timezone.utc),
+                *self._owned_claim_filter(
+                    job_id,
+                    worker_id=worker_id,
+                    execution_token=execution_token,
+                    now=datetime.now(timezone.utc),
+                )
             )
             .with_for_update()
         )
@@ -694,11 +724,12 @@ class JobRepository:
         query = (
             select(Job)
             .where(
-                Job.job_id == job_id,
-                Job.status == JobStatus.running.value,
-                Job.worker_id == worker_id,
-                Job.execution_token == execution_token,
-                Job.claim_expires_at > datetime.now(timezone.utc),
+                *self._owned_claim_filter(
+                    job_id,
+                    worker_id=worker_id,
+                    execution_token=execution_token,
+                    now=datetime.now(timezone.utc),
+                )
             )
             .with_for_update()
         )
@@ -738,7 +769,12 @@ class JobRepository:
         worker_id: str,
         execution_token: UUID,
     ) -> bool:
-        """Return a gracefully interrupted execution to the queue."""
+        """Return a gracefully interrupted execution to the queue.
+
+        Deliberately does not use ``_owned_claim_filter``: a shutting-down worker
+        must still hand its job back after the claim deadline has passed, so this
+        is the one ownership check that intentionally omits ``claim_expires_at``.
+        """
         now = datetime.now(timezone.utc)
         statement = (
             update(Job)
