@@ -5,13 +5,13 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import ForeignKey, ForeignKeyConstraint, Index, String, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.models.base import Base, utc_now
-from src.database.models.documentation_item import DocumentationItem
+from src.database.models.documentation_chunk import DocumentationChunk
 from src.database.models.session import Session
 
 
@@ -37,7 +37,6 @@ class RelevantChunk(Base):
     )
     chunk_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("documentation_items.chunk_id", ondelete="CASCADE"),
         nullable=False,
     )
     relevant_sequence: Mapped[dict[str, str]] = mapped_column(
@@ -57,23 +56,28 @@ class RelevantChunk(Base):
         server_default=text("NOW()"),
     )
 
-    # Relationships
     session: Mapped["Session"] = relationship("Session", back_populates="relevant_chunks")
-    documentation_item: Mapped["DocumentationItem"] = relationship("DocumentationItem")
+    chunk: Mapped["DocumentationChunk"] = relationship("DocumentationChunk", viewonly=True)
 
     __table_args__ = (
-        UniqueConstraint(
+        ForeignKeyConstraint(
+            ["session_id", "chunk_id", "doc_id"],
+            [
+                "documentation_chunks.session_id",
+                "documentation_chunks.chunk_id",
+                "documentation_chunks.doc_id",
+            ],
+            name="fk_relevant_chunks_documentation_chunk",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "uq_relevant_chunk_unique",
             "session_id",
             "result_key",
             "entity_key",
             "chunk_id",
-            "relevant_sequence",
-            name="uq_relevant_chunk_unique",
+            text("md5(relevant_sequence::text)"),
+            unique=True,
         ),
-        Index("idx_relevant_chunks_session_id", "session_id"),
-        Index("idx_relevant_chunks_result_key", "result_key"),
-        Index("idx_relevant_chunks_doc_id", "doc_id"),
-        Index("idx_relevant_chunks_chunk_id", "chunk_id"),
-        Index("idx_relevant_chunks_entity_key", "entity_key"),
-        Index("idx_relevant_chunks_session_result", "session_id", "result_key"),
+        Index("idx_relevant_chunks_chunk_ref", "chunk_id", "session_id", "doc_id"),
     )

@@ -126,12 +126,13 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
     return normalized_input
 
 
-def normalized_input_fingerprint(input_payload: dict[str, Any]) -> dict[str, str]:
+def normalized_input_fingerprint(input_payload: dict[str, Any]) -> str:
     """Return a compact, deterministic cache identity for a job input.
 
     The full input remains in ``jobs.input`` for execution and diagnostics. The
-    normalized column stores only this digest, avoiding another copy of large
-    documentation corpora while preserving exact cache equality semantics.
+    fingerprint column stores only this SHA-256 hex digest, avoiding another copy
+    of large documentation corpora while preserving exact cache equality
+    semantics.
     """
     normalized = normalize_input(to_jsonable(input_payload))
     canonical = json.dumps(
@@ -140,4 +141,4 @@ def normalized_input_fingerprint(input_payload: dict[str, Any]) -> dict[str, str
         separators=(",", ":"),
         ensure_ascii=False,
     )
-    return {"sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

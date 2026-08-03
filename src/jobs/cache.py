@@ -14,7 +14,7 @@ import copy
 import logging
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from src.config import config
 from src.core.db import async_session_maker
@@ -127,13 +127,14 @@ async def reuse_or_run(
                     processing_completed=0,
                 )
                 write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
+                reused_doc_id = UUID(input_payload["doc_id"]) if input_payload.get("doc_id") else uuid4()
                 for item in latest_job_doc_items:
                     await doc_repo.create_documentation_item(
                         session_id=session_id,
                         source="upload",
                         content=item["content"],
                         original_job_id=job_id,
-                        doc_id=UUID(input_payload.get("doc_id")) if input_payload.get("doc_id") else None,
+                        doc_id=reused_doc_id,
                         url=f"upload://{input_payload.get('filename', 'unknown')}",
                         summary=item["summary"],
                         metadata={

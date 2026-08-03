@@ -15,13 +15,9 @@ from uuid import UUID
 
 from src.core.db import async_session_maker
 from src.core.job_execution import get_current_execution
-from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from src.database.repositories.session_repository import SessionRepository
-from src.documents.relevance import (
-    build_chunk_to_doc_map as _build_chunk_to_doc_map,
-)
 from src.documents.relevance import (
     extract_relevant_rows_for_storage as _extract_relevant_rows_for_storage,
 )
@@ -66,7 +62,6 @@ async def persist_result_to_session(
     session_id: UUID,
     session_result_key: str,
     result_dict: Any,
-    input_payload: Dict[str, Any],
 ) -> bool:
     """Store the job result under ``session_result_key`` and refresh relevant-chunk rows.
 
@@ -106,17 +101,9 @@ async def persist_result_to_session(
                     await db.rollback()
                     return False
 
-                chunk_to_doc = _build_chunk_to_doc_map(input_payload.get("documentationItems"))
-                if not chunk_to_doc:
-                    doc_repo = DocumentationRepository(db)
-                    chunk_to_doc = _build_chunk_to_doc_map(
-                        await doc_repo.get_documentation_items_by_session(session_id)
-                    )
-
                 relevant_rows = _extract_relevant_rows_for_storage(
                     result_dict,
                     result_key=session_result_key,
-                    chunk_to_doc=chunk_to_doc,
                 )
                 await relevant_repo.replace_relevant_chunks_for_result(
                     session_id=session_id,

@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from src.core.job_execution import (
@@ -18,12 +18,13 @@ from src.core.job_execution import (
     reset_current_execution,
     set_current_execution,
 )
-from src.database.models import Base, DocumentationItem, Job, Session
+from src.database.models import Base, DocumentationChunk, Job, JobProgress, Session
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import ClaimedJob, JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs.payload import build_execution_payload
 from src.jobs.runner import execute_claimed_job
+from src.shared.normalize import normalized_input_fingerprint
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
@@ -92,7 +93,7 @@ async def _create_queued_job(
                 job_type="test.worker",
                 status="queued",
                 input={"value": value},
-                normalized_input={"value": value},
+                normalized_input_hash=normalized_input_fingerprint({"value": value}),
                 execution_payload=_execution_payload(value),
                 max_attempts=3,
             )
@@ -229,7 +230,7 @@ async def test_documentation_retry_is_idempotent_and_preserves_other_job_links(
         )
         count = (
             await db.execute(
-                select(func.count()).select_from(DocumentationItem).where(DocumentationItem.origin_job_id == job_id)
+                select(func.count()).select_from(DocumentationChunk).where(DocumentationChunk.origin_job_id == job_id)
             )
         ).scalar_one()
         await db.commit()
@@ -251,7 +252,7 @@ async def test_documentation_retry_is_idempotent_and_preserves_other_job_links(
             metadata={"chunk_number": 0},
         )
         linked_item = (
-            await db.execute(select(DocumentationItem).where(DocumentationItem.chunk_id == first_chunk_id))
+            await db.execute(select(DocumentationChunk).where(DocumentationChunk.chunk_id == first_chunk_id))
         ).scalar_one()
         await db.commit()
 
@@ -270,7 +271,6 @@ async def test_documentation_dependency_does_not_consume_an_execution_attempt(
             "digester.getAuth",
             session_id,
             execution_payload=_execution_payload("dependent"),
-            waits_for_documentation=True,
             documentation_wait_timeout_seconds=750,
         )
         producer_job_id = await repo.create_job(
@@ -315,7 +315,6 @@ async def test_documentation_wait_timeout_is_recorded_when_producer_remains_pend
             "digester.getAuth",
             session_id,
             execution_payload=_execution_payload("dependent"),
-            waits_for_documentation=True,
             documentation_wait_timeout_seconds=750,
         )
         await repo.create_job(
@@ -474,7 +473,7 @@ async def test_invalid_queued_job_is_failed_explicitly(
                 job_type="test.invalid",
                 status="queued",
                 input={},
-                normalized_input={},
+                normalized_input_hash=normalized_input_fingerprint({}),
                 execution_payload=None,
             )
         )
@@ -487,3 +486,40 @@ async def test_invalid_queued_job_is_failed_explicitly(
     assert invalid_job is not None
     assert invalid_job.status == "failed"
     assert invalid_job.errors == ["Queued job has no valid durable execution payload and cannot be executed."]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_progress_writers_do_not_collide_on_the_progress_row(
+    postgres_session_factory: SessionFactory,
+) -> None:
+    """A stage update and a completion count can run at the same time.
+
+    Both used to check for the progress row and insert it when absent, so two
+    writers could both insert and the loser aborted its caller's transaction.
+    """
+    session_id = await _create_session(postgres_session_factory)
+    job_id = await _create_queued_job(postgres_session_factory, session_id)
+
+    async with postgres_session_factory() as db:
+        await db.execute(delete(JobProgress).where(JobProgress.job_id == job_id))
+        await db.commit()
+
+    async def report_stage() -> None:
+        async with postgres_session_factory() as db:
+            await JobRepository(db).update_job_progress(job_id, stage="chunking", message="working")
+            await db.commit()
+
+    async def report_completion() -> None:
+        async with postgres_session_factory() as db:
+            await JobRepository(db).increment_processed_documents(job_id)
+            await db.commit()
+
+    await asyncio.gather(report_stage(), report_completion(), report_completion())
+
+    async with postgres_session_factory() as db:
+        rows = (await db.execute(select(JobProgress).where(JobProgress.job_id == job_id))).scalars().all()
+
+    assert len(rows) == 1
+    assert rows[0].stage == "chunking"
+    assert rows[0].message == "working"
+    assert rows[0].processing_completed == 2

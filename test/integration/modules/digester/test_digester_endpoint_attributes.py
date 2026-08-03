@@ -228,15 +228,10 @@ async def test_override_class_attributes_success():
     mock_relevant_repo = MagicMock()
     mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()
     chunk_id = str(uuid4())
-    doc_id = str(uuid4())
 
     with (
         patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
         patch("src.modules.digester.results.RelevantChunkRepository", return_value=mock_relevant_repo),
-        patch(
-            "src.modules.digester.results.get_session_documentation",
-            AsyncMock(return_value=[{"chunkId": chunk_id, "docId": doc_id}]),
-        ),
     ):
         session_id = uuid4()
         response = await override_class_attributes(
@@ -266,7 +261,7 @@ async def test_override_class_attributes_success():
             {
                 "result_key": "userAttributesOutput",
                 "entity_key": "id",
-                "doc_id": doc_id,
+                "doc_id": None,
                 "chunk_id": chunk_id,
                 "relevant_sequence": {
                     "startSequence": "auth starts here",

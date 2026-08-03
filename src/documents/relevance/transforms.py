@@ -34,16 +34,6 @@ def unwrap_result_payload(result_dict: Dict[str, Any]) -> Dict[str, Any]:
     return result if isinstance(result, dict) else result_dict
 
 
-def build_chunk_to_doc_map(doc_items: Any) -> Dict[str, str]:
-    mapping: Dict[str, str] = {}
-    for item in as_dict_list(doc_items):
-        chunk_id = item.get("chunk_id") or item.get("chunkId")
-        doc_id = item.get("doc_id") or item.get("docId")
-        if chunk_id and doc_id:
-            mapping[str(chunk_id)] = str(doc_id)
-    return mapping
-
-
 def build_chunk_ref_remap(
     previous_doc_items: List[Dict[str, Any]],
     current_doc_items: List[Dict[str, Any]],
@@ -193,8 +183,13 @@ def normalize_chunk_refs_for_storage(
     *,
     result_key: str,
     entity_key: Optional[str] = None,
-    chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
+    """Normalize relevance references for storage.
+
+    ``doc_id`` is passed through when present but is not required: the repository
+    resolves the document each chunk belongs to from the stored documentation, so
+    a reference that names only its chunk is complete.
+    """
     normalized: List[Dict[str, Any]] = []
     for item in as_list(value):
         if not isinstance(item, Mapping):
@@ -205,16 +200,11 @@ def normalize_chunk_refs_for_storage(
             continue
 
         doc_id = item.get("doc_id") or item.get("docId")
-        if not doc_id and chunk_to_doc:
-            doc_id = chunk_to_doc.get(str(chunk_id))
-        if not doc_id:
-            continue
-
         normalized.append(
             {
                 "result_key": result_key,
                 "entity_key": entity_key,
-                "doc_id": str(doc_id),
+                "doc_id": str(doc_id) if doc_id else None,
                 "chunk_id": str(chunk_id),
                 "relevant_sequence": normalize_relevant_sequence(
                     item.get("relevant_sequence") or item.get("relevantSequence")
@@ -229,19 +219,15 @@ def extract_relevant_rows_for_storage(
     result_dict: Dict[str, Any],
     *,
     result_key: str,
-    chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     payload = unwrap_result_payload(result_dict)
 
-    # For auth outputs we persist only sequence-based evidence per auth entity.
-    # Top-level relevantDocumentations would create duplicate rows with empty relevant_sequence.
     if result_key != "authOutput":
         rows.extend(
             normalize_chunk_refs_for_storage(
                 result_dict.get("relevantDocumentations"),
                 result_key=result_key,
-                chunk_to_doc=chunk_to_doc,
             )
         )
 
@@ -258,7 +244,6 @@ def extract_relevant_rows_for_storage(
                             obj_class.get("relevantDocumentations"),
                             result_key=result_key,
                             entity_key=normalize_object_class_name(name),
-                            chunk_to_doc=chunk_to_doc,
                         )
                     )
 
@@ -276,7 +261,6 @@ def extract_relevant_rows_for_storage(
                         auth_item.get("relevant_sequences") or auth_item.get("relevantSequences"),
                         result_key=result_key,
                         entity_key=entity_key,
-                        chunk_to_doc=chunk_to_doc,
                     )
                 )
 
@@ -293,7 +277,6 @@ def extract_relevant_rows_for_storage(
                     sequence_value,
                     result_key=result_key,
                     entity_key=entity_key,
-                    chunk_to_doc=chunk_to_doc,
                 )
                 if has_sequence_field:
                     # Sequence-aware payload: persist only rows with valid sequence boundaries.
@@ -305,7 +288,6 @@ def extract_relevant_rows_for_storage(
                         attr_info.get("relevantDocumentations") or attr_info.get("relevant_documentations"),
                         result_key=result_key,
                         entity_key=entity_key,
-                        chunk_to_doc=chunk_to_doc,
                     )
                 )
 
@@ -322,7 +304,6 @@ def extract_relevant_rows_for_storage(
                             endpoint.get("relevantDocumentations"),
                             result_key=result_key,
                             entity_key=endpoint_entity_key,
-                            chunk_to_doc=chunk_to_doc,
                         )
                     )
 
@@ -413,7 +394,6 @@ def strip_attributes_relevance(payload: Dict[str, Any]) -> Dict[str, Any]:
 def extract_attribute_relevance_rows(
     payload: Dict[str, Any],
     result_key: str,
-    chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> list[Dict[str, Any]]:
     attributes_map, _ = extract_attributes_map(payload)
     rows: list[Dict[str, Any]] = []
@@ -429,10 +409,8 @@ def extract_attribute_relevance_rows(
             sequence_value,
             result_key=result_key,
             entity_key=entity_key,
-            chunk_to_doc=chunk_to_doc,
         )
         if has_sequence_field:
-            # Sequence-aware payload: persist only rows with valid sequence boundaries.
             rows.extend(sequence_rows)
             continue
 
@@ -441,7 +419,6 @@ def extract_attribute_relevance_rows(
                 info.get("relevantDocumentations") or info.get("relevant_documentations"),
                 result_key=result_key,
                 entity_key=entity_key,
-                chunk_to_doc=chunk_to_doc,
             )
         )
     return rows
@@ -491,7 +468,6 @@ def _sequence_rows(
     *,
     result_key: str,
     entity_key: str,
-    chunk_to_doc: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for sequence in as_list(value):
@@ -501,15 +477,11 @@ def _sequence_rows(
         if not chunk_id:
             continue
         doc_id = sequence.get("doc_id") or sequence.get("docId")
-        if not doc_id and chunk_to_doc:
-            doc_id = chunk_to_doc.get(str(chunk_id))
-        if not doc_id:
-            continue
         rows.append(
             {
                 "result_key": result_key,
                 "entity_key": entity_key,
-                "doc_id": str(doc_id),
+                "doc_id": str(doc_id) if doc_id else None,
                 "chunk_id": str(chunk_id),
                 "relevant_sequence": normalize_relevant_sequence(sequence),
             }

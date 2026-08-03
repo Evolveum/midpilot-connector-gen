@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from src.database.models import Base, DocumentationItem, Session
+from src.database.models import Base, Document, DocumentationChunk, Session
 from src.database.repositories.documentation_repository import DocumentationRepository
 
 
@@ -40,42 +40,46 @@ async def test_get_conndev_documentation_items_matches_python_content_type_norma
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
         async with session_factory() as db:
+
+            def document(content_type, *, session=session_id):
+                doc_id = uuid4()
+                return Document(
+                    session_id=session,
+                    doc_id=doc_id,
+                    source="upload",
+                    content_type=content_type,
+                )
+
+            conndev_with_charset = document(" APPLICATION/CONNDEV+JSON; charset=utf-8 ")
+            conndev_evolveum = document("application/com.evolveum.conndev+json")
+            ordinary_json = document("application/json")
+            without_content_type = document(None)
+            other_session_conndev = document("application/conndev+json", session=other_session_id)
+
+            def chunk(doc, content, created_at=None):
+                kwargs = {
+                    "session_id": doc.session_id,
+                    "doc_id": doc.doc_id,
+                    "content": content,
+                }
+                if created_at is not None:
+                    kwargs["created_at"] = created_at
+                return DocumentationChunk(**kwargs)
+
             db.add_all(
                 [
                     Session(session_id=session_id),
                     Session(session_id=other_session_id),
-                    DocumentationItem(
-                        session_id=session_id,
-                        source="upload",
-                        content="first",
-                        doc_metadata={"content_type": " APPLICATION/CONNDEV+JSON; charset=utf-8 "},
-                        created_at=first_created_at,
-                    ),
-                    DocumentationItem(
-                        session_id=session_id,
-                        source="upload",
-                        content="second",
-                        doc_metadata={"content_type": "application/com.evolveum.conndev+json"},
-                        created_at=second_created_at,
-                    ),
-                    DocumentationItem(
-                        session_id=session_id,
-                        source="upload",
-                        content="ordinary-json",
-                        doc_metadata={"content_type": "application/json"},
-                    ),
-                    DocumentationItem(
-                        session_id=session_id,
-                        source="upload",
-                        content="missing-content-type",
-                        doc_metadata={},
-                    ),
-                    DocumentationItem(
-                        session_id=other_session_id,
-                        source="upload",
-                        content="other-session",
-                        doc_metadata={"content_type": "application/conndev+json"},
-                    ),
+                    conndev_with_charset,
+                    conndev_evolveum,
+                    ordinary_json,
+                    without_content_type,
+                    other_session_conndev,
+                    chunk(conndev_with_charset, "first", first_created_at),
+                    chunk(conndev_evolveum, "second", second_created_at),
+                    chunk(ordinary_json, "ordinary-json"),
+                    chunk(without_content_type, "missing-content-type"),
+                    chunk(other_session_conndev, "other-session"),
                 ]
             )
             await db.commit()

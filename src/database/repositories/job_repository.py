@@ -10,8 +10,9 @@ from typing import Any, Dict, Optional, Union
 from uuid import UUID, uuid4
 
 from sqlalchemy import ColumnElement, and_, case, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, defer
+from sqlalchemy.orm import aliased, defer, load_only
 
 from src.core.errors import ExecutionOwnershipLostError
 from src.database.models import Job, JobArtifact, JobProgress, Session
@@ -20,6 +21,31 @@ from src.shared.json_values import to_jsonable
 from src.shared.normalize import normalized_input_fingerprint
 
 logger = logging.getLogger(__name__)
+
+_JOB_LISTING_COLUMNS = (
+    Job.job_id,
+    Job.job_type,
+    Job.status,
+    Job.created_at,
+    Job.updated_at,
+    Job.started_at,
+    Job.finished_at,
+    Job.attempt_count,
+    Job.max_attempts,
+    Job.worker_id,
+    Job.claim_expires_at,
+)
+
+_JOB_STATUS_COLUMNS = (
+    Job.job_id,
+    Job.job_type,
+    Job.status,
+    Job.created_at,
+    Job.updated_at,
+    Job.started_at,
+    Job.result,
+    Job.errors,
+)
 
 
 @dataclass(frozen=True)
@@ -55,7 +81,6 @@ class JobRepository:
         *,
         execution_payload: Dict[str, Any],
         binary_artifacts: Mapping[str, bytes] | None = None,
-        waits_for_documentation: bool = False,
         documentation_wait_timeout_seconds: float | None = None,
         max_attempts: int = 3,
     ) -> UUID:
@@ -66,17 +91,17 @@ class JobRepository:
         :param job_type: Type of job
         :param session_id: Associated session ID
         :param documentation_wait_timeout_seconds: Pre-claim queue wait budget,
-            measured from durable job creation
+            measured from durable job creation. ``None`` means the job does not
+            wait for the session's documentation jobs at all.
         :return: Job ID
         """
 
         json_input = to_jsonable(input_payload)
-        normalized_input = normalized_input_fingerprint(json_input)
 
         now = datetime.now(timezone.utc)
         documentation_wait_until = (
             now + timedelta(seconds=documentation_wait_timeout_seconds)
-            if waits_for_documentation and documentation_wait_timeout_seconds is not None
+            if documentation_wait_timeout_seconds is not None
             else None
         )
         job = Job(
@@ -84,9 +109,8 @@ class JobRepository:
             job_type=job_type,
             status=JobStatus.queued.value,
             input=json_input,
-            normalized_input=to_jsonable(normalized_input),
+            normalized_input_hash=normalized_input_fingerprint(json_input),
             execution_payload=execution_payload,
-            waits_for_documentation=waits_for_documentation,
             documentation_wait_until=documentation_wait_until,
             max_attempts=max_attempts,
         )
@@ -95,8 +119,6 @@ class JobRepository:
 
         progress = JobProgress(
             job_id=job.job_id,
-            # processing_completed=0,
-            # total_documents
         )
 
         self.db.add(progress)
@@ -160,7 +182,7 @@ class JobRepository:
             .join(candidate_session, candidate_session.session_id == Job.session_id)
             .where(
                 Job.job_type == job_type,
-                Job.normalized_input == normalized_input_fingerprint(to_jsonable(input_payload)),
+                Job.normalized_input_hash == normalized_input_fingerprint(to_jsonable(input_payload)),
                 Job.created_at >= date_since,
                 Job.status == "finished",
                 tenant_scope,
@@ -312,28 +334,24 @@ class JobRepository:
             now=now,
         )
 
-        query = select(JobProgress).where(JobProgress.job_id == job_id)
-        result = await self.db.execute(query)
-        progress = result.scalar_one_or_none()
-
-        if progress is None:
-            progress = JobProgress(job_id=job_id)
-            self.db.add(progress)
-
+        changed: Dict[str, Any] = {"updated_at": now}
         if stage is not None:
-            progress.stage = stage.value if isinstance(stage, JobStage) else stage
+            changed["stage"] = stage.value if isinstance(stage, JobStage) else stage
         if message is not None:
-            progress.message = message
+            changed["message"] = message
         if total_processing is not None:
-            progress.total_processing = total_processing
+            changed["total_processing"] = total_processing
         if processing_completed is not None:
-            progress.processing_completed = processing_completed
+            changed["processing_completed"] = processing_completed
 
-        progress.updated_at = now
+        await self.db.execute(
+            pg_insert(JobProgress)
+            .values(job_id=job_id, **changed)
+            .on_conflict_do_update(index_elements=[JobProgress.job_id], set_=changed)
+        )
+
         if not fenced:
-            job = await self.get_job(job_id)
-            if job:
-                job.updated_at = now
+            await self.db.execute(update(Job).where(Job.job_id == job_id).values(updated_at=now))
 
         await self.db.flush()
 
@@ -374,10 +392,9 @@ class JobRepository:
             raise FileNotFoundError(f"Job {job_id} not found")
 
         json_input = to_jsonable(new_input)
-        normalized_input = normalized_input_fingerprint(json_input)
 
         job.input = json_input
-        job.normalized_input = normalized_input
+        job.normalized_input_hash = normalized_input_fingerprint(json_input)
         job.updated_at = datetime.now(timezone.utc)
 
         await self.db.flush()
@@ -407,19 +424,17 @@ class JobRepository:
         ):
             await self.db.execute(update(Job).where(Job.job_id == job_id).values(updated_at=now))
 
-        query = (
-            update(JobProgress)
-            .where(JobProgress.job_id == job_id)
-            .values(
-                processing_completed=func.coalesce(JobProgress.processing_completed, 0) + delta,
-                updated_at=now,
+        await self.db.execute(
+            pg_insert(JobProgress)
+            .values(job_id=job_id, processing_completed=delta, updated_at=now)
+            .on_conflict_do_update(
+                index_elements=[JobProgress.job_id],
+                set_={
+                    "processing_completed": func.coalesce(JobProgress.processing_completed, 0) + delta,
+                    "updated_at": now,
+                },
             )
         )
-        result = await self.db.execute(query)
-
-        rowcount = getattr(result, "rowcount", None)
-        if rowcount == 0 or rowcount is None:
-            self.db.add(JobProgress(job_id=job_id, processing_completed=delta, updated_at=now))
 
         await self.db.flush()
 
@@ -434,11 +449,14 @@ class JobRepository:
         :param job_id: Job ID
         :return: Job status dict
         """
-        job = await self.get_job(job_id)
+        job = (
+            await self.db.execute(
+                select(Job).where(Job.job_id == job_id).options(load_only(*_JOB_STATUS_COLUMNS, raiseload=True))
+            )
+        ).scalar_one_or_none()
         if job is None:
             return {"jobId": str(job_id), "status": "not_found"}
 
-        # Get progress
         query = select(JobProgress).where(JobProgress.job_id == job_id)
         result = await self.db.execute(query)
         progress = result.scalar_one_or_none()
@@ -453,7 +471,6 @@ class JobRepository:
         if job.started_at:
             out["startedAt"] = job.started_at.isoformat()
 
-        # Add progress details
         if progress:
             progress_dict: Dict[str, Union[str, int]] = {}
             if progress.stage:
@@ -461,15 +478,12 @@ class JobRepository:
             if progress.message:
                 progress_dict["message"] = progress.message
 
-            # Use different field names based on job type
             if job.job_type == "scrape.getRelevantDocumentation":
-                # Scraper uses iterations (matching IterationProgress schema)
                 if progress.total_processing is not None:
                     progress_dict["totalIterations"] = progress.total_processing
                 if progress.processing_completed is not None:
                     progress_dict["completedIterations"] = progress.processing_completed
             else:
-                # Other jobs use documents
                 if progress.total_processing is not None:
                     progress_dict["totalDocuments"] = progress.total_processing
                 if progress.processing_completed is not None:
@@ -519,7 +533,7 @@ class JobRepository:
             .exists()
         )
         documentation_ready = or_(
-            Job.waits_for_documentation.is_(False),
+            Job.documentation_wait_until.is_(None),
             Job.documentation_wait_until <= now,
             ~pending_documentation_exists,
         )
@@ -543,11 +557,7 @@ class JobRepository:
         if job is None or job.execution_payload is None:
             return None
 
-        if (
-            job.waits_for_documentation
-            and job.documentation_wait_until is not None
-            and job.documentation_wait_until <= now
-        ):
+        if job.documentation_wait_until is not None and job.documentation_wait_until <= now:
             pending_documentation_job_id = (
                 await self.db.execute(
                     select(documentation_job.job_id)
@@ -573,15 +583,11 @@ class JobRepository:
                     errors.append(timeout_message)
                     job.errors = errors
 
-        # Side-effect transactions hold the shared variant. Waiting here
-        # establishes a strict boundary: after this takeover acquires the
-        # exclusive lock, an older execution cannot commit another fenced write.
         await self.db.execute(select(func.pg_advisory_xact_lock(self._execution_lock_key(job.job_id))))
         execution_token = uuid4()
         job.status = JobStatus.running.value
         job.worker_id = worker_id
         job.execution_token = execution_token
-        job.heartbeat_at = now
         job.claim_expires_at = now + timedelta(seconds=claim_timeout_seconds)
         job.attempt_count += 1
         job.updated_at = now
@@ -638,7 +644,6 @@ class JobRepository:
                 )
             )
             .values(
-                heartbeat_at=now,
                 claim_expires_at=now + timedelta(seconds=claim_timeout_seconds),
                 updated_at=now,
             )
@@ -699,7 +704,6 @@ class JobRepository:
         job.worker_id = None
         job.execution_token = None
         job.claim_expires_at = None
-        job.heartbeat_at = None
         await self.update_job_progress(job_id, stage=JobStage.finished, message="completed")
         await self.db.flush()
         logger.info("Job %s set to finished by worker %s", job_id, worker_id)
@@ -750,7 +754,6 @@ class JobRepository:
         job.worker_id = None
         job.execution_token = None
         job.claim_expires_at = None
-        job.heartbeat_at = None
         await self.db.flush()
         logger.error("Job %s set to failed by worker %s: %s", job_id, worker_id, error)
         return {
@@ -789,7 +792,6 @@ class JobRepository:
                 worker_id=None,
                 execution_token=None,
                 claim_expires_at=None,
-                heartbeat_at=None,
                 available_at=now,
                 updated_at=now,
                 attempt_count=case((Job.attempt_count > 0, Job.attempt_count - 1), else_=0),
@@ -826,7 +828,6 @@ class JobRepository:
             job.worker_id = None
             job.execution_token = None
             job.claim_expires_at = None
-            job.heartbeat_at = None
             message = f"Job claim expired after {job.attempt_count} execution attempts."
             errors = list(job.errors or [])
             if message not in errors:
@@ -886,7 +887,15 @@ class JobRepository:
         :param session_id: Session ID
         :return: List of job dicts
         """
-        query = select(Job).where(Job.session_id == session_id).order_by(Job.created_at)
+        # A job listing never shows payloads, and input/normalized_input/
+        # execution_payload/result are the largest columns in the table; loading
+        # them for every job of a session would move megabytes to render a list.
+        query = (
+            select(Job)
+            .where(Job.session_id == session_id)
+            .order_by(Job.created_at)
+            .options(load_only(*_JOB_LISTING_COLUMNS, raiseload=True))
+        )
         result = await self.db.execute(query)
         jobs = result.scalars().all()
 
@@ -909,8 +918,6 @@ class JobRepository:
             if job.status == JobStatus.running.value:
                 if job.worker_id:
                     job_dict["workerId"] = job.worker_id
-                if job.heartbeat_at:
-                    job_dict["heartbeatAt"] = job.heartbeat_at.isoformat()
                 if job.claim_expires_at:
                     job_dict["claimExpiresAt"] = job.claim_expires_at.isoformat()
             job_list.append(job_dict)

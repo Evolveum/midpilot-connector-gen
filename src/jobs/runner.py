@@ -62,6 +62,8 @@ async def schedule_coroutine_job(
     """
     if dynamic_input_enabled and dynamic_input_provider is None:
         raise ValueError("dynamic_input_provider is required when dynamic_input_enabled is true")
+    if await_documentation and await_documentation_timeout is None:
+        raise ValueError("await_documentation_timeout is required when await_documentation is true")
 
     execution_payload = build_execution_payload(
         worker=worker,
@@ -80,8 +82,7 @@ async def schedule_coroutine_job(
         session_id,
         execution_payload=execution_payload,
         binary_artifacts=binary_artifacts,
-        waits_for_documentation=await_documentation,
-        documentation_wait_timeout_seconds=await_documentation_timeout,
+        documentation_wait_timeout_seconds=await_documentation_timeout if await_documentation else None,
         max_attempts=config.jobs.max_attempts,
     )
     if await_documentation:
@@ -188,7 +189,6 @@ async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
             session_id=claimed_job.session_id,
             session_result_key=session_result_key,
             result_dict=result_dict,
-            input_payload=input_payload,
         )
         if not published_to_session:
             message = (

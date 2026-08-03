@@ -4,9 +4,9 @@
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -22,19 +22,12 @@ class SessionData(Base):
 
     __tablename__ = "session_data"
 
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        primary_key=True,
-        default=uuid4,
-        server_default=text("gen_random_uuid()"),
-    )
     session_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("sessions.session_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
+        primary_key=True,
     )
-    key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
     value: Mapped[Any] = mapped_column(JSONB, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -53,9 +46,3 @@ class SessionData(Base):
 
     # Relationships
     session: Mapped["Session"] = relationship("Session", back_populates="session_data")
-
-    __table_args__ = (
-        UniqueConstraint("session_id", "key", name="uq_session_data_session_key"),
-        Index("idx_session_data_session_id", "session_id"),
-        Index("idx_session_data_key", "key"),
-    )

@@ -23,7 +23,6 @@ from src.database.repositories.relevant_chunk_repository import RelevantChunkRep
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.documents.relevance import (
-    build_chunk_to_doc_map,
     extract_attribute_relevance_rows,
     extract_endpoint_relevance_rows,
     extract_object_class_relevance_rows,
@@ -48,7 +47,6 @@ from src.modules.digester.schemas import (
     EndpointResponse,
     ObjectClassesResponse,
 )
-from src.session.access import get_session_documentation
 from src.shared.enums import JobStatus
 
 logger = logging.getLogger(__name__)
@@ -274,8 +272,7 @@ async def store_attributes_override(
                 "attributes": stripped_attributes,
                 "scimContext": scim_context,
             }
-    chunk_to_doc = build_chunk_to_doc_map(await get_session_documentation(session_id, db=db))
-    relevance_rows = extract_attribute_relevance_rows(attributes, result_key, chunk_to_doc=chunk_to_doc)
+    relevance_rows = extract_attribute_relevance_rows(attributes, result_key)
     await _store_result_with_relevance(db, repo, session_id, result_key, stripped_attributes, relevance_rows)
 
 

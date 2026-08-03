@@ -15,7 +15,7 @@ from src.database.models.base import Base, utc_now
 
 if TYPE_CHECKING:
     from src.database.models.api_key import ApiKey
-    from src.database.models.documentation_item import DocumentationItem
+    from src.database.models.document import Document
     from src.database.models.job import Job
     from src.database.models.relevant_chunk import RelevantChunk
     from src.database.models.session_data import SessionData
@@ -45,19 +45,16 @@ class Session(Base):
         server_default=text("NOW()"),
         onupdate=utc_now,
     )
-    # Owning API key; NULL means the session has no owner (created with auth
-    # disabled or by the master key) and is accessible only with the master key.
     api_key_id: Mapped[Optional[UUID]] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("api_keys.api_key_id", ondelete="SET NULL"),
+        ForeignKey("api_keys.api_key_id", ondelete="RESTRICT"),
         nullable=True,
     )
 
-    # Relationships
     api_key: Mapped[Optional["ApiKey"]] = relationship("ApiKey", back_populates="sessions")
     jobs: Mapped[List["Job"]] = relationship("Job", back_populates="session", cascade="all, delete-orphan")
-    documentation_items: Mapped[List["DocumentationItem"]] = relationship(
-        "DocumentationItem", back_populates="session", cascade="all, delete-orphan"
+    documents: Mapped[List["Document"]] = relationship(
+        "Document", back_populates="session", cascade="all, delete-orphan"
     )
     session_data: Mapped[List["SessionData"]] = relationship(
         "SessionData", back_populates="session", cascade="all, delete-orphan"
