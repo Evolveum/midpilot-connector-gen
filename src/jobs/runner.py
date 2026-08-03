@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import config
 from src.core.db import async_session_maker
+from src.core.errors import AppError
 from src.core.job_execution import (
     JobExecutionContext,
     reset_current_execution,
@@ -295,7 +296,12 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
         await asyncio.gather(execution_task, return_exceptions=True)
         logger.warning("Stopped stale execution of job %s after its claim was lost", claimed_job.job_id)
     except Exception as exc:
-        logger.exception("Job %s failed during execution", claimed_job.job_id)
+        if isinstance(exc, AppError):
+            # An expected domain outcome, not a crash: the message is the whole
+            # story, and a stack trace would only bury it in the log.
+            logger.error("Job %s failed: %s", claimed_job.job_id, exc)
+        else:
+            logger.exception("Job %s failed during execution", claimed_job.job_id)
         try:
             await lifecycle.set_failed(claimed_job.job_id, error=str(exc))
         except JobClaimLostError:

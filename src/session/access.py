@@ -19,9 +19,10 @@ from src.core.db import async_session_maker
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
+from src.documents.errors import NoDocumentationStoredError
 from src.jobs.errors import JobNotFoundError
 from src.session.documentation_upload import read_uploaded_documentation
-from src.session.errors import NoDocumentationStoredError, SessionNotFoundError
+from src.session.errors import SessionNotFoundError
 
 
 async def get_session_documentation(

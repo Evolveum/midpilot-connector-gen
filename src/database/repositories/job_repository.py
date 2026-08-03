@@ -344,16 +344,38 @@ class JobRepository:
         if processing_completed is not None:
             changed["processing_completed"] = processing_completed
 
+        await self._upsert_progress(job_id, changed)
+
+        if not fenced:
+            await self.db.execute(update(Job).where(Job.job_id == job_id).values(updated_at=now))
+
+        await self.db.flush()
+
+    async def _upsert_progress(self, job_id: UUID, changed: Dict[str, Any]) -> None:
+        """Write the job's progress row, creating it when it does not exist yet.
+
+        Upsert rather than select-then-insert: a stage update and a chunk
+        completion for the same job can run concurrently, and both would
+        otherwise observe no row and insert one.
+        """
         await self.db.execute(
             pg_insert(JobProgress)
             .values(job_id=job_id, **changed)
             .on_conflict_do_update(index_elements=[JobProgress.job_id], set_=changed)
         )
 
-        if not fenced:
-            await self.db.execute(update(Job).where(Job.job_id == job_id).values(updated_at=now))
+    async def _mark_progress_failed(self, job_id: UUID, *, now: datetime, message: str) -> None:
+        """Move the progress row to the failed stage alongside the job row.
 
-        await self.db.flush()
+        Without this a failed job keeps whatever stage it last reported, so a
+        client polling the status sees "failed" next to a progress block still
+        claiming the job is queued or running. The caller has already refreshed
+        the job's own ``updated_at``, so only the progress row is written here.
+        """
+        await self._upsert_progress(
+            job_id,
+            {"stage": JobStage.failed.value, "message": message, "updated_at": now},
+        )
 
     async def update_job_input(
         self,
@@ -754,6 +776,7 @@ class JobRepository:
         job.worker_id = None
         job.execution_token = None
         job.claim_expires_at = None
+        await self._mark_progress_failed(job_id, now=now, message=lines[0] if lines else "failed")
         await self.db.flush()
         logger.error("Job %s set to failed by worker %s: %s", job_id, worker_id, error)
         return {
@@ -833,6 +856,7 @@ class JobRepository:
             if message not in errors:
                 errors.append(message)
             job.errors = errors
+            await self._mark_progress_failed(job.job_id, now=now, message=message)
         if jobs:
             await self.db.flush()
             logger.error("Failed %s jobs whose claim retry budget was exhausted", len(jobs))
@@ -869,6 +893,7 @@ class JobRepository:
             if message not in errors:
                 errors.append(message)
             job.errors = errors
+            await self._mark_progress_failed(job.job_id, now=now, message=message)
         if jobs:
             await self.db.flush()
             logger.error("Failed %s queued jobs with invalid execution payloads", len(jobs))
