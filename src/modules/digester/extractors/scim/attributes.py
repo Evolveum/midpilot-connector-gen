@@ -209,7 +209,7 @@ def _merge_schema_attributes_with_documented_mappings(
 
             if attribute_context and scim_path_targets_filtered_attribute(scim_path, attribute_context):
                 logger.info(
-                    "[SCIM:Attributes] Filtered documented mapping '%s' for SCIM path '%s' because it belongs to a different SCIM object class",
+                    "[Digester:Attributes] Filtered documented mapping '%s' for SCIM path '%s' because it belongs to a different SCIM object class",
                     documented_name,
                     scim_attribute,
                 )
@@ -330,7 +330,7 @@ async def extract_scim_attributes(
         - "result": {"attributes": {...}} mapped attributes
         - "relevantDocumentations": List of chunks with mapping evidence
     """
-    logger.info("[SCIM:Attributes] Starting mapping extraction for %s", object_class)
+    logger.info("[Digester:Attributes] Starting mapping extraction for %s", object_class)
 
     if chunk_details is None:
         chunk_details = [""] * len(chunks)
@@ -346,7 +346,7 @@ async def extract_scim_attributes(
 
     if len(llm_chunks) < len(chunks):
         logger.info(
-            "[SCIM:Attributes] Excluded %d conndev baseline document(s) from LLM mapping extraction",
+            "[Digester:Attributes] Excluded %d conndev baseline document(s) from LLM mapping extraction",
             len(chunks) - len(llm_chunks),
         )
     chunks = llm_chunks
@@ -367,13 +367,13 @@ async def extract_scim_attributes(
     if schema_attributes is None:
         if not chunks:
             logger.info(
-                "[SCIM:Attributes] No SCIM baseline or documentation chunks available for %s",
+                "[Digester:Attributes] No SCIM baseline or documentation chunks available for %s",
                 object_class,
             )
             return _build_scim_attribute_result({}, [], scim_context)
 
         logger.info(
-            "[SCIM:Attributes] No SCIM baseline for %s; using general attribute discovery over %d documentation chunks",
+            "[Digester:Attributes] No SCIM baseline for %s; using general attribute discovery over %d documentation chunks",
             object_class,
             len(chunks),
         )
@@ -399,7 +399,7 @@ async def extract_scim_attributes(
         )
         await increment_processed_documents(job_id, delta=1)
         logger.info(
-            "[SCIM:Attributes] Derived %d attributes for %s from SCIM schema heuristics",
+            "[Digester:Attributes] Derived %d attributes for %s from SCIM schema heuristics",
             len(schema_attributes),
             object_class,
         )
@@ -410,7 +410,7 @@ async def extract_scim_attributes(
     base_attributes = schema_attributes
     is_standard_class = is_scim_standard_class(scim_schemas, object_class)
     logger.info(
-        "[SCIM:Attributes] Using %d schema baseline attributes for %s",
+        "[Digester:Attributes] Using %d schema baseline attributes for %s",
         len(base_attributes),
         object_class,
     )
@@ -428,7 +428,7 @@ async def extract_scim_attributes(
     chain = _build_scim_attribute_chain(object_class, base_attributes)
 
     logger.info(
-        "[SCIM:Attributes] Processing %d chunks in parallel for %s",
+        "[Digester:Attributes] Processing %d chunks in parallel for %s",
         total_chunks,
         object_class,
     )
@@ -469,7 +469,7 @@ async def extract_scim_attributes(
                     chunk_pair = normalize_chunk_pair(chunk_ref)
                 else:
                     logger.warning(
-                        "[SCIM:Attributes] Missing docId for chunk %s, skipping relevant chunk mapping",
+                        "[Digester:Attributes] Missing docId for chunk %s, skipping relevant chunk mapping",
                         chunk_id_str,
                     )
             if chunk_pair:
@@ -478,7 +478,7 @@ async def extract_scim_attributes(
                     seen_pairs.add(chunk_pair)
 
     logger.info(
-        "[SCIM:Attributes] Completed parallel processing. Found mappings in %d/%d chunks",
+        "[Digester:Attributes] Completed parallel processing. Found mappings in %d/%d chunks",
         len(all_custom_attributes),
         total_chunks,
     )
@@ -509,7 +509,7 @@ async def extract_scim_attributes(
     all_relevant_chunks = _merge_documentation_references(relevant_chunks, baseline_references)
 
     logger.info(
-        "[SCIM:Attributes] Completed for %s. Total attributes: %d (schema baseline: %d, documented mappings: %d)",
+        "[Digester:Attributes] Completed for %s. Total attributes: %d (schema baseline: %d, documented mappings: %d)",
         object_class,
         len(merged_custom_with_references),
         len(schema_attributes or {}),
@@ -546,13 +546,13 @@ async def extract_custom_scim_attributes(
 
         parsed = parse_structured_result(result, ExtractedAttributeResponseSCIM)
         if parsed is None:
-            logger.warning("[SCIM:Attributes] Unexpected result type: %s", type(result))
+            logger.warning("[Digester:Attributes] Unexpected result type: %s", type(result))
             return {}
         attributes = parsed.attributes or {}
 
         if attributes:
             logger.info(
-                "[SCIM:Attributes] Extracted %d raw mapping candidates for %s",
+                "[Digester:Attributes] Extracted %d raw mapping candidates for %s",
                 len(attributes),
                 object_class,
             )
@@ -581,7 +581,7 @@ async def extract_custom_scim_attributes(
 
         if mapped_attributes:
             logger.info(
-                "[SCIM:Attributes] Accepted %d mapping attributes for %s",
+                "[Digester:Attributes] Accepted %d mapping attributes for %s",
                 len(mapped_attributes),
                 object_class,
             )
@@ -590,7 +590,7 @@ async def extract_custom_scim_attributes(
 
     except Exception as e:
         logger.error(
-            "[SCIM:Attributes] Failed to extract mapping attributes for %s: %s",
+            "[Digester:Attributes] Failed to extract mapping attributes for %s: %s",
             object_class,
             e,
         )

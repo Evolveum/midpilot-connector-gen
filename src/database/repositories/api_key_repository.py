@@ -38,7 +38,7 @@ class ApiKeyRepository:
         api_key = ApiKey(name=name, key_prefix=key_prefix, key_hash=key_hash)
         self.db.add(api_key)
         await self.db.flush()
-        logger.info(f"Created API key {api_key.api_key_id} ({name})")
+        logger.info("Created API key %s (%s)", api_key.api_key_id, name)
         return api_key
 
     async def get_active_key_by_hash(self, key_hash: str) -> Optional[ApiKey]:
@@ -75,11 +75,11 @@ class ApiKeyRepository:
         api_key = result.scalar_one_or_none()
 
         if api_key is None:
-            logger.warning(f"API key not found for revocation: {api_key_id}")
+            logger.warning("API key not found for revocation: %s", api_key_id)
             return None
 
         if api_key.revoked_at is None:
             api_key.revoked_at = datetime.now(timezone.utc)
             await self.db.flush()
-            logger.info(f"Revoked API key {api_key_id} ({api_key.name})")
+            logger.info("Revoked API key %s (%s)", api_key_id, api_key.name)
         return api_key

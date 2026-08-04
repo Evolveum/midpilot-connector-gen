@@ -147,7 +147,13 @@ async def test_execution_fence_is_acquired_once_per_transaction() -> None:
     repo, db = _build_repo()
     transaction = object()
     db.get_transaction = MagicMock(side_effect=[None, transaction, transaction])
-    execution = JobExecutionContext(job_id=uuid4(), worker_id="worker-a", execution_token=uuid4())
+    execution = JobExecutionContext(
+        job_id=uuid4(),
+        session_id=uuid4(),
+        job_type="documentation.processUpload",
+        worker_id="worker-a",
+        execution_token=uuid4(),
+    )
 
     with (
         patch(
@@ -172,7 +178,13 @@ async def test_execution_fence_is_acquired_once_per_transaction() -> None:
 @pytest.mark.asyncio
 async def test_execution_fence_rejects_a_different_ambient_job() -> None:
     repo, _ = _build_repo()
-    execution = JobExecutionContext(job_id=uuid4(), worker_id="worker-a", execution_token=uuid4())
+    execution = JobExecutionContext(
+        job_id=uuid4(),
+        session_id=uuid4(),
+        job_type="documentation.processUpload",
+        worker_id="worker-a",
+        execution_token=uuid4(),
+    )
 
     with patch(
         "src.database.repositories.documentation_repository.get_current_execution",

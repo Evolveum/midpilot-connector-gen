@@ -14,7 +14,7 @@ def test_logger_output(caplog):
     logger = logging.getLogger("test_logger")
 
     # Set log level to DEBUG for the test (optional, depends on your setup)
-    logger.setLevel(logging.WARN)
+    logger.setLevel(logging.WARNING)
 
     with caplog.at_level(logging.DEBUG):
         logger.debug("Debug message")

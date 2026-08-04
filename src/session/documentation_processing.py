@@ -106,7 +106,7 @@ async def process_documentation_worker(
         )
 
         logger.info(
-            "[Upload:Job] Processing %s chunks for session %s (job %s) [worker_limit=%s]",
+            "[Session:Upload:Job] Processing %s chunks for session %s (job %s) [worker_limit=%s]",
             len(chunks),
             session_id,
             job_id,
@@ -164,7 +164,7 @@ async def process_documentation_worker(
                 raise
             except Exception as e:
                 logger.error(
-                    "[Upload:Job] Failed to persist chunk batch %s for session %s (job %s): %s",
+                    "[Session:Upload:Job] Failed to persist chunk batch %s for session %s (job %s): %s",
                     [chunk.index for chunk in chunks_to_persist],
                     session_id,
                     job_id,
@@ -206,7 +206,7 @@ async def process_documentation_worker(
             )
 
         logger.info(
-            "[Upload:Job] Completed processing for session %s (job %s): generated %s chunks",
+            "[Session:Upload:Job] Completed processing for session %s (job %s): generated %s chunks",
             session_id,
             job_id,
             len(chunks),

@@ -7,6 +7,7 @@
 import asyncio
 import inspect
 import logging
+import time
 from collections.abc import Mapping
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, Union
 from uuid import UUID
@@ -21,6 +22,7 @@ from src.core.job_execution import (
     reset_current_execution,
     set_current_execution,
 )
+from src.core.observability.llm_metrics import start_llm_usage_tracking, stop_llm_usage_tracking
 from src.database.repositories.job_repository import ClaimedJob, JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs import cache, lifecycle, session_persistence
@@ -269,10 +271,16 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
     context_token = set_current_execution(
         JobExecutionContext(
             job_id=claimed_job.job_id,
+            session_id=claimed_job.session_id,
+            job_type=claimed_job.job_type,
             worker_id=claimed_job.worker_id,
             execution_token=claimed_job.execution_token,
         )
     )
+    llm_usage, usage_token = start_llm_usage_tracking()
+    started = time.monotonic()
+    outcome = "interrupted"
+    logger.info("Started job %s (attempt %s)", claimed_job.job_type, claimed_job.attempt_count)
     execution_task = asyncio.create_task(_run_claimed_job(claimed_job))
     heartbeat_task = asyncio.create_task(_heartbeat(claimed_job))
     try:
@@ -285,6 +293,7 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
         else:
             heartbeat_task.result()
             await execution_task
+        outcome = "succeeded"
     except asyncio.CancelledError:
         execution_task.cancel()
         heartbeat_task.cancel()
@@ -292,21 +301,32 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
         await _release_interrupted_claim(claimed_job)
         raise
     except JobClaimLostError:
+        outcome = "claim lost"
         execution_task.cancel()
         await asyncio.gather(execution_task, return_exceptions=True)
-        logger.warning("Stopped stale execution of job %s after its claim was lost", claimed_job.job_id)
+        logger.warning("Stopped stale execution after the job claim was lost")
     except Exception as exc:
+        outcome = "failed"
         if isinstance(exc, AppError) and exc.status_code < 500:
             # An expected client/domain outcome, not a crash: the message is the
             # whole story, and a stack trace would only bury it in the log.
-            logger.error("Job %s failed: %s", claimed_job.job_id, exc)
+            logger.error("Job failed: %s", exc)
         else:
-            logger.exception("Job %s failed during execution", claimed_job.job_id)
+            logger.exception("Job failed during execution")
         try:
             await lifecycle.set_failed(claimed_job.job_id, error=str(exc))
         except JobClaimLostError:
-            logger.warning("Could not fail job %s because its claim was already lost", claimed_job.job_id)
+            logger.warning("Could not fail the job because its claim was already lost")
     finally:
         heartbeat_task.cancel()
         await asyncio.gather(heartbeat_task, return_exceptions=True)
+        elapsed = time.monotonic() - started
+        logger.info(
+            "Finished job %s: %s in %.1fs (%s)",
+            claimed_job.job_type,
+            outcome,
+            elapsed,
+            llm_usage.describe(elapsed),
+        )
+        stop_llm_usage_tracking(usage_token)
         reset_current_execution(context_token)

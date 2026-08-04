@@ -29,7 +29,7 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
     - LlmChunkOutput object containing summary, tags and category
 
     """
-    logger.debug("[Scrape:LLM] Starting LLM call for chunk processing")
+    logger.debug("[Documents:LLM] Starting LLM call for chunk processing")
     llm = get_default_llm(temperature=0.7)
 
     developer_msg, user_msg = prompts
@@ -57,10 +57,10 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
         lambda: chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Scrape:ProcessChunk")),
         max_attempts=config.scrape_and_process.chunk_llm_retry_attempts,
         base_delay=config.scrape_and_process.chunk_llm_retry_base_delay_seconds,
-        logger_prefix="[Scrape:LLM] ",
+        logger_prefix="[Documents:LLM] ",
         context="chunk processing",
     )
 
-    logger.debug("[Scrape:LLM] Finished LLM call for chunk processing with result: %s", result)
+    logger.debug("[Documents:LLM] Finished LLM call for chunk processing with result: %s", result)
 
     return result

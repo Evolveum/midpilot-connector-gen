@@ -39,8 +39,8 @@ from src.modules.digester.schemas import ApiTypeSignalResult, RestSignalResult
 
 logger = logging.getLogger(__name__)
 
-_LOG_PREFIX = "[ApiType:WebSearch] "
-_REST_LOG_PREFIX = "[ApiType:RestWebSearch] "
+_LOG_PREFIX = "[Digester:ApiType:WebSearch] "
+_REST_LOG_PREFIX = "[Digester:ApiType:RestWebSearch] "
 
 # Cap each snippet so a few verbose results cannot blow up the prompt token budget.
 _MAX_SNIPPET_CHARS = 500

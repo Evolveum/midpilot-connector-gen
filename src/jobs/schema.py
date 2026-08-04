@@ -28,13 +28,6 @@ class IterationProgress(BaseProgress):
     totalIterations: Optional[int] = Field(default=None, description="Maximum iterations configured")
 
 
-class DocumentProgress(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-    docId: Optional[UUID] = Field(default=None, description="Identifier of the document being processed")
-    processedChunks: Optional[int] = Field(default=None, description="Chunks processed in the current document")
-    totalChunks: Optional[int] = Field(default=None, description="Total chunks for the current document")
-
-
 class MultiDocProgress(BaseProgress):
     processedDocuments: Optional[int] = Field(default=None, description="Number of fully processed documents")
     totalDocuments: Optional[int] = Field(default=None, description="Total number of documents to process")

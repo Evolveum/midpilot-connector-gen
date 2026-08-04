@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
+from src.api.correlation import bind_session_correlation
 from src.api.exception_handlers import register_exception_handlers
 from src.auth.dependencies import authenticate_request
 from src.config import config
@@ -52,16 +53,18 @@ def create_api() -> FastAPI:
 
     :return: Configured FastAPI instance.
     """
-    app = FastAPI(title=config.app.title, version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title=config.app.title, version=config.app.version, lifespan=lifespan)
 
     register_exception_handlers(app)
 
-    # API key auth + session ownership run for every API route; /health stays open.
-    # Order matters: authentication stores the AuthContext the ownership check reads.
     app.include_router(
         root_router,
         prefix=f"{config.app.api_base_url}/v1",
-        dependencies=[Depends(authenticate_request), Depends(enforce_session_ownership)],
+        dependencies=[
+            Depends(bind_session_correlation),
+            Depends(authenticate_request),
+            Depends(enforce_session_ownership),
+        ],
     )
 
     @app.get("/health")

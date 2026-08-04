@@ -101,7 +101,7 @@ async def create_session(
     try:
         session_id = await repo.create_session(api_key_id=auth.api_key_id)
     except Exception as e:
-        logger.error(f"Failed to create session: {e}")
+        logger.error("Failed to create session: %s", e)
         raise HTTPException(status_code=500, detail="Unable to create session")
     return SessionCreateResponse(
         sessionId=session_id,
@@ -127,16 +127,16 @@ async def create_session_with_id(
     """
     repo = SessionRepository(db)
     if await repo.session_exists(session_id):
-        logger.error(f"Cannot create session - session already exists: {session_id}")
+        logger.error("Cannot create session - session already exists: %s", session_id)
         raise SessionAlreadyExistsError(session_id)
 
     try:
         created_id = await repo.create_session_with_id(session_id, api_key_id=auth.api_key_id)
     except ValueError as e:
-        logger.error(f"Failed to create session with ID {session_id}: {e}")
+        logger.error("Failed to create session with ID %s: %s", session_id, e)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to create session with ID {session_id}: {e}")
+        logger.error("Failed to create session with ID %s: %s", session_id, e)
         raise HTTPException(status_code=500, detail="Unable to create session")
 
     return SessionCreateResponse(

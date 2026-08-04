@@ -135,7 +135,29 @@ migrations.
 
 == Observability
 
-* Structured logging configured in `src/config/logging.py`.
+* Logging is configured in `src/core/observability/logging.py`, its settings live
+  in `src/config/logging.py`. Every record has the shape
++
+----
+<time> | <level> | <pid> | <session> | <job> | <logger name> | <message>
+----
++
+`session` and `job` are the first eight characters of the respective ids, or
+`--------` when the record belongs to neither. They are resolved by
+`src/core/observability/correlation.py` from context variables - the job runner
+publishes both for background work, the `bind_session_correlation` dependency
+publishes the session for HTTP requests - so concurrent sessions stay
+distinguishable without any call site passing ids around.
+* Log messages carry a `+[Pipeline:Concern]+` prefix naming the pipeline stage
+  they belong to (`+[Digester:Attributes]+`, `+[Scrape:Loop]+`). Shared layers use
+  their own pipeline name (`+[Documents:Process]+`), never a caller's.
+* Every LLM call is timed and its tokens counted by
+  `src/core/observability/llm_metrics.py`, attached centrally in
+  `get_default_llm`. Individual calls log at `DEBUG`; each job reports its
+  totals at `INFO` when it finishes.
+* Successful requests to `+LOGGING__ACCESS_LOG_EXCLUDED_PATHS+` are omitted from
+  the access log; failures on those paths are still logged. Add the job-status
+  polling endpoints there when their poll interval drowns out the application log.
 * Optional https://langfuse.com/[Langfuse] tracing of every API request and
   LLM call (`+LANGFUSE__*+` settings).
 * Job progress is persisted per stage (`JobStage` in `src/shared/enums.py`)

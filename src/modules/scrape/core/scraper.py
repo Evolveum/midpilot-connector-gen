@@ -182,7 +182,9 @@ async def scraper_loop(
 
             link_arr = [ref.url for ref in documentation_references.references if ref.url]
             logger.info(
-                f"[Scrape:Loop] Extracted {len(link_arr)} raw links from documentation %s", str(scraped_link.url)
+                "[Scrape:Loop] Extracted %s raw links from documentation %s",
+                len(link_arr),
+                str(scraped_link.url),
             )
             max_links = config.scrape_and_process.max_links_per_documentation
             if max_links > 0 and len(link_arr) > max_links:
@@ -302,7 +304,8 @@ async def scraper_loop(
                                     link,
                                 )
                     logger.info(
-                        f"[Scrape:Loop] LLM identified {len(relevant_links)} relevant links on documentation %s",
+                        "[Scrape:Loop] LLM identified %s relevant links on documentation %s",
+                        len(relevant_links),
                         str(scraped_link.url),
                     )
                     llm_irrelevant_links = list(set(partly_filtered_new_links) - set(relevant_links))

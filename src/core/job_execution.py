@@ -12,6 +12,8 @@ from uuid import UUID
 @dataclass(frozen=True)
 class JobExecutionContext:
     job_id: UUID
+    session_id: UUID
+    job_type: str
     worker_id: str
     execution_token: UUID
 

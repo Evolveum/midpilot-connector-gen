@@ -124,7 +124,7 @@ forbidden_modules = ["src.modules.discovery", "src.modules.scrape"]
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "TID252"]
+select = ["E4", "E7", "E9", "F", "G", "I", "LOG", "TID252"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

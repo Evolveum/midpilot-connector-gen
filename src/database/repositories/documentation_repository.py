@@ -310,7 +310,7 @@ class DocumentationRepository:
         )
         self.db.add(chunk)
         await self.db.flush()
-        logger.info(f"Created chunk_id {chunk.chunk_id} for session {session_id}")
+        logger.info("Created chunk_id %s for session %s", chunk.chunk_id, session_id)
         return chunk.chunk_id
 
     async def get_documentation_items_by_session(
@@ -480,7 +480,7 @@ class DocumentationRepository:
             imported_count += 1
 
         await self.db.flush()
-        logger.info(f"Imported {imported_count} documentation chunks for session {session_id}")
+        logger.info("Imported %s documentation chunks for session %s", imported_count, session_id)
         return imported_count
 
     async def get_documentation_items_by_session_and_job(self, session_id: UUID, job_id: UUID) -> List[Dict[str, Any]]:
@@ -538,7 +538,7 @@ class DocumentationRepository:
         chunk = result.scalars().unique().one_or_none()
 
         if chunk is None:
-            logger.warning(f"Documentation chunk not found for update: {chunk_id}")
+            logger.warning("Documentation chunk not found for update: %s", chunk_id)
             return False
 
         if metadata is not None:
@@ -571,7 +571,7 @@ class DocumentationRepository:
             chunk.doc_id = doc_id
 
         await self.db.flush()
-        logger.info(f"Updated documentation chunk with chunk_id: {chunk_id}")
+        logger.info("Updated documentation chunk with chunk_id: %s", chunk_id)
         return True
 
     async def remove_job_ids_from_documentation_items(self, session_id: UUID, doc_source: str) -> int:
@@ -600,7 +600,10 @@ class DocumentationRepository:
         count = int(getattr(result, "rowcount", 0) or 0)
         await self.db.flush()
         logger.info(
-            f"Removed job IDs from {count} documentation chunks for session {session_id} and source {doc_source}"
+            "Removed job IDs from %s documentation chunks for session %s and source %s",
+            count,
+            session_id,
+            doc_source,
         )
         return count
 
@@ -626,7 +629,7 @@ class DocumentationRepository:
         await self.db.execute(delete(Document).where(Document.session_id == session_id, Document.doc_id == doc_id))
 
         await self.db.flush()
-        logger.info(f"Deleted document {doc_id} with {chunk_count} chunk(s) for session {session_id}")
+        logger.info("Deleted document %s with %s chunk(s) for session %s", doc_id, chunk_count, session_id)
         return int(chunk_count)
 
     async def get_documentation_item(self, chunk_id: UUID) -> Optional[Dict[str, Any]]:
@@ -661,5 +664,5 @@ class DocumentationRepository:
         await self.db.execute(delete(Document).where(Document.session_id == session_id))
 
         await self.db.flush()
-        logger.info(f"Deleted {chunk_count} documentation chunks for session {session_id}")
+        logger.info("Deleted %s documentation chunks for session %s", chunk_count, session_id)
         return int(chunk_count)

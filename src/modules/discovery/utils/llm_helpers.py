@@ -10,7 +10,6 @@ from typing import Any, List, Tuple
 from langchain_classic.output_parsers import OutputFixingParser
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 
@@ -65,16 +64,6 @@ def get_prioritized_fallback_templates(integration_type: DiscoveryIntegrationTyp
             deduped_templates.append(template)
 
     return deduped_templates or DEFAULT_FALLBACK_TEMPLATES.copy()
-
-
-def make_eval_prompt(system_prompt: str) -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            ("user", "Here is the result of a search from a search engine: {tool_output_raw}"),
-            ("user", "{input}"),
-        ]
-    )
 
 
 def fetch_parser_response(

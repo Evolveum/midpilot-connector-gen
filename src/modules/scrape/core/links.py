@@ -5,8 +5,6 @@
 from typing import Dict, List, Tuple
 from urllib.parse import urljoin, urlparse
 
-from crawl4ai import CrawlResult  # type: ignore
-
 
 def remove_anchor_links(urls: list[str]) -> Tuple[List[str], Dict[str, str]]:
     """
@@ -110,41 +108,3 @@ def relative_paths_to_absolute(reference_list: List[str], current_url: str) -> T
             new_reference_list.append(absolute)
 
     return new_reference_list, map_of_links
-
-
-def extract_base_url(url: str):
-    parsed_url = urlparse(url)
-    base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-
-    return base_url
-
-
-def get_links_for_documentation(scraperOutput: CrawlResult) -> list:
-    """
-    Extract and clean links from a CrawlResult object.
-    inputs:
-        scraperOutput: CrawlResult - the result object from the scraper
-    outputs:
-        list - cleaned list of absolute links
-    """
-    link_arr = []
-    link_arr.extend([link["href"] for link in scraperOutput.links["internal"]])
-    link_arr.extend([link["href"] for link in scraperOutput.links["external"]])
-    link_arr_clean = clean_reference_list(link_arr)
-    link_arr_abs, _ = relative_paths_to_absolute(link_arr_clean, scraperOutput.url)
-    return link_arr_abs
-
-
-def get_file_extension(url: str) -> str:
-    """
-    Extract file extension from URL.
-    inputs:
-        url: str - the URL string
-    outputs:
-        str - file extension (without dot), or empty string if none
-    """
-    parsed_url = urlparse(url)
-    path = parsed_url.path
-    if "." in path:
-        return path.split(".")[-1]
-    return ""
