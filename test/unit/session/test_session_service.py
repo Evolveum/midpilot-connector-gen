@@ -45,31 +45,32 @@ def _doc_row(session_doc_id: str, chunk_id: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_get_documentation_document_returns_only_matching_doc():
+async def test_get_documentation_document_asks_the_database_for_one_document():
+    """The document is selected in SQL; the whole session must not be loaded to filter it."""
     session_id = uuid4()
     doc_id = uuid4()
-    other_id = uuid4()
-    chunk_1, chunk_2, chunk_3 = uuid4(), uuid4(), uuid4()
+    chunk_1, chunk_2 = uuid4(), uuid4()
     doc_repo = MagicMock()
-    doc_repo.get_documentation_items_for_export = AsyncMock(
+    doc_repo.get_documentation_items_by_doc_id = AsyncMock(
         return_value=[
             _doc_row(str(doc_id), str(chunk_1)),
-            _doc_row(str(other_id), str(chunk_2)),
-            _doc_row(str(doc_id), str(chunk_3)),
+            _doc_row(str(doc_id), str(chunk_2)),
         ]
     )
+    doc_repo.get_documentation_items_for_export = AsyncMock(side_effect=AssertionError("must not load the session"))
 
     document = await service.get_documentation_document(doc_repo, session_id, doc_id)
 
     assert str(document.doc_id) == str(doc_id)
-    assert {str(chunk.chunk_id) for chunk in document.chunks} == {str(chunk_1), str(chunk_3)}
+    assert {str(chunk.chunk_id) for chunk in document.chunks} == {str(chunk_1), str(chunk_2)}
+    doc_repo.get_documentation_items_by_doc_id.assert_awaited_once_with(session_id, doc_id)
 
 
 @pytest.mark.asyncio
 async def test_get_documentation_document_raises_when_absent():
     session_id = uuid4()
     doc_repo = MagicMock()
-    doc_repo.get_documentation_items_for_export = AsyncMock(return_value=[_doc_row(str(uuid4()), str(uuid4()))])
+    doc_repo.get_documentation_items_by_doc_id = AsyncMock(return_value=[])
 
     with pytest.raises(DocumentationItemNotFoundError):
         await service.get_documentation_document(doc_repo, session_id, uuid4())

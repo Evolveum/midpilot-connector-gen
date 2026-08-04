@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import config
 from src.core.db import async_session_maker
+from src.core.errors import AppError
 from src.core.job_execution import (
     JobExecutionContext,
     reset_current_execution,
@@ -62,6 +63,8 @@ async def schedule_coroutine_job(
     """
     if dynamic_input_enabled and dynamic_input_provider is None:
         raise ValueError("dynamic_input_provider is required when dynamic_input_enabled is true")
+    if await_documentation and await_documentation_timeout is None:
+        raise ValueError("await_documentation_timeout is required when await_documentation is true")
 
     execution_payload = build_execution_payload(
         worker=worker,
@@ -80,8 +83,7 @@ async def schedule_coroutine_job(
         session_id,
         execution_payload=execution_payload,
         binary_artifacts=binary_artifacts,
-        waits_for_documentation=await_documentation,
-        documentation_wait_timeout_seconds=await_documentation_timeout,
+        documentation_wait_timeout_seconds=await_documentation_timeout if await_documentation else None,
         max_attempts=config.jobs.max_attempts,
     )
     if await_documentation:
@@ -188,7 +190,6 @@ async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
             session_id=claimed_job.session_id,
             session_result_key=session_result_key,
             result_dict=result_dict,
-            input_payload=input_payload,
         )
         if not published_to_session:
             message = (
@@ -295,7 +296,12 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
         await asyncio.gather(execution_task, return_exceptions=True)
         logger.warning("Stopped stale execution of job %s after its claim was lost", claimed_job.job_id)
     except Exception as exc:
-        logger.exception("Job %s failed during execution", claimed_job.job_id)
+        if isinstance(exc, AppError) and exc.status_code < 500:
+            # An expected client/domain outcome, not a crash: the message is the
+            # whole story, and a stack trace would only bury it in the log.
+            logger.error("Job %s failed: %s", claimed_job.job_id, exc)
+        else:
+            logger.exception("Job %s failed during execution", claimed_job.job_id)
         try:
             await lifecycle.set_failed(claimed_job.job_id, error=str(exc))
         except JobClaimLostError:

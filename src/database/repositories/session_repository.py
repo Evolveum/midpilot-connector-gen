@@ -158,7 +158,7 @@ class SessionRepository:
                 updated_at=now,
             )
             .on_conflict_do_update(
-                constraint="uq_session_data_session_key",
+                index_elements=[SessionData.session_id, SessionData.key],
                 set_={
                     "value": value,
                     "updated_at": now,

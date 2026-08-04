@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import RelevantChunk
+from src.database.models import DocumentationChunk, RelevantChunk
 from src.shared.normalize import normalize_relevant_sequence
 
 logger = logging.getLogger(__name__)
@@ -55,10 +55,10 @@ class RelevantChunkRepository:
             chunk_info.get("entity_key") or chunk_info.get("entityKey") or default_entity_key
         )
 
-        doc_id = self._parse_uuid(chunk_info.get("doc_id") or chunk_info.get("docId"))
         chunk_id = self._parse_uuid(chunk_info.get("chunk_id") or chunk_info.get("chunkId"))
-        if not doc_id or not chunk_id:
+        if not chunk_id:
             return None
+        claimed_doc_id = self._parse_uuid(chunk_info.get("doc_id") or chunk_info.get("docId"))
 
         raw_sequence = chunk_info.get("relevant_sequence") or chunk_info.get("relevantSequence")
         if not raw_sequence:
@@ -74,7 +74,7 @@ class RelevantChunkRepository:
         return {
             "result_key": result_key,
             "entity_key": entity_key,
-            "doc_id": doc_id,
+            "claimed_doc_id": claimed_doc_id,
             "chunk_id": chunk_id,
             "relevant_sequence": relevant_sequence,
         }
@@ -111,47 +111,26 @@ class RelevantChunkRepository:
         """Serialize one relevant chunk without ``resultKey``, for payloads already grouped by result."""
         return {key: value for key, value in cls._serialize_chunk(chunk).items() if key != "resultKey"}
 
-    async def add_relevant_chunk(
-        self,
-        *,
-        session_id: UUID,
-        result_key: str,
-        doc_id: UUID,
-        chunk_id: UUID,
-        relevant_sequence: Optional[Dict[str, str]] = None,
-        entity_key: Optional[str] = None,
-    ) -> bool:
-        """Add a single relevant chunk. Returns False for duplicates."""
-        normalized_entity_key = self._normalize_entity_key(entity_key)
-        normalized_sequence = normalize_relevant_sequence(relevant_sequence or {})
+    async def _load_session_doc_ids(self, session_id: UUID, chunk_ids: set[UUID]) -> Dict[UUID, UUID]:
+        """Map chunk ids to the document they actually belong to, within one session.
 
-        stmt = select(RelevantChunk).where(
-            RelevantChunk.session_id == session_id,
-            RelevantChunk.result_key == result_key,
-            RelevantChunk.doc_id == doc_id,
-            RelevantChunk.chunk_id == chunk_id,
-            RelevantChunk.relevant_sequence == normalized_sequence,
-        )
-        if normalized_entity_key is None:
-            stmt = stmt.where(RelevantChunk.entity_key.is_(None))
-        else:
-            stmt = stmt.where(RelevantChunk.entity_key == normalized_entity_key)
+        Relevance references come out of an LLM, so the document id they carry is
+        only a claim. Resolving it against the stored documentation in a single
+        query keeps the persisted triple consistent with what the composite
+        foreign key on ``relevant_chunks`` enforces.
+        """
+        if not chunk_ids:
+            return {}
 
-        existing = (await self.db.execute(stmt)).scalar_one_or_none()
-        if existing is not None:
-            return False
-
-        chunk = RelevantChunk(
-            session_id=session_id,
-            result_key=result_key,
-            entity_key=normalized_entity_key,
-            doc_id=doc_id,
-            chunk_id=chunk_id,
-            relevant_sequence=normalized_sequence,
-        )
-        self.db.add(chunk)
-        await self.db.flush()
-        return True
+        rows = (
+            await self.db.execute(
+                select(DocumentationChunk.chunk_id, DocumentationChunk.doc_id).where(
+                    DocumentationChunk.session_id == session_id,
+                    DocumentationChunk.chunk_id.in_(chunk_ids),
+                )
+            )
+        ).all()
+        return {chunk_id: doc_id for chunk_id, doc_id in rows}
 
     async def replace_relevant_chunks_for_result(
         self,
@@ -199,20 +178,46 @@ class RelevantChunkRepository:
             dedupe_keys.add(dedupe_key)
             normalized.append(normalized_chunk)
 
+        doc_ids_by_chunk = await self._load_session_doc_ids(session_id, {item["chunk_id"] for item in normalized})
+
+        persisted = 0
         for item in normalized:
+            stored_doc_id = doc_ids_by_chunk.get(item["chunk_id"])
+            if stored_doc_id is None:
+                logger.warning(
+                    "Dropping relevant chunk %s for session %s result %s: the chunk is not part of "
+                    "this session's documentation",
+                    item["chunk_id"],
+                    session_id,
+                    item["result_key"],
+                )
+                continue
+            claimed_doc_id = item["claimed_doc_id"]
+            if claimed_doc_id is not None and claimed_doc_id != stored_doc_id:
+                logger.warning(
+                    "Relevant chunk %s for session %s result %s referenced document %s but belongs "
+                    "to document %s; storing the document it belongs to",
+                    item["chunk_id"],
+                    session_id,
+                    item["result_key"],
+                    claimed_doc_id,
+                    stored_doc_id,
+                )
+
             self.db.add(
                 RelevantChunk(
                     session_id=session_id,
                     result_key=item["result_key"],
                     entity_key=item["entity_key"],
-                    doc_id=item["doc_id"],
+                    doc_id=stored_doc_id,
                     chunk_id=item["chunk_id"],
                     relevant_sequence=item["relevant_sequence"],
                 )
             )
+            persisted += 1
 
         await self.db.flush()
-        return len(normalized)
+        return persisted
 
     async def get_relevant_chunks(
         self,
@@ -297,7 +302,6 @@ class RelevantChunkRepository:
         rows = (await self.db.execute(stmt)).scalars().all()
         mapping: Dict[str, List[Dict[str, Any]]] = {}
         for row in rows:
-            # entity_key is the mapping key here, so it is deliberately not repeated in the payload
             payload: Dict[str, Any] = {
                 "docId": str(row.doc_id),
                 "chunkId": str(row.chunk_id),
@@ -308,10 +312,9 @@ class RelevantChunkRepository:
 
     async def delete_by_session(self, session_id: UUID) -> int:
         """Delete all relevant chunks for a session."""
-        rows = await self.get_relevant_chunks(session_id=session_id)
-        await self.db.execute(delete(RelevantChunk).where(RelevantChunk.session_id == session_id))
+        result = await self.db.execute(delete(RelevantChunk).where(RelevantChunk.session_id == session_id))
         await self.db.flush()
-        return len(rows)
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def count_by_session(self, session_id: UUID) -> int:
         stmt = select(func.count()).select_from(RelevantChunk).where(RelevantChunk.session_id == session_id)

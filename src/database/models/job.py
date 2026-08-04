@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List
 from uuid import UUID, uuid4
 
-from sqlalchemy import ARRAY, Boolean, CheckConstraint, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import ARRAY, CheckConstraint, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -34,21 +34,15 @@ class Job(Base):
         PGUUID(as_uuid=True),
         ForeignKey("sessions.session_id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
-    job_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    status: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        index=True,
-    )
+    job_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
         default=utc_now,
         server_default=text("NOW()"),
-        index=True,
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -60,25 +54,14 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
-    # JSONB columns for flexible data storage
     input: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    normalized_input: Mapped[Dict[str, Any]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
+    normalized_input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     result: Mapped[Dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     execution_payload: Mapped[Dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-
-    # Array of error messages
     errors: Mapped[List[str] | None] = mapped_column(ARRAY(Text), nullable=True)
-
-    # Durable execution ownership. A worker may mutate/finalize a running job
-    # only while it owns the current execution token.
     worker_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     execution_token: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     claim_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    heartbeat_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     available_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
@@ -87,12 +70,6 @@ class Job(Base):
     )
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3, server_default=text("3"))
-    waits_for_documentation: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-        server_default=text("false"),
-    )
     documentation_wait_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     # Relationships
@@ -109,17 +86,32 @@ class Job(Base):
     __table_args__ = (
         CheckConstraint("status IN ('queued', 'running', 'finished', 'failed')", name="check_job_status"),
         Index("idx_jobs_session_id", "session_id"),
-        Index("idx_jobs_status", "status"),
-        Index("idx_jobs_type", "job_type"),
-        Index("idx_jobs_status_type_created", "status", "job_type", "created_at"),  # For claim_next_job
+        Index("idx_jobs_created_at", "created_at"),
+        Index("idx_jobs_status_type_created", "status", "job_type", "created_at"),
         Index(
-            "idx_jobs_claimable",
-            "status",
-            "waits_for_documentation",
-            "available_at",
-            "claim_expires_at",
+            "idx_jobs_reuse_lookup",
+            "job_type",
+            "normalized_input_hash",
             "created_at",
+            postgresql_where=text("status = 'finished'"),
+        ),
+        Index(
+            "idx_jobs_claimable_queued",
+            "available_at",
+            "created_at",
+            "job_id",
+            postgresql_where=text("status = 'queued'"),
+        ),
+        Index(
+            "idx_jobs_claimable_expired",
+            "claim_expires_at",
+            postgresql_where=text("status = 'running'"),
         ),
         CheckConstraint("attempt_count >= 0", name="check_job_attempt_count"),
         CheckConstraint("max_attempts > 0", name="check_job_max_attempts"),
+        CheckConstraint("attempt_count <= max_attempts", name="check_job_attempt_bounds"),
+        CheckConstraint(
+            "started_at IS NULL OR finished_at IS NULL OR finished_at >= started_at",
+            name="check_job_timeline",
+        ),
     )

@@ -37,8 +37,7 @@ async def get_documentation_document(
     Return one documentation document (all chunks for ``documentation_id``) in the
     export bundle shape. Raises ``DocumentationItemNotFoundError`` when it is absent.
     """
-    doc_rows = await doc_repo.get_documentation_items_for_export(session_id)
-    doc_rows_for_document = [item for item in doc_rows if str(item.get("docId")) == str(documentation_id)]
+    doc_rows_for_document = await doc_repo.get_documentation_items_by_doc_id(session_id, documentation_id)
 
     if not doc_rows_for_document:
         raise DocumentationItemNotFoundError(documentation_id, session_id)

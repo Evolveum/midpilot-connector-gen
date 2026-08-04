@@ -52,15 +52,3 @@ class InvalidDocumentationImportError(AppError):
 
     status_code = 422
     code = "invalid_documentation_import"
-
-
-class NoDocumentationStoredError(AppError):
-    """Raised when an operation needs documentation but none has been stored yet."""
-
-    status_code = 400
-    code = "no_documentation_stored"
-
-    def __init__(self, session_id: UUID):
-        super().__init__(
-            f"Session {session_id} has no stored documentation. Please upload documentation file or run scraper."
-        )

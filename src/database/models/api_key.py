@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, Text, text
+from sqlalchemy import CheckConstraint, String, Text, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -47,3 +47,5 @@ class ApiKey(Base):
 
     # Relationships
     sessions: Mapped[List["Session"]] = relationship("Session", back_populates="api_key")
+
+    __table_args__ = (CheckConstraint("key_hash ~ '^[0-9a-f]{64}$'", name="check_api_key_hash_hex"),)

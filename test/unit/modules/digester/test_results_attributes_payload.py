@@ -46,7 +46,6 @@ async def test_attributes_override_preserves_internal_scim_codegen_context():
     )
 
     with (
-        patch("src.modules.digester.results.get_session_documentation", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.digester.results._store_result_with_relevance", new_callable=AsyncMock) as store_result,
     ):
         await store_attributes_override(
@@ -72,7 +71,6 @@ async def test_attributes_override_accepts_scim_context_without_storing_it_as_an
     incoming_context = {"resource": {"endpoint": "/CustomUsers"}}
 
     with (
-        patch("src.modules.digester.results.get_session_documentation", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.digester.results._store_result_with_relevance", new_callable=AsyncMock) as store_result,
     ):
         await store_attributes_override(

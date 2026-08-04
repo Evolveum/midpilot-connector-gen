@@ -98,7 +98,7 @@ async def test_claim_query_keeps_documentation_dependent_jobs_out_of_worker_slot
     assert claimed is None
     compiled = _compile_postgres(db.execute.await_args_list[0].args[0])
     sql = " ".join(str(compiled).split())
-    assert "jobs.waits_for_documentation IS false" in sql
+    assert "jobs.documentation_wait_until IS NULL" in sql
     assert "jobs.documentation_wait_until <=" in sql
     assert "NOT (EXISTS (SELECT jobs_1.job_id" in sql
     list_params = [value for value in compiled.params.values() if isinstance(value, list)]

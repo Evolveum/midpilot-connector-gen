@@ -24,7 +24,7 @@ def _build_repo() -> tuple[DocumentationRepository, MagicMock]:
 async def test_get_conndev_documentation_items_builds_normalized_postgres_filter() -> None:
     repo, db = _build_repo()
     result = MagicMock()
-    result.scalars.return_value.all.return_value = []
+    result.scalars.return_value.unique.return_value.all.return_value = []
     db.execute = AsyncMock(return_value=result)
 
     await repo.get_conndev_documentation_items_by_session(uuid4())
@@ -32,10 +32,10 @@ async def test_get_conndev_documentation_items_builds_normalized_postgres_filter
     query = db.execute.await_args.args[0]
     compiled = str(query.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
 
-    assert "lower(btrim(split_part((documentation_items.metadata ->> 'content_type'), ';', 1)))" in compiled
+    assert "lower(btrim(split_part(documents.content_type, ';', 1)))" in compiled
     assert "application/com.evolveum.conndev+json" in compiled
     assert "application/conndev+json" in compiled
-    assert "ORDER BY documentation_items.created_at" in compiled
+    assert "ORDER BY documentation_chunks.created_at" in compiled
 
 
 @pytest.mark.asyncio
@@ -48,7 +48,7 @@ async def test_get_scraped_documentation_items_for_export_by_job_covers_created_
     """
     repo, db = _build_repo()
     result = MagicMock()
-    result.scalars.return_value.all.return_value = []
+    result.scalars.return_value.unique.return_value.all.return_value = []
     db.execute = AsyncMock(return_value=result)
     session_id = uuid4()
     job_id = uuid4()
@@ -59,18 +59,20 @@ async def test_get_scraped_documentation_items_for_export_by_job_covers_created_
     sql = " ".join(str(compiled).split())
     params = compiled.params
 
-    assert "documentation_items.session_id = %(session_id_1)s::UUID" in sql
     assert (
-        "(documentation_items.origin_job_id = %(origin_job_id_1)s::UUID "
-        "OR (documentation_items.scrape_job_ids @> %(scrape_job_ids_1)s::JSONB))" in sql
+        "JOIN documents ON documents.session_id = documentation_chunks.session_id "
+        "AND documents.doc_id = documentation_chunks.doc_id" in sql
     )
-    assert "documentation_items.source = %(source_1)s" in sql
-    assert params["session_id_1"] == session_id
+    assert (
+        "(documentation_chunks.origin_job_id = %(origin_job_id_1)s::UUID "
+        "OR (documentation_chunks.scrape_job_ids @> %(scrape_job_ids_1)s::JSONB))" in sql
+    )
+    assert "documents.source = %(source_1)s" in sql
+    assert session_id in params.values()
     assert params["origin_job_id_1"] == job_id
-    # The job id is stored as a string inside the JSONB array, so containment must match that shape.
     assert params["scrape_job_ids_1"] == [str(job_id)]
     assert params["source_1"] == "scraper"
-    assert "ORDER BY documentation_items.doc_id, documentation_items.created_at, documentation_items.chunk_id" in sql
+    assert "ORDER BY documentation_chunks.doc_id, documentation_chunks.created_at, documentation_chunks.chunk_id" in sql
 
 
 @pytest.mark.asyncio
@@ -94,23 +96,26 @@ async def test_import_documentation_items_for_session_preserves_exported_values(
         }
     ]
 
+    db.execute = AsyncMock()
     imported_count = await repo.import_documentation_items_for_session(session_id, items)
 
     assert imported_count == 1
     db.flush.assert_awaited_once()
     db.add.assert_called_once()
 
-    added_item = db.add.call_args.args[0]
-    assert added_item.session_id == session_id
-    assert added_item.doc_id == doc_id
-    assert added_item.chunk_id == chunk_id
-    assert added_item.source == "upload"
-    assert added_item.url == "upload://connector-openapi.json"
-    assert added_item.summary == "Chunk summary"
-    assert added_item.content == "Chunk full content"
-    assert added_item.doc_metadata == {"category": "reference", "token_count": 123}
-    assert list(added_item.scrape_job_ids) == ["job-1", "job-2"]
-    assert added_item.created_at.isoformat() == "2026-04-02T12:34:56+00:00"
+    document_upsert = str(db.execute.await_args.args[0].compile(dialect=postgresql.dialect()))
+    assert "INSERT INTO documents" in document_upsert
+    assert "ON CONFLICT (session_id, doc_id) DO UPDATE" in document_upsert
+
+    added_chunk = db.add.call_args.args[0]
+    assert added_chunk.session_id == session_id
+    assert added_chunk.doc_id == doc_id
+    assert added_chunk.chunk_id == chunk_id
+    assert added_chunk.summary == "Chunk summary"
+    assert added_chunk.content == "Chunk full content"
+    assert added_chunk.doc_metadata == {"category": "reference", "token_count": 123}
+    assert list(added_chunk.scrape_job_ids) == ["job-1", "job-2"]
+    assert added_chunk.created_at.isoformat() == "2026-04-02T12:34:56+00:00"
 
 
 @pytest.mark.asyncio
@@ -131,6 +136,7 @@ async def test_idempotent_chunk_upsert_preserves_other_job_links() -> None:
 
     statement = db.execute.await_args.args[0]
     sql = str(statement.compile(dialect=postgresql.dialect()))
+    assert "INSERT INTO documentation_chunks" in sql
     assert "CASE WHEN" in sql
     assert "scrape_job_ids" in sql
     assert "||" in sql

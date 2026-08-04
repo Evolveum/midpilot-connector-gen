@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import logging
 import os
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
@@ -10,26 +11,41 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from src.core.errors import LLMUnavailableError
 from src.core.job_execution import (
     JobExecutionContext,
     reset_current_execution,
     set_current_execution,
 )
-from src.database.models import Base, DocumentationItem, Job, Session
+from src.database.models import Base, DocumentationChunk, Job, JobProgress, Session
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import ClaimedJob, JobRepository
 from src.database.repositories.session_repository import SessionRepository
+from src.documents.errors import NoDocumentationStoredError
 from src.jobs.payload import build_execution_payload
 from src.jobs.runner import execute_claimed_job
+from src.shared.enums import JobStage
+from src.shared.normalize import normalized_input_fingerprint
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
 
 async def durable_echo_worker(value: str, *, job_id: UUID) -> dict[str, str]:
     return {"value": value, "jobId": str(job_id)}
+
+
+async def durable_missing_documentation_worker(session_id: UUID) -> dict[str, str]:
+    raise NoDocumentationStoredError(session_id)
+
+
+async def durable_unavailable_llm_worker() -> dict[str, str]:
+    try:
+        raise TimeoutError("provider timed out")
+    except TimeoutError as exc:
+        raise LLMUnavailableError("generating a connector") from exc
 
 
 def _execution_payload(value: str) -> dict:
@@ -92,7 +108,7 @@ async def _create_queued_job(
                 job_type="test.worker",
                 status="queued",
                 input={"value": value},
-                normalized_input={"value": value},
+                normalized_input_hash=normalized_input_fingerprint({"value": value}),
                 execution_payload=_execution_payload(value),
                 max_attempts=3,
             )
@@ -229,7 +245,7 @@ async def test_documentation_retry_is_idempotent_and_preserves_other_job_links(
         )
         count = (
             await db.execute(
-                select(func.count()).select_from(DocumentationItem).where(DocumentationItem.origin_job_id == job_id)
+                select(func.count()).select_from(DocumentationChunk).where(DocumentationChunk.origin_job_id == job_id)
             )
         ).scalar_one()
         await db.commit()
@@ -251,7 +267,7 @@ async def test_documentation_retry_is_idempotent_and_preserves_other_job_links(
             metadata={"chunk_number": 0},
         )
         linked_item = (
-            await db.execute(select(DocumentationItem).where(DocumentationItem.chunk_id == first_chunk_id))
+            await db.execute(select(DocumentationChunk).where(DocumentationChunk.chunk_id == first_chunk_id))
         ).scalar_one()
         await db.commit()
 
@@ -270,7 +286,6 @@ async def test_documentation_dependency_does_not_consume_an_execution_attempt(
             "digester.getAuth",
             session_id,
             execution_payload=_execution_payload("dependent"),
-            waits_for_documentation=True,
             documentation_wait_timeout_seconds=750,
         )
         producer_job_id = await repo.create_job(
@@ -315,7 +330,6 @@ async def test_documentation_wait_timeout_is_recorded_when_producer_remains_pend
             "digester.getAuth",
             session_id,
             execution_payload=_execution_payload("dependent"),
-            waits_for_documentation=True,
             documentation_wait_timeout_seconds=750,
         )
         await repo.create_job(
@@ -474,7 +488,7 @@ async def test_invalid_queued_job_is_failed_explicitly(
                 job_type="test.invalid",
                 status="queued",
                 input={},
-                normalized_input={},
+                normalized_input_hash=normalized_input_fingerprint({}),
                 execution_payload=None,
             )
         )
@@ -487,3 +501,203 @@ async def test_invalid_queued_job_is_failed_explicitly(
     assert invalid_job is not None
     assert invalid_job.status == "failed"
     assert invalid_job.errors == ["Queued job has no valid durable execution payload and cannot be executed."]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_progress_writers_do_not_collide_on_the_progress_row(
+    postgres_session_factory: SessionFactory,
+) -> None:
+    """A stage update and a completion count can run at the same time.
+
+    Both used to check for the progress row and insert it when absent, so two
+    writers could both insert and the loser aborted its caller's transaction.
+    """
+    session_id = await _create_session(postgres_session_factory)
+    job_id = await _create_queued_job(postgres_session_factory, session_id)
+
+    async with postgres_session_factory() as db:
+        await db.execute(delete(JobProgress).where(JobProgress.job_id == job_id))
+        await db.commit()
+
+    async def report_stage() -> None:
+        async with postgres_session_factory() as db:
+            await JobRepository(db).update_job_progress(job_id, stage="chunking", message="working")
+            await db.commit()
+
+    async def report_completion() -> None:
+        async with postgres_session_factory() as db:
+            await JobRepository(db).increment_processed_documents(job_id)
+            await db.commit()
+
+    await asyncio.gather(report_stage(), report_completion(), report_completion())
+
+    async with postgres_session_factory() as db:
+        rows = (await db.execute(select(JobProgress).where(JobProgress.job_id == job_id))).scalars().all()
+
+    assert len(rows) == 1
+    assert rows[0].stage == "chunking"
+    assert rows[0].message == "working"
+    assert rows[0].processing_completed == 2
+
+
+async def _progress_stage(session_factory: SessionFactory, job_id: UUID) -> tuple[str | None, str | None]:
+    async with session_factory() as db:
+        progress = (await db.execute(select(JobProgress).where(JobProgress.job_id == job_id))).scalar_one_or_none()
+        return (progress.stage, progress.message) if progress else (None, None)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_job_does_not_keep_reporting_its_last_progress_stage(
+    postgres_session_factory: SessionFactory,
+) -> None:
+    """A client polling the status must not see "failed" next to a queued stage.
+
+    Only the success path used to move the progress row, so a job that failed
+    while still waiting in the queue kept reporting stage "queue" forever.
+    """
+    session_id = await _create_session(postgres_session_factory)
+    job_id = await _create_queued_job(postgres_session_factory, session_id)
+
+    async with postgres_session_factory() as db:
+        await JobRepository(db).update_job_progress(
+            job_id, stage=JobStage.queue, message="Waiting for documentation processing to complete."
+        )
+        await db.commit()
+
+    assert await _progress_stage(postgres_session_factory, job_id) == (
+        "queue",
+        "Waiting for documentation processing to complete.",
+    )
+
+    claimed = await _claim(postgres_session_factory, worker_id="worker-failing")
+    assert claimed is not None
+    async with postgres_session_factory() as db:
+        await JobRepository(db).fail_claimed_job(
+            job_id,
+            "Session has no documentation items stored.",
+            worker_id=claimed.worker_id,
+            execution_token=claimed.execution_token,
+        )
+        await db.commit()
+
+    stage, message = await _progress_stage(postgres_session_factory, job_id)
+    assert stage == "failed"
+    assert message == "Session has no documentation items stored."
+
+
+@pytest.mark.asyncio
+async def test_a_job_failed_by_the_reaper_also_reports_the_failed_stage(
+    postgres_session_factory: SessionFactory,
+) -> None:
+    session_id = await _create_session(postgres_session_factory)
+    invalid_job_id = uuid4()
+    async with postgres_session_factory() as db:
+        db.add(
+            Job(
+                job_id=invalid_job_id,
+                session_id=session_id,
+                job_type="test.invalid",
+                status="queued",
+                input={},
+                normalized_input_hash=normalized_input_fingerprint({}),
+                execution_payload=None,
+            )
+        )
+        db.add(JobProgress(job_id=invalid_job_id, stage=JobStage.queue.value))
+        await db.commit()
+
+    async with postgres_session_factory() as db:
+        assert await JobRepository(db).fail_invalid_queued_jobs() == 1
+        await db.commit()
+
+    stage, message = await _progress_stage(postgres_session_factory, invalid_job_id)
+    assert stage == "failed"
+    assert message == "Queued job has no valid durable execution payload and cannot be executed."
+
+
+@pytest.mark.asyncio
+async def test_an_expected_domain_failure_is_logged_without_a_stack_trace(
+    postgres_session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A session with no documentation is a user-visible outcome, not a crash.
+
+    It used to surface as an unhandled ValueError, so the log carried a full
+    traceback that buried the one line a reader needs.
+    """
+    session_id = await _create_session(postgres_session_factory)
+    execution_payload = build_execution_payload(
+        worker=durable_missing_documentation_worker,
+        worker_args=(session_id,),
+        worker_kwargs={},
+        dynamic_input_provider=None,
+        session_result_key=None,
+        await_documentation=False,
+        await_documentation_timeout=None,
+    )
+    async with postgres_session_factory() as db:
+        job_id = await JobRepository(db).create_job(
+            {"skipCache": True}, "test.missingDocumentation", session_id, execution_payload=execution_payload
+        )
+        await db.commit()
+
+    claim = await _claim(postgres_session_factory, worker_id="worker-domain-failure")
+    assert claim is not None
+    monkeypatch.setattr("src.jobs.runner.async_session_maker", postgres_session_factory)
+    monkeypatch.setattr("src.jobs.lifecycle.async_session_maker", postgres_session_factory)
+
+    with caplog.at_level(logging.ERROR, logger="src.jobs.runner"):
+        await execute_claimed_job(claim)
+
+    records = [record for record in caplog.records if record.name == "src.jobs.runner"]
+    assert len(records) == 1
+    assert records[0].exc_info is None
+    assert "has no stored documentation" in records[0].getMessage()
+
+    async with postgres_session_factory() as db:
+        job = await JobRepository(db).get_job(job_id)
+    assert job is not None
+    assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_a_server_app_error_is_logged_with_its_exception_chain(
+    postgres_session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session_id = await _create_session(postgres_session_factory)
+    execution_payload = build_execution_payload(
+        worker=durable_unavailable_llm_worker,
+        worker_args=(),
+        worker_kwargs={},
+        dynamic_input_provider=None,
+        session_result_key=None,
+        await_documentation=False,
+        await_documentation_timeout=None,
+    )
+    async with postgres_session_factory() as db:
+        job_id = await JobRepository(db).create_job(
+            {"skipCache": True}, "test.unavailableLlm", session_id, execution_payload=execution_payload
+        )
+        await db.commit()
+
+    claim = await _claim(postgres_session_factory, worker_id="worker-infrastructure-failure")
+    assert claim is not None
+    monkeypatch.setattr("src.jobs.runner.async_session_maker", postgres_session_factory)
+    monkeypatch.setattr("src.jobs.lifecycle.async_session_maker", postgres_session_factory)
+
+    with caplog.at_level(logging.ERROR, logger="src.jobs.runner"):
+        await execute_claimed_job(claim)
+
+    records = [record for record in caplog.records if record.name == "src.jobs.runner"]
+    assert len(records) == 1
+    assert records[0].exc_info is not None
+    assert isinstance(records[0].exc_info[1], LLMUnavailableError)
+    assert "TimeoutError: provider timed out" in caplog.text
+
+    async with postgres_session_factory() as db:
+        job = await JobRepository(db).get_job(job_id)
+    assert job is not None
+    assert job.status == "failed"

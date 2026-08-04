@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.session_repository import SessionRepository
+from src.documents.errors import NoDocumentationStoredError
 from src.documents.filtering.schema import ChunkFilterCriteria
 
 
@@ -43,7 +44,7 @@ async def _filter_documentation_items_impl(
     doc_repo = DocumentationRepository(db)
     raw_items = await doc_repo.get_documentation_items_by_session(session_id)
     if not raw_items:
-        raise ValueError(f"Session with ID {session_id} has no documentation items stored.")
+        raise NoDocumentationStoredError(session_id)
 
     doc_items: List[Dict[str, Any]] = []
     for item in raw_items:

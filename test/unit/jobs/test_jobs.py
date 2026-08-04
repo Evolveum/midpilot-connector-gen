@@ -90,7 +90,6 @@ async def test_documentation_dependency_is_persisted_without_starting_a_waiting_
         )
 
     create_kwargs = repo.create_job.await_args.kwargs
-    assert create_kwargs["waits_for_documentation"] is True
     assert create_kwargs["documentation_wait_timeout_seconds"] == 750
     repo.update_job_progress.assert_awaited_once_with(
         job_id,
@@ -208,7 +207,6 @@ async def test_session_persistence_failure_is_recorded_and_fails_the_job_executi
                 session_id=session_id,
                 session_result_key="testOutput",
                 result_dict={"value": "ok"},
-                input_payload={},
             )
 
     append_error.assert_awaited_once()
