@@ -14,6 +14,7 @@ import pytest_asyncio
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from src.core.errors import LLMUnavailableError
 from src.core.job_execution import (
     JobExecutionContext,
     reset_current_execution,
@@ -38,6 +39,13 @@ async def durable_echo_worker(value: str, *, job_id: UUID) -> dict[str, str]:
 
 async def durable_missing_documentation_worker(session_id: UUID) -> dict[str, str]:
     raise NoDocumentationStoredError(session_id)
+
+
+async def durable_unavailable_llm_worker() -> dict[str, str]:
+    try:
+        raise TimeoutError("provider timed out")
+    except TimeoutError as exc:
+        raise LLMUnavailableError("generating a connector") from exc
 
 
 def _execution_payload(value: str) -> dict:
@@ -646,6 +654,48 @@ async def test_an_expected_domain_failure_is_logged_without_a_stack_trace(
     assert len(records) == 1
     assert records[0].exc_info is None
     assert "has no stored documentation" in records[0].getMessage()
+
+    async with postgres_session_factory() as db:
+        job = await JobRepository(db).get_job(job_id)
+    assert job is not None
+    assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_a_server_app_error_is_logged_with_its_exception_chain(
+    postgres_session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session_id = await _create_session(postgres_session_factory)
+    execution_payload = build_execution_payload(
+        worker=durable_unavailable_llm_worker,
+        worker_args=(),
+        worker_kwargs={},
+        dynamic_input_provider=None,
+        session_result_key=None,
+        await_documentation=False,
+        await_documentation_timeout=None,
+    )
+    async with postgres_session_factory() as db:
+        job_id = await JobRepository(db).create_job(
+            {"skipCache": True}, "test.unavailableLlm", session_id, execution_payload=execution_payload
+        )
+        await db.commit()
+
+    claim = await _claim(postgres_session_factory, worker_id="worker-infrastructure-failure")
+    assert claim is not None
+    monkeypatch.setattr("src.jobs.runner.async_session_maker", postgres_session_factory)
+    monkeypatch.setattr("src.jobs.lifecycle.async_session_maker", postgres_session_factory)
+
+    with caplog.at_level(logging.ERROR, logger="src.jobs.runner"):
+        await execute_claimed_job(claim)
+
+    records = [record for record in caplog.records if record.name == "src.jobs.runner"]
+    assert len(records) == 1
+    assert records[0].exc_info is not None
+    assert isinstance(records[0].exc_info[1], LLMUnavailableError)
+    assert "TimeoutError: provider timed out" in caplog.text
 
     async with postgres_session_factory() as db:
         job = await JobRepository(db).get_job(job_id)

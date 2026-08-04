@@ -296,9 +296,9 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
         await asyncio.gather(execution_task, return_exceptions=True)
         logger.warning("Stopped stale execution of job %s after its claim was lost", claimed_job.job_id)
     except Exception as exc:
-        if isinstance(exc, AppError):
-            # An expected domain outcome, not a crash: the message is the whole
-            # story, and a stack trace would only bury it in the log.
+        if isinstance(exc, AppError) and exc.status_code < 500:
+            # An expected client/domain outcome, not a crash: the message is the
+            # whole story, and a stack trace would only bury it in the log.
             logger.error("Job %s failed: %s", claimed_job.job_id, exc)
         else:
             logger.exception("Job %s failed during execution", claimed_job.job_id)

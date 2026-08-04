@@ -92,3 +92,70 @@ async def test_get_conndev_documentation_items_matches_python_content_type_norma
             async with engine.begin() as connection:
                 await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_update_documentation_item_creates_target_document_before_moving_chunk():
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL repository integration tests")
+
+    schema_name = f"test_documentation_update_{uuid4().hex}"
+    engine = create_async_engine(
+        database_url,
+        execution_options={"schema_translate_map": {None: schema_name}},
+    )
+    schema_created = False
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
+            schema_created = True
+            await connection.run_sync(Base.metadata.create_all)
+
+        session_id = uuid4()
+        original_doc_id = uuid4()
+        target_doc_id = uuid4()
+        chunk_id = uuid4()
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with session_factory() as db:
+            db.add_all(
+                [
+                    Session(session_id=session_id),
+                    Document(
+                        session_id=session_id,
+                        doc_id=original_doc_id,
+                        source="upload",
+                        url="upload://original.json",
+                    ),
+                    DocumentationChunk(
+                        session_id=session_id,
+                        doc_id=original_doc_id,
+                        chunk_id=chunk_id,
+                        content="original content",
+                    ),
+                ]
+            )
+            await db.commit()
+
+            updated = await DocumentationRepository(db).update_documentation_item(
+                chunk_id,
+                doc_id=target_doc_id,
+            )
+            await db.commit()
+
+            moved_chunk = await db.get(DocumentationChunk, chunk_id)
+            target_document = await db.get(Document, (session_id, target_doc_id))
+
+        assert updated is True
+        assert moved_chunk is not None
+        assert moved_chunk.doc_id == target_doc_id
+        assert target_document is not None
+        assert target_document.source == "upload"
+        assert target_document.url == "upload://original.json"
+    finally:
+        if schema_created:
+            async with engine.begin() as connection:
+                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        await engine.dispose()

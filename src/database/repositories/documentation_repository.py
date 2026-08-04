@@ -548,8 +548,6 @@ class DocumentationRepository:
         else:
             document_fields = {}
 
-        if doc_id is not None:
-            chunk.doc_id = doc_id
         if content is not None:
             chunk.content = content
         if summary is not None:
@@ -560,13 +558,17 @@ class DocumentationRepository:
                 chunk.scrape_job_ids = current_ids + [str(original_job_id)]
 
         if source is not None or url is not None or doc_id is not None or document_fields:
+            target_doc_id = doc_id if doc_id is not None else chunk.doc_id
             await self._upsert_document(
                 session_id=chunk.session_id,
-                doc_id=chunk.doc_id,
+                doc_id=target_doc_id,
                 source=source if source is not None else chunk.document.source,
                 url=url if url is not None else chunk.document.url,
                 document_fields=document_fields,
             )
+
+        if doc_id is not None:
+            chunk.doc_id = doc_id
 
         await self.db.flush()
         logger.info(f"Updated documentation chunk with chunk_id: {chunk_id}")
