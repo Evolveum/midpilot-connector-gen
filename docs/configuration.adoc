@@ -80,7 +80,10 @@ most likely to touch.
 | `+APP__WORKERS+` | `1` | HTTP and job-consumer processes in this container.
   Every process claims independently from the same PostgreSQL queue.
 | `+JOBS__ENABLED+` | `true` | Run an embedded queue consumer in this FastAPI
-  process. Disable it for API-only pods.
+  process. Disable it for API-only pods; the queue is then drained by processes
+  started with `python -m src.jobs.runtime`, which ignore this setting. Note
+  that a process with it disabled still accepts requests that create jobs -
+  they simply stay `queued` until some consumer exists.
 | `+JOBS__MAX_CONCURRENT_JOBS+` | `2` | Maximum running jobs in each process.
   This is separate from the LLM semaphore because one job can fan out into
   several LLM calls.

@@ -57,15 +57,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-async def init_db() -> None:
-    """
-    Initialize database - create all tables.
-    Should be called on application startup.
-    """
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-
 async def close_db() -> None:
     """
     Close database connections.

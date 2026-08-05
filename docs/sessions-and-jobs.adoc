@@ -97,16 +97,38 @@ All final state and session-result writes are fenced by the execution token,
 so the old process cannot overwrite the new worker even if it resumes late.
 Graceful shutdown returns interrupted work directly to `queued`.
 
-For independent Kubernetes scaling, run API pods with
-`JOBS__ENABLED=false` and worker-only pods with:
+=== Deployment shapes
+
+The consumer runs in one of two shapes, both of which claim from the same
+queue and need no coordination beyond PostgreSQL.
+
+*Embedded* (default). Every FastAPI process started with `+JOBS__ENABLED=true+`
+runs a consumer, so a single `python server.py` both serves requests and drains
+the queue. Throughput is raised with `+APP__WORKERS+` and
+`+JOBS__MAX_CONCURRENT_JOBS+`.
+
+*Standalone.* For scaling the API and the queue independently, run API
+processes with `+JOBS__ENABLED=false+` and consumers from the worker entry
+point:
 
 [source,shell]
 ----
 python -m src.jobs.runtime
 ----
 
-The standalone process uses the same per-process concurrency, claim timeout,
-heartbeat, CPU-pool and shutdown settings as the embedded FastAPI consumer.
+It applies the same per-process concurrency, claim timeout, heartbeat, CPU-pool
+and shutdown settings as the embedded consumer, but starts no HTTP server. It
+does not read `+JOBS__ENABLED+` - a process started this way is always a
+consumer. Because it builds no FastAPI application it opens no listening port
+and stays roughly 65 MB smaller than an API process, which also keeps the API
+from being reachable on hosts that are only meant to do background work.
+
+WARNING: Every process opens its own database pool, so scaling out multiplies
+the connection count. Eleven processes on the default pool settings can exceed
+PostgreSQL's own default `max_connections` of 100 and fail with
+`sorry, too many clients already`. Size `+DATABASE__POOL_SIZE+` and
+`+DATABASE__MAX_OVERFLOW+` together with the server limit - see
+link:configuration.adoc[Configuration].
 
 Execution is *at least once*: if a process dies after an external LLM provider
 accepted a request but before the result was persisted, the reclaimed attempt
