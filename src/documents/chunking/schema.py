@@ -80,7 +80,7 @@ def _split_structured_schema(
         parsed = load(text)
     except json.JSONDecodeError as exc:
         logger.warning(
-            "[Chunking] Single-item schema %s is not valid structured data (%s); "
+            "[Documents:Chunking] Single-item schema %s is not valid structured data (%s); "
             "falling back to token-overlap split which may break native parsing.",
             filename,
             exc,
@@ -105,7 +105,7 @@ def _split_value(value: Any, *, max_tokens: int, serialize: Serializer) -> list[
         return _split_dict_value(value, max_tokens=max_tokens, serialize=serialize)
     if isinstance(value, str):
         return _split_string_value(value, max_tokens=max_tokens)
-    logger.warning("[Chunking] Oversized scalar schema value cannot be split further; emitting as-is.")
+    logger.warning("[Documents:Chunking] Oversized scalar schema value cannot be split further; emitting as-is.")
     return [value]
 
 
@@ -186,7 +186,7 @@ def _split_sql_statements(text: str, *, filename: str, max_tokens: int) -> list[
                 groups.append("\n".join(current))
                 current, current_tokens = [], 0
             logger.warning(
-                "[Chunking] Single SQL statement in %s exceeds the token budget; "
+                "[Documents:Chunking] Single SQL statement in %s exceeds the token budget; "
                 "token-splitting it, which may break native SQL parsing for that statement.",
                 filename,
             )

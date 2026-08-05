@@ -152,4 +152,4 @@ async def append_job_error(job_id: UUID, message: str) -> None:
     except JobClaimLostError:
         raise
     except Exception:
-        logger.error("Append job error failed for %s", job_id, exc_info=True)
+        logger.exception("Append job error failed for %s", job_id)

@@ -133,5 +133,5 @@ async def persist_result_to_session(
         except JobClaimLostError:
             raise
         except Exception:
-            logger.error("Failed to record session persistence error for job %s", job_id, exc_info=True)
+            logger.exception("Failed to record session persistence error for job %s", job_id)
         raise

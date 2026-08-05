@@ -208,14 +208,14 @@ async def _fetch_registry() -> List[ScimCloudImplementation]:
     implementations: List[ScimCloudImplementation] = []
     for (url, _version), result in zip(sources, results):
         if isinstance(result, BaseException):
-            logger.warning("[ApiType:ScimCloud] Failed to fetch/parse %s: %s", url, result)
+            logger.warning("[Digester:ApiType:ScimCloud] Failed to fetch/parse %s: %s", url, result)
             continue
         implementations.extend(result)
 
     if not implementations:
         raise RuntimeError("scim.cloud registry fetch produced no implementations")
 
-    logger.info("[ApiType:ScimCloud] Loaded %s SCIM implementations from registry", len(implementations))
+    logger.info("[Digester:ApiType:ScimCloud] Loaded %s SCIM implementations from registry", len(implementations))
     return implementations
 
 
@@ -236,7 +236,7 @@ async def get_registry() -> List[ScimCloudImplementation]:
             implementations = await _fetch_registry()
         except Exception as exc:
             if _cache_implementations is not None:
-                logger.warning("[ApiType:ScimCloud] Registry refresh failed, using stale cache: %s", exc)
+                logger.warning("[Digester:ApiType:ScimCloud] Registry refresh failed, using stale cache: %s", exc)
                 return _cache_implementations
             raise
         _cache_implementations = implementations
@@ -303,19 +303,19 @@ async def lookup_scim_support(application_name: str) -> ScimCloudMatch:
     if not config.digester.scim_cloud_enabled:
         return ScimCloudMatch(application_name=application_name or "")
     if not application_name or not application_name.strip():
-        logger.info("[ApiType:ScimCloud] No application name provided; skipping registry lookup")
+        logger.info("[Digester:ApiType:ScimCloud] No application name provided; skipping registry lookup")
         return ScimCloudMatch(application_name=application_name or "")
 
     try:
         implementations = await get_registry()
     except Exception as exc:
-        logger.warning("[ApiType:ScimCloud] Registry unavailable, skipping signal: %s", exc)
+        logger.warning("[Digester:ApiType:ScimCloud] Registry unavailable, skipping signal: %s", exc)
         return ScimCloudMatch(application_name=application_name)
 
     match = match_registry(application_name, implementations)
     if match.matched:
         logger.info(
-            "[ApiType:ScimCloud] '%s' matched '%s' (developer='%s', field=%s, score=%.3f, versions=%s)",
+            "[Digester:ApiType:ScimCloud] '%s' matched '%s' (developer='%s', field=%s, score=%.3f, versions=%s)",
             application_name,
             match.project_name,
             match.developer,
@@ -324,5 +324,5 @@ async def lookup_scim_support(application_name: str) -> ScimCloudMatch:
             match.scim_versions,
         )
     else:
-        logger.info("[ApiType:ScimCloud] '%s' not found in registry", application_name)
+        logger.info("[Digester:ApiType:ScimCloud] '%s' not found in registry", application_name)
     return match

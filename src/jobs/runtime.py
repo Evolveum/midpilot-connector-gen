@@ -25,7 +25,7 @@ async def run_worker_until_stopped() -> None:
     for signal_name in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(signal_name, stop_event.set)
-        except NotImplementedError:  # pragma: no cover - Windows event loops
+        except NotImplementedError:
             pass
 
     worker = JobWorker()

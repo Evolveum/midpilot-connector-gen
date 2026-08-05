@@ -83,9 +83,9 @@ async def process_scraped_documentation(
         (chunks, errors): the successfully built DocumentationItem objects and any per-chunk failures
     """
 
-    logger.debug("[Scrape:Process] Processing documentation: %s", documentation.url)
+    logger.debug("[Documents:Process] Processing documentation: %s", documentation.url)
     chunks = split_text_with_token_overlap(documentation.content, max_tokens=chunk_length, overlap_ratio=0.05)
-    logger.debug("[Scrape:Process] Generated %s chunks for documentation: %s", len(chunks), documentation.url)
+    logger.debug("[Documents:Process] Generated %s chunks for documentation: %s", len(chunks), documentation.url)
 
     async def process_chunk(idx: int, chunk: tuple[str, int]) -> tuple[int, DocumentationItem]:
         prompts = get_llm_chunk_process_prompt(chunk[0], str(documentation.url), app, app_version)
@@ -121,7 +121,7 @@ async def process_scraped_documentation(
     for idx, outcome in enumerate(settled):
         if isinstance(outcome, BaseException):
             logger.warning(
-                "[Scrape:Process] Skipping chunk %s of documentation %s after failure: %s",
+                "[Documents:Process] Skipping chunk %s of documentation %s after failure: %s",
                 idx,
                 documentation.url,
                 outcome,
@@ -136,7 +136,7 @@ async def process_scraped_documentation(
     documentation_chunks = [item[1] for item in processed_chunks]
 
     logger.info(
-        "[Scrape:Process] Completed processing documentation %s: %s chunks succeeded, %s failed",
+        "[Documents:Process] Completed processing documentation %s: %s chunks succeeded, %s failed",
         documentation.url,
         len(documentation_chunks),
         len(errors),

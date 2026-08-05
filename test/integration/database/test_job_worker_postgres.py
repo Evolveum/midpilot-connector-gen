@@ -367,6 +367,8 @@ async def test_documentation_fence_does_not_block_heartbeat(
     context_token = set_current_execution(
         JobExecutionContext(
             job_id=claim.job_id,
+            session_id=claim.session_id,
+            job_type=claim.job_type,
             worker_id=claim.worker_id,
             execution_token=claim.execution_token,
         )

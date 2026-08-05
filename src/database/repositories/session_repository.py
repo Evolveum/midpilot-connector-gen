@@ -36,11 +36,6 @@ class SessionRepository:
         """
         self.db = db
 
-    @staticmethod
-    def now_iso() -> str:
-        """Return current UTC timestamp as ISO formatted string."""
-        return datetime.now(timezone.utc).isoformat()
-
     async def create_session(self, api_key_id: Optional[UUID] = None) -> UUID:
         """
         Create a new session and return its unique ID.
@@ -52,7 +47,7 @@ class SessionRepository:
         session = Session(api_key_id=api_key_id)
         self.db.add(session)
         await self.db.flush()
-        logger.info(f"Created new session: {session.session_id}")
+        logger.info("Created new session: %s", session.session_id)
         return session.session_id
 
     async def create_session_with_id(self, session_id: UUID, api_key_id: Optional[UUID] = None) -> UUID:
@@ -67,7 +62,7 @@ class SessionRepository:
         session = Session(session_id=session_id, api_key_id=api_key_id)
         self.db.add(session)
         await self.db.flush()
-        logger.info(f"Created new session with provided ID: {session_id}")
+        logger.info("Created new session with provided ID: %s", session_id)
         return session_id
 
     async def get_session(self, session_id: UUID) -> Optional[Dict[str, Any]]:
@@ -82,7 +77,7 @@ class SessionRepository:
         session = result.scalar_one_or_none()
 
         if session is None:
-            logger.warning(f"Session not found: {session_id}")
+            logger.warning("Session not found: %s", session_id)
             return None
 
         # Get all session_data for this session
@@ -116,7 +111,7 @@ class SessionRepository:
         session = result.scalar_one_or_none()
 
         if session is None:
-            logger.error(f"Cannot update non-existent session: {session_id}")
+            logger.error("Cannot update non-existent session: %s", session_id)
             return False
 
         # Update session timestamp
@@ -128,7 +123,7 @@ class SessionRepository:
             await self._upsert_session_data(session_id, key, value)
 
         await self.db.flush()
-        logger.info(f"Updated session: {session_id}")
+        logger.info("Updated session: %s", session_id)
         return True
 
     async def lock_session(self, session_id: UUID) -> bool:
@@ -266,7 +261,9 @@ class SessionRepository:
         for step in key[1:]:
             if not isinstance(value, dict):
                 logger.warning(
-                    f"Expected dict while traversing session data for session {session_id}, got {type(value)}"
+                    "Expected dict while traversing session data for session %s, got %s",
+                    session_id,
+                    type(value),
                 )
                 return None
             value = value.get(step)
@@ -284,12 +281,12 @@ class SessionRepository:
         session = result.scalar_one_or_none()
 
         if session is None:
-            logger.warning(f"Session not found for deletion: {session_id}")
+            logger.warning("Session not found for deletion: %s", session_id)
             return False
 
         await self.db.delete(session)
         await self.db.flush()
-        logger.info(f"Deleted session: {session_id}")
+        logger.info("Deleted session: %s", session_id)
         return True
 
     async def get_session_owner(self, session_id: UUID) -> Optional[SessionOwner]:

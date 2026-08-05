@@ -239,7 +239,7 @@ async def extract_endpoints(
         )
         if rest_result is None:
             if not relevant_chunks:
-                logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
+                logger.warning("[Digester:Endpoints] No relevant chunks found for %s", object_class)
                 return build_endpoint_result()
             rest_result = build_endpoint_result()
 

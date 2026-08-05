@@ -248,11 +248,6 @@ class RelevantChunkRepository:
         rows = (await self.db.execute(stmt)).scalars().all()
         return [self._serialize_chunk(row) for row in rows]
 
-    async def get_relevant_chunks_for_result(self, session_id: UUID, result_key: str) -> List[Dict[str, Any]]:
-        """Get relevant chunks for one result_key."""
-        rows = await self.get_relevant_chunks(session_id=session_id, result_key=result_key)
-        return [{key: value for key, value in item.items() if key != "resultKey"} for item in rows]
-
     async def get_relevant_chunks_map(
         self,
         session_id: UUID,
@@ -310,23 +305,6 @@ class RelevantChunkRepository:
             mapping.setdefault(row.entity_key or "", []).append(payload)
         return mapping
 
-    async def delete_by_session(self, session_id: UUID) -> int:
-        """Delete all relevant chunks for a session."""
-        result = await self.db.execute(delete(RelevantChunk).where(RelevantChunk.session_id == session_id))
-        await self.db.flush()
-        return int(getattr(result, "rowcount", 0) or 0)
-
     async def count_by_session(self, session_id: UUID) -> int:
         stmt = select(func.count()).select_from(RelevantChunk).where(RelevantChunk.session_id == session_id)
-        return int((await self.db.execute(stmt)).scalar_one())
-
-    async def count_by_result_key(self, session_id: UUID, result_key: str) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(RelevantChunk)
-            .where(
-                RelevantChunk.session_id == session_id,
-                RelevantChunk.result_key == result_key,
-            )
-        )
         return int((await self.db.execute(stmt)).scalar_one())

@@ -155,7 +155,7 @@ def _register_schema(
     name = _schema_name(raw_schema)
     if not name:
         logger.warning(
-            "[SCIM:Baseline] Skipping %s schema from document %s for session %s: no resolvable name",
+            "[Digester:Baseline] Skipping %s schema from document %s for session %s: no resolvable name",
             source,
             doc_id,
             session_id,
@@ -168,7 +168,7 @@ def _register_schema(
         if not replace_existing:
             if existing.get("id") != raw_schema.get("id"):
                 logger.warning(
-                    "[SCIM:Baseline] Schema name conflict for '%s' in session %s: keeping URN %s, ignoring %s from %s",
+                    "[Digester:Baseline] Schema name conflict for '%s' in session %s: keeping URN %s, ignoring %s from %s",
                     name,
                     session_id,
                     existing.get("id"),
@@ -179,7 +179,7 @@ def _register_schema(
 
         if existing.get("id") != raw_schema.get("id"):
             logger.warning(
-                "[SCIM:Baseline] Replacing older schema '%s' in session %s: URN %s -> %s from %s",
+                "[Digester:Baseline] Replacing older schema '%s' in session %s: URN %s -> %s from %s",
                 name,
                 session_id,
                 existing.get("id"),
@@ -188,7 +188,7 @@ def _register_schema(
             )
         else:
             logger.info(
-                "[SCIM:Baseline] Replacing older schema '%s' in session %s with document %s",
+                "[Digester:Baseline] Replacing older schema '%s' in session %s with document %s",
                 name,
                 session_id,
                 doc_id,
@@ -240,7 +240,7 @@ def _parse_scim_resource(
     primary_schema = _parse_embedded_json(doc.get("primarySchema"))
     if not isinstance(primary_schema, dict):
         logger.warning(
-            "[SCIM:Baseline] Skipping resource document %s for session %s: invalid primarySchema",
+            "[Digester:Baseline] Skipping resource document %s for session %s: invalid primarySchema",
             doc_id,
             session_id,
         )
@@ -255,7 +255,7 @@ def _parse_scim_resource(
     name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else _schema_name(primary_schema)
     if not name:
         logger.warning(
-            "[SCIM:Baseline] Skipping resource document %s for session %s: no resolvable name",
+            "[Digester:Baseline] Skipping resource document %s for session %s: no resolvable name",
             doc_id,
             session_id,
         )
@@ -287,7 +287,7 @@ def _parse_connid_object_class(
     name = doc.get("name")
     if not isinstance(name, str) or not name.strip():
         logger.warning(
-            "[SCIM:Baseline] Skipping ConnId object class document %s for session %s: no name",
+            "[Digester:Baseline] Skipping ConnId object class document %s for session %s: no name",
             doc_id,
             session_id,
         )
@@ -359,7 +359,7 @@ def _parse_shadow_connid_object_class(
         name = scim_binding.get("name")
     if not isinstance(name, str) or not name.strip():
         logger.warning(
-            "[SCIM:Baseline] Skipping ConnId object class document %s for session %s: no name",
+            "[Digester:Baseline] Skipping ConnId object class document %s for session %s: no name",
             doc_id,
             session_id,
         )
@@ -370,7 +370,7 @@ def _parse_shadow_connid_object_class(
         flattened = _flatten_shadow_connid_attribute(entry)
         if flattened is None:
             logger.warning(
-                "[SCIM:Baseline] Ignoring malformed attribute shadow in ConnId object class document %s "
+                "[Digester:Baseline] Ignoring malformed attribute shadow in ConnId object class document %s "
                 "for session %s (class %s)",
                 doc_id,
                 session_id,
@@ -414,7 +414,7 @@ def _parse_service_provider_config(
         config = ScimServiceProviderConfig.model_validate(raw_config)
     except ValidationError as exc:
         logger.warning(
-            "[SCIM:Baseline] Skipping ServiceProviderConfig document %s for session %s: invalid contract (%s)",
+            "[Digester:Baseline] Skipping ServiceProviderConfig document %s for session %s: invalid contract (%s)",
             doc_id,
             session_id,
             exc,
@@ -509,7 +509,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             doc = json.loads(content)
         except json.JSONDecodeError as exc:
             logger.warning(
-                "[SCIM:Baseline] Skipping conndev document %s for session %s: invalid JSON (%s)",
+                "[Digester:Baseline] Skipping conndev document %s for session %s: invalid JSON (%s)",
                 doc_id,
                 session_id,
                 exc,
@@ -530,7 +530,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             if parsed_service_provider_config is not None:
                 if service_provider_config is not None:
                     logger.info(
-                        "[SCIM:Baseline] Replacing older ServiceProviderConfig in session %s with document %s",
+                        "[Digester:Baseline] Replacing older ServiceProviderConfig in session %s with document %s",
                         session_id,
                         doc_id,
                     )
@@ -552,7 +552,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
                 )
             else:
                 logger.warning(
-                    "[SCIM:Baseline] Skipping schema document %s for session %s: invalid schemaContent",
+                    "[Digester:Baseline] Skipping schema document %s for session %s: invalid schemaContent",
                     doc_id,
                     session_id,
                 )
@@ -588,7 +588,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
                 _set_case_insensitive(connid_classes, connid_class.name, connid_class)
         else:
             logger.warning(
-                "[SCIM:Baseline] Skipping conndev document %s for session %s: unrecognized contract (keys: %s)",
+                "[Digester:Baseline] Skipping conndev document %s for session %s: unrecognized contract (keys: %s)",
                 doc_id,
                 session_id,
                 sorted(doc.keys()),
@@ -615,7 +615,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
     # Every SCIM extractor job loads the baseline, so this per-load summary stays at DEBUG;
     # the extractors log what they derived from it at INFO.
     logger.debug(
-        "[SCIM:Baseline] Session %s: loaded %d SCIM schema(s), %d resource(s), %d ConnId object class(es), "
+        "[Digester:Baseline] Session %s: loaded %d SCIM schema(s), %d resource(s), %d ConnId object class(es), "
         "%d extension mapping(s), ServiceProviderConfig=%s",
         session_id,
         len(bundle.schemas),
@@ -801,7 +801,7 @@ def get_base_scim_attributes(schemas: Dict[str, Any], class_name: str) -> Dict[s
     """Return the baseline attributes for ``class_name`` in digester AttributeInfo format."""
     schema = get_scim_schema(schemas, class_name)
     if not schema:
-        logger.warning("[SCIM:Baseline] Schema not found for class: %s", class_name)
+        logger.warning("[Digester:Baseline] Schema not found for class: %s", class_name)
         return {}
 
     attributes: Dict[str, Dict[str, Any]] = {}
@@ -844,7 +844,7 @@ def get_base_scim_attributes(schemas: Dict[str, Any], class_name: str) -> Dict[s
 
     # Called per class from several flows (attribute extraction, codegen-context projection);
     # the callers report the resulting counts at INFO.
-    logger.debug("[SCIM:Baseline] Loaded %d attributes for %s", len(attributes), class_name)
+    logger.debug("[Digester:Baseline] Loaded %d attributes for %s", len(attributes), class_name)
     return attributes
 
 
@@ -1157,7 +1157,7 @@ def map_scim_type_to_digester(scim_type: Any) -> str:
     normalized_type = str(scim_type).strip().lower()
     mapped_type = type_map.get(normalized_type)
     if mapped_type is None:
-        logger.debug("[SCIM:Baseline] Unknown attribute type %r; defaulting to string", scim_type)
+        logger.debug("[Digester:Baseline] Unknown attribute type %r; defaulting to string", scim_type)
         return "string"
     return mapped_type
 

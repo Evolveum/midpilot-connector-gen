@@ -27,7 +27,7 @@ async def get_relevant_links_from_text(prompts: Tuple[str, str]) -> RelevantLink
     :param app_version: Application version.
     :return: RelevantLinks object containing the list of relevant links, or None if an error occurs.
     """
-    logger.debug("[LLM] Starting LLM call for relevant links extraction")
+    logger.debug("[Scrape:LLM] Starting LLM call for relevant links extraction")
     developer_msg, user_msg = prompts
 
     llm = get_default_llm()
@@ -61,12 +61,12 @@ async def get_relevant_links_from_text(prompts: Tuple[str, str]) -> RelevantLink
             ),
             max_attempts=config.scrape_and_process.chunk_llm_retry_attempts,
             base_delay=config.scrape_and_process.chunk_llm_retry_base_delay_seconds,
-            logger_prefix="[LLM] ",
+            logger_prefix="[Scrape:LLM] ",
             context="relevant-link extraction",
         )
-        logger.debug("[LLM] LLM call successful for relevant links extraction")
+        logger.debug("[Scrape:LLM] LLM call successful for relevant links extraction")
         return result
     except Exception as e:
         raise_if_llm_unavailable(e, context="extracting relevant links")
-        logger.error("[LLM] Error invoking LLM for relevant links extraction: %s", e)
+        logger.error("[Scrape:LLM] Error invoking LLM for relevant links extraction: %s", e)
         return None

@@ -196,7 +196,7 @@ async def extract_sql_object_classes(doc_items: list[dict], job_id: UUID) -> dic
         except Exception as exc:
             raise_if_llm_unavailable(exc, context="detecting SQL object classes")
             logger.warning(
-                "[SQL:ObjectClasses] Domain object-class LLM detection failed; using deterministic table heuristics. error=%s",
+                "[Digester:ObjectClasses] Domain object-class LLM detection failed; using deterministic table heuristics. error=%s",
                 type(exc).__name__,
             )
 

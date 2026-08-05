@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from src.config import ReasoningEffort, config
 from src.core.errors import LLMUnavailableError
+from src.core.observability.llm_metrics import get_llm_metrics_handler
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,7 @@ def get_default_llm(
         "extra_body": {"provider": {"order": config.llm.provider_order}},
         "http_async_client": get_llm_http_client(),
         "max_retries": 0,
+        "callbacks": [get_llm_metrics_handler()],
     }
     if selected_reasoning_effort is not None:
         llm_kwargs["reasoning_effort"] = selected_reasoning_effort

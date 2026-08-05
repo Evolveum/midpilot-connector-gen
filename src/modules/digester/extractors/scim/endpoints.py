@@ -55,19 +55,19 @@ async def pregenerate_scim_endpoints(
 
     flags = object_class_flags or {}
     if is_true(flags.get("embedded")) or is_true(flags.get("abstract")):
-        logger.info("[SCIM:Endpoints] %s is embedded or abstract; skipping standalone endpoints", object_class)
+        logger.info("[Digester:Endpoints] %s is embedded or abstract; skipping standalone endpoints", object_class)
         await increment_processed_documents(job_id, delta=1)
         return _build_scim_endpoint_result(baseline_bundle)
 
     if is_scim_extension_schema(baseline_bundle, object_class):
-        logger.info("[SCIM:Endpoints] %s is a SCIM extension schema; skipping standalone endpoints", object_class)
+        logger.info("[Digester:Endpoints] %s is a SCIM extension schema; skipping standalone endpoints", object_class)
         await increment_processed_documents(job_id, delta=1)
         return _build_scim_endpoint_result(baseline_bundle)
 
     endpoint_definition = get_scim_resource_endpoint_definition(baseline_bundle, object_class)
     if endpoint_definition is None:
         logger.info(
-            "[SCIM:Endpoints] No explicit conndev endpoint for %s; falling back to scraped documentation",
+            "[Digester:Endpoints] No explicit conndev endpoint for %s; falling back to scraped documentation",
             object_class,
         )
         return None
@@ -87,7 +87,7 @@ async def pregenerate_scim_endpoints(
     await increment_processed_documents(job_id, delta=1)
 
     logger.info(
-        "[SCIM:Endpoints] Pregenerated %d endpoints for %s",
+        "[Digester:Endpoints] Pregenerated %d endpoints for %s",
         len(endpoints),
         object_class,
     )

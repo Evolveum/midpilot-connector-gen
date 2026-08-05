@@ -204,6 +204,39 @@ uv run poe start
 # e.g. `curl http://0.0.0.0:8090/health`
 ```
 
+#### Running the API and the job workers separately
+
+`poe start` runs both roles in one process. To reproduce the split deployment
+locally — one API that only serves requests, plus several queue consumers —
+start them as separate processes. The consumers use
+`python -m src.jobs.runtime`, which starts no HTTP server:
+
+```bash
+# 1x API, consuming nothing
+JOBS__ENABLED=false APP__WORKERS=1 APP__LIVE_RELOAD=false \
+  uv run python server.py > /tmp/api.log 2>&1 &
+
+# 10x worker; lower pools because each process opens its own
+for i in $(seq 1 10); do
+  DATABASE__POOL_SIZE=3 DATABASE__MAX_OVERFLOW=3 \
+    uv run python -m src.jobs.runtime > /tmp/worker-$i.log 2>&1 &
+done
+```
+
+Verify the split took effect — the first count must be the number of workers,
+the second must be zero:
+
+```bash
+grep -h "Started database job worker" /tmp/worker-*.log | wc -l
+grep -c "Started database job worker" /tmp/api.log
+```
+
+Stop everything with `pkill -f "src.jobs.runtime"; pkill -f "server.py"`.
+
+> The lowered pool settings are not optional at this scale: PostgreSQL defaults
+> to `max_connections=100`, while 11 processes on the default pool of
+> `10 + 20` can ask for up to 330 connections.
+
 ### Installing dependencies
 
 `dev` dependency group is used to distinguish from production ones.

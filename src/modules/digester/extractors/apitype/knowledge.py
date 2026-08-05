@@ -34,8 +34,8 @@ from src.modules.digester.schemas import ApiTypeSignalResult, RestSignalResult
 
 logger = logging.getLogger(__name__)
 
-_LOG_PREFIX = "[ApiType:Knowledge] "
-_REST_LOG_PREFIX = "[ApiType:RestKnowledge] "
+_LOG_PREFIX = "[Digester:ApiType:Knowledge] "
+_REST_LOG_PREFIX = "[Digester:ApiType:RestKnowledge] "
 
 
 async def lookup_api_type_knowledge(application_name: str) -> ApiTypeSignalResult:

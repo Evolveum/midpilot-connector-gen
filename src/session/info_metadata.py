@@ -124,7 +124,7 @@ async def load_session_metadata(session_id: UUID, key: str = "metadataOutput") -
             repo = SessionRepository(db)
             metadata = await repo.get_session_data(session_id, key)
     except Exception as exc:
-        logger.warning("[SessionMetadataUtils] Failed to load %s for %s: %s", key, session_id, exc)
+        logger.warning("[Session:Metadata] Failed to load %s for %s: %s", key, session_id, exc)
         return None
     return metadata if isinstance(metadata, dict) else None
 

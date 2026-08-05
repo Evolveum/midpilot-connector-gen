@@ -126,7 +126,7 @@ class JobRepository:
             self.db.add(JobArtifact(job_id=job.job_id, name=name, data=data))
         await self.db.flush()
 
-        logger.info(f"Created job {job.job_id} of type {job_type} for session {session_id}")
+        logger.info("Created job %s of type %s for session %s", job.job_id, job_type, session_id)
         return job.job_id
 
     async def get_job(self, job_id: UUID) -> Optional[Job]:
@@ -304,7 +304,7 @@ class JobRepository:
         job.updated_at = now
 
         await self.db.flush()
-        logger.warning(f"Appended error to job {job_id}: {message}")
+        logger.warning("Appended error to job %s: %s", job_id, message)
 
     async def update_job_progress(
         self,
@@ -420,7 +420,7 @@ class JobRepository:
         job.updated_at = datetime.now(timezone.utc)
 
         await self.db.flush()
-        logger.info(f"Updated input for job {job_id}")
+        logger.info("Updated input for job %s", job_id)
 
     async def increment_processed_documents(
         self,

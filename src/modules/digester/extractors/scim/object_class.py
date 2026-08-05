@@ -62,14 +62,14 @@ async def extract_scim_object_classes(
         - "result": ObjectClassesResponse with merged classes
         - "relevantDocumentations": List of chunks containing custom extensions
     """
-    logger.info("[SCIM:ObjectClasses] Starting guided extraction")
+    logger.info("[Digester:ObjectClasses] Starting guided extraction")
 
     # The conndev documents are the deterministic baseline source (steps 1-2); only the
     # remaining documentation is sent to the LLM for custom-class extraction (step 3).
     llm_doc_items = [item for item in doc_items if not is_conndev_documentation_item(item)]
     if len(llm_doc_items) < len(doc_items):
         logger.info(
-            "[SCIM:ObjectClasses] Excluded %d conndev baseline document(s) from LLM extraction",
+            "[Digester:ObjectClasses] Excluded %d conndev baseline document(s) from LLM extraction",
             len(doc_items) - len(llm_doc_items),
         )
 
@@ -94,7 +94,7 @@ async def extract_scim_object_classes(
         for cls in base_classes_data
     ]
 
-    logger.info("[SCIM:ObjectClasses] Loaded %d base SCIM classes", len(base_classes))
+    logger.info("[Digester:ObjectClasses] Loaded %d base SCIM classes", len(base_classes))
 
     # Step 2: Derive embedded object classes from standard SCIM complex attributes
     embedded_classes_data = get_embedded_object_classes_from_scim_schemas(scim_schemas)
@@ -110,7 +110,7 @@ async def extract_scim_object_classes(
     ]
 
     logger.info(
-        "[SCIM:ObjectClasses] Derived %d embedded classes from SCIM complex attributes",
+        "[Digester:ObjectClasses] Derived %d embedded classes from SCIM complex attributes",
         len(embedded_classes),
     )
 
@@ -174,7 +174,7 @@ async def extract_scim_object_classes(
         doc_id = chunk_id_to_doc_id.get(chunk_id)
 
         logger.info(
-            "[SCIM:ObjectClasses] Chunk %s: extracted %d custom classes",
+            "[Digester:ObjectClasses] Chunk %s: extracted %d custom classes",
             chunk_id,
             len(custom_classes),
         )
@@ -189,7 +189,7 @@ async def extract_scim_object_classes(
                 class_to_chunks[class_name].append({"doc_id": doc_id, "chunk_id": chunk_id})
             else:
                 logger.warning(
-                    "[SCIM:ObjectClasses] Missing docId for chunk %s, skipping relevant chunk mapping for class %s",
+                    "[Digester:ObjectClasses] Missing docId for chunk %s, skipping relevant chunk mapping for class %s",
                     chunk_id,
                     obj_class.name,
                 )
@@ -200,12 +200,12 @@ async def extract_scim_object_classes(
             all_relevant_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id})
         elif has_relevant_data:
             logger.warning(
-                "[SCIM:ObjectClasses] Missing docId for chunk %s, skipping top-level relevant chunk mapping",
+                "[Digester:ObjectClasses] Missing docId for chunk %s, skipping top-level relevant chunk mapping",
                 chunk_id,
             )
 
     logger.info(
-        "[SCIM:ObjectClasses] Extracted %d custom classes from %d chunks",
+        "[Digester:ObjectClasses] Extracted %d custom classes from %d chunks",
         len(all_custom_classes),
         len(llm_doc_items),
     )
@@ -225,7 +225,7 @@ async def extract_scim_object_classes(
         class_to_chunks,
     )
 
-    logger.info("[SCIM:ObjectClasses] Completed. Total classes: %d", len(result.objectClasses))
+    logger.info("[Digester:ObjectClasses] Completed. Total classes: %d", len(result.objectClasses))
 
     return {
         "result": result.model_dump(by_alias=True),
@@ -249,7 +249,7 @@ async def _find_relevant_chunks_for_base_classes(
         doc_items: List of documentation items
         class_to_chunks: Dictionary to populate with found chunks
     """
-    logger.info("[SCIM:ObjectClasses] Finding relevant chunks for %d base classes", len(base_classes))
+    logger.info("[Digester:ObjectClasses] Finding relevant chunks for %d base classes", len(base_classes))
 
     for base_class in base_classes:
         class_name = canonical_object_class_key(base_class.name)
@@ -286,7 +286,7 @@ async def _find_relevant_chunks_for_base_classes(
                 if chunk_ref not in class_to_chunks[class_name]:
                     class_to_chunks[class_name].append(chunk_ref)
                     logger.debug(
-                        "[SCIM:ObjectClasses] Found reference to %s in chunk %s",
+                        "[Digester:ObjectClasses] Found reference to %s in chunk %s",
                         base_class.name,
                         chunk_id,
                     )
@@ -296,7 +296,7 @@ async def _find_relevant_chunks_for_base_classes(
         class_name = canonical_object_class_key(base_class.name)
         chunk_count = len(class_to_chunks.get(class_name, []))
         logger.info(
-            "[SCIM:ObjectClasses] Base class '%s' found in %d chunks",
+            "[Digester:ObjectClasses] Base class '%s' found in %d chunks",
             base_class.name,
             chunk_count,
         )
@@ -353,12 +353,12 @@ async def extract_custom_scim_classes(
             custom_only.append(obj_class)
         else:
             logger.info(
-                "[SCIM:ObjectClasses] Filtered out standard class '%s' (should not be extracted)",
+                "[Digester:ObjectClasses] Filtered out standard class '%s' (should not be extracted)",
                 obj_class.name,
             )
 
     logger.info(
-        "[SCIM:ObjectClasses] Custom extraction complete. Count: %d (filtered %d standard classes)",
+        "[Digester:ObjectClasses] Custom extraction complete. Count: %d (filtered %d standard classes)",
         len(custom_only),
         len(extracted) - len(custom_only),
     )

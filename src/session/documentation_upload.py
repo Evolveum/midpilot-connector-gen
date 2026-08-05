@@ -145,7 +145,7 @@ def _decode_text(data: bytes, filename: str) -> str:
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError:
-        logger.info("[Upload] Falling back to replacement UTF-8 decode for %s", filename)
+        logger.info("[Session:Upload] Falling back to replacement UTF-8 decode for %s", filename)
         return data.decode("utf-8", errors="replace")
 
 
@@ -347,7 +347,7 @@ def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentati
         max_tokens = config.scrape_and_process.single_item_schema_max_tokens
         if is_conndev_content_type(uploaded.content_type) or token_count <= max_tokens:
             logger.info(
-                "[Upload] Preserving uploaded schema as a single documentation item for session %s "
+                "[Session:Upload] Preserving uploaded schema as a single documentation item for session %s "
                 "filename=%s content_type=%s tokens=%s",
                 session_id,
                 uploaded.filename,
@@ -357,7 +357,7 @@ def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentati
             return [(uploaded.text, token_count)]
 
         logger.warning(
-            "[Upload] Single-item schema exceeds the LLM token budget for session %s "
+            "[Session:Upload] Single-item schema exceeds the LLM token budget for session %s "
             "filename=%s content_type=%s tokens=%s max_tokens=%s; splitting into structurally valid sub-schemas.",
             session_id,
             uploaded.filename,
@@ -372,7 +372,7 @@ def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentati
             max_tokens=max_tokens,
         )
         logger.info(
-            "[Upload] Split oversized single-item schema into %s sub-schema chunks for session %s filename=%s",
+            "[Session:Upload] Split oversized single-item schema into %s sub-schema chunks for session %s filename=%s",
             len(chunks),
             session_id,
             uploaded.filename,
@@ -380,7 +380,7 @@ def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentati
         return chunks
 
     logger.info(
-        "[Upload] Chunking documentation for session %s filename=%s content_type=%s parser=%s",
+        "[Session:Upload] Chunking documentation for session %s filename=%s content_type=%s parser=%s",
         session_id,
         uploaded.filename,
         uploaded.content_type,
@@ -391,7 +391,7 @@ def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentati
         max_tokens=config.scrape_and_process.chunk_length,
         overlap_ratio=0.05,
     )
-    logger.info("[Upload] Generated %s chunks for uploaded document", len(chunks))
+    logger.info("[Session:Upload] Generated %s chunks for uploaded document", len(chunks))
     return chunks
 
 
