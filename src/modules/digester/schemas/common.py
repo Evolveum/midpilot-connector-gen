@@ -46,6 +46,21 @@ class ChunkReference(CamelCaseModel):
         return self.model_dump(by_alias=True)
 
 
+def build_chunk_references_from_doc_items(chunk_items: List[dict]) -> List[ChunkReference]:
+    """Build normalized chunk references from documentation items.
+
+    Lives next to the model rather than in ``selection`` because extractors need it too, and
+    ``selection`` imports extractors.
+    """
+    chunk_refs: List[ChunkReference] = []
+    for item in chunk_items:
+        raw_chunk_id = item.get("chunkId")
+        raw_doc_id = item.get("docId")
+        if raw_chunk_id and raw_doc_id:
+            chunk_refs.append(ChunkReference(doc_id=str(raw_doc_id).strip(), chunk_id=str(raw_chunk_id).strip()))
+    return chunk_refs
+
+
 class DocSequenceItem(CamelCaseModel):
     """
     Represents a sequence from a chunk relevant to the extracted information.

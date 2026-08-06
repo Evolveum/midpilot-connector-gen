@@ -8,7 +8,8 @@ from collections import OrderedDict
 from typing import Any, Iterable
 
 from src.documents.chunking import normalize_to_text
-from src.modules.digester.selection import build_chunk_references_from_doc_items
+from src.modules.digester.extractors.sql.conndev_schema import extract_conndev_sql_tables
+from src.modules.digester.schemas.common import ChunkReference, build_chunk_references_from_doc_items
 
 _CREATE_TABLE_RE = re.compile(
     r"CREATE\s+(?:TEMPORARY\s+|TEMP\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
@@ -176,7 +177,9 @@ def _extract_tables_from_mapping(value: Any, source_ref: dict[str, str] | None) 
         for key in _TABLE_KEYS:
             if key in value:
                 return _extract_tables_from_mapping(value[key], source_ref)
-        return [table for item in value.values() if (table := _normalize_table(item, source_ref))]
+        return [
+            table for item in value.values() if isinstance(item, dict) and (table := _normalize_table(item, source_ref))
+        ]
     return []
 
 
@@ -201,6 +204,32 @@ def _extract_tables_from_text(text: str, source_ref: dict[str, str] | None) -> l
     ]
 
 
+def _merge_relevant_documentations(existing: dict[str, Any], incoming: list[Any]) -> None:
+    """Append documentation references the table does not already carry."""
+    merged = existing.setdefault("relevantDocumentations", [])
+    seen = {(str(ref.get("docId")), str(ref.get("chunkId"))) for ref in merged if isinstance(ref, dict)}
+    for ref in incoming:
+        if not isinstance(ref, dict):
+            continue
+        pair = (str(ref.get("docId")), str(ref.get("chunkId")))
+        if pair not in seen:
+            merged.append(ref)
+            seen.add(pair)
+
+
+def _extract_tables_from_item(item: dict, source_ref: dict[str, str] | None) -> list[dict[str, Any]]:
+    """
+    Read one documentation item as SQL tables.
+
+    A conndev SQL export is authoritative and wins; anything else is parsed as a raw SQL schema
+    (JSON table list or ``CREATE TABLE`` DDL).
+    """
+    conndev_tables = extract_conndev_sql_tables(item, ChunkReference(**source_ref) if source_ref else None)
+    if conndev_tables:
+        return conndev_tables
+    return _extract_tables_from_text(normalize_to_text(item.get("content", "")), source_ref)
+
+
 def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
     doc_items_list = list(doc_items)
     tables_by_name: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -211,7 +240,7 @@ def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
     for item in doc_items_list:
         chunk_id = str(item.get("chunkId") or "").strip()
         source_ref = refs_by_chunk.get(chunk_id)
-        for table in _extract_tables_from_text(normalize_to_text(item.get("content", "")), source_ref):
+        for table in _extract_tables_from_item(item, source_ref):
             name = str(table.get("table") or "").strip()
             if not name:
                 continue
@@ -224,16 +253,32 @@ def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
                 column_name = str(column.get("name") or "").lower()
                 if column_name and column_name not in existing_columns:
                     existing.setdefault("columns", []).append(column)
-            existing.setdefault("relevantDocumentations", []).extend(table.get("relevantDocumentations", []))
+            _merge_relevant_documentations(existing, table.get("relevantDocumentations", []))
 
     return list(tables_by_name.values())
+
+
+# Word endings that look plural but are not, so a trailing "s" must be kept
+# (``m_focus`` -> ``MFocus``, ``m_status`` -> ``MStatus``, ``m_address`` -> ``MAddress``).
+_NON_PLURAL_SUFFIXES: tuple[str, ...] = ("ss", "us", "is")
+
+
+def object_class_name_for_table(table: dict[str, Any]) -> str:
+    """
+    Resolve the object-class name of a table record.
+
+    A conndev export states the name midPoint uses and it is taken verbatim; a raw database
+    schema has no such name, so it is derived from the table name.
+    """
+    exported_name = str(table.get("objectClass") or "").strip()
+    return exported_name or object_class_name_from_table(str(table.get("table") or ""))
 
 
 def object_class_name_from_table(table_name: str) -> str:
     base = table_name.strip().split(".")[-1]
     if base.endswith("ies") and len(base) > 3:
         base = f"{base[:-3]}y"
-    elif base.endswith("s") and not base.endswith("ss") and len(base) > 3:
+    elif base.endswith("s") and not base.lower().endswith(_NON_PLURAL_SUFFIXES) and len(base) > 3:
         base = base[:-1]
     parts = re.split(r"[_\-\s]+", base)
     return "".join(part[:1].upper() + part[1:] for part in parts if part) or table_name
@@ -261,7 +306,8 @@ def tables_for_object_class(tables: list[dict[str, Any]], object_class: str) -> 
     selected = [
         table
         for table in tables
-        if object_class_name_from_table(str(table.get("table") or "")).lower() == target
+        if object_class_name_for_table(table).lower() == target
+        or object_class_name_from_table(str(table.get("table") or "")).lower() == target
         or str(table.get("table") or "").lower() == target
     ]
     if selected:

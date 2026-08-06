@@ -7,7 +7,19 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from uuid import UUID
 
 from src.documents.chunking import normalize_to_text
-from src.modules.digester.schemas.common import ChunkReference
+from src.modules.digester.schemas.common import ChunkReference, build_chunk_references_from_doc_items
+
+__all__ = [
+    "build_chunk_id_to_doc_id",
+    "build_chunk_references_from_doc_items",
+    "build_chunk_references_from_mappings",
+    "build_relevant_chunks_from_doc_items",
+    "chunk_ids_from_relevant_chunks",
+    "collect_relevant_chunks",
+    "exclude_doc_items_by_chunk_id",
+    "resolve_relevant_chunk_ref",
+    "select_doc_chunks",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -58,17 +70,6 @@ def build_chunk_id_to_doc_id(chunk_items: List[dict]) -> Dict[str, str]:
 def build_relevant_chunks_from_doc_items(chunk_items: List[dict]) -> List[Dict[str, Any]]:
     """Build relevant chunk descriptors from filtered documentation items."""
     return [chunk_ref.to_internal_dict() for chunk_ref in build_chunk_references_from_doc_items(chunk_items)]
-
-
-def build_chunk_references_from_doc_items(chunk_items: List[dict]) -> List[ChunkReference]:
-    """Build normalized chunk references from documentation items."""
-    chunk_refs: List[ChunkReference] = []
-    for item in chunk_items:
-        raw_chunk_id = item.get("chunkId")
-        raw_doc_id = item.get("docId")
-        if raw_chunk_id and raw_doc_id:
-            chunk_refs.append(ChunkReference(doc_id=str(raw_doc_id).strip(), chunk_id=str(raw_chunk_id).strip()))
-    return chunk_refs
 
 
 def build_chunk_references_from_mappings(chunks: List[Dict[str, Any]]) -> List[ChunkReference]:

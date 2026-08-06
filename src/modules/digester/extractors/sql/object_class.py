@@ -2,227 +2,124 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-import json
+"""
+SQL object-class extraction.
+
+Every table in the session's schema becomes an object-class candidate, whether it came from a
+conndev SQL export (``ri:conndev_sql``) or from a raw database schema (``CREATE TABLE`` DDL or a
+JSON table list). Nothing is filtered out here on a guess: an object class of a database
+connector is always backed by a table, so there is nothing for an LLM to *discover* - only to
+judge.
+
+That judgement is the shared
+:func:`~src.modules.digester.aggregation.object_class_ranking.deduplicate_and_sort_object_classes`
+step, which assigns the IGA/IDM confidence level and the final ordering. SQL therefore behaves
+like SCIM: a deterministic contract in, the same ranking out.
+"""
+
 import logging
-from typing import Any
+from typing import Any, Dict, List
 from uuid import UUID
 
-from src.core.llm import build_structured_chain, raise_if_llm_unavailable
+from src.documents.normalize import canonical_object_class_key
 from src.jobs import update_job_progress
-from src.modules.digester.entities.object_classes import confidence_order_key
-from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
-from src.modules.digester.extractors.sql.schema import collect_sql_tables, object_class_name_from_table
-from src.modules.digester.prompts.sql.object_class_prompts import (
-    sql_object_class_system_prompt,
-    sql_object_class_user_prompt,
+from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_object_classes
+from src.modules.digester.extractors.sql.conndev_schema import is_conndev_table
+from src.modules.digester.extractors.sql.schema import (
+    collect_sql_tables,
+    object_class_name_for_table,
 )
-from src.modules.digester.schemas import ExtendedObjectClass, FinalObjectClass, ObjectClassesExtendedResponse
+from src.modules.digester.schemas import ExtendedObjectClass
 from src.modules.digester.selection import build_relevant_chunks_from_doc_items
 from src.shared.coerce import as_list
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 
-# TODO
-# Need to be edited
-_TECHNICAL_TABLE_MARKERS = (
-    "audit",
-    "cache",
-    "flyway",
-    "history",
-    "liquibase",
-    "log",
-    "migration",
-    "schema_version",
-    "tmp",
-)
-_IGA_TABLE_MARKERS = (
-    "account",
-    "assignment",
-    "employee",
-    "entitlement",
-    "group",
-    "membership",
-    "organization",
-    "permission",
-    "person",
-    "role",
-    "user",
-)
+# Column names listed in an object-class description, enough for the ranking LLM to judge what the
+# table holds without pushing whole schemas into the prompt.
+_DESCRIPTION_COLUMN_SAMPLE = 12
 
 
-def _is_probably_domain_table(table: dict[str, Any]) -> bool:
-    table_name = str(table.get("table") or "").lower()
-    if not table_name or any(marker in table_name for marker in _TECHNICAL_TABLE_MARKERS):
-        return False
-    if any(marker in table_name for marker in _IGA_TABLE_MARKERS):
-        return True
-
-    columns = {str(column.get("name") or "").lower() for column in table.get("columns", [])}
-    identity_columns = {"id", "uid", "username", "user_name", "login", "email", "name", "display_name"}
-    return bool(columns.intersection(identity_columns)) and len(columns) >= 3
-
-
-def _object_class_from_table(table: dict[str, Any]) -> FinalObjectClass:
+def _describe_table(table: dict[str, Any]) -> str:
+    """Build the object-class description the confidence/sorting LLM reasons over."""
     table_name = str(table.get("table") or "").strip()
-    columns = as_list(table.get("columns"))
-    relevant_documentations = as_list(table.get("relevantDocumentations"))
-    return FinalObjectClass(
-        name=object_class_name_from_table(table_name),
-        relevant=RelevantLevel.TRUE,
-        confidence=ConfidenceLevel.HIGH
-        if any(marker in table_name.lower() for marker in _IGA_TABLE_MARKERS)
-        else ConfidenceLevel.MEDIUM,
+    database_schema = str(table.get("databaseSchema") or "").strip()
+    qualified = f"{database_schema}.{table_name}" if database_schema else table_name
+
+    column_names = [name for column in as_list(table.get("columns")) if (name := str(column.get("name") or "").strip())]
+    if not column_names:
+        return f"Database table '{qualified}' with no documented columns."
+
+    sample = ", ".join(column_names[:_DESCRIPTION_COLUMN_SAMPLE])
+    remaining = len(column_names) - _DESCRIPTION_COLUMN_SAMPLE
+    if remaining > 0:
+        sample = f"{sample}, ... (+{remaining} more)"
+    return f"Database table '{qualified}' with {len(column_names)} columns: {sample}."
+
+
+def _object_class_from_table(table: dict[str, Any]) -> ExtendedObjectClass:
+    return ExtendedObjectClass(
+        name=object_class_name_for_table(table),
+        description=_describe_table(table),
         superclass=None,
         abstract=False,
         embedded=False,
-        description=f"Database object mapped from table '{table_name}' with {len(columns)} columns.",
-        relevant_documentations=relevant_documentations,
     )
 
 
-def _build_schema_heuristics(tables: list[dict[str, Any]]) -> str:
-    table_summaries = []
-    for table in tables:
-        columns = as_list(table.get("columns"))
-        table_summaries.append(
-            {
-                "table": table.get("table"),
-                "objectClassCandidate": object_class_name_from_table(str(table.get("table") or "")),
-                "columns": [
-                    {
-                        "name": column.get("name"),
-                        "type": column.get("type"),
-                        "primaryKey": column.get("primaryKey"),
-                        "nullable": column.get("nullable"),
-                    }
-                    for column in columns[:30]
-                    if isinstance(column, dict)
-                ],
-            }
-        )
-    return json.dumps(table_summaries, ensure_ascii=False, indent=2)
-
-
-def _merge_sql_object_classes(object_classes: list[FinalObjectClass]) -> list[FinalObjectClass]:
-    by_name: dict[str, FinalObjectClass] = {}
-    for obj_class in object_classes:
-        key = obj_class.name.strip().lower()
-        if not key:
+def _chunk_refs_from_table(table: dict[str, Any]) -> List[Dict[str, str]]:
+    """Convert a table's documentation references to the internal snake_case shape."""
+    refs: List[Dict[str, str]] = []
+    for chunk in as_list(table.get("relevantDocumentations")):
+        if not isinstance(chunk, dict):
             continue
-        existing = by_name.get(key)
-        if existing is None:
-            by_name[key] = obj_class
-            continue
-        if confidence_order_key(obj_class.confidence) < confidence_order_key(existing.confidence):
-            existing.confidence = obj_class.confidence
-        if obj_class.description and len(obj_class.description) > len(existing.description or ""):
-            existing.description = obj_class.description
-        seen = {
-            (str(chunk.get("doc_id") or chunk.get("docId")), str(chunk.get("chunk_id") or chunk.get("chunkId")))
-            for chunk in existing.relevant_documentations
-            if isinstance(chunk, dict)
-        }
-        for chunk in obj_class.relevant_documentations:
-            pair = (str(chunk.get("doc_id") or chunk.get("docId")), str(chunk.get("chunk_id") or chunk.get("chunkId")))
-            if pair not in seen:
-                existing.relevant_documentations.append(chunk)
-                seen.add(pair)
-    return sorted(by_name.values(), key=lambda item: (confidence_order_key(item.confidence), item.name.lower()))
-
-
-def _build_documentation_context(doc_items: list[dict]) -> str:
-    chunks: list[str] = []
-    for item in doc_items[:12]:
-        content = str(item.get("content") or "")
-        if not content.strip():
-            continue
-        chunks.append(
-            "\n".join(
-                [
-                    f"summary: {item.get('summary') or ''}",
-                    f"tags: {(item.get('@metadata') or {}).get('tags') or ''}",
-                    content[:4000],
-                ]
-            )
-        )
-    return "\n\n---\n\n".join(chunks)
-
-
-async def _detect_domain_classes_with_llm(
-    *,
-    tables: list[dict[str, Any]],
-    doc_items: list[dict],
-) -> list[ExtendedObjectClass]:
-    if not tables and not doc_items:
-        return []
-
-    chain = build_structured_chain(
-        sql_object_class_system_prompt,
-        sql_object_class_user_prompt,
-        ObjectClassesExtendedResponse,
-    )
-    result = await chain.ainvoke(
-        {
-            "schema_heuristics": _build_schema_heuristics(tables),
-            "documentation_context": _build_documentation_context(doc_items),
-        }
-    )
-    return result.object_classes if isinstance(result, ObjectClassesExtendedResponse) else []
+        doc_id = str(chunk.get("docId") or chunk.get("doc_id") or "").strip()
+        chunk_id = str(chunk.get("chunkId") or chunk.get("chunk_id") or "").strip()
+        if doc_id and chunk_id:
+            refs.append({"doc_id": doc_id, "chunk_id": chunk_id})
+    return refs
 
 
 async def extract_sql_object_classes(doc_items: list[dict], job_id: UUID) -> dict[str, Any]:
     """
     Extract database connector object classes.
 
-    The pipeline mirrors SCIM shape: deterministic schema heuristics first, then
-    one LLM call to keep only domain-specific object classes.
+    Every table becomes a candidate; the shared ranking step decides which ones matter and in
+    which order they are returned.
     """
     await update_job_progress(
         job_id,
         stage=JobStage.processing,
         total_processing=len(doc_items) or 1,
         processing_completed=0,
-        message="Processing SQL schema heuristics",
+        message="Reading SQL schema",
     )
 
     tables = collect_sql_tables(doc_items)
-    heuristic_classes = [_object_class_from_table(table) for table in tables if _is_probably_domain_table(table)]
 
-    llm_classes: list[ExtendedObjectClass] = []
-    if tables or doc_items:
-        try:
-            llm_classes = await _detect_domain_classes_with_llm(tables=tables, doc_items=doc_items)
-        except Exception as exc:
-            raise_if_llm_unavailable(exc, context="detecting SQL object classes")
-            logger.warning(
-                "[Digester:ObjectClasses] Domain object-class LLM detection failed; using deterministic table heuristics. error=%s",
-                type(exc).__name__,
+    candidates: list[ExtendedObjectClass] = []
+    class_to_chunks: Dict[str, List[Dict[str, str]]] = {}
+    for table in tables:
+        candidates.append(_object_class_from_table(table))
+        chunk_refs = _chunk_refs_from_table(table)
+        if chunk_refs:
+            class_to_chunks.setdefault(canonical_object_class_key(object_class_name_for_table(table)), []).extend(
+                chunk_refs
             )
 
-    llm_final_classes = [
-        FinalObjectClass(
-            name=obj_class.name,
-            relevant=RelevantLevel.TRUE,
-            confidence=ConfidenceLevel.MEDIUM,
-            superclass=obj_class.superclass,
-            abstract=bool(obj_class.abstract),
-            embedded=bool(obj_class.embedded),
-            description=obj_class.description,
-        )
-        for obj_class in llm_classes
-    ]
-    final_classes = _merge_sql_object_classes(heuristic_classes + llm_final_classes)
-    relevant_chunks = build_relevant_chunks_from_doc_items(doc_items)
-
-    await update_job_progress(
-        job_id,
-        stage=JobStage.schema_ready,
-        processing_completed=len(doc_items) or 1,
-        message=f"SQL object-class extraction complete: {len(final_classes)} classes",
+    logger.info(
+        "[Digester:ObjectClasses] SQL schema read: %s tables (%s from a conndev export)",
+        len(tables),
+        sum(1 for table in tables if is_conndev_table(table)),
     )
 
+    result = await deduplicate_and_sort_object_classes(candidates, job_id, class_to_chunks)
+
+    relevant_chunks = build_relevant_chunks_from_doc_items(doc_items)
+    logger.info("[Digester:ObjectClasses] Completed. Total classes: %d", len(result.objectClasses))
+
     return {
-        "result": {"objectClasses": [obj_class.model_dump(by_alias=True, mode="json") for obj_class in final_classes]},
+        "result": result.model_dump(by_alias=True, mode="json"),
         "relevantDocumentations": relevant_chunks,
     }

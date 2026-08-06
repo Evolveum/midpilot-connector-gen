@@ -2,16 +2,23 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import json
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
+from src.modules.digester.extractors.conndev import detect_object_class_binding
 from src.modules.digester.extractors.object_class import extract_object_classes
 from src.modules.digester.extractors.sql.attributes import extract_sql_attributes
-from src.modules.digester.extractors.sql.schema import collect_sql_tables
+from src.modules.digester.extractors.sql.schema import (
+    collect_sql_tables,
+    object_class_name_for_table,
+    object_class_name_from_table,
+    tables_for_object_class,
+)
 from src.modules.digester.extractors.sql.tables import extract_sql_tables
-from src.modules.digester.schemas import ExtendedObjectClass, ObjectClassesExtendedResponse
+from src.modules.digester.schemas import ObjectClassesResponse
 from src.shared.enums import ApiType
 
 
@@ -25,6 +32,38 @@ def _sql_doc(content: str) -> dict:
         "summary": "Database schema",
         "@metadata": {"tags": ["sql", "schema"]},
     }
+
+
+def _conndev_attribute(name: str, connid_type: str, **flags) -> dict:
+    return {
+        "type": "c:ShadowType",
+        "object": {
+            "exists": True,
+            "objectClass": "ri:conndev_Attribute",
+            "attributes": {"name": name, "connId": {"type": connid_type, **flags}},
+        },
+    }
+
+
+def _conndev_sql_doc(table: str, database_schema: str, attributes: list[dict]) -> dict:
+    """A midPoint ``ri:conndev_sql`` object-class export, as uploaded by the connector-development tool."""
+    return _sql_doc(
+        json.dumps(
+            {
+                "sql": {
+                    "type": "c:ShadowType",
+                    "object": {
+                        "exists": True,
+                        "objectClass": "ri:conndev_sql",
+                        "attributes": {"table": table, "schema": database_schema},
+                    },
+                },
+                "uid": table,
+                "name": table,
+                "attributes": attributes,
+            }
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -132,33 +171,39 @@ def test_collect_sql_tables_marks_composite_table_level_primary_key_columns():
     assert [column["primaryKey"] for column in tables[0]["columns"]] == [True, True, False]
 
 
+def _ranking_passthrough() -> AsyncMock:
+    """Stand in for the shared ranking step, echoing the candidates it was handed."""
+
+    async def _rank(candidates, _job_id, _class_to_chunks=None):
+        return ObjectClassesResponse(
+            objectClasses=[
+                {
+                    "name": candidate.name,
+                    "description": candidate.description,
+                    "confidence": "medium",
+                    "relevant": "true",
+                }
+                for candidate in candidates
+            ]
+        )
+
+    return AsyncMock(side_effect=_rank)
+
+
 @pytest.mark.asyncio
-async def test_extract_sql_object_classes_uses_heuristics_and_single_llm_call(mock_digester_update_job_progress):
+async def test_extract_sql_object_classes_from_raw_schema_ranks_every_table(mock_digester_update_job_progress):
     doc = _sql_doc(
         """
-        {"tables": [{"name": "users", "columns": [{"name": "id"}, {"name": "username"}, {"name": "email"}]}]}
+        {"tables": [
+          {"name": "users", "columns": [{"name": "id"}, {"name": "username"}, {"name": "email"}]},
+          {"name": "qrtz_locks", "columns": [{"name": "lock_name"}]}
+        ]}
         """
     )
 
-    class FakeChain:
-        ainvoke = AsyncMock(
-            return_value=ObjectClassesExtendedResponse(
-                objectClasses=[
-                    ExtendedObjectClass(
-                        name="User",
-                        description="Application account holder.",
-                        superclass=None,
-                        abstract=False,
-                        embedded=False,
-                    )
-                ]
-            )
-        )
-
+    ranking = _ranking_passthrough()
     with (
-        patch(
-            "src.modules.digester.extractors.sql.object_class.build_structured_chain", return_value=FakeChain()
-        ) as build_chain,
+        patch("src.modules.digester.extractors.sql.object_class.deduplicate_and_sort_object_classes", ranking),
         patch(
             "src.modules.digester.extractors.object_class.resolve_effective_api_type",
             new_callable=AsyncMock,
@@ -167,9 +212,138 @@ async def test_extract_sql_object_classes_uses_heuristics_and_single_llm_call(mo
     ):
         result = await extract_object_classes([doc], uuid4(), uuid4())
 
-    assert result["result"]["objectClasses"][0]["name"] == "User"
-    build_chain.assert_called_once()
-    FakeChain.ainvoke.assert_awaited_once()
+    # No name heuristic drops a table up front; relevance is the ranking step's decision.
+    names = [obj_class["name"] for obj_class in result["result"]["objectClasses"]]
+    assert names == ["User", "QrtzLock"]
+
+
+@pytest.mark.asyncio
+async def test_extract_sql_object_classes_from_conndev_export(mock_digester_update_job_progress):
+    docs = [
+        _conndev_sql_doc("m_user", "midpoint_user", [_conndev_attribute("nameorig", "string", required=True)]),
+        _conndev_sql_doc("m_focus", "midpoint_user", [_conndev_attribute("oid", "string")]),
+    ]
+
+    ranking = _ranking_passthrough()
+    with (
+        patch("src.modules.digester.extractors.sql.object_class.deduplicate_and_sort_object_classes", ranking),
+        patch(
+            "src.modules.digester.extractors.object_class.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SQL,
+        ),
+    ):
+        result = await extract_object_classes(docs, uuid4(), uuid4())
+
+    # The export states the object class name, so it is used verbatim - no PascalCase reshaping.
+    names = [obj_class["name"] for obj_class in result["result"]["objectClasses"]]
+    assert names == ["m_user", "m_focus"]
+
+    candidates, _job_id, class_to_chunks = ranking.await_args.args
+    assert candidates[0].description == "Database table 'midpoint_user.m_user' with 1 columns: nameorig."
+    assert class_to_chunks["m_user"] == [{"doc_id": docs[0]["docId"], "chunk_id": docs[0]["chunkId"]}]
+
+
+def test_collect_sql_tables_reads_conndev_export_columns():
+    doc = _conndev_sql_doc(
+        "m_user",
+        "midpoint_user",
+        [
+            _conndev_attribute("nameorig", "string", required=True),
+            _conndev_attribute("createtimestamp", "zoneddatetime"),
+            _conndev_attribute("oid", "string", creatable=False, updateable=False),
+        ],
+    )
+
+    tables = collect_sql_tables([doc])
+
+    assert len(tables) == 1
+    table = tables[0]
+    assert table["table"] == "m_user"
+    assert table["databaseSchema"] == "midpoint_user"
+    assert table["source"] == "conndev"
+    assert table["columns"] == [
+        {"name": "nameorig", "connIdType": "string", "mandatory": True},
+        {"name": "createtimestamp", "connIdType": "zoneddatetime"},
+        {"name": "oid", "connIdType": "string", "creatable": False, "updatable": False},
+    ]
+    assert table["relevantDocumentations"] == [{"docId": doc["docId"], "chunkId": doc["chunkId"]}]
+
+
+def test_collect_sql_tables_does_not_invent_tables_from_scalar_json_fields():
+    """``uid``/``name`` are scalar fields, not column-less tables."""
+    doc = _sql_doc(json.dumps({"uid": "m_user", "name": "m_user", "displayName": "User"}))
+
+    assert collect_sql_tables([doc]) == []
+
+
+def test_detect_object_class_binding_distinguishes_sql_from_scim():
+    sql_doc = {"sql": {}, "uid": "m_user", "name": "m_user", "attributes": []}
+    scim_doc = {"scim": {}, "uid": "User", "name": "User", "attributes": []}
+
+    assert detect_object_class_binding(sql_doc) is ApiType.SQL
+    assert detect_object_class_binding(scim_doc) is ApiType.SCIM
+    assert detect_object_class_binding({"schemaContent": "{}"}) is None
+
+
+@pytest.mark.parametrize(
+    ("table_name", "expected"),
+    [
+        ("m_user", "MUser"),
+        ("app_users", "AppUser"),
+        ("m_focus", "MFocus"),
+        ("m_status", "MStatus"),
+        ("m_address", "MAddress"),
+        ("companies", "Company"),
+    ],
+)
+def test_object_class_name_from_table_keeps_false_plurals(table_name: str, expected: str):
+    """Name derivation is the fallback for a raw schema, which carries no object-class name."""
+    assert object_class_name_from_table(table_name) == expected
+
+
+def test_object_class_name_prefers_the_exported_conndev_name():
+    conndev_table = {"table": "m_user", "objectClass": "m_user"}
+    raw_schema_table = {"table": "app_users"}
+
+    assert object_class_name_for_table(conndev_table) == "m_user"
+    assert object_class_name_for_table(raw_schema_table) == "AppUser"
+
+
+def test_tables_for_object_class_matches_the_exported_name():
+    tables = [{"table": "m_user", "objectClass": "m_user", "columns": []}]
+
+    assert tables_for_object_class(tables, "m_user") == tables
+    assert tables_for_object_class(tables, "M_User") == tables
+
+
+@pytest.mark.asyncio
+async def test_extract_sql_attributes_from_conndev_export(mock_digester_update_job_progress):
+    doc = _conndev_sql_doc(
+        "m_user",
+        "midpoint_user",
+        [
+            _conndev_attribute("nameorig", "string", required=True),
+            _conndev_attribute("createtimestamp", "zoneddatetime"),
+            _conndev_attribute("modifychannelid", "integer"),
+            _conndev_attribute("oid", "string", creatable=False, updateable=False),
+            _conndev_attribute("photo", "binary"),
+        ],
+    )
+
+    result = await extract_sql_attributes([doc], "m_user", uuid4())
+
+    attributes = result["result"]["attributes"]
+    assert set(attributes) == {"nameorig", "createtimestamp", "modifychannelid", "oid", "photo"}
+    assert attributes["nameorig"]["mandatory"] is True
+    assert attributes["createtimestamp"]["type"] == "string"
+    assert attributes["createtimestamp"]["format"] == "date-time"
+    assert attributes["modifychannelid"]["type"] == "integer"
+    assert attributes["photo"]["format"] == "binary"
+    assert attributes["oid"]["creatable"] is False
+    assert attributes["oid"]["updatable"] is False
+    assert attributes["nameorig"]["description"] == "Column 'nameorig' from table 'midpoint_user.m_user'."
+    assert result["relevantDocumentations"] == [{"doc_id": doc["docId"], "chunk_id": doc["chunkId"]}]
 
 
 @pytest.mark.asyncio

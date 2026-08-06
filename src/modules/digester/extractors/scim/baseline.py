@@ -40,6 +40,13 @@ from pydantic import ValidationError
 
 from src.core.db import async_session_maker
 from src.database.repositories.documentation_repository import DocumentationRepository
+from src.modules.digester.extractors.conndev import (
+    CONNDEV_SCIM_BINDING,
+    CONNDEV_SQL_BINDING,
+    conndev_attribute_entries,
+    flatten_shadow_connid_attribute,
+    shadow_object_attributes,
+)
 from src.modules.digester.schemas.common import ChunkReference
 from src.modules.digester.schemas.scim import (
     SCIM_SERVICE_PROVIDER_CONFIG_URN,
@@ -298,50 +305,9 @@ def _parse_connid_object_class(
         namespace=str(doc.get("namespace") or ""),
         locator=str(doc.get("locator") or ""),
         uid=str(doc.get("uid") or ""),
-        attributes=as_dict_list(doc.get("attributes")),
+        attributes=conndev_attribute_entries(doc.get("attributes")),
         source_reference=source_reference,
     )
-
-
-def _shadow_object_attributes(value: Any) -> Optional[Dict[str, Any]]:
-    """Unwrap a midPoint shadow wrapper (``{"object": {"attributes": {...}}}``) to its attributes."""
-    if not isinstance(value, dict):
-        return None
-    shadow_object = value.get("object")
-    if not isinstance(shadow_object, dict):
-        return None
-    attributes = shadow_object.get("attributes")
-    return attributes if isinstance(attributes, dict) else None
-
-
-def _flatten_shadow_connid_attribute(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Flatten one ``ri:conndev_Attribute`` shadow into the flat ConnId attribute shape.
-
-    The ConnId flags (``type``, ``creatable``, ``updateable``, ``required``) live under
-    ``connId``; the SCIM wire path lives under ``scim.path`` and is kept as ``scimPath``.
-    """
-    attributes = _shadow_object_attributes(entry)
-    if attributes is None:
-        return None
-
-    connid_flags = attributes.get("connId")
-    flattened: Dict[str, Any] = dict(connid_flags) if isinstance(connid_flags, dict) else {}
-
-    scim_binding = attributes.get("scim")
-    scim_path = scim_binding.get("path") if isinstance(scim_binding, dict) else None
-    if isinstance(scim_path, str) and scim_path.strip():
-        flattened["scimPath"] = scim_path.strip()
-
-    name = attributes.get("name")
-    if isinstance(name, str) and name.strip():
-        flattened["name"] = name.strip()
-    elif "scimPath" in flattened:
-        flattened["name"] = flattened["scimPath"]
-    else:
-        return None
-
-    return flattened
 
 
 def _parse_shadow_connid_object_class(
@@ -352,7 +318,7 @@ def _parse_shadow_connid_object_class(
     source_reference: Optional[ChunkReference] = None,
 ) -> Optional[ConnIdObjectClassDefinition]:
     """Parse the shadow-wrapped ConnId object class contract into the common definition."""
-    scim_binding = _shadow_object_attributes(doc.get("scim")) or {}
+    scim_binding = shadow_object_attributes(doc.get(CONNDEV_SCIM_BINDING)) or {}
 
     name = doc.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -366,8 +332,8 @@ def _parse_shadow_connid_object_class(
         return None
 
     attributes: List[Dict[str, Any]] = []
-    for entry in as_dict_list(doc.get("attributes")):
-        flattened = _flatten_shadow_connid_attribute(entry)
+    for entry in conndev_attribute_entries(doc.get("attributes")):
+        flattened = flatten_shadow_connid_attribute(entry, binding_key=CONNDEV_SCIM_BINDING)
         if flattened is None:
             logger.warning(
                 "[Digester:Baseline] Ignoring malformed attribute shadow in ConnId object class document %s "
@@ -577,7 +543,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             )
             if connid_class is not None:
                 _set_case_insensitive(connid_classes, connid_class.name, connid_class)
-        elif "scim" in doc and "uid" in doc:
+        elif CONNDEV_SCIM_BINDING in doc and "uid" in doc:
             connid_class = _parse_shadow_connid_object_class(
                 doc,
                 session_id=session_id,
@@ -586,6 +552,15 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             )
             if connid_class is not None:
                 _set_case_insensitive(connid_classes, connid_class.name, connid_class)
+        elif CONNDEV_SQL_BINDING in doc and "uid" in doc:
+            # A SQL-bound object class in a SCIM baseline means the session apiType does not match
+            # the uploaded conndev export; extractors/sql reads these documents.
+            logger.info(
+                "[Digester:Baseline] Skipping SQL-bound conndev document %s for session %s: "
+                "the SCIM baseline only reads SCIM-bound contracts",
+                doc_id,
+                session_id,
+            )
         else:
             logger.warning(
                 "[Digester:Baseline] Skipping conndev document %s for session %s: unrecognized contract (keys: %s)",
