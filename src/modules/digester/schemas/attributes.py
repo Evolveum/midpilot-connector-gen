@@ -234,6 +234,25 @@ class AttributeInfoScim(AttributeInfoBase):
     )
 
 
+class AttributeInfoSql(AttributeInfoBase):
+    """Attribute metadata with its physical database binding."""
+
+    table: str = Field(
+        ...,
+        min_length=1,
+        description="Physical database table containing the attribute.",
+    )
+    column: str = Field(
+        ...,
+        min_length=1,
+        description="Physical database column mapped to the attribute.",
+    )
+    primaryKey: Optional[bool] = Field(
+        default=None,
+        description="Whether the column belongs to the table primary key.",
+    )
+
+
 class AttributeProcessingInfo(AttributeBooleanFlagsBase, RelevantDocumentationsMixin):
     relevant_sequences: List[DocProcessingSequenceItem] = Field(
         description=("List of document sequences that support the presence of this attribute, includes full text")
@@ -264,7 +283,7 @@ class AttributeResponse(BaseModel):
     Return an empty map when the object class has no properties in the fragment.
     """
 
-    attributes: Dict[str, AttributeInfoScim | AttributeInfoRest] = Field(
+    attributes: Dict[str, AttributeInfoSql | AttributeInfoScim | AttributeInfoRest] = Field(
         default_factory=dict,
         description="Map of attribute name to its normalized metadata (AttributeInfo).",
     )

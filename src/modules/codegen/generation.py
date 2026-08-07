@@ -36,6 +36,7 @@ from src.modules.codegen.utils.prompt_records import (
     build_attribute_mapping_records,
     build_connid_attribute_mapping_records,
     build_scim_contract_prompt_vars,
+    build_sql_attribute_mapping_records,
 )
 from src.modules.digester.schemas import RelationsResponse
 from src.session.info_metadata import (
@@ -69,7 +70,11 @@ async def generate_native_schema_code(
     assets = get_operation_assets("native_schema", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
 
-    records = build_attribute_mapping_records(attributes_payload)
+    records = (
+        build_sql_attribute_mapping_records(attributes_payload)
+        if protocol == ApiType.SQL
+        else build_attribute_mapping_records(attributes_payload)
+    )
     extra_prompt_vars = {"user_schema_docs": docs_text}
     if protocol == ApiType.SCIM:
         extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))

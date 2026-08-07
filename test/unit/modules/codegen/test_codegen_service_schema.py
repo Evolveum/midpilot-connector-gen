@@ -75,7 +75,14 @@ async def test_generate_native_schema():
 @pytest.mark.asyncio
 async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
     test_attributes = {
-        "username": {"type": "varchar", "description": "User login", "mandatory": True},
+        "Username": {
+            "type": "string",
+            "description": "User login",
+            "mandatory": True,
+            "table": "m_user",
+            "column": "nameorig",
+            "primaryKey": True,
+        },
     }
 
     with (
@@ -97,6 +104,9 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
     assert kwargs["system_prompt"] == get_native_schema_system_prompt
     assert kwargs["user_prompt"] == get_native_schema_user_prompt
     assert set(kwargs["extra_prompt_vars"]) == {"user_schema_docs"}
+    assert kwargs["records"][0]["table"] == "m_user"
+    assert kwargs["records"][0]["column"] == "nameorig"
+    assert kwargs["records"][0]["primaryKey"] is True
 
 
 @pytest.mark.asyncio
