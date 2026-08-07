@@ -87,7 +87,9 @@ def _column_from_connid_attribute(attribute: Dict[str, Any]) -> Optional[Dict[st
 
     column_name = attribute.get("column")
     if isinstance(column_name, str) and column_name.strip():
-        column["name"] = column_name.strip()
+        # ``name`` is the logical ConnId attribute exposed to midPoint. The SQL binding may
+        # point it at a differently named physical column, so keep both identities.
+        column["column"] = column_name.strip()
 
     if "required" in attribute:
         column["mandatory"] = bool(attribute.get("required"))

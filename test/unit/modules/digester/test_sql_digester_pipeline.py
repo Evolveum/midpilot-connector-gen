@@ -36,13 +36,16 @@ def _sql_doc(content: str) -> dict:
     }
 
 
-def _conndev_attribute(name: str, connid_type: str, **flags) -> dict:
+def _conndev_attribute(name: str, connid_type: str, *, column: str | None = None, **flags) -> dict:
+    attributes = {"name": name, "connId": {"type": connid_type, **flags}}
+    if column is not None:
+        attributes["sql"] = {"path": column}
     return {
         "type": "c:ShadowType",
         "object": {
             "exists": True,
             "objectClass": "ri:conndev_Attribute",
-            "attributes": {"name": name, "connId": {"type": connid_type, **flags}},
+            "attributes": attributes,
         },
     }
 
@@ -271,6 +274,66 @@ def test_collect_sql_tables_reads_conndev_export_columns():
     assert table["relevantDocumentations"] == [{"docId": doc["docId"], "chunkId": doc["chunkId"]}]
 
 
+def test_collect_sql_tables_preserves_logical_attribute_name_and_physical_column():
+    doc = _conndev_sql_doc(
+        "m_user",
+        "midpoint_user",
+        [_conndev_attribute("Username", "string", column="nameorig", required=True)],
+    )
+
+    table = collect_sql_tables([doc])[0]
+
+    assert table["columns"] == [{"name": "Username", "column": "nameorig", "connIdType": "string", "mandatory": True}]
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_collect_sql_tables_merges_conndev_and_ddl_column_metadata(reverse_order):
+    conndev_doc = _conndev_sql_doc(
+        "m_user",
+        "midpoint_user",
+        [
+            _conndev_attribute(
+                "Username",
+                "string",
+                column="nameorig",
+                required=True,
+                creatable=False,
+                updateable=False,
+            )
+        ],
+    )
+    ddl_doc = _sql_doc(
+        """
+        CREATE TABLE m_user (
+          nameorig VARCHAR(255) NOT NULL PRIMARY KEY
+        );
+        """
+    )
+    docs = [conndev_doc, ddl_doc]
+    if reverse_order:
+        docs.reverse()
+
+    table = collect_sql_tables(docs)[0]
+
+    assert table["objectClass"] == "m_user"
+    assert table["databaseSchema"] == "midpoint_user"
+    assert table["source"] == "conndev"
+    assert table["primaryKey"] == ["nameorig"]
+    assert table["columns"] == [
+        {
+            "name": "Username",
+            "column": "nameorig",
+            "connIdType": "string",
+            "mandatory": True,
+            "creatable": False,
+            "updatable": False,
+            "type": "VARCHAR(255)",
+            "nullable": False,
+            "primaryKey": True,
+        }
+    ]
+
+
 def test_collect_sql_tables_does_not_invent_tables_from_scalar_json_fields():
     """``uid``/``name`` are scalar fields, not column-less tables."""
     doc = _sql_doc(json.dumps({"uid": "m_user", "name": "m_user", "displayName": "User"}))
@@ -345,6 +408,23 @@ async def test_extract_sql_attributes_from_conndev_export(mock_digester_update_j
     assert attributes["oid"]["updatable"] is False
     assert attributes["nameorig"]["description"] == "Column 'nameorig' from table 'midpoint_user.m_user'."
     assert result["relevantDocumentations"] == [{"doc_id": doc["docId"], "chunk_id": doc["chunkId"]}]
+
+
+@pytest.mark.asyncio
+async def test_extract_sql_attributes_maps_logical_name_to_physical_column(mock_digester_update_job_progress):
+    doc = _conndev_sql_doc(
+        "m_user",
+        "midpoint_user",
+        [_conndev_attribute("Username", "string", column="nameorig")],
+    )
+
+    result = await extract_sql_attributes([doc], "m_user", uuid4())
+
+    assert set(result["result"]["attributes"]) == {"Username"}
+    assert result["result"]["attributes"]["Username"]["column"] == "nameorig"
+    assert result["result"]["attributes"]["Username"]["description"] == (
+        "Column 'nameorig' from table 'midpoint_user.m_user'."
+    )
 
 
 @pytest.mark.asyncio

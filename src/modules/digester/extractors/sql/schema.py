@@ -8,7 +8,7 @@ from collections import OrderedDict
 from typing import Any, Iterable
 
 from src.documents.chunking import normalize_to_text
-from src.modules.digester.extractors.sql.conndev_schema import extract_conndev_sql_tables
+from src.modules.digester.extractors.sql.conndev_schema import extract_conndev_sql_tables, is_conndev_table
 from src.modules.digester.schemas.common import ChunkReference, build_chunk_references_from_doc_items
 
 _CREATE_TABLE_RE = re.compile(
@@ -27,6 +27,13 @@ _PRIMARY_KEY_COLUMNS_RE = re.compile(
 )
 _IDENTIFIER_PREFIX_RE = re.compile(r"^\s*(?P<identifier>\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[\w.]+)")
 _TABLE_KEYS = ("tables", "schema", "databaseSchema", "nativeSchema")
+
+# Database declarations are authoritative for physical constraints and SQL types. Conndev is
+# authoritative for the logical ConnId identity and capability flags. Keeping the precedence
+# explicit makes a mixed Conndev + DDL session independent of document order.
+_DATABASE_COLUMN_FIELDS = frozenset({"type", "nullable", "primaryKey", "foreignKey", "default", "generated"})
+_DATABASE_TABLE_FIELDS = frozenset({"primaryKey", "foreignKeys", "description"})
+_CONNDEV_TABLE_FIELDS = frozenset({"objectClass", "databaseSchema", "source"})
 
 
 def _clean_identifier(value: Any) -> str:
@@ -217,6 +224,78 @@ def _merge_relevant_documentations(existing: dict[str, Any], incoming: list[Any]
             seen.add(pair)
 
 
+def _column_identity(column: dict[str, Any]) -> str:
+    """Return the physical database-column identity used to join Conndev and DDL records."""
+    return _clean_identifier(column.get("column") or column.get("name")).lower()
+
+
+def _merge_cross_source_column(conndev_column: dict[str, Any], database_column: dict[str, Any]) -> dict[str, Any]:
+    """Combine one logical ConnId attribute with its physical database declaration."""
+    merged = {**database_column, **conndev_column}
+    for field in _DATABASE_COLUMN_FIELDS:
+        if field in database_column:
+            merged[field] = database_column[field]
+    return merged
+
+
+def _merge_columns(
+    existing: dict[str, Any], incoming: dict[str, Any], *, existing_is_conndev: bool, incoming_is_conndev: bool
+) -> list[dict[str, Any]]:
+    existing_columns = [column for column in existing.get("columns", []) if isinstance(column, dict)]
+    incoming_columns = [column for column in incoming.get("columns", []) if isinstance(column, dict)]
+
+    if existing_is_conndev != incoming_is_conndev:
+        conndev_columns = existing_columns if existing_is_conndev else incoming_columns
+        database_columns = incoming_columns if existing_is_conndev else existing_columns
+        database_by_name = {_column_identity(column): column for column in database_columns}
+        merged_columns: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        # Conndev order and logical names are stable; database-only columns follow afterwards.
+        for conndev_column in conndev_columns:
+            identity = _column_identity(conndev_column)
+            database_column = database_by_name.get(identity)
+            merged_columns.append(
+                _merge_cross_source_column(conndev_column, database_column)
+                if identity and database_column is not None
+                else conndev_column
+            )
+            if identity:
+                seen.add(identity)
+        merged_columns.extend(
+            column for column in database_columns if not (identity := _column_identity(column)) or identity not in seen
+        )
+        return merged_columns
+
+    # Preserve the established first-document precedence for duplicate records from the same
+    # source, while still adding columns that only the later document declares.
+    merged_columns = list(existing_columns)
+    seen = {_column_identity(column) for column in existing_columns}
+    merged_columns.extend(
+        column for column in incoming_columns if not (identity := _column_identity(column)) or identity not in seen
+    )
+    return merged_columns
+
+
+def _merge_table_metadata(
+    existing: dict[str, Any], incoming: dict[str, Any], *, existing_is_conndev: bool, incoming_is_conndev: bool
+) -> None:
+    """Merge table-level metadata with protocol-specific source precedence."""
+    for key, value in incoming.items():
+        if key not in {"columns", "relevantDocumentations"} and key not in existing:
+            existing[key] = value
+
+    if existing_is_conndev != incoming_is_conndev:
+        conndev_table = existing if existing_is_conndev else incoming
+        database_table = incoming if existing_is_conndev else existing
+        for field in _CONNDEV_TABLE_FIELDS:
+            if field in conndev_table:
+                existing[field] = conndev_table[field]
+        for field in _DATABASE_TABLE_FIELDS:
+            if field in database_table:
+                existing[field] = database_table[field]
+
+
 def _extract_tables_from_item(item: dict, source_ref: dict[str, str] | None) -> list[dict[str, Any]]:
     """
     Read one documentation item as SQL tables.
@@ -248,11 +327,20 @@ def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
             if existing is None:
                 tables_by_name[name.lower()] = table
                 continue
-            existing_columns = {str(column.get("name")).lower(): column for column in existing.get("columns", [])}
-            for column in table.get("columns", []):
-                column_name = str(column.get("name") or "").lower()
-                if column_name and column_name not in existing_columns:
-                    existing.setdefault("columns", []).append(column)
+            existing_is_conndev = is_conndev_table(existing)
+            incoming_is_conndev = is_conndev_table(table)
+            existing["columns"] = _merge_columns(
+                existing,
+                table,
+                existing_is_conndev=existing_is_conndev,
+                incoming_is_conndev=incoming_is_conndev,
+            )
+            _merge_table_metadata(
+                existing,
+                table,
+                existing_is_conndev=existing_is_conndev,
+                incoming_is_conndev=incoming_is_conndev,
+            )
             _merge_relevant_documentations(existing, table.get("relevantDocumentations", []))
 
     return list(tables_by_name.values())

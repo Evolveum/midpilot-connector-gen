@@ -30,6 +30,9 @@ def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tup
     name = str(column.get("name") or "").strip()
     if not name:
         return None
+    column_name = str(column.get("column") or name).strip()
+    if not column_name:
+        return None
 
     attr_type, attr_format = _column_attribute_type(column)
 
@@ -54,7 +57,7 @@ def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tup
     return name, {
         "type": attr_type,
         "format": attr_format,
-        "description": _column_description(name, table),
+        "description": _column_description(column_name, table),
         "mandatory": mandatory,
         "updatable": bool(updatable),
         "creatable": bool(creatable),
@@ -62,7 +65,7 @@ def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tup
         "multivalue": False,
         "returnedByDefault": True,
         "table": table.get("table"),
-        "column": name,
+        "column": column_name,
         "primaryKey": column.get("primaryKey"),
         "relevantDocumentations": relevant_documentations,
     }
