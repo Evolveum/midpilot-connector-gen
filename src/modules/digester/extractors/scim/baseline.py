@@ -41,8 +41,6 @@ from pydantic import ValidationError
 from src.core.db import async_session_maker
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.modules.digester.extractors.conndev import (
-    CONNDEV_SCIM_BINDING,
-    CONNDEV_SQL_BINDING,
     conndev_attribute_entries,
     flatten_shadow_connid_attribute,
     shadow_object_attributes,
@@ -53,7 +51,11 @@ from src.modules.digester.schemas.scim import (
     ScimServiceProviderConfig,
 )
 from src.shared.coerce import as_dict_list
-from src.shared.content_types import is_conndev_documentation_item
+from src.shared.content_types import (
+    CONNDEV_SCIM_BINDING,
+    CONNDEV_SQL_BINDING,
+    is_conndev_documentation_item,
+)
 
 logger = logging.getLogger(__name__)
 

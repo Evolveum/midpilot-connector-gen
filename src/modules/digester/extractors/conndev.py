@@ -26,18 +26,14 @@ from typing import Any, Dict, List, Optional
 
 from src.modules.digester.schemas.common import ChunkReference
 from src.shared.coerce import as_dict_list
+from src.shared.content_types import (
+    CONNDEV_SCIM_BINDING,
+    CONNDEV_SQL_BINDING,
+    detect_conndev_object_class_api_type,
+)
 from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
-
-CONNDEV_SCIM_BINDING = "scim"
-CONNDEV_SQL_BINDING = "sql"
-
-# Protocol discriminator: the binding key present on a conndev object-class document.
-_BINDING_API_TYPES: Dict[str, ApiType] = {
-    CONNDEV_SCIM_BINDING: ApiType.SCIM,
-    CONNDEV_SQL_BINDING: ApiType.SQL,
-}
 
 
 @dataclass(frozen=True)
@@ -119,12 +115,7 @@ def detect_object_class_binding(doc: Any) -> Optional[ApiType]:
     ``None`` means the document is not a shadow-wrapped object-class export (it may still be
     another conndev contract, e.g. a SCIM schema or ServiceProviderConfig document).
     """
-    if not isinstance(doc, dict) or "uid" not in doc:
-        return None
-    for binding_key, api_type in _BINDING_API_TYPES.items():
-        if binding_key in doc:
-            return api_type
-    return None
+    return detect_conndev_object_class_api_type(doc)
 
 
 def parse_sql_object_class_document(

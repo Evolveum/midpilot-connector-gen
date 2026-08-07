@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -129,15 +130,24 @@ async def test_process_documentation_worker_updates_progress_per_chunk_and_persi
 
 
 @pytest.mark.asyncio
-async def test_process_documentation_worker_skips_llm_for_conndev_export():
+@pytest.mark.parametrize(
+    ("filename", "document", "expected_protocol"),
+    [
+        ("conndev_ScimSchema_Device.json", {"schemaContent": "{}", "name": "Device"}, "SCIM"),
+        ("conndev_ObjectClass_Account.json", {"uid": "Account", "name": "Account", "sql": {}}, "SQL"),
+    ],
+)
+async def test_process_documentation_worker_skips_llm_and_labels_conndev_protocol(
+    filename, document, expected_protocol
+):
     raw_upload = RawUploadedDocumentation(
         data=b"raw",
-        filename="conndev_ScimSchema_Device.json",
+        filename=filename,
         content_type="application/com.evolveum.conndev+json",
         content_hash="hash",
     )
     uploaded = UploadedDocumentation(
-        text='{"schemaContent":"{}","name":"Device"}',
+        text=json.dumps(document),
         filename=raw_upload.filename,
         content_type=raw_upload.content_type,
         metadata={
@@ -180,5 +190,6 @@ async def test_process_documentation_worker_skips_llm_for_conndev_export():
     assert result["chunks_processed"] == 1
     process_with_llm.assert_not_awaited()
     persisted = persist_chunk.await_args.kwargs["chunk"]
+    assert persisted.summary == f"midPoint connector-development {expected_protocol} export: {filename}"
     assert persisted.metadata["category"] == "spec_json"
-    assert persisted.metadata["tags"] == ["scim", "schema", "conndev"]
+    assert persisted.metadata["tags"] == [expected_protocol.lower(), "schema", "conndev"]
