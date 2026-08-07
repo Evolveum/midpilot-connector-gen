@@ -71,17 +71,31 @@ class AttributesNotFoundError(AppError):
 
 
 class OperationSurfaceNotFoundError(AppError):
-    """Raised when the endpoints/table metadata needed to generate operations are missing.
-
-    The message is protocol-dependent (REST endpoints vs SQL table metadata) and is
-    therefore supplied by the caller rather than built here.
-    """
+    """Raised when the endpoints needed to generate REST operations have not been extracted yet."""
 
     status_code = 404
     code = "operation_surface_not_found"
 
-    def __init__(self, message: str):
-        super().__init__(message)
+    def __init__(self, object_class: str, session_id: UUID):
+        super().__init__(
+            f"No endpoints found for {object_class} in session {session_id}. "
+            f"Please run /classes/{object_class}/endpoints endpoint first."
+        )
+
+
+class EndpointExtractionNotSupportedError(AppError):
+    """Raised when endpoint extraction is requested for a protocol that has no endpoints."""
+
+    status_code = 422
+    code = "endpoint_extraction_not_supported"
+
+    def __init__(self, object_class: str, api_type: str):
+        super().__init__(
+            f"Endpoint extraction is not applicable to a '{api_type}' session ({object_class}). "
+            "A database connector has no endpoints: its tables come from the uploaded schema and "
+            "code generation reads the table and column of each attribute from /classes/"
+            f"{object_class}/attributes."
+        )
 
 
 class RelationsNotFoundError(AppError):

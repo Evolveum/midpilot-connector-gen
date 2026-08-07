@@ -49,16 +49,7 @@ _INITIAL_STAGE = "preparing"
 _INITIAL_MESSAGE = "Preparing code generation from relevant chunks"
 
 
-def missing_operation_surface_detail(protocol: ApiType, object_class: str, session_id: UUID) -> str:
-    if protocol == ApiType.SQL:
-        return (
-            f"No SQL table metadata found for {object_class} in session {session_id}. "
-            "Please run the table/schema extraction step for this object class first."
-        )
-    return (
-        f"No endpoints found for {object_class} in session {session_id}. "
-        f"Please run /classes/{object_class}/endpoints endpoint first."
-    )
+_PROTOCOLS_REQUIRING_ENDPOINTS = frozenset({ApiType.REST})
 
 
 # This part is for codegen Create/Update/Delete/Search
@@ -101,8 +92,8 @@ async def schedule_operation_job(
     context_payload = codegen_input.context_payload() if codegen_input is not None else {}
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and protocol != ApiType.SCIM:
-        raise OperationSurfaceNotFoundError(missing_operation_surface_detail(protocol, object_class, session_id))
+    if eps is None and protocol in _PROTOCOLS_REQUIRING_ENDPOINTS:
+        raise OperationSurfaceNotFoundError(object_class, session_id)
 
     job_input: dict[str, Any] = {
         "sessionId": session_id,

@@ -1,12 +1,81 @@
 = SQL search operation
 
-SQL search generation should use the selected table records for the object class.
+The database connector implements search itself from the native schema mapping: the table, the
+column mapping and the primary key are already declared there. The `search` block therefore only
+declares which search capabilities the connector may use.
 
-== Search rules
+== Built-in search
 
-* Prefer primary key predicates for get-by-id.
-* For list/search operations, select from the main table mapped to the object class.
-* Add joins only for tables listed in the object class mapping or required by foreign keys in the uploaded schema.
-* Respect nullable columns and use explicit column names.
-* Keep pagination/filter behavior conservative when the schema lacks index or ordering details.
+[source,groovy]
+----
+objectClass("m_user") {
+    search {
+        sql {
+            builtIn {
+                enabled true
+                emptyFilterSupported true
+                anyFilterSupported true
+            }
+        }
+    }
+}
+----
 
+`builtIn` accepts exactly three keys:
+
+* `enabled` - use the framework's built-in search for this object class.
+* `emptyFilterSupported` - support a search with no filter (get all rows).
+* `anyFilterSupported` - support any ConnId filter; the framework translates it into predicates
+  over the mapped columns.
+
+Nothing else belongs inside `builtIn`. The framework owns statement construction, identity
+resolution from the primary key, type conversion and result mapping.
+
+== Search intents
+
+Generation is intent-scoped; declare only what the requested intent needs.
+
+|===
+|Intent |Declaration
+
+|`all` |`enabled true` and `emptyFilterSupported true`
+|`filter` |`enabled true` and `anyFilterSupported true`
+|`id` |`enabled true` only - identity is resolved from the primary key
+|===
+
+== Attribute resolvers and custom search
+
+`attributeResolver` and `custom` blocks have the same shape as in the REST and SCIM connectors and
+sit beside `sql` inside `search`:
+
+[source,groovy]
+----
+objectClass("m_user") {
+    search {
+        attributeResolver {
+            // only when a mapped column needs resolving beyond the native schema
+        }
+
+        custom {
+            // only when built-in search cannot serve this object class
+        }
+
+        sql {
+            builtIn {
+                enabled true
+            }
+        }
+    }
+}
+----
+
+Generate them only when the uploaded schema or the provider documentation proves the built-in
+behavior is insufficient.
+
+== Rules
+
+* Never render a table name as `endpoint(...)`, a path, or a hand-written SQL statement.
+* Never generate REST or SCIM constructs (`httpOperation`, `request {}`, response extractors,
+  query parameters).
+* A conndev SQL export carries no primary keys. When no attribute is marked `primaryKey`, leave a
+  TODO instead of guessing the identity column from a column name.

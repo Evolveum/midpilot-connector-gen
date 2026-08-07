@@ -46,6 +46,12 @@ from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 
+_DETERMINISTIC_CONTEXT_PROTOCOLS = frozenset({ApiType.SCIM, ApiType.SQL})
+
+
+def _uses_deterministic_context(protocol: ApiType) -> bool:
+    return protocol in _DETERMINISTIC_CONTEXT_PROTOCOLS
+
 
 async def generate_native_schema_code(
     attributes_payload: AttributesPayload,
@@ -197,6 +203,7 @@ async def generate_search_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
@@ -244,6 +251,7 @@ async def generate_create_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
@@ -291,6 +299,7 @@ async def generate_update_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
@@ -338,6 +347,7 @@ async def generate_delete_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks

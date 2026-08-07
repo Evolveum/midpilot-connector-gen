@@ -3,12 +3,15 @@
 # Licensed under the EUPL-1.2 or later.
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from src.modules.digester import orchestration
+from src.modules.digester.errors import EndpointExtractionNotSupportedError
 from src.modules.digester.extractors.conndev import detect_object_class_binding
+from src.modules.digester.extractors.endpoints import extract_endpoints
 from src.modules.digester.extractors.object_class import extract_object_classes
 from src.modules.digester.extractors.sql.attributes import extract_sql_attributes
 from src.modules.digester.extractors.sql.schema import (
@@ -17,7 +20,6 @@ from src.modules.digester.extractors.sql.schema import (
     object_class_name_from_table,
     tables_for_object_class,
 )
-from src.modules.digester.extractors.sql.tables import extract_sql_tables
 from src.modules.digester.schemas import ObjectClassesResponse
 from src.shared.enums import ApiType
 
@@ -71,7 +73,6 @@ def mock_sql_update_job_progress():
     with (
         patch("src.modules.digester.extractors.sql.attributes.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.sql.object_class.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.extractors.sql.tables.update_job_progress", new_callable=AsyncMock),
     ):
         yield
 
@@ -390,14 +391,43 @@ async def test_extract_sql_attributes_treats_table_level_primary_key_as_non_upda
 
 
 @pytest.mark.asyncio
-async def test_extract_sql_tables_returns_codegen_compatible_endpoints_key(mock_digester_update_job_progress):
-    doc = _sql_doc(
-        """
-        {"tables": [{"name": "users", "columns": [{"name": "id", "type": "uuid"}]}]}
-        """
-    )
+async def test_endpoint_extraction_is_rejected_for_a_sql_session():
+    """A database connector has no endpoints, so the request must fail instead of extracting nothing."""
+    with patch(
+        "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+        new_callable=AsyncMock,
+        return_value=ApiType.SQL,
+    ):
+        with pytest.raises(EndpointExtractionNotSupportedError) as excinfo:
+            await extract_endpoints([_sql_doc("CREATE TABLE m_user (oid uuid);")], "m_user", uuid4(), [], uuid4())
 
-    result = await extract_sql_tables([doc], "User", uuid4())
+    assert "not applicable" in str(excinfo.value)
 
-    assert list(result["result"]) == ["endpoints"]
-    assert result["result"]["endpoints"][0]["table"] == "users"
+
+@pytest.mark.asyncio
+async def test_endpoint_extraction_is_rejected_before_a_job_is_created():
+    """The request path rejects it too, so no job row and no documentation selection happen."""
+    repo = MagicMock()
+    repo.db = MagicMock()
+
+    with (
+        patch(
+            "src.modules.digester.orchestration.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SQL,
+        ),
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch("src.modules.digester.orchestration.DocumentationSelector") as mock_selector,
+    ):
+        with pytest.raises(EndpointExtractionNotSupportedError):
+            await orchestration.schedule_endpoint_extraction(
+                db=MagicMock(),
+                repo=repo,
+                session_id=uuid4(),
+                object_class="m_user",
+                skip_cache=False,
+                api_type=None,
+            )
+
+    mock_schedule.assert_not_awaited()
+    mock_selector.assert_not_called()

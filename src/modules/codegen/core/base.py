@@ -191,7 +191,7 @@ class BaseGroovyGenerator(ABC):
             per_chunk_counts = {}
             chunk_ids_included = []
             logger.info(
-                "%s No LLM text chunks remain after conndev filtering; running one SCIM context-only generation pass",
+                "%s No LLM text chunks remain after conndev filtering; running one context-only generation pass",
                 self.config.logger_prefix,
             )
 
