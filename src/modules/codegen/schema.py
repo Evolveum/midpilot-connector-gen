@@ -21,6 +21,15 @@ PreferredAuthorizations: TypeAlias = Optional[List[Dict[str, Any]]]
 
 @dataclass
 class OperationConfig:
+    """
+    Static configuration of one Groovy generation operation.
+
+    ``context_only_for_conndev`` marks a protocol whose operation context is deterministic
+    (SCIM contracts, SQL tables): conndev exports are never fed to the LLM as text chunks, so
+    a session built only from them would otherwise have nothing to generate from. Such a
+    protocol instead runs a single pass on the extracted context alone.
+    """
+
     operation_name: str
     system_prompt: str
     user_prompt: str

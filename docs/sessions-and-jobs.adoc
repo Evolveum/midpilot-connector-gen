@@ -41,7 +41,8 @@ link:pipeline/scrape.adoc[scrape stage], or by direct upload:
 | Endpoint | Purpose
 
 | `POST /api/session/{sessionId}/documentation`
-| Upload a file; it is chunked and LLM-processed in a background job.
+| Upload a file; it is chunked and processed in a background job (LLM-based
+  for normal documents, deterministic for conndev exports).
 
 | `PUT /api/session/{sessionId}/documentation`
 | Replace *all* documentation in the session with one uploaded file.
@@ -59,11 +60,19 @@ link:pipeline/scrape.adoc[scrape stage], or by direct upload:
 | Remove documentation.
 |===
 
-NOTE: Uploaded documentation goes through the same chunking and LLM
-chunk-processing as scraped documentation, so the digester treats both sources
-identically. The application name/version for processing is taken from the
-session's `discoveryInput` or `scrapeInput` — run (or at least record) those
-inputs first for best results.
+SQL inputs can be uploaded directly as `.sql`/SQL media types, as a JSON table
+list (prefer `application/sql+json` so schema-preserving chunking is selected),
+or as a midPoint conndev export (`.conndev`,
+`application/conndev+json`, or
+`application/com.evolveum.conndev+json`). See
+link:pipeline/digester.adoc#sql-schema-sources[SQL sources of schema].
+
+NOTE: Normal uploads go through the same chunking and LLM chunk-processing as
+scraped documentation, so the digester treats both sources identically.
+Conndev exports are preserved and classified from their binding
+deterministically; they do not call the chunk-processing LLM. The application
+name/version for normal processing is taken from the session's `discoveryInput`
+or `scrapeInput` — run (or at least record) those inputs first for best results.
 
 == The asynchronous job pattern
 

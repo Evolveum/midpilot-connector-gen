@@ -8,7 +8,7 @@ relevant links, and converts the content into processed documentation chunks
 stored in the session — the input for the link:digester.adoc[digester].
 
 Module: `src/modules/scrape/` (crawling built on crawl4ai + Playwright via
-`src/common/web/`).
+`src/integrations/web/`).
 
 == Endpoints
 
@@ -38,10 +38,12 @@ Module: `src/modules/scrape/` (crawling built on crawl4ai + Playwright via
    `+SCRAPE_AND_PROCESS__MAX_SCRAPER_ITERATIONS+` (default 4) iterations.
 4. As each page is saved, it is *chunked* (token-based,
    `+SCRAPE_AND_PROCESS__CHUNK_LENGTH+` tokens per chunk) and each chunk is
-   *processed by an LLM* (`src/common/chunk_processor/`): cleaned up,
+   *processed by an LLM* (`src/documents/processing/`): cleaned up,
    categorized (`spec_json`, `reference_api`, `tutorial`, …) and annotated
-   with metadata. Oversized preserved schemas (SQL/SCIM/OpenAPI) are split
-   into structurally valid sub-schemas instead of naive cuts.
+   with metadata. Preserved SQL/SCIM schemas that exceed the single-schema
+   budget are split into structurally valid sub-schemas instead of naive cuts.
+   Conndev uploads are the exception: their binding is classified
+   deterministically and the chunk-processing LLM is skipped.
 5. Processed chunks are persisted as `documentation_items` rows with
    `source='scrape'`.
 

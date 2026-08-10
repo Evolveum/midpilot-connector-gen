@@ -6,6 +6,7 @@
 
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
 
@@ -29,13 +30,19 @@ from src.modules.digester.prompts.rest.sorting_output_prompts import (
     sort_object_classes_system_prompt,
     sort_object_classes_user_prompt,
 )
+from src.modules.digester.prompts.sql.object_class_ranking_prompts import (
+    sort_sql_object_classes_system_prompt,
+    sort_sql_object_classes_user_prompt,
+)
 from src.modules.digester.schemas import (
     BaseObjectClass,
     ExtendedObjectClass,
     FinalObjectClass,
+    ObjectClassConfidenceAssignmentsResponse,
     ObjectClassesConfidenceResponse,
     ObjectClassesRankedResponse,
     ObjectClassesResponse,
+    ObjectClassNameOrderResponse,
     RankedObjectClass,
 )
 from src.shared.enums import JobStage
@@ -54,10 +61,22 @@ def _alpha_sort_key(obj_class: BaseObjectClass) -> str:
     return obj_class.name.strip().lower()
 
 
-def _to_confidence_payload(obj_class: ExtendedObjectClass) -> Dict[str, Any]:
+def _ranking_description(
+    obj_class: ExtendedObjectClass,
+    ranking_descriptions: Mapping[str, str] | None,
+) -> str:
+    if ranking_descriptions is None:
+        return obj_class.description
+    return ranking_descriptions.get(canonical_object_class_key(obj_class.name), obj_class.description)
+
+
+def _to_confidence_payload(
+    obj_class: ExtendedObjectClass,
+    ranking_descriptions: Mapping[str, str] | None = None,
+) -> Dict[str, Any]:
     return {
         "name": obj_class.name,
-        "description": obj_class.description,
+        "description": _ranking_description(obj_class, ranking_descriptions),
     }
 
 
@@ -106,23 +125,47 @@ def _to_final_object_class(
 async def _sort_bucket_by_importance(
     object_classes: List[RankedObjectClass],
     confidence_level: ConfidenceLevel,
+    *,
+    sql_compact: bool = False,
+    ranking_descriptions: Mapping[str, str] | None = None,
 ) -> List[RankedObjectClass]:
     if len(object_classes) <= 1:
         return list(object_classes)
 
     llm_sort = get_default_llm()
-    sort_chain = build_structured_chain(
-        sort_object_classes_system_prompt,
-        sort_object_classes_user_prompt,
-        ObjectClassesRankedResponse,
-        llm=llm_sort,
-        user_role="human",
-    )
+    if sql_compact:
+        sort_chain = build_structured_chain(
+            sort_sql_object_classes_system_prompt,
+            sort_sql_object_classes_user_prompt,
+            ObjectClassNameOrderResponse,
+            llm=llm_sort,
+            user_role="human",
+        )
+    else:
+        sort_chain = build_structured_chain(
+            sort_object_classes_system_prompt,
+            sort_object_classes_user_prompt,
+            ObjectClassesRankedResponse,
+            llm=llm_sort,
+            user_role="human",
+        )
 
     original_map = {obj.name.strip().lower(): obj for obj in object_classes}
     alphabetical_bucket = sorted(object_classes, key=lambda item: item.name.strip().lower())
-    items_for_sorting = [item.model_dump(by_alias=True, exclude={"endpoints", "attributes"}) for item in object_classes]
-    items_json = json.dumps(items_for_sorting)
+    if sql_compact:
+        items_for_sorting = [
+            {
+                "name": item.name,
+                "description": _ranking_description(item, ranking_descriptions),
+            }
+            for item in object_classes
+        ]
+        items_json = json.dumps(items_for_sorting, separators=(",", ":"))
+    else:
+        items_for_sorting = [
+            item.model_dump(by_alias=True, exclude={"endpoints", "attributes"}) for item in object_classes
+        ]
+        items_json = json.dumps(items_for_sorting)
 
     try:
         logger.info(
@@ -130,12 +173,12 @@ async def _sort_bucket_by_importance(
             confidence_level,
             len(object_classes),
         )
-        sort_result = cast(
-            ObjectClassesRankedResponse,
-            await invoke_llm(
-                sort_chain,
-                {"items_json": items_json, "confidence_level": confidence_level},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:SortObjectClasses"),
+        sort_result = await invoke_llm(
+            sort_chain,
+            {"items_json": items_json, "confidence_level": confidence_level},
+            config=RunnableConfig(
+                callbacks=[langfuse_handler],
+                run_name="Digester:SortSqlObjectClasses" if sql_compact else "Digester:SortObjectClasses",
             ),
         )
         logger.debug("[Digester:ObjectClasses] Bucket sorting LLM raw (%s): %r", confidence_level, (sort_result or ""))
@@ -144,8 +187,13 @@ async def _sort_bucket_by_importance(
             used: set[str] = set()
             sorted_bucket: List[RankedObjectClass] = []
 
-            for ranked in sort_result.objectClasses:
-                key = ranked.name.strip().lower()
+            ordered_names = (
+                sort_result.objectClasses
+                if sql_compact
+                else [ranked.name for ranked in cast(ObjectClassesRankedResponse, sort_result).objectClasses]
+            )
+            for ranked_name in ordered_names:
+                key = ranked_name.strip().lower()
                 if key in original_map and key not in used:
                     sorted_bucket.append(original_map[key])
                     used.add(key)
@@ -171,6 +219,39 @@ async def deduplicate_and_sort_object_classes(
     all_object_classes: List[ExtendedObjectClass],
     job_id: UUID,
     class_to_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> ObjectClassesResponse:
+    """Apply the shared REST/SCIM confidence and ordering contract."""
+    return await _deduplicate_and_sort_object_classes(
+        all_object_classes,
+        job_id,
+        class_to_chunks,
+        sql_compact=False,
+    )
+
+
+async def deduplicate_and_sort_sql_object_classes(
+    all_object_classes: List[ExtendedObjectClass],
+    job_id: UUID,
+    class_to_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ranking_descriptions: Mapping[str, str] | None = None,
+) -> ObjectClassesResponse:
+    """Apply the same final ranking semantics with compact SQL-only LLM contracts."""
+    return await _deduplicate_and_sort_object_classes(
+        all_object_classes,
+        job_id,
+        class_to_chunks,
+        sql_compact=True,
+        ranking_descriptions=ranking_descriptions,
+    )
+
+
+async def _deduplicate_and_sort_object_classes(
+    all_object_classes: List[ExtendedObjectClass],
+    job_id: UUID,
+    class_to_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    *,
+    sql_compact: bool,
+    ranking_descriptions: Mapping[str, str] | None = None,
 ) -> ObjectClassesResponse:
     """Deduplicate classes, assign LLM confidence, and apply final shared ordering.
 
@@ -199,29 +280,40 @@ async def deduplicate_and_sort_object_classes(
             message="Assigning confidence levels to object classes",
         )
 
-        items_for_confidence = [_to_confidence_payload(oc) for oc in dedup_list]
+        items_for_confidence = [
+            _to_confidence_payload(oc, ranking_descriptions if sql_compact else None) for oc in dedup_list
+        ]
         llm_filter = get_default_llm()
-        confidence_parser: PydanticOutputParser[ObjectClassesConfidenceResponse] = PydanticOutputParser(
-            pydantic_object=ObjectClassesConfidenceResponse
-        )
+        confidence_model = ObjectClassConfidenceAssignmentsResponse if sql_compact else ObjectClassesConfidenceResponse
+        confidence_parser: PydanticOutputParser[Any] = PydanticOutputParser(pydantic_object=confidence_model)
 
         developer_message = SystemMessage(
-            content=get_object_classes_relevancy_system_prompt() + "\n\n" + confidence_parser.get_format_instructions()
+            content=get_object_classes_relevancy_system_prompt(compact_output=sql_compact)
+            + "\n\n"
+            + confidence_parser.get_format_instructions()
         )
         developer_message.additional_kwargs = {"__openai_role__": "developer"}
 
-        user_message = HumanMessage(content=get_object_classes_relevancy_user_prompt(json.dumps(items_for_confidence)))
+        confidence_json = (
+            json.dumps(items_for_confidence, separators=(",", ":")) if sql_compact else json.dumps(items_for_confidence)
+        )
+        user_message = HumanMessage(
+            content=get_object_classes_relevancy_user_prompt(
+                confidence_json,
+                source_description="a database schema" if sql_compact else "API documentation",
+            )
+        )
         user_message.additional_kwargs = {"__openai_role__": "user"}
 
         chat_prompts = ChatPromptTemplate.from_messages([developer_message, user_message])
         confidence_chain = make_basic_chain(prompt=chat_prompts, llm=llm_filter, parser=confidence_parser)
 
-        confidence_result = cast(
-            ObjectClassesConfidenceResponse,
-            await invoke_llm(
-                confidence_chain,
-                {},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:ObjectClassConfidence"),
+        confidence_result = await invoke_llm(
+            confidence_chain,
+            {},
+            config=RunnableConfig(
+                callbacks=[langfuse_handler],
+                run_name=("Digester:SqlObjectClassConfidence" if sql_compact else "Digester:ObjectClassConfidence"),
             ),
         )
         logger.info("[Digester:ObjectClasses] Confidence LLM raw: %r", (confidence_result or ""))
@@ -274,7 +366,12 @@ async def deduplicate_and_sort_object_classes(
             if not bucket:
                 continue
             if level == ConfidenceLevel.HIGH:
-                sorted_bucket = await _sort_bucket_by_importance(bucket, level)
+                sorted_bucket = await _sort_bucket_by_importance(
+                    bucket,
+                    level,
+                    sql_compact=sql_compact,
+                    ranking_descriptions=ranking_descriptions,
+                )
             else:
                 sorted_bucket = sorted(bucket, key=lambda item: item.name.strip().lower())
             sorted_ranked.extend(sorted_bucket)

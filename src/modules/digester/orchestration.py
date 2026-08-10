@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.filtering.filter import filter_documentation_items
 from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
-from src.modules.digester.errors import ObjectClassesNotFoundError
+from src.modules.digester.errors import EndpointExtractionNotSupportedError, ObjectClassesNotFoundError
 from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.extractors.auth import extract_auth
 from src.modules.digester.extractors.connectivity_endpoint import extract_connectivity_endpoint
@@ -40,7 +40,7 @@ from src.modules.digester.selection import (
     metadata_input,
 )
 from src.session.errors import SessionNotFoundError
-from src.session.info_metadata import get_session_base_api_url
+from src.session.info_metadata import get_session_base_api_url, resolve_effective_api_type
 from src.shared.enums import ApiType
 
 _DOCUMENTATION_WAIT_TIMEOUT_SECONDS = 750
@@ -150,7 +150,14 @@ async def schedule_endpoint_extraction(
     """
     Schedule endpoint extraction for one normalized object class and persist
     ``{object_class}EndpointsJobId`` / ``{object_class}EndpointsInput``.
+
+    A SQL session is rejected before a job is created: a database connector has no
+    endpoints, so there is nothing to extract and nothing downstream consumes the result.
     """
+    protocol = await resolve_effective_api_type(session_id, api_type)
+    if protocol == ApiType.SQL:
+        raise EndpointExtractionNotSupportedError(object_class, protocol.value)
+
     selection = await DocumentationSelector(db).build_endpoint_plan(
         repo=repo,
         session_id=session_id,

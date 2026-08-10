@@ -127,28 +127,17 @@ class DocumentationSelector:
         object_class: str,
         api_type_override: ApiType | None = None,
     ) -> DocumentationSelection:
+        """
+        Select documentation for REST/SCIM endpoint extraction.
+
+        SQL never reaches this plan: a database connector has no endpoints, so the request is
+        rejected in orchestration before a job exists.
+        """
         target_object_class = await self._get_target_object_class(repo, session_id, object_class)
         base_api_url = await self._get_base_url(session_id, api_type_override)
         api_types = await self._resolve_api_types(session_id, api_type_override)
         is_scim = is_scim_api(api_types)
-        is_sql = is_sql_api(api_types)
         object_class_flags = _endpoint_object_class_flags(target_object_class) if is_scim else {}
-
-        if is_sql:
-            doc_items = await self._get_documentation(session_id, db=self._db)
-            chunk_refs = await self._load_sql_object_class_chunk_refs(
-                session_id=session_id,
-                object_class=object_class,
-                doc_items=doc_items,
-            )
-            if not chunk_refs:
-                raise RelevantChunksNotFoundError(object_class, "endpoints")
-            return DocumentationSelection(
-                doc_items=doc_items,
-                chunk_references=chunk_refs,
-                base_api_url=base_api_url,
-                object_class_flags=object_class_flags,
-            )
 
         criteria = ENDPOINT_CRITERIA.model_copy()
         criteria.allowed_tags = [[normalize_object_class_name(object_class)], ["endpoint", "endpoints"]]

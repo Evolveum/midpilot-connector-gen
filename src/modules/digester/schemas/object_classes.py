@@ -93,6 +93,13 @@ class ObjectClassWithConfidence(BaseObjectClass):
     )
 
 
+class ObjectClassConfidenceAssignment(CamelCaseModel):
+    """Compact LLM-only confidence assignment used for large SQL schemas."""
+
+    name: str = Field(..., description="Exact input object-class name.")
+    confidence: ConfidenceLevel = Field(..., description="Assigned IGA/IDM confidence: low, medium, or high.")
+
+
 class RankedObjectClass(ExtendedObjectClass):
     """
     Third-pass sorting model.
@@ -174,6 +181,32 @@ class ObjectClassesConfidenceResponse(CamelCaseModel):
 
     @property
     def objectClasses(self) -> List[ObjectClassWithConfidence]:
+        return self.object_classes
+
+
+class ObjectClassConfidenceAssignmentsResponse(CamelCaseModel):
+    """Compact SQL confidence response that does not echo descriptions."""
+
+    object_classes: List[ObjectClassConfidenceAssignment] = Field(
+        default_factory=list,
+        description="One confidence assignment for every input object class.",
+    )
+
+    @property
+    def objectClasses(self) -> List[ObjectClassConfidenceAssignment]:
+        return self.object_classes
+
+
+class ObjectClassNameOrderResponse(CamelCaseModel):
+    """Compact SQL sorting response containing only object-class names in final order."""
+
+    object_classes: List[str] = Field(
+        default_factory=list,
+        description="Every input object-class name exactly once, ordered by IGA/IDM importance.",
+    )
+
+    @property
+    def objectClasses(self) -> List[str]:
         return self.object_classes
 
 

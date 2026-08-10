@@ -118,9 +118,9 @@ them to HTTP responses.
 | `langfuse.py`
 | Tracing of API requests and LLM calls (disabled by default).
 
-| `utils/`
-| Cross-module helpers, notably `session_info_metadata.py` — reading detected
-  metadata such as link:api-type.adoc[apiType] and base API URL from a session.
+| `src/session/info_metadata.py`
+| Reading detected metadata such as link:api-type.adoc[apiType], REST/SCIM base
+  API URLs, and the SQL database name from a session.
 |===
 
 == Data storage

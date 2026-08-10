@@ -4,10 +4,11 @@
 
 Midpilot Connector Generator is a FastAPI backend that uses LLMs to generate
 https://evolveum.com/midpoint/[midPoint] connectors for third-party systems.
-Given an application name (and optionally its documentation), it discovers and
-scrapes the application's API documentation, extracts a structured model of the
-API (object classes, attributes, endpoints, authentication), and generates the
-Groovy connector code.
+Given an application name and its documentation or database schema, it builds
+a structured integration model (object classes, attributes, endpoints where
+applicable, and authentication) and generates the Groovy connector code. REST
+and SCIM documentation can be discovered and scraped; SQL schemas are uploaded
+directly.
 
 == Documentation map
 

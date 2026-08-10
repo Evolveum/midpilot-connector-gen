@@ -17,6 +17,8 @@ digester or other DB-backed runtime paths.
 from collections.abc import Mapping
 from typing import Any
 
+from src.shared.enums import ApiType
+
 # The conndev connector schema is JSON.
 CONNDEV_CONTENT_TYPES: frozenset[str] = frozenset(
     {
@@ -31,6 +33,8 @@ DEFAULT_CONNDEV_CONTENT_TYPE = "application/com.evolveum.conndev+json"
 # File suffix midPoint connector schemas are uploaded with.
 CONNDEV_SUFFIX = ".conndev"
 CONNDEV_JSON_FILENAME_PREFIX = "conndev_"
+CONNDEV_SCIM_BINDING = "scim"
+CONNDEV_SQL_BINDING = "sql"
 
 
 def normalize_content_type(content_type: str | None) -> str:
@@ -67,3 +71,37 @@ def is_conndev_export_filename(filename_or_url: str | None) -> bool:
     return basename.endswith(CONNDEV_SUFFIX) or (
         basename.startswith(CONNDEV_JSON_FILENAME_PREFIX) and basename.endswith(".json")
     )
+
+
+def detect_conndev_object_class_api_type(document: Any) -> ApiType | None:
+    """Return the protocol declared by a shadow-wrapped Conndev object-class export."""
+    if not isinstance(document, Mapping) or "uid" not in document:
+        return None
+    if CONNDEV_SCIM_BINDING in document:
+        return ApiType.SCIM
+    if CONNDEV_SQL_BINDING in document:
+        return ApiType.SQL
+    return None
+
+
+def detect_conndev_api_type(document: Any) -> ApiType | None:
+    """Classify any supported Conndev contract as SQL or SCIM from its JSON shape."""
+    object_class_api_type = detect_conndev_object_class_api_type(document)
+    if object_class_api_type is not None:
+        return object_class_api_type
+    if not isinstance(document, Mapping):
+        return None
+
+    # Older SCIM ConnId object-class exports predate the shadow-wrapped ``scim`` binding.
+    if "locator" in document and "uid" in document:
+        return ApiType.SCIM
+    if "schemaContent" in document:
+        return ApiType.SCIM
+    if "endpoint" in document and "primarySchema" in document:
+        return ApiType.SCIM
+
+    name = str(document.get("name") or "").strip().lower()
+    document_id = str(document.get("id") or "").strip().lower()
+    if "content" in document and "serviceproviderconfig" in {name, document_id}:
+        return ApiType.SCIM
+    return None

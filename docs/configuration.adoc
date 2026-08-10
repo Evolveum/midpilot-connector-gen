@@ -66,6 +66,11 @@ most likely to touch.
   sequence-matching tolerances, auth criteria threshold, debug logging.
 |===
 
+NOTE: The external apiType signal settings cover REST and SCIM. SQL is selected
+from uploaded documentation by the per-chunk documentation signal, or declared
+manually in session metadata; there is no SQL registry/knowledge/web-search
+toggle.
+
 == Settings you will most likely change
 
 [cols="2,1,2", options="header"]

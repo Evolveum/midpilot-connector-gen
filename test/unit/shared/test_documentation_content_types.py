@@ -5,9 +5,12 @@
 import pytest
 
 from src.shared.content_types import (
+    detect_conndev_api_type,
+    detect_conndev_object_class_api_type,
     get_documentation_item_content_type,
     is_conndev_documentation_item,
 )
+from src.shared.enums import ApiType
 
 
 @pytest.mark.parametrize(
@@ -28,3 +31,24 @@ def test_conndev_documentation_item_supports_normalized_and_repository_shapes(it
 def test_documentation_item_content_type_ignores_invalid_metadata_shapes():
     assert get_documentation_item_content_type({"@metadata": "invalid"}) is None
     assert not is_conndev_documentation_item({"@metadata": {"content_type": "application/json"}})
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        ({"uid": "Account", "sql": {}}, ApiType.SQL),
+        ({"uid": "User", "scim": {}}, ApiType.SCIM),
+        ({"uid": "User", "locator": "/Users"}, ApiType.SCIM),
+        ({"schemaContent": "{}", "name": "User"}, ApiType.SCIM),
+        ({"endpoint": "/Users", "primarySchema": "{}"}, ApiType.SCIM),
+        ({"name": "ServiceProviderConfig", "content": "{}"}, ApiType.SCIM),
+        ({"something": "else"}, None),
+    ],
+)
+def test_detect_conndev_api_type_supports_all_known_contract_shapes(document, expected):
+    assert detect_conndev_api_type(document) is expected
+
+
+def test_detect_conndev_object_class_api_type_only_accepts_bound_object_classes():
+    assert detect_conndev_object_class_api_type({"uid": "Account", "sql": {}}) is ApiType.SQL
+    assert detect_conndev_object_class_api_type({"schemaContent": "{}"}) is None

@@ -144,6 +144,7 @@ def test_all_scim_crud_generators_enable_context_only_conndev_generation():
         "user_prompt": "{chunk}",
         "protocol_label": "scim",
         "include_scim_context": True,
+        "context_only_for_conndev": True,
     }
     generators = [
         SearchGenerator(intent=SearchIntent.ALL, **shared_kwargs),
@@ -171,6 +172,7 @@ async def test_scim_crud_runs_context_only_generation_when_selected_input_is_con
         user_prompt="{chunk}",
         protocol_label="scim",
         include_scim_context=True,
+        context_only_for_conndev=True,
     )
     chain = AsyncMock()
     chain.ainvoke.return_value = generated_code

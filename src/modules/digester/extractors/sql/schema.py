@@ -8,7 +8,8 @@ from collections import OrderedDict
 from typing import Any, Iterable
 
 from src.documents.chunking import normalize_to_text
-from src.modules.digester.selection import build_chunk_references_from_doc_items
+from src.modules.digester.extractors.sql.conndev_schema import extract_conndev_sql_tables, is_conndev_table
+from src.modules.digester.schemas.common import ChunkReference, build_chunk_references_from_doc_items
 
 _CREATE_TABLE_RE = re.compile(
     r"CREATE\s+(?:TEMPORARY\s+|TEMP\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
@@ -26,6 +27,10 @@ _PRIMARY_KEY_COLUMNS_RE = re.compile(
 )
 _IDENTIFIER_PREFIX_RE = re.compile(r"^\s*(?P<identifier>\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[\w.]+)")
 _TABLE_KEYS = ("tables", "schema", "databaseSchema", "nativeSchema")
+
+_DATABASE_COLUMN_FIELDS = frozenset({"type", "nullable", "primaryKey", "foreignKey", "default", "generated"})
+_DATABASE_TABLE_FIELDS = frozenset({"primaryKey", "foreignKeys", "description"})
+_CONNDEV_TABLE_FIELDS = frozenset({"objectClass", "databaseSchema", "source"})
 
 
 def _clean_identifier(value: Any) -> str:
@@ -91,6 +96,7 @@ def _normalize_column(column: Any) -> dict[str, Any] | None:
         ("primaryKey", "primaryKey"),
         ("foreignKey", "foreignKey"),
         ("default", "default"),
+        ("generated", "generated"),
     ):
         if source_key in column and column[source_key] is not None:
             normalized[target_key] = column[source_key]
@@ -114,6 +120,16 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
         for key in ("primaryKey", "foreignKeys", "description"):
             if key in table and table[key] is not None:
                 normalized[key] = table[key]
+
+        table_primary_key = normalized.get("primaryKey")
+        if isinstance(table_primary_key, list):
+            primary_key_columns = {
+                cleaned.casefold() for value in table_primary_key if (cleaned := _clean_identifier(value))
+            }
+            for column in columns:
+                column_name = _clean_identifier(column.get("column") or column.get("name"))
+                if column_name:
+                    column["primaryKey"] = column_name.casefold() in primary_key_columns
     else:
         return None
 
@@ -146,8 +162,9 @@ def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str
             "type": " ".join(_COLUMN_CONSTRAINT_RE.sub("", column_match.group("type")).split()),
             "nullable": "NOT NULL" not in upper,
             "primaryKey": "PRIMARY KEY" in upper,
-            "generated": "GENERATED" in upper,
         }
+        if "GENERATED" in upper:
+            column["generated"] = True
         if column["primaryKey"]:
             primary_key.append(column_name)
         columns.append(column)
@@ -176,7 +193,9 @@ def _extract_tables_from_mapping(value: Any, source_ref: dict[str, str] | None) 
         for key in _TABLE_KEYS:
             if key in value:
                 return _extract_tables_from_mapping(value[key], source_ref)
-        return [table for item in value.values() if (table := _normalize_table(item, source_ref))]
+        return [
+            table for item in value.values() if isinstance(item, dict) and (table := _normalize_table(item, source_ref))
+        ]
     return []
 
 
@@ -201,6 +220,104 @@ def _extract_tables_from_text(text: str, source_ref: dict[str, str] | None) -> l
     ]
 
 
+def _merge_relevant_documentations(existing: dict[str, Any], incoming: list[Any]) -> None:
+    """Append documentation references the table does not already carry."""
+    merged = existing.setdefault("relevantDocumentations", [])
+    seen = {(str(ref.get("docId")), str(ref.get("chunkId"))) for ref in merged if isinstance(ref, dict)}
+    for ref in incoming:
+        if not isinstance(ref, dict):
+            continue
+        pair = (str(ref.get("docId")), str(ref.get("chunkId")))
+        if pair not in seen:
+            merged.append(ref)
+            seen.add(pair)
+
+
+def _column_identity(column: dict[str, Any]) -> str:
+    """Return the physical database-column identity used to join Conndev and DDL records."""
+    return _clean_identifier(column.get("column") or column.get("name")).lower()
+
+
+def _merge_cross_source_column(conndev_column: dict[str, Any], database_column: dict[str, Any]) -> dict[str, Any]:
+    """Combine one logical ConnId attribute with its physical database declaration."""
+    merged = {**database_column, **conndev_column}
+    for field in _DATABASE_COLUMN_FIELDS:
+        if field in database_column:
+            merged[field] = database_column[field]
+    return merged
+
+
+def _merge_columns(
+    existing: dict[str, Any], incoming: dict[str, Any], *, existing_is_conndev: bool, incoming_is_conndev: bool
+) -> list[dict[str, Any]]:
+    existing_columns = [column for column in existing.get("columns", []) if isinstance(column, dict)]
+    incoming_columns = [column for column in incoming.get("columns", []) if isinstance(column, dict)]
+
+    if existing_is_conndev != incoming_is_conndev:
+        conndev_columns = existing_columns if existing_is_conndev else incoming_columns
+        database_columns = incoming_columns if existing_is_conndev else existing_columns
+        database_by_name = {_column_identity(column): column for column in database_columns}
+        merged_columns: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        # Conndev order and logical names are stable; database-only columns follow afterwards.
+        for conndev_column in conndev_columns:
+            identity = _column_identity(conndev_column)
+            database_column = database_by_name.get(identity)
+            merged_columns.append(
+                _merge_cross_source_column(conndev_column, database_column)
+                if identity and database_column is not None
+                else conndev_column
+            )
+            if identity:
+                seen.add(identity)
+        merged_columns.extend(
+            column for column in database_columns if not (identity := _column_identity(column)) or identity not in seen
+        )
+        return merged_columns
+
+    # Preserve the established first-document precedence for duplicate records from the same
+    # source, while still adding columns that only the later document declares.
+    merged_columns = list(existing_columns)
+    seen = {_column_identity(column) for column in existing_columns}
+    merged_columns.extend(
+        column for column in incoming_columns if not (identity := _column_identity(column)) or identity not in seen
+    )
+    return merged_columns
+
+
+def _merge_table_metadata(
+    existing: dict[str, Any], incoming: dict[str, Any], *, existing_is_conndev: bool, incoming_is_conndev: bool
+) -> None:
+    """Merge table-level metadata with protocol-specific source precedence."""
+    for key, value in incoming.items():
+        if key not in {"columns", "relevantDocumentations"} and key not in existing:
+            existing[key] = value
+
+    if existing_is_conndev != incoming_is_conndev:
+        conndev_table = existing if existing_is_conndev else incoming
+        database_table = incoming if existing_is_conndev else existing
+        for field in _CONNDEV_TABLE_FIELDS:
+            if field in conndev_table:
+                existing[field] = conndev_table[field]
+        for field in _DATABASE_TABLE_FIELDS:
+            if field in database_table:
+                existing[field] = database_table[field]
+
+
+def _extract_tables_from_item(item: dict, source_ref: dict[str, str] | None) -> list[dict[str, Any]]:
+    """
+    Read one documentation item as SQL tables.
+
+    A conndev SQL export is authoritative and wins; anything else is parsed as a raw SQL schema
+    (JSON table list or ``CREATE TABLE`` DDL).
+    """
+    conndev_tables = extract_conndev_sql_tables(item, ChunkReference(**source_ref) if source_ref else None)
+    if conndev_tables:
+        return conndev_tables
+    return _extract_tables_from_text(normalize_to_text(item.get("content", "")), source_ref)
+
+
 def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
     doc_items_list = list(doc_items)
     tables_by_name: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -211,7 +328,7 @@ def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
     for item in doc_items_list:
         chunk_id = str(item.get("chunkId") or "").strip()
         source_ref = refs_by_chunk.get(chunk_id)
-        for table in _extract_tables_from_text(normalize_to_text(item.get("content", "")), source_ref):
+        for table in _extract_tables_from_item(item, source_ref):
             name = str(table.get("table") or "").strip()
             if not name:
                 continue
@@ -219,21 +336,46 @@ def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
             if existing is None:
                 tables_by_name[name.lower()] = table
                 continue
-            existing_columns = {str(column.get("name")).lower(): column for column in existing.get("columns", [])}
-            for column in table.get("columns", []):
-                column_name = str(column.get("name") or "").lower()
-                if column_name and column_name not in existing_columns:
-                    existing.setdefault("columns", []).append(column)
-            existing.setdefault("relevantDocumentations", []).extend(table.get("relevantDocumentations", []))
+            existing_is_conndev = is_conndev_table(existing)
+            incoming_is_conndev = is_conndev_table(table)
+            existing["columns"] = _merge_columns(
+                existing,
+                table,
+                existing_is_conndev=existing_is_conndev,
+                incoming_is_conndev=incoming_is_conndev,
+            )
+            _merge_table_metadata(
+                existing,
+                table,
+                existing_is_conndev=existing_is_conndev,
+                incoming_is_conndev=incoming_is_conndev,
+            )
+            _merge_relevant_documentations(existing, table.get("relevantDocumentations", []))
 
     return list(tables_by_name.values())
+
+
+# Word endings that look plural but are not, so a trailing "s" must be kept
+# (``m_focus`` -> ``MFocus``, ``m_status`` -> ``MStatus``, ``m_address`` -> ``MAddress``).
+_NON_PLURAL_SUFFIXES: tuple[str, ...] = ("ss", "us", "is")
+
+
+def object_class_name_for_table(table: dict[str, Any]) -> str:
+    """
+    Resolve the object-class name of a table record.
+
+    A conndev export states the name midPoint uses and it is taken verbatim; a raw database
+    schema has no such name, so it is derived from the table name.
+    """
+    exported_name = str(table.get("objectClass") or "").strip()
+    return exported_name or object_class_name_from_table(str(table.get("table") or ""))
 
 
 def object_class_name_from_table(table_name: str) -> str:
     base = table_name.strip().split(".")[-1]
     if base.endswith("ies") and len(base) > 3:
         base = f"{base[:-3]}y"
-    elif base.endswith("s") and not base.endswith("ss") and len(base) > 3:
+    elif base.endswith("s") and not base.lower().endswith(_NON_PLURAL_SUFFIXES) and len(base) > 3:
         base = base[:-1]
     parts = re.split(r"[_\-\s]+", base)
     return "".join(part[:1].upper() + part[1:] for part in parts if part) or table_name
@@ -261,7 +403,8 @@ def tables_for_object_class(tables: list[dict[str, Any]], object_class: str) -> 
     selected = [
         table
         for table in tables
-        if object_class_name_from_table(str(table.get("table") or "")).lower() == target
+        if object_class_name_for_table(table).lower() == target
+        or object_class_name_from_table(str(table.get("table") or "")).lower() == target
         or str(table.get("table") or "").lower() == target
     ]
     if selected:

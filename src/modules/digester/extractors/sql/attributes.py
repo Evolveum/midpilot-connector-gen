@@ -8,6 +8,7 @@ from uuid import UUID
 
 from src.jobs import update_job_progress
 from src.modules.digester.entities.object_classes import build_attribute_result
+from src.modules.digester.extractors.sql.conndev_schema import connid_type_to_attribute_type
 from src.modules.digester.extractors.sql.schema import (
     collect_sql_tables,
     sql_type_to_attribute_type,
@@ -18,15 +19,36 @@ from src.shared.enums import JobStage
 logger = logging.getLogger(__name__)
 
 
+def _column_attribute_type(column: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Resolve the digester type/format from whichever type system the column came with."""
+    if "connIdType" in column:
+        return connid_type_to_attribute_type(column.get("connIdType"))
+    return sql_type_to_attribute_type(column.get("type"))
+
+
 def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
     name = str(column.get("name") or "").strip()
     if not name:
         return None
+    column_name = str(column.get("column") or name).strip()
+    if not column_name:
+        return None
 
-    attr_type, attr_format = sql_type_to_attribute_type(column.get("type"))
+    attr_type, attr_format = _column_attribute_type(column)
+
+    # Explicit flags from a conndev export win; otherwise they are derived from the SQL schema
+    # (a primary key is not updatable, a generated column is not creatable).
     mandatory = column.get("mandatory")
     if mandatory is None and column.get("nullable") is not None:
         mandatory = not bool(column.get("nullable"))
+
+    updatable = column.get("updatable")
+    if updatable is None:
+        updatable = not bool(column.get("primaryKey"))
+
+    creatable = column.get("creatable")
+    if creatable is None:
+        creatable = not bool(column.get("generated"))
 
     relevant_documentations = table.get("relevantDocumentations")
     if not isinstance(relevant_documentations, list):
@@ -35,18 +57,24 @@ def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tup
     return name, {
         "type": attr_type,
         "format": attr_format,
-        "description": f"Column '{name}' from table '{table.get('table')}'.",
+        "description": _column_description(column_name, table),
         "mandatory": mandatory,
-        "updatable": not bool(column.get("primaryKey")),
-        "creatable": not bool(column.get("generated")),
+        "updatable": bool(updatable),
+        "creatable": bool(creatable),
         "readable": True,
         "multivalue": False,
         "returnedByDefault": True,
         "table": table.get("table"),
-        "column": name,
+        "column": column_name,
         "primaryKey": column.get("primaryKey"),
         "relevantDocumentations": relevant_documentations,
     }
+
+
+def _column_description(name: str, table: dict[str, Any]) -> str:
+    database_schema = str(table.get("databaseSchema") or "").strip()
+    qualified_table = f"{database_schema}.{table.get('table')}" if database_schema else str(table.get("table"))
+    return f"Column '{name}' from table '{qualified_table}'."
 
 
 async def extract_sql_attributes(

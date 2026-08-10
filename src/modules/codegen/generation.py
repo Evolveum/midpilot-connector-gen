@@ -36,6 +36,7 @@ from src.modules.codegen.utils.prompt_records import (
     build_attribute_mapping_records,
     build_connid_attribute_mapping_records,
     build_scim_contract_prompt_vars,
+    build_sql_attribute_mapping_records,
 )
 from src.modules.digester.schemas import RelationsResponse
 from src.session.info_metadata import (
@@ -45,6 +46,12 @@ from src.session.info_metadata import (
 from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
+
+_DETERMINISTIC_CONTEXT_PROTOCOLS = frozenset({ApiType.SCIM, ApiType.SQL})
+
+
+def _uses_deterministic_context(protocol: ApiType) -> bool:
+    return protocol in _DETERMINISTIC_CONTEXT_PROTOCOLS
 
 
 async def generate_native_schema_code(
@@ -63,7 +70,11 @@ async def generate_native_schema_code(
     assets = get_operation_assets("native_schema", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
 
-    records = build_attribute_mapping_records(attributes_payload)
+    records = (
+        build_sql_attribute_mapping_records(attributes_payload)
+        if protocol == ApiType.SQL
+        else build_attribute_mapping_records(attributes_payload)
+    )
     extra_prompt_vars = {"user_schema_docs": docs_text}
     if protocol == ApiType.SCIM:
         extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))
@@ -197,6 +208,7 @@ async def generate_search_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
@@ -244,6 +256,7 @@ async def generate_create_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
@@ -291,6 +304,7 @@ async def generate_update_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
@@ -338,6 +352,7 @@ async def generate_delete_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks

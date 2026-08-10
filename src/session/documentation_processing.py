@@ -5,6 +5,7 @@
 """Background worker that parses, chunks and LLM-processes uploaded documentation."""
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict
 from uuid import UUID
@@ -24,13 +25,39 @@ from src.session.documentation_upload import (
     parse_uploaded_documentation,
 )
 from src.session.schema import ProcessedDocumentationChunk, RawUploadedDocumentation
-from src.shared.content_types import is_conndev_content_type
+from src.shared.content_types import detect_conndev_api_type, is_conndev_content_type
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 
 _UPLOAD_WORKER_LIMIT = max(1, min(config.database.pool_size, 8))
 _UPLOAD_WORKER_SEMAPHORE = asyncio.Semaphore(_UPLOAD_WORKER_LIMIT)
+
+
+def _build_conndev_chunk_output(chunk_text: str, filename: str) -> LlmChunkOutput:
+    """Build deterministic processing metadata from a Conndev document's protocol binding."""
+    try:
+        document = json.loads(chunk_text)
+    except json.JSONDecodeError:
+        document = None
+
+    api_type = detect_conndev_api_type(document)
+    if api_type is None:
+        logger.warning("[Session:Upload] Could not determine protocol for Conndev export %s", filename)
+        summary = f"midPoint connector-development export: {filename}"
+        tags = ["schema", "conndev"]
+    else:
+        summary = f"midPoint connector-development {api_type.name} export: {filename}"
+        tags = [api_type.value, "schema", "conndev"]
+
+    return LlmChunkOutput(
+        summary=summary,
+        num_endpoints=0,
+        tags=tags,
+        category="spec_json",
+        different_app_name=False,
+        num_defined_object_classes=1,
+    )
 
 
 async def _persist_processed_documentation_chunk(
@@ -117,14 +144,7 @@ async def process_documentation_worker(
             chunk_text, chunk_length = chunk_data
 
             if is_conndev_content_type(uploaded.content_type):
-                data = LlmChunkOutput(
-                    summary=f"midPoint connector-development SCIM export: {uploaded.filename}",
-                    num_endpoints=0,
-                    tags=["scim", "schema", "conndev"],
-                    category="spec_json",
-                    different_app_name=False,
-                    num_defined_object_classes=1,
-                )
+                data = _build_conndev_chunk_output(chunk_text, uploaded.filename)
             else:
                 async with semaphore:
                     prompts = get_llm_chunk_process_prompt(chunk_text, uploaded.filename, app, app_version)
