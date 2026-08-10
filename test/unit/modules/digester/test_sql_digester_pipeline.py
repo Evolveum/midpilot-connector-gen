@@ -14,6 +14,7 @@ from src.modules.digester.extractors.conndev import detect_object_class_binding
 from src.modules.digester.extractors.endpoints import extract_endpoints
 from src.modules.digester.extractors.object_class import extract_object_classes
 from src.modules.digester.extractors.sql.attributes import extract_sql_attributes
+from src.modules.digester.extractors.sql.object_class import _describe_table
 from src.modules.digester.extractors.sql.schema import (
     collect_sql_tables,
     object_class_name_for_table,
@@ -178,7 +179,7 @@ def test_collect_sql_tables_marks_composite_table_level_primary_key_columns():
 def _ranking_passthrough() -> AsyncMock:
     """Stand in for the shared ranking step, echoing the candidates it was handed."""
 
-    async def _rank(candidates, _job_id, _class_to_chunks=None):
+    async def _rank(candidates, _job_id, _class_to_chunks=None, *, class_to_chunks=None, ranking_descriptions=None):
         return ObjectClassesResponse(
             objectClasses=[
                 {
@@ -194,12 +195,31 @@ def _ranking_passthrough() -> AsyncMock:
     return AsyncMock(side_effect=_rank)
 
 
+def test_sql_ranking_description_is_shorter_than_final_description():
+    table = {
+        "table": "m_user",
+        "databaseSchema": "midpoint_user",
+        "columns": [{"name": f"column_{index}"} for index in range(1, 7)],
+    }
+
+    assert _describe_table(table) == (
+        "Database table 'midpoint_user.m_user' with 6 columns: "
+        "column_1, column_2, column_3, column_4, column_5, column_6."
+    )
+    assert _describe_table(table, column_sample=4) == (
+        "Database table 'midpoint_user.m_user' with 6 columns: column_1, column_2, column_3, column_4, ... (+2 more)."
+    )
+
+
 @pytest.mark.asyncio
 async def test_extract_sql_object_classes_from_raw_schema_ranks_every_table(mock_digester_update_job_progress):
     doc = _sql_doc(
         """
         {"tables": [
-          {"name": "users", "columns": [{"name": "id"}, {"name": "username"}, {"name": "email"}]},
+          {"name": "users", "columns": [
+            {"name": "id"}, {"name": "username"}, {"name": "email"},
+            {"name": "given_name"}, {"name": "family_name"}, {"name": "department"}
+          ]},
           {"name": "qrtz_locks", "columns": [{"name": "lock_name"}]}
         ]}
         """
@@ -207,7 +227,7 @@ async def test_extract_sql_object_classes_from_raw_schema_ranks_every_table(mock
 
     ranking = _ranking_passthrough()
     with (
-        patch("src.modules.digester.extractors.sql.object_class.deduplicate_and_sort_object_classes", ranking),
+        patch("src.modules.digester.extractors.sql.object_class.deduplicate_and_sort_sql_object_classes", ranking),
         patch(
             "src.modules.digester.extractors.object_class.resolve_effective_api_type",
             new_callable=AsyncMock,
@@ -219,6 +239,14 @@ async def test_extract_sql_object_classes_from_raw_schema_ranks_every_table(mock
     # No name heuristic drops a table up front; relevance is the ranking step's decision.
     names = [obj_class["name"] for obj_class in result["result"]["objectClasses"]]
     assert names == ["User", "QrtzLock"]
+    candidates, _job_id = ranking.await_args.args
+    ranking_descriptions = ranking.await_args.kwargs["ranking_descriptions"]
+    assert candidates[0].description == (
+        "Database table 'users' with 6 columns: id, username, email, given_name, family_name, department."
+    )
+    assert ranking_descriptions["user"] == (
+        "Database table 'users' with 6 columns: id, username, email, given_name, ... (+2 more)."
+    )
 
 
 @pytest.mark.asyncio
@@ -230,7 +258,7 @@ async def test_extract_sql_object_classes_from_conndev_export(mock_digester_upda
 
     ranking = _ranking_passthrough()
     with (
-        patch("src.modules.digester.extractors.sql.object_class.deduplicate_and_sort_object_classes", ranking),
+        patch("src.modules.digester.extractors.sql.object_class.deduplicate_and_sort_sql_object_classes", ranking),
         patch(
             "src.modules.digester.extractors.object_class.resolve_effective_api_type",
             new_callable=AsyncMock,
@@ -243,7 +271,8 @@ async def test_extract_sql_object_classes_from_conndev_export(mock_digester_upda
     names = [obj_class["name"] for obj_class in result["result"]["objectClasses"]]
     assert names == ["m_user", "m_focus"]
 
-    candidates, _job_id, class_to_chunks = ranking.await_args.args
+    candidates, _job_id = ranking.await_args.args
+    class_to_chunks = ranking.await_args.kwargs["class_to_chunks"]
     assert candidates[0].description == "Database table 'midpoint_user.m_user' with 1 columns: nameorig."
     assert class_to_chunks["m_user"] == [{"doc_id": docs[0]["docId"], "chunk_id": docs[0]["chunkId"]}]
 

@@ -5,9 +5,19 @@
 import textwrap
 
 
-def get_object_classes_relevancy_system_prompt() -> str:
+def get_object_classes_relevancy_system_prompt(*, compact_output: bool = False) -> str:
+    output_contract = (
+        "Return only each exact `name` with its `confidence`; do not copy descriptions into the output."
+        if compact_output
+        else "Preserve both `name` and `description` exactly as provided and add `confidence`."
+    )
+    semantic_rules = (
+        "- Use object name semantics first and the compact description second."
+        if compact_output
+        else "- Use object name semantics first, description second, chunk count as a weak tie-breaker only."
+    )
     return textwrap.dedent(
-        """
+        f"""
 You are an expert Identity Governance & Administration (IGA) and Identity Data Management (IDM) Integration Specialist.
 Your task is to assign a confidence level to each provided API object class based on practical IGA/IDM importance.
 
@@ -17,7 +27,7 @@ Return EVERY provided object class exactly once with one confidence value:
 - low
 
 Do NOT remove, merge, or invent classes.
-Preserve both `name` and `description` exactly as provided and add `confidence`.
+{output_contract}
 
 Confidence criteria:
 
@@ -39,7 +49,7 @@ Confidence criteria:
 - Non-identity business artifacts and plumbing classes
 
 Rules:
-- Use object name semantics first, description second, chunk count as a weak tie-breaker only.
+{semantic_rules}
 - If uncertain, choose LOWER confidence.
 - Prefer canonical singular forms over technical variants when both appear.
 
@@ -48,10 +58,14 @@ Output only structured JSON per format instructions.
     )
 
 
-def get_object_classes_relevancy_user_prompt(object_classes_json: str) -> str:
+def get_object_classes_relevancy_user_prompt(
+    object_classes_json: str,
+    *,
+    source_description: str = "API documentation",
+) -> str:
     return textwrap.dedent(
         f"""
-You are provided with object classes extracted from API documentation.
+You are provided with object classes extracted from {source_description}.
 Assign confidence to each class for IGA/IDM integration use.
 
 Input:

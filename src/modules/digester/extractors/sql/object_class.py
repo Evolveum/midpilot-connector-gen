@@ -12,7 +12,7 @@ connector is always backed by a table, so there is nothing for an LLM to *discov
 judge.
 
 That judgement is the shared
-:func:`~src.modules.digester.aggregation.object_class_ranking.deduplicate_and_sort_object_classes`
+:func:`~src.modules.digester.aggregation.object_class_ranking.deduplicate_and_sort_sql_object_classes`
 step, which assigns the IGA/IDM confidence level and the final ordering. SQL therefore behaves
 like SCIM: a deterministic contract in, the same ranking out.
 """
@@ -23,7 +23,7 @@ from uuid import UUID
 
 from src.documents.normalize import canonical_object_class_key
 from src.jobs import update_job_progress
-from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_object_classes
+from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_sql_object_classes
 from src.modules.digester.extractors.sql.conndev_schema import is_conndev_table
 from src.modules.digester.extractors.sql.schema import (
     collect_sql_tables,
@@ -36,13 +36,12 @@ from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 
-# Column names listed in an object-class description, enough for the ranking LLM to judge what the
-# table holds without pushing whole schemas into the prompt.
 _DESCRIPTION_COLUMN_SAMPLE = 12
+_RANKING_DESCRIPTION_COLUMN_SAMPLE = 4
 
 
-def _describe_table(table: dict[str, Any]) -> str:
-    """Build the object-class description the confidence/sorting LLM reasons over."""
+def _describe_table(table: dict[str, Any], *, column_sample: int = _DESCRIPTION_COLUMN_SAMPLE) -> str:
+    """Build a bounded table description for the final response or ranking context."""
     table_name = str(table.get("table") or "").strip()
     database_schema = str(table.get("databaseSchema") or "").strip()
     qualified = f"{database_schema}.{table_name}" if database_schema else table_name
@@ -51,8 +50,8 @@ def _describe_table(table: dict[str, Any]) -> str:
     if not column_names:
         return f"Database table '{qualified}' with no documented columns."
 
-    sample = ", ".join(column_names[:_DESCRIPTION_COLUMN_SAMPLE])
-    remaining = len(column_names) - _DESCRIPTION_COLUMN_SAMPLE
+    sample = ", ".join(column_names[:column_sample])
+    remaining = len(column_names) - column_sample
     if remaining > 0:
         sample = f"{sample}, ... (+{remaining} more)"
     return f"Database table '{qualified}' with {len(column_names)} columns: {sample}."
@@ -100,13 +99,18 @@ async def extract_sql_object_classes(doc_items: list[dict], job_id: UUID) -> dic
 
     candidates: list[ExtendedObjectClass] = []
     class_to_chunks: Dict[str, List[Dict[str, str]]] = {}
+    ranking_descriptions: Dict[str, str] = {}
     for table in tables:
-        candidates.append(_object_class_from_table(table))
+        object_class = _object_class_from_table(table)
+        candidates.append(object_class)
+        class_key = canonical_object_class_key(object_class.name)
+        ranking_descriptions[class_key] = _describe_table(
+            table,
+            column_sample=_RANKING_DESCRIPTION_COLUMN_SAMPLE,
+        )
         chunk_refs = _chunk_refs_from_table(table)
         if chunk_refs:
-            class_to_chunks.setdefault(canonical_object_class_key(object_class_name_for_table(table)), []).extend(
-                chunk_refs
-            )
+            class_to_chunks.setdefault(class_key, []).extend(chunk_refs)
 
     logger.info(
         "[Digester:ObjectClasses] SQL schema read: %s tables (%s from a conndev export)",
@@ -114,7 +118,12 @@ async def extract_sql_object_classes(doc_items: list[dict], job_id: UUID) -> dic
         sum(1 for table in tables if is_conndev_table(table)),
     )
 
-    result = await deduplicate_and_sort_object_classes(candidates, job_id, class_to_chunks)
+    result = await deduplicate_and_sort_sql_object_classes(
+        candidates,
+        job_id,
+        class_to_chunks=class_to_chunks,
+        ranking_descriptions=ranking_descriptions,
+    )
 
     relevant_chunks = build_relevant_chunks_from_doc_items(doc_items)
     logger.info("[Digester:ObjectClasses] Completed. Total classes: %d", len(result.objectClasses))
