@@ -96,6 +96,7 @@ def _normalize_column(column: Any) -> dict[str, Any] | None:
         ("primaryKey", "primaryKey"),
         ("foreignKey", "foreignKey"),
         ("default", "default"),
+        ("generated", "generated"),
     ):
         if source_key in column and column[source_key] is not None:
             normalized[target_key] = column[source_key]
@@ -161,8 +162,9 @@ def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str
             "type": " ".join(_COLUMN_CONSTRAINT_RE.sub("", column_match.group("type")).split()),
             "nullable": "NOT NULL" not in upper,
             "primaryKey": "PRIMARY KEY" in upper,
-            "generated": "GENERATED" in upper,
         }
+        if "GENERATED" in upper:
+            column["generated"] = True
         if column["primaryKey"]:
             primary_key.append(column_name)
         columns.append(column)

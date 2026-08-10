@@ -134,9 +134,7 @@ def parse_sql_object_class_document(
     table = str(sql_binding.get("table") or "").strip()
     name = str(doc.get("name") or "").strip() or table
     if not table:
-        table = name
-    if not table:
-        logger.warning("[Digester:Conndev] Skipping SQL object class document: no table name")
+        logger.warning("[Digester:Conndev] Skipping SQL object class document: no physical table binding")
         return None
 
     attributes: List[Dict[str, Any]] = []

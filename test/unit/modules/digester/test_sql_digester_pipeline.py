@@ -198,6 +198,19 @@ def test_collect_sql_tables_projects_raw_json_table_primary_key_to_columns():
     assert [column["primaryKey"] for column in tables[0]["columns"]] == [True, False]
 
 
+@pytest.mark.parametrize(
+    "schema",
+    [
+        '{"tables": [{"name": "users", "columns": [{"name": "id", "type": "uuid", "generated": true}]}]}',
+        "CREATE TABLE users (id UUID GENERATED ALWAYS AS IDENTITY);",
+    ],
+)
+def test_collect_sql_tables_preserves_generated_column_metadata(schema):
+    table = collect_sql_tables([_sql_doc(schema)])[0]
+
+    assert table["columns"][0]["generated"] is True
+
+
 def _ranking_passthrough() -> AsyncMock:
     """Stand in for the shared ranking step, echoing the candidates it was handed."""
 
@@ -413,6 +426,19 @@ def test_collect_sql_tables_does_not_treat_ordinary_json_as_conndev():
     assert "source" not in tables[0]
 
 
+def test_collect_sql_tables_skips_conndev_sql_document_without_table_binding(caplog):
+    doc = _conndev_sql_doc("m_user", "midpoint_user", [_conndev_attribute("oid", "string")])
+    content = json.loads(doc["content"])
+    del content["sql"]["object"]["attributes"]["table"]
+    doc["content"] = json.dumps(content)
+
+    with caplog.at_level("WARNING", logger="src.modules.digester.extractors.conndev"):
+        tables = collect_sql_tables([doc])
+
+    assert tables == []
+    assert "no physical table binding" in caplog.text
+
+
 def test_detect_object_class_binding_distinguishes_sql_from_scim():
     sql_doc = {"sql": {}, "uid": "m_user", "name": "m_user", "attributes": []}
     scim_doc = {"scim": {}, "uid": "User", "name": "User", "attributes": []}
@@ -540,6 +566,17 @@ async def test_extract_sql_attributes_treats_table_level_primary_key_as_non_upda
     assert attributes["id"]["primaryKey"] is True
     assert attributes["id"]["updatable"] is False
     assert attributes["email"]["updatable"] is True
+
+
+@pytest.mark.asyncio
+async def test_extract_sql_attributes_marks_generated_columns_non_creatable(
+    mock_digester_update_job_progress,
+):
+    doc = _sql_doc("CREATE TABLE users (id UUID GENERATED ALWAYS AS IDENTITY);")
+
+    result = await extract_sql_attributes([doc], "User", uuid4())
+
+    assert result["result"]["attributes"]["id"]["creatable"] is False
 
 
 @pytest.mark.asyncio
