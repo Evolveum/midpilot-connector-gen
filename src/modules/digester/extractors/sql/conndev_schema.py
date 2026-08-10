@@ -25,16 +25,15 @@ from src.modules.digester.extractors.conndev import (
     parse_sql_object_class_document,
 )
 from src.modules.digester.schemas.common import ChunkReference
+from src.shared.content_types import is_conndev_documentation_item
 from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 
-# Marks a table record built from a conndev export, so downstream code can tell an authoritative
-# column list from one recovered heuristically out of DDL.
+
 CONNDEV_TABLE_SOURCE = "conndev"
 
-# ConnId attribute type -> (digester type, digester format). ConnId reports Java-side types, which
-# do not overlap with the native SQL type names handled by ``sql_type_to_attribute_type``.
+
 _CONNID_TYPE_MAP: Dict[str, tuple[str, Optional[str]]] = {
     "string": ("string", None),
     "character": ("string", None),
@@ -131,6 +130,9 @@ def extract_conndev_sql_tables(
     Returns an empty list when the item is not such an export, so the caller can fall back to
     raw SQL schema parsing.
     """
+    if not is_conndev_documentation_item(item):
+        return []
+
     content = normalize_to_text(item.get("content", "")).strip()
     if not content:
         return []

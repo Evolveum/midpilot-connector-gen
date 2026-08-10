@@ -53,7 +53,7 @@ def _conndev_attribute(name: str, connid_type: str, *, column: str | None = None
 
 def _conndev_sql_doc(table: str, database_schema: str, attributes: list[dict]) -> dict:
     """A midPoint ``ri:conndev_sql`` object-class export, as uploaded by the connector-development tool."""
-    return _sql_doc(
+    doc = _sql_doc(
         json.dumps(
             {
                 "sql": {
@@ -70,6 +70,8 @@ def _conndev_sql_doc(table: str, database_schema: str, attributes: list[dict]) -
             }
         )
     )
+    doc["@metadata"]["content_type"] = "application/com.evolveum.conndev+json"
+    return doc
 
 
 @pytest.fixture(autouse=True)
@@ -388,6 +390,27 @@ def test_collect_sql_tables_does_not_invent_tables_from_scalar_json_fields():
     doc = _sql_doc(json.dumps({"uid": "m_user", "name": "m_user", "displayName": "User"}))
 
     assert collect_sql_tables([doc]) == []
+
+
+def test_collect_sql_tables_does_not_treat_ordinary_json_as_conndev():
+    doc = _sql_doc(
+        json.dumps(
+            {
+                "uid": "schema-document",
+                "name": "not-a-table",
+                "sql": {},
+                "tables": [{"name": "users", "columns": [{"name": "id", "type": "uuid"}]}],
+            }
+        )
+    )
+    doc["@metadata"]["content_type"] = "application/json"
+
+    tables = collect_sql_tables([doc])
+
+    assert len(tables) == 1
+    assert tables[0]["table"] == "users"
+    assert tables[0]["columns"] == [{"name": "id", "type": "uuid"}]
+    assert "source" not in tables[0]
 
 
 def test_detect_object_class_binding_distinguishes_sql_from_scim():
