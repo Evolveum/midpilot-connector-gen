@@ -45,14 +45,16 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 == How generation works
 
 1. *Context assembly* — for each operation, `selection/` gathers the digester
-   outputs (endpoints, attributes, auth) and the documentation chunks recorded
-   as relevant for the operation's result key, plus required midPoint
-   connector-development reference material (`selection/docs_loader.py`).
+   outputs (attributes, auth, and endpoints where available) and the chunks
+   recorded as relevant for the operation's result key, plus required midPoint
+   connector-development reference material (`selection/docs_loader.py`). SQL
+   CRUD/search generation requires attributes but not endpoints.
 2. *Protocol-specific prompts* — prompts live under `prompts/`, split by
    protocol (`rest/`, `scim/`, `sql/`) and operation. The protocol is chosen
    by the effective link:../api-type.adoc[apiType]; SCIM additionally injects
    a shared SCIM context so generated code follows the fixed SCIM baseline
-   contracts.
+   contracts. The connection target is read per protocol: REST and SCIM get the
+   base API URL, SQL gets `databaseName` and no URL at all.
 3. *Generation and validation* — the LLM output goes through post-processing
    and Groovy validation (`utils/groovy_validation.py`,
    `utils/postprocess.py`). Validation failures feed a *repair* loop
@@ -61,19 +63,39 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 4. The final script is persisted in the session under the operation's result
    key.
 
+=== Protocol coverage
+
+[cols="2,1,1,1", options="header"]
+|===
+| Endpoint | `rest` | `scim` | `sql`
+
+| `native-schema` | yes | yes | yes (REST prompt, SQL reference doc)
+| `connid` | yes | yes | yes (protocol-independent)
+| `search/{intent}` | yes | yes | yes
+| `create` / `update` / `delete` | yes | yes | yes
+| `relations/{relationName}` | yes | yes | generic path; usable only when a
+  suitable `relationsOutput` has been supplied or extracted
+| `authorization` | yes | yes | *not supported*
+|===
+
+IMPORTANT: `authorization` has no SQL prompt family. Requesting it for a `sql`
+session fails with `Unsupported operation/protocol: authorization/sql`, unless
+the only preferred authorization is the custom `other` method, which returns a
+static scaffold without calling the LLM. Write the database authentication
+block by hand for now.
+
 == Pitfalls
 
 IMPORTANT: Codegen inherits everything from the digester. Generating code for
-an object class whose endpoints/attributes were never extracted (or were
-extracted under the wrong link:../api-type.adoc[apiType]) fails or produces
-unusable code. Complete the digester sequence for the class first:
-`endpoints` → `attributes`, and run `authorization` before operations that
-need authenticated calls.
+an object class whose attributes were never extracted (or were extracted under
+the wrong link:../api-type.adoc[apiType]) fails or produces unusable code.
+Complete the digester sequence for the class first — `endpoints` →
+`attributes` for REST/SCIM, `attributes` alone for SQL — and run
+`authorization` before operations that need authenticated calls.
 
-NOTE: Every generation endpoint accepts an `apiType` query parameter that
-overrides the detected protocol for that request — useful when an application
-exposes several protocols (e.g. both REST and SCIM) and you want a specific
-one.
+NOTE: Protocol-specific generation endpoints accept an `apiType` query
+parameter that overrides the detected protocol for that request. ConnID and
+relation generation are protocol-independent and do not accept the override.
 
 NOTE: Generated code is stored per operation and can be regenerated or
 manually replaced (`PUT`) independently — you do not need to redo the whole

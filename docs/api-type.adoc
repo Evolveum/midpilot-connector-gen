@@ -6,7 +6,7 @@ link:index.adoc[← Documentation index]
 `apiType` is the single most important piece of session metadata: it decides
 which protocol-specific extractors and prompt families the
 link:pipeline/digester.adoc[digester] and link:pipeline/codegen.adoc[codegen]
-stages use. Supported values (`ApiType` in `src/common/enums.py`):
+stages use. Supported values (`ApiType` in `src/shared/enums.py`):
 
 * `rest` — generic REST/OpenAPI provisioning API,
 * `scim` — SCIM 1.1/2.0 provisioning,
@@ -18,26 +18,36 @@ The digester *metadata* step (`POST /api/digester/{sessionId}/metadata`)
 detects the apiType by combining several independent signals
 (`src/modules/digester/extractors/apitype/`):
 
-[cols="1,3", options="header"]
+[cols="1,1,3", options="header"]
 |===
-| Signal | How it works
+| Signal | Detects | How it works
 
 | `documentation`
+| REST, SCIM, SQL
 | Per-chunk LLM extraction from the stored documentation.
 
 | `scim_cloud`
+| SCIM
 | Lookup of the application name in the public
   https://scim.cloud[scim.cloud] SCIM implementations registry (fuzzy match,
-  cached, SCIM only).
+  cached).
 
 | `knowledge_of_llm`
+| REST, SCIM
 | Documentation-free question to the LLM whether the application is known to
   support SCIM / REST provisioning.
 
 | `web_search`
+| REST, SCIM
 | Web search for SCIM / REST support plus an LLM assessment of the results
   (fetches result pages by default — the most expensive signal).
 |===
+
+IMPORTANT: Only the `documentation` signal can detect `sql`. There is no
+registry, knowledge or web-search signal for a database integration, so a SQL
+target is recognized only when the uploaded documentation itself shows schema
+or database evidence. When it does not, declare the protocol explicitly — see
+<<manual-declaration>>.
 
 Each signal can be toggled and tuned via `+DIGESTER__*+` settings
 (`scim_cloud_enabled`, `apitype_scim_knowledge_enabled`,
@@ -45,38 +55,112 @@ Each signal can be toggled and tuned via `+DIGESTER__*+` settings
 templates — see `src/config/digester.py`).
 
 The merged result is stored in the session `infoMetadata` as an `apiType`
-*list* (an application can expose several protocols), together with a
-per-protocol *availability advisory* (`available` / `paid` / `unknown`) that
-warns when a protocol exists but is gated behind a paid or enterprise plan.
+*list* (an application can expose several protocols), together with the
+per-protocol connectivity block:
+
+[cols="1,3", options="header"]
+|===
+| Block | Contents
+
+| `restAvailability`, `scimAvailability`
+| The base API endpoint(s) for that protocol plus an *availability advisory*
+  (`available` / `paid` / `unknown`) that warns when the protocol exists but is
+  gated behind a paid or enterprise plan.
+
+| `sqlAvailability`
+| `databaseName` — the database/schema the connector must connect to. SQL has
+  no base endpoint and no availability advisory.
+|===
+
+All three blocks are always present; the irrelevant ones are empty.
+
+[[conndev-exports]]
+== conndev exports carry their own protocol
+
+A midPoint connector-development export (`application/com.evolveum.conndev+json`)
+is uploaded with the same media type regardless of the protocol it describes.
+The protocol is stated *inside* the document, by the binding key on an
+object-class export:
+
+[cols="1,3", options="header"]
+|===
+| Binding | Meaning
+
+| `"scim": {...}` (`ri:conndev_scim`)
+| SCIM object class; carries the schema URN. Read by
+  `src/modules/digester/extractors/scim/baseline.py`.
+
+| `"sql": {...}` (`ri:conndev_sql`)
+| Database object class; carries `table` and `schema`. Read by
+  `src/modules/digester/extractors/sql/`.
+|===
+
+The shared shadow-unwrapping lives in
+`src/modules/digester/extractors/conndev.py`.
+
+Upload processing reads this binding deterministically and tags the stored
+chunk as `sql` or `scim`; it does not call the chunk-processing LLM. The tag
+and the upload media type do not, however, write `metadataOutput.infoMetadata`
+or set the session's `apiType`. Run metadata extraction over the preserved
+JSON, or declare the protocol as described below.
+
+WARNING: Never infer the protocol from the upload's media type alone — it says
+only "this is a conndev export". Inspect the binding inside the document.
 
 == How it is resolved and overridden
 
 When a digester or codegen job needs a single protocol, it resolves it via
-`src/common/utils/session_info_metadata.py`:
+`src/session/info_metadata.py`:
 
-1. If the request carries an explicit `apiType` *query parameter*
-   (available on `POST /api/digester/{sessionId}/classes` and on every
-   codegen generation endpoint), that value wins.
-2. Otherwise the stored `apiType` list from the session metadata is used.
+1. If a protocol-aware request carries an explicit `apiType` *query parameter*,
+   that value wins. The override is available on digester `classes`,
+   `endpoints`, and `attributes`, and on codegen `authorization`,
+   `native-schema`, `search`, `create`, `update`, and `delete`. ConnID and
+   relation generation are protocol-independent and do not accept it.
+2. Otherwise the stored `apiType` list from the session metadata is used. When
+   several protocols are stored, the single protocol is picked in the order
+   *SQL → SCIM → REST*.
 3. If nothing is stored, the protocol *silently defaults to `rest`*.
+
+[[manual-declaration]]
+=== Declaring the apiType manually
+
+`PUT /api/digester/{sessionId}/metadata` writes `infoMetadata` directly and is
+the supported way to state the protocol when detection cannot (or should not)
+run — the usual case for a conndev SQL export or any uploaded database schema:
+
+[source,json]
+----
+{"infoMetadata": {"name": "midpoint", "apiType": ["sql"],
+                  "sqlAvailability": {"databaseName": "midpoint_db"}}}
+----
+
+The `PUT` stores no `metadataJobId`, so a session whose metadata was declared
+this way has no metadata job — that is expected, not a failure.
 
 == Pitfalls
 
-IMPORTANT: Run metadata extraction *before* object classes, endpoints,
-attributes, or any codegen. Without it there is no stored apiType and
-everything falls back to REST — for a SCIM or SQL target this means wrong
+IMPORTANT: Establish the protocol *before* protocol-specific extraction or
+codegen: run metadata extraction, store metadata manually, or pass the
+`apiType` override everywhere it is supported. Without one of these, the
+service falls back to REST — for a SCIM or SQL target this means wrong
 extractors, wrong prompts, and unusable output, with no error raised.
 
 IMPORTANT: When the target exposes several protocols (detection stored e.g.
 both `rest` and `scim`), decide which connector you want and pass the
-explicit `apiType=` override consistently on *all* extraction and generation
-requests. Mixing protocols mid-pipeline (classes extracted as SCIM, code
-generated as REST) produces inconsistent results.
+explicit `apiType=` override consistently on every protocol-aware extraction
+and generation request. Mixing protocols mid-pipeline (classes extracted as
+SCIM, code generated as REST) produces inconsistent results. ConnID and
+relation generation consume the already stored model and have no protocol
+override of their own.
 
 WARNING: The `integrationType` field of the
 link:pipeline/discovery.adoc[discovery] request is *not* the apiType — it only
 biases the documentation search. Do not expect it to configure the digester
-or codegen.
+or codegen. It also accepts `scim`, `rest` and `dummy` only: there is no SQL
+discovery mode, because a database integration is not found by searching the
+web. For a SQL target, skip discovery and upload the schema or the conndev
+export directly.
 
 NOTE: Check the availability advisory in the metadata output: a detected
 protocol marked `paid` may not be usable on the customer's actual plan even
