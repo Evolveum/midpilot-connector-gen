@@ -28,9 +28,6 @@ _PRIMARY_KEY_COLUMNS_RE = re.compile(
 _IDENTIFIER_PREFIX_RE = re.compile(r"^\s*(?P<identifier>\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[\w.]+)")
 _TABLE_KEYS = ("tables", "schema", "databaseSchema", "nativeSchema")
 
-# Database declarations are authoritative for physical constraints and SQL types. Conndev is
-# authoritative for the logical ConnId identity and capability flags. Keeping the precedence
-# explicit makes a mixed Conndev + DDL session independent of document order.
 _DATABASE_COLUMN_FIELDS = frozenset({"type", "nullable", "primaryKey", "foreignKey", "default", "generated"})
 _DATABASE_TABLE_FIELDS = frozenset({"primaryKey", "foreignKeys", "description"})
 _CONNDEV_TABLE_FIELDS = frozenset({"objectClass", "databaseSchema", "source"})
@@ -122,6 +119,16 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
         for key in ("primaryKey", "foreignKeys", "description"):
             if key in table and table[key] is not None:
                 normalized[key] = table[key]
+
+        table_primary_key = normalized.get("primaryKey")
+        if isinstance(table_primary_key, list):
+            primary_key_columns = {
+                cleaned.casefold() for value in table_primary_key if (cleaned := _clean_identifier(value))
+            }
+            for column in columns:
+                column_name = _clean_identifier(column.get("column") or column.get("name"))
+                if column_name:
+                    column["primaryKey"] = column_name.casefold() in primary_key_columns
     else:
         return None
 

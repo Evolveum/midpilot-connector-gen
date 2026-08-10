@@ -176,6 +176,26 @@ def test_collect_sql_tables_marks_composite_table_level_primary_key_columns():
     assert [column["primaryKey"] for column in tables[0]["columns"]] == [True, True, False]
 
 
+def test_collect_sql_tables_projects_raw_json_table_primary_key_to_columns():
+    doc = _sql_doc(
+        """
+        {"tables": [{
+          "name": "users",
+          "primaryKey": ["id"],
+          "columns": [
+            {"name": "id", "type": "uuid"},
+            {"name": "email", "type": "varchar"}
+          ]
+        }]}
+        """
+    )
+
+    tables = collect_sql_tables([doc])
+
+    assert tables[0]["primaryKey"] == ["id"]
+    assert [column["primaryKey"] for column in tables[0]["columns"]] == [True, False]
+
+
 def _ranking_passthrough() -> AsyncMock:
     """Stand in for the shared ranking step, echoing the candidates it was handed."""
 
@@ -497,6 +517,35 @@ async def test_extract_sql_attributes_treats_table_level_primary_key_as_non_upda
     assert attributes["id"]["primaryKey"] is True
     assert attributes["id"]["updatable"] is False
     assert attributes["email"]["updatable"] is True
+
+
+@pytest.mark.asyncio
+async def test_extract_sql_attributes_projects_raw_json_composite_primary_key(
+    mock_digester_update_job_progress,
+):
+    doc = _sql_doc(
+        """
+        {"tables": [{
+          "name": "user_roles",
+          "primaryKey": ["user_id", "role_id"],
+          "columns": [
+            {"name": "user_id", "type": "uuid"},
+            {"name": "role_id", "type": "uuid"},
+            {"name": "assigned_at", "type": "timestamp"}
+          ]
+        }]}
+        """
+    )
+
+    result = await extract_sql_attributes([doc], "UserRole", uuid4())
+
+    attributes = result["result"]["attributes"]
+    assert attributes["user_id"]["primaryKey"] is True
+    assert attributes["user_id"]["updatable"] is False
+    assert attributes["role_id"]["primaryKey"] is True
+    assert attributes["role_id"]["updatable"] is False
+    assert attributes["assigned_at"]["primaryKey"] is False
+    assert attributes["assigned_at"]["updatable"] is True
 
 
 @pytest.mark.asyncio
