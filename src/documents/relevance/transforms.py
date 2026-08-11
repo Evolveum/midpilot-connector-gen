@@ -9,12 +9,9 @@ from collections import defaultdict
 from typing import Any, Dict, List, Mapping, Optional
 
 from src.documents.normalize import normalize_endpoint_key, normalize_object_class_name
+from src.shared.auth import auth_entity_key
 from src.shared.coerce import as_dict_list, as_list, as_mapping
 from src.shared.normalize import normalize_relevant_sequence, normalize_url
-
-
-def build_auth_entity_key(name: Any, auth_type: Any) -> str:
-    return f"{str(name or '').strip().lower()}|{str(auth_type or '').strip().lower()}"
 
 
 def build_endpoint_entity_key(path: Any, method: Any) -> Optional[str]:
@@ -253,7 +250,7 @@ def extract_relevant_rows_for_storage(
             for auth_item in auth_items:
                 if not isinstance(auth_item, Mapping):
                     continue
-                entity_key = build_auth_entity_key(auth_item.get("name"), auth_item.get("type"))
+                entity_key = auth_entity_key(auth_item.get("name"), auth_item.get("type"))
                 if entity_key == "|":
                     continue
                 rows.extend(

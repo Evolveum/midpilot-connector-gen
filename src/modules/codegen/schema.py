@@ -10,8 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.core.schema import CamelCaseModel
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
-from src.modules.digester.enums import normalize_auth_type_value
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
+from src.shared.auth import normalize_auth_type_value
 
 AttributesPayload: TypeAlias = Union[AttributeResponse, Mapping[str, Any]]
 EndpointsPayload: TypeAlias = Union[EndpointResponse, Mapping[str, Any]]

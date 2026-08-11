@@ -14,10 +14,10 @@ from src.documents.normalize import normalize_object_class_name
 from src.documents.relevance.transforms import (
     _split_relevance_refs,
     attribute_entity_key,
-    build_auth_entity_key,
     build_endpoint_entity_key,
     extract_attributes_map,
 )
+from src.shared.auth import auth_entity_key
 from src.shared.coerce import as_dict_list
 
 
@@ -165,7 +165,7 @@ async def hydrate_auth_sequences_from_relevance(
         if not isinstance(auth_item, Mapping):
             continue
         item = dict(auth_item)
-        refs = by_entity.get(build_auth_entity_key(item.get("name"), item.get("type")), [])
+        refs = by_entity.get(auth_entity_key(item.get("name"), item.get("type")), [])
         _, relevant_sequences = _split_relevance_refs(refs)
         if relevant_sequences:
             item["relevant_sequences"] = [

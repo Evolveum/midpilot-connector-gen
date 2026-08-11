@@ -5,7 +5,7 @@
 from typing import Any, Dict, List, Mapping, Optional
 
 from src.modules.codegen.schema import AuthPayload, PreferredAuthorizations
-from src.modules.digester.enums import auth_type_match_key, normalize_auth_type_value
+from src.shared.auth import auth_match_key, normalize_auth_type_value
 from src.shared.coerce import as_list, as_mapping
 
 ANALYSIS_SUPPORT_FIELD = "analysisSupport"
@@ -18,9 +18,7 @@ UNSUPPORTED_AUTH_QUIRKS = (
 
 
 def _auth_key(auth_item: Mapping[str, Any]) -> tuple[str, str]:
-    name = str(auth_item.get("name") or "").strip().lower()
-    auth_type = auth_type_match_key(auth_item.get("type"))
-    return name, auth_type
+    return auth_match_key(auth_item.get("name"), auth_item.get("type"))
 
 
 def _normalize_preferred_authorization(preferred: Mapping[str, Any]) -> Dict[str, Any]:
@@ -41,8 +39,7 @@ def _find_matching_auth_item(
     auth_items: List[Mapping[str, Any]],
     preferred: Mapping[str, Any],
 ) -> Optional[Mapping[str, Any]]:
-    preferred_name = str(preferred.get("name") or "").strip().lower()
-    preferred_type = auth_type_match_key(preferred.get("type"))
+    preferred_name, preferred_type = _auth_key(preferred)
     if not preferred_name:
         return None
 
@@ -117,8 +114,7 @@ def is_single_other_authorization(preferred_authorizations: PreferredAuthorizati
         return False
 
     authorization = _normalize_preferred_authorization(preferred_authorizations[0])
-    name = str(authorization.get("name") or "").strip().lower()
-    return name == "other" and auth_type_match_key(authorization.get("type")) == "other"
+    return _auth_key(authorization) == ("other", "other")
 
 
 def _selected_auth_chunk_ids(auth_payload: AuthPayload, preferred_authorizations: PreferredAuthorizations) -> set[str]:

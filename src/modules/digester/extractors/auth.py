@@ -15,7 +15,6 @@ from src.core.llm import build_structured_chain
 from src.core.observability.langfuse import langfuse_handler
 from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
-from src.modules.digester.enums import auth_match_key
 from src.modules.digester.extraction.chunk_extraction import (
     extract_single_chunk,
     run_all_items_build_parallel,
@@ -44,6 +43,7 @@ from src.modules.digester.schemas import (
     DocSequenceItem,
 )
 from src.modules.digester.selection import build_chunk_id_to_doc_id, collect_relevant_chunks
+from src.shared.auth import auth_match_key
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)

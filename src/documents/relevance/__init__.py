@@ -19,7 +19,6 @@ from src.documents.relevance.persistence import (
 )
 from src.documents.relevance.transforms import (
     attribute_entity_key,
-    build_auth_entity_key,
     build_chunk_ref_remap,
     build_endpoint_entity_key,
     extract_attribute_relevance_rows,
@@ -39,7 +38,6 @@ from src.documents.relevance.transforms import (
 
 __all__ = [
     "attribute_entity_key",
-    "build_auth_entity_key",
     "build_chunk_ref_remap",
     "build_endpoint_entity_key",
     "extract_attribute_relevance_rows",
