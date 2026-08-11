@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import DocumentationChunk, RelevantChunk
@@ -304,7 +304,3 @@ class RelevantChunkRepository:
             }
             mapping.setdefault(row.entity_key or "", []).append(payload)
         return mapping
-
-    async def count_by_session(self, session_id: UUID) -> int:
-        stmt = select(func.count()).select_from(RelevantChunk).where(RelevantChunk.session_id == session_id)
-        return int((await self.db.execute(stmt)).scalar_one())

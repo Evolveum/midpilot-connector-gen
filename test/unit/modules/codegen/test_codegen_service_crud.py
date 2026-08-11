@@ -90,9 +90,7 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
             new_callable=AsyncMock,
             return_value=("", ""),
         ) as mock_get_connection_target,
-        patch(
-            "src.modules.codegen.generation._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
-        ),
+        patch("src.modules.codegen.generation._collect_relevant_chunks", new_callable=AsyncMock, return_value=None),
         patch("src.modules.codegen.generation.CreateGenerator") as mock_create_generator_class,
     ):
         mock_generator_instance = mock_create_generator_class.return_value

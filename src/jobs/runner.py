@@ -291,8 +291,7 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
         if execution_task in done:
             await execution_task
         else:
-            heartbeat_task.result()
-            await execution_task
+            await heartbeat_task
         outcome = "succeeded"
     except asyncio.CancelledError:
         execution_task.cancel()

@@ -229,8 +229,8 @@ class InfoMetadataExtraction(_EndpointCarrier, InfoMetadataBase):
 DEFAULT_SCIM_AVAILABILITY_CONFIDENCE: float = 1.0
 DEFAULT_REST_AVAILABILITY_CONFIDENCE: float = 1.0
 
-# Maps free-form availability wording (from the documentation-free REST signals) to the
-# canonical protocol availability. Shared by the signal schema and any future consumer so
+# Maps free-form availability wording from documentation-free protocol signals to the
+# canonical protocol availability. Shared by the signal schemas and any future consumer so
 # the vocabulary stays in one place.
 _PROTOCOL_AVAILABILITY_ALIASES: Dict[str, ProtocolAvailability] = {
     "available": ProtocolAvailability.AVAILABLE,
@@ -426,23 +426,7 @@ class ApiTypeSignalResult(CamelCaseModel):
     @field_validator("scim_availability", mode="before")
     @classmethod
     def _normalize_scim_availability(cls, value: Any) -> ProtocolAvailability:
-        if isinstance(value, ProtocolAvailability):
-            return value
-        if not isinstance(value, str):
-            return ProtocolAvailability.UNKNOWN
-        mapping = {
-            "available": ProtocolAvailability.AVAILABLE,
-            "free": ProtocolAvailability.AVAILABLE,
-            "included": ProtocolAvailability.AVAILABLE,
-            "standard": ProtocolAvailability.AVAILABLE,
-            "paid": ProtocolAvailability.PAID,
-            "gated": ProtocolAvailability.PAID,
-            "premium": ProtocolAvailability.PAID,
-            "enterprise": ProtocolAvailability.PAID,
-            "business": ProtocolAvailability.PAID,
-            "unknown": ProtocolAvailability.UNKNOWN,
-        }
-        return mapping.get(value.strip().lower(), ProtocolAvailability.UNKNOWN)
+        return normalize_protocol_availability(value)
 
 
 class RestSignalResult(CamelCaseModel):
@@ -489,13 +473,6 @@ class InfoExtractionResponse(CamelCaseModel):
         description="High-level application metadata if discovered in the documentation. Null when unavailable.",
     )
 
-    @field_validator("info_metadata", mode="before")
-    @classmethod
-    def _normalize_info(cls, v):
-        if v is None:
-            return None
-        return v
-
 
 class InfoResponse(CamelCaseModel):
     """
@@ -507,10 +484,3 @@ class InfoResponse(CamelCaseModel):
         default=None,
         description="High-level application and API metadata if discovered in the documentations. Null when unavailable.",
     )
-
-    @field_validator("info_metadata", mode="before")
-    @classmethod
-    def _normalize_info(cls, v):
-        if v is None:
-            return None
-        return v

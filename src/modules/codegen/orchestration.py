@@ -165,9 +165,7 @@ async def schedule_authorization_job(
     """
     protocol = await resolve_effective_api_type(session_id, api_type)
 
-    input_preferred_authorizations = (
-        codegen_input.preferred_authorizations_payload() if codegen_input is not None else None
-    )
+    input_preferred_authorizations = codegen_input.preferred_authorizations_payload()
 
     auth_output_raw = await repo.get_session_data(session_id, "authOutput")
     if not isinstance(auth_output_raw, Mapping) or not auth_output_raw:
@@ -183,8 +181,8 @@ async def schedule_authorization_job(
             pass
 
     preferred_authorizations = enrich_preferred_authorizations(auth_output, input_preferred_authorizations)
-    repair_context = codegen_input.repair_context() if codegen_input else None
-    context_payload = codegen_input.context_payload() if codegen_input else {}
+    repair_context = codegen_input.repair_context()
+    context_payload = codegen_input.context_payload()
 
     job_input: dict[str, Any] = {
         "sessionId": session_id,

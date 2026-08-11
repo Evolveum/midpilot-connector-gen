@@ -14,7 +14,7 @@ from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 
 from src.core.observability.langfuse import langfuse_handler
-from src.modules.discovery.schema import DiscoveryIntegrationType, PyScrapeFetchReferences, PySearchPrompts
+from src.modules.discovery.schema import DiscoveryIntegrationType, PySearchPrompts
 
 logger = logging.getLogger(__name__)
 
@@ -64,21 +64,6 @@ def get_prioritized_fallback_templates(integration_type: DiscoveryIntegrationTyp
             deduped_templates.append(template)
 
     return deduped_templates or DEFAULT_FALLBACK_TEMPLATES.copy()
-
-
-def fetch_parser_response(
-    parser_model: ChatOpenAI,
-    unstructured_output: str,
-    pydantic_class_template: type[PyScrapeFetchReferences],
-) -> PyScrapeFetchReferences:
-    """Parse the evaluator output into the pydantic_class_template."""
-    base_parser: PydanticOutputParser[PyScrapeFetchReferences] = PydanticOutputParser(
-        pydantic_object=pydantic_class_template
-    )
-    meta_parser = OutputFixingParser.from_llm(parser=base_parser, llm=parser_model)
-    parsed_output = meta_parser.parse(unstructured_output)
-    assert isinstance(parsed_output, pydantic_class_template)  # helps type-checkers
-    return parsed_output
 
 
 def _parse_search_prompts(parser_model: ChatOpenAI, raw_text: str) -> PySearchPrompts:

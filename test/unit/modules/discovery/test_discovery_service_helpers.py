@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage
 
 import src.integrations.web.search as search
 import src.modules.discovery.utils.llm_helpers as llm_helpers
-from src.modules.discovery.schema import PyScrapeFetchReferences, PySearchPrompts
+from src.modules.discovery.schema import PySearchPrompts
 
 
 def test_search_with_ddgs():
@@ -50,30 +50,6 @@ def test_search_web_uses_configured_backend():
         mock_config.brave = SimpleNamespace(endpoint="https://example.test/search", api_key="key")
         search.search_web("test")
         mock_brave.assert_called_once_with("test", max_results=10)
-
-
-def test_fetch_parser_response():
-    """Test the fetch_parser_response function."""
-    mock_parser_model = MagicMock()
-
-    # Patch OutputFixingParser.from_llm to return an object whose parse()
-    # gives a PyScrapeFetchReferences instance (what the function returns).
-    with (
-        patch("src.modules.discovery.utils.llm_helpers.OutputFixingParser") as mock_ofp,
-        patch("src.modules.discovery.utils.llm_helpers.PydanticOutputParser"),
-    ):
-        meta = MagicMock()
-        meta.parse.return_value = PyScrapeFetchReferences(name="n", urls_to_crawl=["https://x.y/z"], text_output="txt")
-        mock_ofp.from_llm.return_value = meta
-
-        result = llm_helpers.fetch_parser_response(
-            parser_model=mock_parser_model,
-            unstructured_output=json.dumps({"any": "payload"}),
-            pydantic_class_template=PyScrapeFetchReferences,
-        )
-
-        assert isinstance(result, PyScrapeFetchReferences)
-        assert result.urls_to_crawl == ["https://x.y/z"]
 
 
 def test_generate_query_via_llm(mock_llm, mock_llm_eval):

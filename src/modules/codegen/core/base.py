@@ -66,18 +66,13 @@ class ChunkProcessor:
         """
         chunks: List[str] = []
         provenance_chunk_ids: List[Optional[str]] = []
-        per_chunk_selected_counts: Dict[str, int] = {}
-        chunk_ids_included: List[str] = []
 
         # Build chunk map by UUID - documentation_items are already chunked
         chunks_by_uuid: Dict[str, Dict[str, Any]] = {}
         for item in documentation_items:
-            try:
-                uid = item.get("chunkId")
-                if isinstance(uid, str):
-                    chunks_by_uuid[uid] = item
-            except Exception:
-                continue
+            uid = item.get("chunkId")
+            if isinstance(uid, str):
+                chunks_by_uuid[uid] = item
 
         # Process pairs in order - each pair references a specific chunk by its ID
         chunk_counts: Dict[str, int] = {}
@@ -107,17 +102,14 @@ class ChunkProcessor:
                 seen_chunk_ids.append(chunk_id)
             chunk_counts[chunk_id] += 1
 
-        per_chunk_selected_counts = chunk_counts
-        chunk_ids_included = seen_chunk_ids
-
         logger.info(
             "%s Using %d pre-chunked documentation items from %d unique chunk IDs",
             logger_prefix,
             len(chunks),
-            len(chunk_ids_included),
+            len(seen_chunk_ids),
         )
 
-        return chunks, provenance_chunk_ids, per_chunk_selected_counts, chunk_ids_included
+        return chunks, provenance_chunk_ids, chunk_counts, seen_chunk_ids
 
 
 class BaseGroovyGenerator(ABC):
@@ -217,7 +209,6 @@ class BaseGroovyGenerator(ABC):
         # Step 4: Process chunks iteratively
         fallback_result = self.get_initial_result(**operation_specific_kwargs)
         initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result=fallback_result)
-        result = initial_result
         result = await self._process_chunks(
             chunks=chunks,
             provenance_chunk_ids=provenance_chunk_ids,
@@ -226,7 +217,7 @@ class BaseGroovyGenerator(ABC):
             input_data=input_data,
             chain=chain,
             job_id=job_id,
-            initial_result=result,
+            initial_result=initial_result,
         )
 
         if not result:

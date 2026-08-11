@@ -188,10 +188,10 @@ class CodegenRepairContext(CamelCaseModel):
         )
 
     def context_payload(self) -> dict[str, Any]:
-        if not self.is_repair:
-            return {}
         repair_context = self.repair_context()
-        return repair_context.to_payload() if repair_context is not None else {}
+        if repair_context is None:
+            return {}
+        return repair_context.to_payload()
 
 
 class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
@@ -202,9 +202,7 @@ class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
 
 
 class AuthorizationCodegenInput(PreferredAuthorizationsInput, CodegenRepairContext):
-    def preferred_authorizations_payload(self) -> list[dict[str, Any]] | None:
-        if not self.preferred_authorizations:
-            return None
+    def preferred_authorizations_payload(self) -> list[dict[str, Any]]:
         return [authorization.model_dump(exclude_none=True) for authorization in self.preferred_authorizations]
 
     def context_payload(self) -> dict[str, Any]:

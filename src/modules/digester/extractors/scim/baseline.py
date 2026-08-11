@@ -679,12 +679,6 @@ def get_scim_resource_endpoint_definition(
     return None
 
 
-def get_scim_resource_endpoint(bundle: ScimBaselineBundle, class_name: str) -> Optional[str]:
-    """Return the explicit exported endpoint path for ``class_name``, or None."""
-    definition = get_scim_resource_endpoint_definition(bundle, class_name)
-    return definition.endpoint if definition is not None else None
-
-
 def _append_reference(
     references: List[Dict[str, str]],
     seen: set[tuple[str, str]],
@@ -772,57 +766,6 @@ def get_base_scim_object_classes(bundle: ScimBaselineBundle) -> List[Dict[str, A
         )
 
     return object_classes
-
-
-def get_base_scim_attributes(schemas: Dict[str, Any], class_name: str) -> Dict[str, Dict[str, Any]]:
-    """Return the baseline attributes for ``class_name`` in digester AttributeInfo format."""
-    schema = get_scim_schema(schemas, class_name)
-    if not schema:
-        logger.warning("[Digester:Baseline] Schema not found for class: %s", class_name)
-        return {}
-
-    attributes: Dict[str, Dict[str, Any]] = {}
-    for attr in as_dict_list(schema.get("attributes")):
-        attr_name = attr.get("name")
-        if not attr_name:
-            continue
-
-        mutability = attr.get("mutability", "readWrite")
-        is_updatable = mutability not in ("readOnly", "immutable")
-        is_creatable = mutability != "readOnly"
-        is_readable = mutability != "writeOnly"
-
-        returned = attr.get("returned", "default")
-        returned_by_default = returned in ("always", "default")
-
-        attribute_info: Dict[str, Any] = {
-            "type": map_scim_type_to_digester(attr.get("type")),
-            "format": _infer_format_from_scim_attr(attr),
-            "description": attr.get("description", ""),
-            "mandatory": attr.get("required", False),
-            "updatable": is_updatable,
-            "creatable": is_creatable,
-            "readable": is_readable,
-            "multivalue": attr.get("multiValued", False),
-            "returnedByDefault": returned_by_default,
-        }
-
-        if attr.get("type") == "complex" and isinstance(attr.get("subAttributes"), list):
-            attribute_info["subAttributes"] = {}
-            for sub_attr in as_dict_list(attr.get("subAttributes")):
-                sub_name = sub_attr.get("name")
-                if sub_name:
-                    attribute_info["subAttributes"][sub_name] = {
-                        "type": map_scim_type_to_digester(sub_attr.get("type")),
-                        "description": sub_attr.get("description", ""),
-                    }
-
-        attributes[attr_name] = attribute_info
-
-    # Called per class from several flows (attribute extraction, codegen-context projection);
-    # the callers report the resulting counts at INFO.
-    logger.debug("[Digester:Baseline] Loaded %d attributes for %s", len(attributes), class_name)
-    return attributes
 
 
 _SCIM_ATTRIBUTE_CONTEXT_KEYS = (
@@ -1137,25 +1080,3 @@ def map_scim_type_to_digester(scim_type: Any) -> str:
         logger.debug("[Digester:Baseline] Unknown attribute type %r; defaulting to string", scim_type)
         return "string"
     return mapped_type
-
-
-def _infer_format_from_scim_attr(attr: Dict[str, Any]) -> Optional[str]:
-    """Infer a digester format hint from a SCIM attribute definition."""
-    scim_type = str(attr.get("type") or "").strip().lower()
-
-    if scim_type == "datetime":
-        return "date-time"
-    if scim_type == "binary":
-        return "binary"
-    if scim_type == "reference":
-        return "reference"
-    if scim_type == "complex":
-        return "embedded"
-
-    name = str(attr.get("name", "")).lower()
-    if "email" in name:
-        return "email"
-    if "url" in name or "uri" in name:
-        return "uri"
-
-    return None

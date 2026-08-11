@@ -138,8 +138,3 @@ async def discover_candidate_links(
         candidate_links=candidate_links,
         candidate_links_enriched=candidates_enriched,
     )
-
-
-async def fetch_candidate_links(app_data: CandidateLinksInput, job_id: UUID) -> CandidateLinksOutput:
-    """Backward-compatible alias."""
-    return await discover_candidate_links(app_data, None, job_id=job_id)

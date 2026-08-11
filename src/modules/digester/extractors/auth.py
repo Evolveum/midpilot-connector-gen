@@ -543,13 +543,11 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
 
     logger.info(
         "[Digester:Auth] Sorting complete. Total: %s sorted auth items. Type counts: %s",
-        len(sorted_auth_items.auth) if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth else 0,
+        len(sorted_auth_items.auth or []),
         _auth_type_counts(sorted_auth_items),
     )
 
     return {
-        "result": sorted_auth_items.model_dump(by_alias=True)
-        if hasattr(sorted_auth_items, "model_dump")
-        else sorted_auth_items,
+        "result": sorted_auth_items.model_dump(by_alias=True),
         "relevantDocumentations": all_relevant_chunks,
     }

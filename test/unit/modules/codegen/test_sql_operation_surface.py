@@ -95,7 +95,7 @@ async def test_search_generation_enables_context_only_pass_per_protocol(protocol
         patch(
             "src.modules.codegen.generation._collect_relevant_chunks",
             new_callable=AsyncMock,
-            return_value=(None, None),
+            return_value=None,
         ),
         patch("src.modules.codegen.generation.SearchGenerator") as mock_generator_class,
     ):

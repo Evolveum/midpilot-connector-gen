@@ -6,10 +6,10 @@ import os
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from src.database.models import Base, Document, DocumentationChunk, Session
+from src.database.models import Base, Document, DocumentationChunk, RelevantChunk, Session
 from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 
 
@@ -108,7 +108,13 @@ async def test_relevant_chunks_are_stored_against_the_document_the_chunk_belongs
             await db.execute(delete(DocumentationChunk).where(DocumentationChunk.chunk_id == chunk_id))
             await db.commit()
 
-            remaining = await RelevantChunkRepository(db).count_by_session(session_id)
+            remaining = int(
+                (
+                    await db.execute(
+                        select(func.count()).select_from(RelevantChunk).where(RelevantChunk.session_id == session_id)
+                    )
+                ).scalar_one()
+            )
 
         assert remaining == 0
     finally:

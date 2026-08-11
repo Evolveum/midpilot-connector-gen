@@ -262,3 +262,40 @@ async def test_release_interrupted_claim_gives_up_when_the_database_does_not_ans
     await asyncio.wait_for(runner._release_interrupted_claim(claimed_job), timeout=5)
 
     assert release_started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_lost_heartbeat_cancels_the_running_execution(monkeypatch: pytest.MonkeyPatch):
+    execution_started = asyncio.Event()
+    execution_cancelled = asyncio.Event()
+
+    async def run_until_cancelled(claimed_job: ClaimedJob) -> None:
+        execution_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            execution_cancelled.set()
+            raise
+
+    async def lose_claim(claimed_job: ClaimedJob) -> None:
+        await execution_started.wait()
+        raise JobClaimLostError(claimed_job.job_id)
+
+    claimed_job = ClaimedJob(
+        job_id=uuid4(),
+        session_id=uuid4(),
+        job_type="digester.test",
+        input_payload={},
+        execution_payload={},
+        worker_id="test-worker",
+        execution_token=uuid4(),
+        attempt_count=1,
+    )
+    monkeypatch.setattr(runner, "_run_claimed_job", run_until_cancelled)
+    monkeypatch.setattr(runner, "_heartbeat", lose_claim)
+
+    with patch("src.jobs.runner.lifecycle.set_failed", new_callable=AsyncMock) as set_failed:
+        await asyncio.wait_for(runner.execute_claimed_job(claimed_job), timeout=1)
+
+    assert execution_cancelled.is_set()
+    set_failed.assert_not_awaited()

@@ -27,10 +27,9 @@ from src.modules.digester.extractors.scim.baseline import (
     ScimResourceDefinition,
     build_scim_baseline_bundle,
     build_scim_codegen_context,
-    get_base_scim_attributes,
     get_base_scim_object_classes,
     get_scim_class_document_references,
-    get_scim_resource_endpoint,
+    get_scim_resource_endpoint_definition,
     load_session_scim_baseline,
     map_scim_type_to_digester,
 )
@@ -275,7 +274,9 @@ async def test_loader_supports_arbitrary_schema_resource_and_object_class_names(
     assert set(bundle.schemas) == {"Device"}
     assert set(bundle.resources) == {"Device"}
     assert set(bundle.connid_classes) == {"Device"}
-    assert get_scim_resource_endpoint(bundle, "device") == "/inventory/devices"
+    endpoint_definition = get_scim_resource_endpoint_definition(bundle, "device")
+    assert endpoint_definition is not None
+    assert endpoint_definition.endpoint == "/inventory/devices"
 
     context = build_scim_codegen_context(bundle, "device")
     assert context["resource"]["endpoint"] == "/inventory/devices"
@@ -563,7 +564,7 @@ async def test_loader_uses_conndev_content_type_with_arbitrary_filename():
     assert bundle.schemas["User"] == USER_SCHEMA
 
 
-def test_get_scim_resource_endpoint_prefers_resource_then_connid_locator():
+def test_get_scim_resource_endpoint_definition_prefers_resource_then_connid_locator():
     resource = ScimResourceDefinition(
         name="User",
         endpoint="/scim/v2/Users",
@@ -573,22 +574,14 @@ def test_get_scim_resource_endpoint_prefers_resource_then_connid_locator():
     connid_class = ConnIdObjectClassDefinition(name="User", namespace=USER_SCHEMA["id"], locator="/Users", uid="User")
 
     with_resource = build_scim_baseline_bundle({"User": USER_SCHEMA}, {"User": resource}, {"User": connid_class})
-    assert get_scim_resource_endpoint(with_resource, "user") == "/scim/v2/Users"
+    resource_definition = get_scim_resource_endpoint_definition(with_resource, "user")
+    assert resource_definition is not None
+    assert resource_definition.endpoint == "/scim/v2/Users"
 
     locator_only = build_scim_baseline_bundle({"User": USER_SCHEMA}, {}, {"User": connid_class})
-    assert get_scim_resource_endpoint(locator_only, "user") == "/Users"
+    locator_definition = get_scim_resource_endpoint_definition(locator_only, "user")
+    assert locator_definition is not None
+    assert locator_definition.endpoint == "/Users"
 
     schemas_only = build_scim_baseline_bundle({"User": USER_SCHEMA})
-    assert get_scim_resource_endpoint(schemas_only, "user") is None
-
-
-def test_immutable_scim_attribute_is_creatable_but_not_updatable():
-    schema = {
-        "id": "urn:example:Group",
-        "name": "Group",
-        "attributes": [{"name": "externalId", "type": "string", "mutability": "immutable"}],
-    }
-    attributes = get_base_scim_attributes({"Group": schema}, "Group")
-
-    assert attributes["externalId"]["updatable"] is False
-    assert attributes["externalId"]["creatable"] is True
+    assert get_scim_resource_endpoint_definition(schemas_only, "user") is None

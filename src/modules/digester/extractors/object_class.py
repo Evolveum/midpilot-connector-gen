@@ -147,6 +147,6 @@ async def _extract_rest_object_classes(
     )
 
     return {
-        "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
+        "result": final_result.model_dump(by_alias=True),
         "relevantDocumentations": all_relevant_chunks,
     }

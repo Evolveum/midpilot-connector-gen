@@ -2,8 +2,10 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from typing import Any, Optional, Type
+from typing import Optional
 from uuid import UUID
+
+from pydantic import BaseModel
 
 from src.jobs import get_job_status
 from src.jobs.schema import BaseProgress, JobStatusMultiDocResponse, JobStatusStageResponse
@@ -54,7 +56,7 @@ async def build_multi_doc_status_response(job_id: UUID | None) -> JobStatusMulti
     )
 
 
-async def build_typed_job_status_response(job_id: UUID, model_cls: Type[Any]) -> JobStatusMultiDocResponse:
+async def build_typed_job_status_response(job_id: UUID, model_cls: type[BaseModel]) -> JobStatusMultiDocResponse:
     """Build multi-doc status response and parse successful result into the provided model class."""
     status = await get_job_status(job_id)
     raw_status = status.get("status", JobStatus.not_found.value)
@@ -76,10 +78,7 @@ async def build_typed_job_status_response(job_id: UUID, model_cls: Type[Any]) ->
                         if not isinstance(relevant, list):
                             obj_class["relevantDocumentations"] = []
 
-            if hasattr(model_cls, "model_validate"):
-                result_payload = model_cls.model_validate(actual_result)
-            else:
-                result_payload = model_cls(**actual_result)
+            result_payload = model_cls.model_validate(actual_result)
         except Exception as exc:
             return JobStatusMultiDocResponse(
                 jobId=status.get("jobId", job_id),
