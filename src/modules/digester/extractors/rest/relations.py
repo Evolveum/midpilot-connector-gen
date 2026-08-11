@@ -2,395 +2,696 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+"""
+Staged relation detection for REST documentation.
+
+A relation is a cross-chunk object: chunking splits the subject schema, the object schema
+and the sub-resource endpoint into different fragments, so no single fragment holds enough
+to judge one. The pipeline therefore separates observing from deciding.
+
+    1 harvest      one call per chunk, recall-first, no rejection
+    2 seed         attributes, endpoints and class metadata already in the session
+    3 sweep        one call per object class, with that class's whole documentation in view
+    4 focus        one call per pair whose evidence is thin or one-sided
+    5 adjudicate   one call per class pair, with every observation for it at once
+    6 verify       one adversarial call per accepted relation
+    7 project      down to the unchanged ``RelationsResponse`` contract
+
+Stages 1-4 only produce observations, which are folded onto an **unordered class pair**;
+that is what makes two documented navigation directions one relation rather than two
+half-populated records. Stage 5 is the only stage that accepts, rejects, assigns the
+subject/object orientation, and decides whether distinct documented attributes express
+separate associations.
+
+Everything the pipeline learns beyond the seven contract fields - relation kind, per-side
+cardinality, link class, confidence, rationale and the explicit rejections - is persisted
+under ``relationsAnalysisOutput`` instead of being thrown away.
+"""
+
+import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from src.core.llm import build_structured_chain, raise_if_llm_unavailable
-from src.documents.chunking import normalize_to_text
+from src.config import config
 from src.documents.normalize import normalize_object_class_name
 from src.jobs import append_job_error, update_job_progress
-from src.modules.digester.aggregation.merges import merge_relations_results
-from src.modules.digester.entities.relations import deduplicate_semantic_relations
-from src.modules.digester.enums import ConfidenceLevel
-from src.modules.digester.extraction.chunk_extraction import process_over_chunks
-from src.modules.digester.extraction.llm_execution import invoke_chunk_chain
-from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
-from src.modules.digester.prompts.rest.relations_prompts import (
-    get_relations_system_prompt,
-    get_relations_user_prompt,
+from src.modules.digester.entities.relation_candidates import (
+    ObjectClassIndex,
+    ObjectClassInfo,
+    ObservedPair,
+    deduplicate_relation_names,
+    grounded_attribute_names,
+    group_observations,
+    is_attribute_grounded,
+    observations_from_attributes,
+    observations_from_class_metadata,
+    observations_from_endpoints,
+    sort_relations_by_iga_priority,
+    verdict_to_relation_record,
 )
-from src.modules.digester.schemas import FinalObjectClass, ObjectClassesResponse, RelationRecord, RelationsResponse
+from src.modules.digester.entities.relations import deduplicate_semantic_relations, split_relation_tokens
+from src.modules.digester.extraction.llm_execution import run_chunks_concurrently
+from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
+from src.modules.digester.extractors.rest import relation_context, relation_passes
+from src.modules.digester.extractors.rest.relation_context import LOG_SCOPE
+from src.modules.digester.results import store_relations_analysis
+from src.modules.digester.schemas import RelationRecord, RelationsResponse
+from src.modules.digester.schemas.relation_analysis import (
+    RELATION_KINDS_ACCEPTED,
+    EvidenceSource,
+    RelationAnalysisStats,
+    RelationDecision,
+    RelationObservation,
+    RelationPairAnalysis,
+    RelationsAnalysis,
+    RelationVerdict,
+)
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 
-CONFIDENCE_PRIORITY: Dict[ConfidenceLevel, int] = {
-    ConfidenceLevel.HIGH: 0,
-    ConfidenceLevel.MEDIUM: 1,
-    ConfidenceLevel.LOW: 2,
-}
-MISSING_CLASS_PRIORITY = len(CONFIDENCE_PRIORITY)
+# One observation plus where it came from and which chunk backs it.
+ObservationEntry = Tuple[RelationObservation, EvidenceSource, Optional[Sequence[Dict[str, str]]]]
+
+# --- Entry point ---
 
 
-def _extract_relevant_object_classes(relevant_object_classes: Any) -> List[FinalObjectClass]:
-    """
-    Parse object classes from the canonical digester payload shape.
-    Expected input: {"objectClasses": [...]} (camelCase aliases supported by schema model).
-    """
-    try:
-        parsed = ObjectClassesResponse.model_validate(relevant_object_classes)
-        logger.debug(
-            "[Digester:Relations] Successfully extracted %d relevant object classes",
-            len(parsed.object_classes),
-        )
-        return parsed.object_classes
-
-    except Exception as exc:
-        logger.error("[Digester:Relations] Failed to parse object classes payload: %s", exc)
-        return []
-
-
-def _extract_relevant_names(relevant_object_classes: Any) -> List[Tuple[str, str]]:
-    """
-    Extract object class names and descriptions from the object classes payload.
-    Returns a list of tuples (name, description).
-    """
-    relevant_items = _extract_relevant_object_classes(relevant_object_classes)
-    return [(item.name, item.description) for item in relevant_items]
-
-
-def _confidence_order_key(confidence: ConfidenceLevel) -> int:
-    return CONFIDENCE_PRIORITY[confidence]
-
-
-def _build_object_class_priority_map(relevant_object_classes: Any) -> Dict[str, Tuple[int, int, int]]:
-    """
-    Build deterministic object-class priority map:
-    1) confidence (high -> medium -> low)
-    2) relative order within the same confidence bucket
-    3) original global order as a stable tie-breaker
-    """
-    relevant_items = _extract_relevant_object_classes(relevant_object_classes)
-    priority_map: Dict[str, Tuple[int, int, int]] = {}
-    bucket_positions: Dict[int, int] = {}
-
-    for global_position, item in enumerate(relevant_items):
-        class_name = item.name.strip()
-        if not class_name:
-            continue
-
-        confidence_rank = _confidence_order_key(item.confidence)
-        bucket_position = bucket_positions.get(confidence_rank, 0)
-        bucket_positions[confidence_rank] = bucket_position + 1
-
-        class_key = normalize_object_class_name(class_name)
-        candidate = (confidence_rank, bucket_position, global_position)
-        existing = priority_map.get(class_key)
-        if existing is None or candidate < existing:
-            priority_map[class_key] = candidate
-
-    return priority_map
-
-
-def _sort_relations_by_iga_priority(
-    relations: List[RelationRecord],
+async def extract_relations(
+    doc_items: List[dict],
     relevant_object_classes: Any,
-) -> List[RelationRecord]:
-    """
-    Sort relations by object-class importance with deterministic fallback.
-    Subject class priority is primary because relation semantics are anchored to subject attributes.
-    """
-    if len(relations) <= 1:
-        return list(relations)
-
-    object_class_priority = _build_object_class_priority_map(relevant_object_classes)
-    if not object_class_priority:
-        return sorted(
-            relations,
-            key=lambda rel: (
-                normalize_object_class_name(rel.subject),
-                normalize_object_class_name(rel.subject_attribute or ""),
-                normalize_object_class_name(rel.object),
-                normalize_object_class_name(rel.object_attribute or ""),
-            ),
-        )
-
-    missing_class_bucket_position = len(object_class_priority) + 1
-    missing_class_priority = (MISSING_CLASS_PRIORITY, missing_class_bucket_position, missing_class_bucket_position)
-
-    def _sort_key(relation: RelationRecord) -> Tuple[int, int, int, int, int, int, str, str, str]:
-        subject_priority = object_class_priority.get(
-            normalize_object_class_name(relation.subject),
-            missing_class_priority,
-        )
-        object_priority = object_class_priority.get(
-            normalize_object_class_name(relation.object),
-            missing_class_priority,
-        )
-        return (
-            subject_priority[0],
-            subject_priority[1],
-            subject_priority[2],
-            object_priority[0],
-            object_priority[1],
-            object_priority[2],
-            normalize_object_class_name(relation.subject_attribute or ""),
-            normalize_object_class_name(relation.object),
-            normalize_object_class_name(relation.object_attribute or ""),
-        )
-
-    return sorted(relations, key=_sort_key)
-
-
-def sort_relation_dicts_by_iga_priority(
-    relations: List[Any],
-    relevant_object_classes: Any,
-) -> List[Dict[str, Any]]:
-    """
-    Parse, semantically deduplicate, sort, and serialize relation payload items in one place.
-    Invalid relation records are skipped to preserve robust merge behavior.
-    """
-    parsed_relations: List[RelationRecord] = []
-    for relation in relations:
-        try:
-            parsed_relations.append(RelationRecord.model_validate(relation))
-        except Exception:
-            logger.debug("[Digester:Relations] Skipping invalid relation during final merge sort: %r", relation)
-
-    deduplicated_relations = deduplicate_semantic_relations(parsed_relations)
-    sorted_relations = _sort_relations_by_iga_priority(deduplicated_relations, relevant_object_classes)
-    return [relation.model_dump(by_alias=True) for relation in sorted_relations]
-
-
-async def _parse_relations_result(
-    result: Any,
+    session_id: UUID,
     job_id: UUID,
-    idx: Optional[int] = None,
-    total_chunks: Optional[int] = None,
-    chunk_id: Optional[UUID] = None,
-) -> List[RelationRecord]:
+) -> Dict[str, Any]:
     """
-    Parse LLM result into RelationRecord list.
-    Handles various result formats from structured output.
-    """
-    try:
-        # Handle RelationsResponse directly
-        if isinstance(result, RelationsResponse):
-            logger.debug("[Digester:Relations] Found %d relations in RelationsResponse", len(result.relations))
-            return result.relations
-
-        # Handle dict format
-        if isinstance(result, dict):
-            if "relations" in result:
-                relations_data = result["relations"]
-                logger.debug("[Digester:Relations] Parsing %d relations from dict format", len(relations_data))
-                return [RelationRecord.model_validate(rel) for rel in relations_data]
-            else:
-                # Try to parse as single RelationsResponse
-                logger.debug("[Digester:Relations] Attempting to parse dict as RelationsResponse")
-                parsed = RelationsResponse.model_validate(result)
-                return parsed.relations
-
-        # Handle string content (JSON)
-        content = getattr(result, "content", None)
-        if isinstance(content, str) and content.strip():
-            data = json.loads(content)
-            if "relations" in data:
-                logger.debug("[Digester:Relations] Found %d relations in JSON content", len(data["relations"]))
-                return [RelationRecord.model_validate(rel) for rel in data["relations"]]
-
-        logger.warning("[Digester:Relations] Could not parse result format")
-        return []
-
-    except Exception as exc:
-        if job_id is not None and idx is not None:
-            total = total_chunks or 0
-            prefix = "[Digester:Relations] "
-            error_message = f"{prefix}Failed to parse chunk {idx + 1}/{total if total else '?'}: {exc}"
-            if chunk_id:
-                error_message = f"{error_message} (chunk_id: {chunk_id})"
-            logger.exception(error_message)
-            await append_job_error(job_id, error_message)
-        else:
-            logger.exception("[Digester:Relations] Failed to parse relations result")
-        return []
-
-
-async def _extract_from_chunk(
-    chain,
-    idx: int,
-    chunk: str,
-    job_id: UUID,
-    total_chunks: Optional[int] = None,
-    chunk_id: Optional[UUID] = None,
-    chunk_metadata: Optional[Dict[str, Any]] = None,
-) -> List[RelationRecord]:
-    try:
-        result = await invoke_chunk_chain(chain, chunk, chunk_metadata)
-        return await _parse_relations_result(
-            result,
-            job_id=job_id,
-            idx=idx,
-            total_chunks=total_chunks,
-            chunk_id=chunk_id,
-        )
-    except Exception as exc:
-        raise_if_llm_unavailable(exc, context="extracting relations")
-        total = total_chunks or 0
-        error_message = f"[Digester:Relations] Failed to process chunk {idx + 1}/{total if total else '?'}: {exc}"
-        if chunk_id:
-            error_message = f"{error_message} (chunk_id: {chunk_id})"
-        logger.exception(error_message)
-        await append_job_error(job_id, error_message)
-        return []
-
-
-async def extract_relations_raw(
-    schema: str,
-    relevant_object_classes: Any,
-    job_id: UUID,
-    chunk_id: Optional[UUID] = None,
-    chunk_metadata: Optional[Dict[str, Any]] = None,
-) -> Tuple[RelationsResponse, bool]:
-    """
-    Extract relationships between object classes from an OpenAPI/Swagger specification.
-
-    This function analyzes the provided OpenAPI spec to identify relationships where one object class
-    contains properties that reference another object class (foreign keys, IDs, $refs, etc.).
+    Detect relations between the session's object classes.
 
     Args:
-        schema: OpenAPI/Swagger specification as string (YAML or JSON format).
-        relevant_object_classes: Output from /getObjectClass endpoint. Can be JSON string, dict, list,
-                              or ObjectClassesResponse.
-
-    Returns:
-        Tuple containing:
-        - RelationsResponse: Contains list of discovered relationships with normalized class names,
-                          subject/object attributes, and relationship metadata.
-        - Boolean indicating if relevant relation data was found
-
-    Note:
-        - Class names are used exactly as provided without any normalization
-        - Only relationships with strong evidence in the spec chunks are included
-        - Deduplication is performed on (subject, subjectAttribute, object) tuples
+        doc_items: Documentation chunks selected for this session.
+        relevant_object_classes: Stored ``objectClassesOutput`` payload.
+        session_id: Session whose attribute and endpoint output is reused as evidence.
+        job_id: Job used for progress, errors and the stale-write guard on the analysis.
     """
-    logger.info("[Digester:Relations] LLM call for chunk %s", chunk_id)
-    relevant_items = _extract_relevant_names(relevant_object_classes)
-    if not relevant_items:
-        logger.warning("[Digester:Relations] No relevant object classes; returning empty.")
-        return RelationsResponse(relations=[]), False
+    index, skipped_classes = ObjectClassIndex.from_payload(relevant_object_classes)
+    if skipped_classes:
+        logger.warning("[%s] Skipped %d malformed object-class entries while indexing", LOG_SCOPE, skipped_classes)
+    if not len(index):
+        message = f"[{LOG_SCOPE}] No usable object classes in objectClassesOutput; nothing to relate"
+        logger.error(message)
+        await append_job_error(job_id, message)
+        return _empty_result()
 
-    # Extract names and descriptions
-    relevant_names = [name for name, _ in relevant_items]
-    relevant_descriptions = [desc for _, desc in relevant_items]
+    chunk_lookup = relation_context.build_chunk_lookup(doc_items)
+    prompt_classes = relation_context.classes_for_prompt(index)
+    object_classes_json = json.dumps(index.to_prompt_payload(prompt_classes), ensure_ascii=False, indent=1)
 
-    # Format for the prompt
-    relevant_list_with_descriptions = "\n".join(
-        f"- {name}: {desc}" if desc.strip() else f"- {name}" for name, desc in relevant_items
+    attributes_by_class, endpoints_by_class = await relation_context.load_class_schemas(session_id, index)
+    class_chunk_ids = await relation_context.load_class_chunk_ids(session_id, index, chunk_lookup)
+
+    entries: List[ObservationEntry] = []
+    stats = RelationAnalysisStats()
+
+    entries.extend(_seed_from_session(index, attributes_by_class, endpoints_by_class, chunk_lookup, stats))
+    entries.extend(await _harvest(doc_items, object_classes_json, job_id, stats))
+    entries.extend(await _sweep_classes(index, object_classes_json, class_chunk_ids, chunk_lookup, job_id, stats))
+
+    # Grouped twice on purpose: the focused re-read needs to know which pairs are weak, and its
+    # own observations then have to land on those same pairs.
+    pairs, _ = group_observations(entries, index)
+    entries.extend(await _focus_weak_pairs(pairs, index, class_chunk_ids, chunk_lookup, job_id, stats))
+    pairs, unresolved = group_observations(entries, index)
+
+    stats.observations_total = len(entries)
+    if unresolved:
+        logger.info("[%s] Dropped %d observations naming classes that were never extracted", LOG_SCOPE, unresolved)
+
+    analyses = await _adjudicate_pairs(pairs, index, attributes_by_class, job_id, stats)
+    relations = await _verify_and_collect(analyses, index, attributes_by_class, job_id, stats)
+
+    await _persist_analysis(session_id, job_id, analyses, stats)
+
+    relevant_documentations = _relevant_documentations(analyses)
+    logger.info(
+        "[%s] Completed: %d pairs analyzed, %d relations emitted, %d observations from %d chunks",
+        LOG_SCOPE,
+        len(analyses),
+        len(relations),
+        stats.observations_total,
+        stats.chunks_harvested,
     )
 
-    # Normalize text (input is already pre-chunked in DB)
-    text = normalize_to_text(schema)
+    return {
+        "result": RelationsResponse(relations=relations).model_dump(by_alias=True),
+        "relevantDocumentations": relevant_documentations,
+    }
 
-    if not text or not text.strip():
-        logger.warning("[Digester:Relations] Empty schema provided; returning empty.")
-        return RelationsResponse(relations=[]), False
 
-    # Progress: start processing
+def _empty_result() -> Dict[str, Any]:
+    return {"result": RelationsResponse(relations=[]).model_dump(by_alias=True), "relevantDocumentations": []}
+
+
+# --- Stage 2: deterministic seeding ---
+
+
+def _seed_from_session(
+    index: ObjectClassIndex,
+    attributes_by_class: Dict[str, Any],
+    endpoints_by_class: Dict[str, Any],
+    chunk_lookup: Dict[str, Dict[str, Any]],
+    stats: RelationAnalysisStats,
+) -> List[ObservationEntry]:
+    """
+    Turn already-extracted digester output into observations, without an LLM call.
+
+    Attribute schemas carry the distinction relation detection needs: ``format=reference``
+    means the attribute points at another object class, ``format=embedded`` means it belongs
+    to this one. Both are recorded so the embedded case is rejected explicitly instead of
+    being rediscovered and re-proposed every run.
+    """
+    entries: List[ObservationEntry] = []
+
+    for info in index.all:
+        key = normalize_object_class_name(info.name)
+        payload = attributes_by_class.get(key)
+        if payload is not None:
+            for observation in observations_from_attributes(info.name, payload, index):
+                entries.append((observation, "attribute_schema", None))
+        endpoints = endpoints_by_class.get(key)
+        if endpoints is not None:
+            for observation in observations_from_endpoints(info.name, endpoints, index):
+                entries.append((observation, "endpoint_schema", None))
+
+    for observation in observations_from_class_metadata(index):
+        entries.append((observation, "object_class_metadata", None))
+
+    stats.observations_deterministic = len(entries)
+    logger.info("[%s] Seeded %d observations from stored schema output", LOG_SCOPE, len(entries))
+    return entries
+
+
+# --- Stage 1: per-chunk harvest ---
+
+
+async def _harvest(
+    doc_items: List[dict],
+    object_classes_json: str,
+    job_id: UUID,
+    stats: RelationAnalysisStats,
+) -> List[ObservationEntry]:
+    """Run the recall-first harvest over every selected chunk."""
+    if not doc_items:
+        return []
+
     await update_job_progress(
         job_id,
-        stage="processing_chunks",
-        message="Processing chunk and extracting relations",
+        stage=JobStage.processing_chunks,
+        message=f"Harvesting relation evidence from {len(doc_items)} chunks",
     )
 
-    chain = build_structured_chain(
-        get_relations_system_prompt,
-        get_relations_user_prompt,
-        RelationsResponse,
-        partial_variables={
-            "relevant_list": relevant_names,
-            "relevant_descriptions": relevant_descriptions,
-            "relevant_list_with_descriptions": relevant_list_with_descriptions,
-        },
-        user_role="human",
-    )
+    chain = relation_passes.build_harvest_chain()
+    metadata_map = build_doc_metadata_map(doc_items)
+    chunk_id_to_doc_id = {
+        str(item["chunkId"]): str(item["docId"]) for item in doc_items if item.get("chunkId") and item.get("docId")
+    }
 
-    # Process the single pre-chunked input (no need for asyncio.gather with just one item)
-    chunk_results = [
-        await _extract_from_chunk(
-            chain,
-            0,
-            text,
-            job_id,
-            total_chunks=1,
+    async def extractor(content: str, jid: UUID, chunk_id: UUID) -> Tuple[List[RelationObservation], bool]:
+        return await relation_passes.harvest_chunk(
+            content=content,
+            job_id=jid,
             chunk_id=chunk_id,
-            chunk_metadata=chunk_metadata,
+            chunk_metadata=metadata_map.get(str(chunk_id)),
+            object_classes_json=object_classes_json,
+            chain=chain,
         )
-    ]
 
-    merged_relations: List[RelationRecord] = []
-    for relation_list in chunk_results:
-        if relation_list:
-            merged_relations.extend(relation_list)
+    results = await run_chunks_concurrently(chunk_items=doc_items, job_id=job_id, extractor=extractor)
 
-    if not merged_relations:
-        return RelationsResponse(relations=[]), False
+    entries: List[ObservationEntry] = []
+    for observations, _has_relevant_data, chunk_id in results:
+        doc_id = chunk_id_to_doc_id.get(str(chunk_id))
+        refs = [{"doc_id": doc_id, "chunk_id": str(chunk_id)}] if doc_id else None
+        for observation in observations or []:
+            entries.append((observation, "chunk_harvest", refs))
 
-    deduplicated_relations: Dict[Tuple[str, str, str], RelationRecord] = {}
-    for relation in merged_relations:
-        dedup_key = (relation.subject, relation.subject_attribute or "", relation.object)
-        if dedup_key not in deduplicated_relations:
-            deduplicated_relations[dedup_key] = relation
-            continue
-        current_relation = deduplicated_relations[dedup_key]
-        if (not (current_relation.display_name or "").strip()) and (relation.display_name or "").strip():
-            deduplicated_relations[dedup_key] = relation
-        elif len(relation.short_description or "") > len(current_relation.short_description or ""):
-            deduplicated_relations[dedup_key] = relation
+    stats.chunks_harvested = len(doc_items)
+    logger.info("[%s] Harvested %d observations from %d chunks", LOG_SCOPE, len(entries), len(doc_items))
+    return entries
 
-    semantic_relations = deduplicate_semantic_relations(list(deduplicated_relations.values()))
-    final_relations = _sort_relations_by_iga_priority(
-        semantic_relations,
-        relevant_object_classes,
+
+# --- Stage 3: per-class sweep ---
+
+
+async def _sweep_classes(
+    index: ObjectClassIndex,
+    object_classes_json: str,
+    class_chunk_ids: Dict[str, List[str]],
+    chunk_lookup: Dict[str, Dict[str, Any]],
+    job_id: UUID,
+    stats: RelationAnalysisStats,
+) -> List[ObservationEntry]:
+    """
+    Ask, per object class, what it relates to - with that class's whole documentation in view.
+
+    This is the pass that recovers links whose two ends live in different chunks, because the
+    question is asked once per class instead of once per fragment.
+    """
+    limit = config.digester.relation_class_sweep_limit
+    if limit <= 0:
+        return []
+
+    max_rank = 1 if config.digester.relation_sweep_include_medium_confidence else 0
+    candidates = index.candidates(max_confidence_rank=max_rank, limit=limit)
+    swept = [info for info in candidates if class_chunk_ids.get(normalize_object_class_name(info.name))]
+
+    undocumented = [info.name for info in candidates if info not in swept]
+    if undocumented:
+        logger.warning(
+            "[%s] %d eligible class(es) have no documentation mapped and get no sweep: %s",
+            LOG_SCOPE,
+            len(undocumented),
+            ", ".join(undocumented[:10]),
+        )
+    if not swept:
+        return []
+
+    eligible = len(index.candidates(max_confidence_rank=max_rank, limit=0))
+    if eligible > len(candidates):
+        logger.warning(
+            "[%s] Sweeping %d of %d eligible classes (relation_class_sweep_limit=%d)",
+            LOG_SCOPE,
+            len(candidates),
+            eligible,
+            limit,
+        )
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.processing_chunks,
+        total_processing=len(swept),
+        processing_completed=0,
+        message=f"Sweeping {len(swept)} object classes for relations",
     )
 
+    async def sweep(info: ObjectClassInfo) -> List[ObservationEntry]:
+        chunk_ids = class_chunk_ids[normalize_object_class_name(info.name)]
+        documentation, skipped = relation_context.assemble_documentation(chunk_ids, chunk_lookup)
+        if skipped:
+            logger.info(
+                "[%s] Class sweep for %s skipped %d chunk(s) over the context budget",
+                LOG_SCOPE,
+                info.name,
+                skipped,
+            )
+        observations = await relation_passes.sweep_class(
+            focus_class=info.name,
+            focus_description=info.description,
+            object_classes_json=object_classes_json,
+            documentation=documentation,
+            job_id=job_id,
+        )
+        refs = relation_context.chunk_refs(chunk_ids, chunk_lookup)
+        return [(observation, "class_sweep", refs) for observation in observations]
+
+    swept_results = await asyncio.gather(*(sweep(info) for info in swept))
+    entries = [entry for group in swept_results for entry in group]
+    stats.classes_swept = len(swept)
+    logger.info("[%s] Class sweep produced %d observations over %d classes", LOG_SCOPE, len(entries), len(swept))
+    return entries
+
+
+# --- Stage 4: focused re-read of weak pairs ---
+
+
+async def _focus_weak_pairs(
+    pairs: Dict[str, ObservedPair],
+    index: ObjectClassIndex,
+    class_chunk_ids: Dict[str, List[str]],
+    chunk_lookup: Dict[str, Dict[str, Any]],
+    job_id: UUID,
+    stats: RelationAnalysisStats,
+) -> List[ObservationEntry]:
+    """Re-read the documentation for pairs whose evidence is thin or one-sided."""
+    weak = [pair for pair in pairs.values() if pair.is_weak()]
+    if not weak:
+        return []
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.processing_chunks,
+        total_processing=len(weak),
+        processing_completed=0,
+        message=f"Re-reading documentation for {len(weak)} uncertain relation candidates",
+    )
+
+    async def focus(pair: ObservedPair) -> Tuple[List[ObservationEntry], bool]:
+        chunk_ids = relation_context.pair_chunk_ids(pair, class_chunk_ids)
+        if not chunk_ids:
+            logger.info("[%s] No documentation maps to pair %s; skipping its re-read", LOG_SCOPE, pair.key)
+            return [], False
+        documentation, skipped = relation_context.assemble_documentation(chunk_ids, chunk_lookup)
+        if skipped:
+            logger.info(
+                "[%s] Re-read of %s skipped %d chunk(s) over the context budget",
+                LOG_SCOPE,
+                pair.key,
+                skipped,
+            )
+        if not documentation.strip():
+            return [], False
+        observations = await relation_passes.focus_pair(
+            class_a=pair.class_a,
+            class_b=pair.class_b,
+            class_metadata=index.to_prompt_payload(
+                [info for info in (index.resolve(pair.class_a), index.resolve(pair.class_b)) if info]
+            ),
+            known_observations=pair.observations,
+            documentation=documentation,
+            job_id=job_id,
+        )
+        refs = relation_context.chunk_refs(chunk_ids, chunk_lookup)
+        return [(observation, "pair_focus", refs) for observation in observations], True
+
+    focused = await asyncio.gather(*(focus(pair) for pair in weak))
+    entries = [entry for group, _called in focused for entry in group]
+    stats.pairs_refocused = sum(1 for _group, called in focused if called)
     logger.info(
-        "[Digester:Relations] Extraction process completed successfully with %d final relations", len(final_relations)
+        "[%s] Focused re-read produced %d observations over %d of %d selected pairs",
+        LOG_SCOPE,
+        len(entries),
+        stats.pairs_refocused,
+        len(weak),
+    )
+    return entries
+
+
+# --- Stage 5: adjudication ---
+
+
+async def _adjudicate_pairs(
+    pairs: Dict[str, ObservedPair],
+    index: ObjectClassIndex,
+    attributes_by_class: Dict[str, Any],
+    job_id: UUID,
+    stats: RelationAnalysisStats,
+) -> List[RelationPairAnalysis]:
+    """Decide every pair, with all of its observations in view."""
+    if not pairs:
+        return []
+
+    # Ordered by evidence strength so the safety ceiling, if it bites, drops the weakest
+    # candidates rather than an arbitrary alphabetical tail.
+    ranked = sorted(pairs.values(), key=lambda pair: (tuple(-value for value in pair.evidence_strength()), pair.key))
+    limit = config.digester.relation_max_adjudicated_pairs
+    ordered = ranked[:limit]
+    if len(ranked) > limit:
+        dropped = [pair.key for pair in ranked[limit:]]
+        logger.warning(
+            "[%s] Judging %d of %d pairs (relation_max_adjudicated_pairs=%d); dropped: %s",
+            LOG_SCOPE,
+            len(ordered),
+            len(ranked),
+            limit,
+            ", ".join(dropped[:20]),
+        )
+        await append_job_error(
+            job_id,
+            f"[{LOG_SCOPE}] {len(dropped)} relation candidate pair(s) were not judged because the "
+            f"relation_max_adjudicated_pairs limit of {limit} was reached",
+        )
+
+    await update_job_progress(
+        job_id,
+        stage=JobStage.building,
+        total_processing=len(ordered),
+        processing_completed=0,
+        message=f"Judging {len(ordered)} relation candidates",
     )
 
-    # update_job_progress(job_id, stage=JobStage.finished, message="Relation extraction complete")
+    async def judge(pair: ObservedPair) -> RelationPairAnalysis:
+        judgement = await relation_passes.adjudicate_pair(
+            class_a=pair.class_a,
+            class_b=pair.class_b,
+            class_metadata=index.to_prompt_payload(
+                [info for info in (index.resolve(pair.class_a), index.resolve(pair.class_b)) if info]
+            ),
+            known_attributes=relation_context.known_attributes_for((pair.class_a, pair.class_b), attributes_by_class),
+            observations=pair.observations,
+            job_id=job_id,
+        )
+        analysis = RelationPairAnalysis(
+            pair_key=pair.key,
+            class_a=pair.class_a,
+            class_b=pair.class_b,
+            observation_sources=list(pair.sources),
+            observations=list(pair.observations),
+            relevant_documentations=list(pair.chunk_refs),
+        )
+        if judgement is None:
+            analysis.rejection_reason = "Adjudication produced no judgement"
+            return analysis
 
-    return RelationsResponse(relations=final_relations), bool(final_relations)
+        for verdict in judgement.relations:
+            normalized = _normalize_verdict(verdict, pair)
+            if normalized is None:
+                analysis.decisions.append(
+                    RelationDecision(
+                        verdict=verdict,
+                        rejection_reason=(
+                            "Adjudication named a subject/object outside the class pair or reused one side "
+                            "for a non-self relation"
+                        ),
+                    )
+                )
+                continue
+            decision = RelationDecision(verdict=normalized)
+            if not normalized.is_relation or normalized.kind not in RELATION_KINDS_ACCEPTED:
+                decision.rejection_reason = normalized.rationale.strip() or f"Classified as {normalized.kind}"
+            analysis.decisions.append(decision)
+
+        if not analysis.decisions:
+            analysis.rejection_reason = judgement.rationale.strip() or f"Classified as {judgement.rejection_kind}"
+        return analysis
+
+    analyses = list(await asyncio.gather(*(judge(pair) for pair in ordered)))
+    stats.pairs_adjudicated = len(analyses)
+    candidates = sum(len(analysis.decisions) for analysis in analyses)
+    logger.info("[%s] Adjudicated %d pairs into %d candidate association(s)", LOG_SCOPE, len(analyses), candidates)
+    return analyses
 
 
-async def extract_relations(doc_items: List[dict], relevant_object_class: Any, job_id: UUID):
-    """Extract relations from multiple documentation items."""
+def _normalize_verdict(
+    verdict: RelationVerdict,
+    pair: ObservedPair,
+) -> Optional[RelationVerdict]:
+    """
+    Canonicalize a verdict only when both of its classes belong to the judged pair.
 
-    chunk_metadata_map = build_doc_metadata_map(doc_items)
+    Invalid orientation is rejected rather than repaired with a name-based guess. Only the
+    adjudication LLM, which sees class descriptions and evidence, may assign semantics.
+    """
+    if not verdict.is_relation:
+        return verdict
 
-    def extractor(content: str, jid: UUID, chunk_id: UUID):
-        chunk_metadata = chunk_metadata_map.get(str(chunk_id))
-        return extract_relations_raw(content, relevant_object_class, jid, chunk_id, chunk_metadata)
+    members = {
+        normalize_object_class_name(pair.class_a): pair.class_a,
+        normalize_object_class_name(pair.class_b): pair.class_b,
+    }
+    resolved_subject = members.get(normalize_object_class_name(verdict.subject))
+    resolved_object = members.get(normalize_object_class_name(verdict.object))
+    if resolved_subject is None or resolved_object is None:
+        return None
+    if not pair.is_self_pair and resolved_subject == resolved_object:
+        return None
+    return verdict.model_copy(update={"subject": resolved_subject, "object": resolved_object})
 
-    def per_chunk_count(d: Dict[str, Any]) -> int:
-        return len(cast(List[dict], d.get("relations", [])))
 
-    def merge_and_sort_relations(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        merged = merge_relations_results(results)
-        raw_relations = merged.get("relations", [])
-        if not isinstance(raw_relations, list):
-            merged["relations"] = []
-            return merged
+# --- Stage 6: verification and projection ---
 
-        merged["relations"] = sort_relation_dicts_by_iga_priority(raw_relations, relevant_object_class)
-        return merged
 
-    return await process_over_chunks(
-        chunk_items=doc_items,
+async def _verify_and_collect(
+    analyses: List[RelationPairAnalysis],
+    index: ObjectClassIndex,
+    attributes_by_class: Dict[str, Any],
+    job_id: UUID,
+    stats: RelationAnalysisStats,
+) -> List[RelationRecord]:
+    """Refute what survived adjudication, then project the survivors onto the API contract."""
+    pending = [
+        (analysis, decision)
+        for analysis in analyses
+        for decision in analysis.decisions
+        if not decision.rejection_reason
+    ]
+    if not pending:
+        return []
+
+    if config.digester.relation_verification_enabled:
+        await update_job_progress(
+            job_id,
+            stage=JobStage.building,
+            total_processing=len(pending),
+            processing_completed=0,
+            message=f"Verifying {len(pending)} relation candidates",
+        )
+        await asyncio.gather(
+            *(_verify_one(analysis, decision, index, attributes_by_class, job_id) for analysis, decision in pending)
+        )
+        stats.relations_verified = len(pending)
+
+    records: List[RelationRecord] = []
+    for analysis, decision in pending:
+        if decision.rejection_reason:
+            continue
+        _ground_decision_attributes(analysis, decision, attributes_by_class)
+        record = verdict_to_relation_record(decision.verdict)
+        if record is None:
+            decision.rejection_reason = "Verdict could not be projected onto a relation record"
+            continue
+        decision.accepted = True
+        analysis.accepted = True
+        records.append(record)
+
+    relations = deduplicate_relation_names(deduplicate_semantic_relations(records))
+    relations = sort_relations_by_iga_priority(relations, index)
+    stats.relations_emitted = len(relations)
+    return relations
+
+
+async def _verify_one(
+    analysis: RelationPairAnalysis,
+    decision: RelationDecision,
+    index: ObjectClassIndex,
+    attributes_by_class: Dict[str, Any],
+    job_id: UUID,
+) -> None:
+    """Ask a skeptic to refute one relation; a failed verification keeps the relation."""
+    refutation = await relation_passes.verify_relation(
+        relation_json=decision.verdict.model_dump_json(by_alias=True, exclude_none=True),
+        class_metadata=index.to_prompt_payload(
+            [info for info in (index.resolve(analysis.class_a), index.resolve(analysis.class_b)) if info]
+        ),
+        observations=analysis.observations,
+        known_attributes=relation_context.known_attributes_for(
+            (analysis.class_a, analysis.class_b), attributes_by_class
+        ),
         job_id=job_id,
-        extractor=extractor,
-        merger=merge_and_sort_relations,
-        logger_scope="Digester:Relations",
-        per_chunk_count=per_chunk_count,
     )
+    decision.refutation = refutation
+    if refutation is None:
+        return
+
+    if refutation.refuted:
+        decision.rejection_reason = refutation.reason.strip() or "Refuted during verification"
+        return
+
+    updates: Dict[str, Any] = {}
+    if refutation.corrected_subject_attribute.strip():
+        updates["subject_attribute"] = refutation.corrected_subject_attribute.strip()
+    if refutation.corrected_object_attribute.strip():
+        updates["object_attribute"] = refutation.corrected_object_attribute.strip()
+    if updates:
+        decision.verdict = decision.verdict.model_copy(update=updates)
+
+
+def _ground_decision_attributes(
+    analysis: RelationPairAnalysis,
+    decision: RelationDecision,
+    attributes_by_class: Dict[str, Any],
+) -> None:
+    """
+    Drop attribute names that appear neither in the class schema nor in the cited evidence.
+
+    A fabricated attribute name reaches codegen as a real one, so an empty side is strictly
+    better than an invented one. The relation itself survives - only the name is cleared.
+    """
+    verdict = decision.verdict
+    observed_names = {
+        "".join(split_relation_tokens(name))
+        for observation in analysis.observations
+        for name in (observation.source_attribute, observation.target_attribute)
+        if name.strip()
+    }
+
+    updates: Dict[str, Any] = {}
+    for field_name, class_name, attribute in (
+        ("subject_attribute", verdict.subject, verdict.subject_attribute),
+        ("object_attribute", verdict.object, verdict.object_attribute),
+    ):
+        if not attribute.strip():
+            continue
+        known = grounded_attribute_names(attributes_by_class.get(normalize_object_class_name(class_name)))
+        if is_attribute_grounded(attribute, known):
+            continue
+        if "".join(split_relation_tokens(attribute)) in observed_names:
+            continue
+        decision.ungrounded_attributes.append(f"{class_name}.{attribute}")
+        updates[field_name] = ""
+
+    if updates:
+        logger.info(
+            "[%s] Cleared ungrounded attribute name(s) on %s: %s",
+            LOG_SCOPE,
+            analysis.pair_key,
+            ", ".join(decision.ungrounded_attributes),
+        )
+        decision.verdict = verdict.model_copy(update=updates)
+
+
+# --- Persistence and evidence ---
+
+
+async def _persist_analysis(
+    session_id: UUID,
+    job_id: UUID,
+    analyses: List[RelationPairAnalysis],
+    stats: RelationAnalysisStats,
+) -> None:
+    """Store the working state; a failure here must not fail the extraction."""
+    observation_limit = config.digester.relation_max_stored_observations_per_pair
+    stored_pairs: List[RelationPairAnalysis] = []
+    truncated_observations = 0
+    for pair in analyses:
+        if len(pair.observations) <= observation_limit:
+            stored_pairs.append(pair)
+            continue
+        truncated_observations += len(pair.observations) - observation_limit
+        stored_pairs.append(pair.model_copy(update={"observations": pair.observations[:observation_limit]}))
+
+    if truncated_observations:
+        logger.info(
+            "[%s] Omitted %d observations from persisted analysis due to the per-pair storage limit",
+            LOG_SCOPE,
+            truncated_observations,
+        )
+
+    analysis = RelationsAnalysis(job_id=str(job_id), stats=stats, pairs=stored_pairs)
+    try:
+        stored = await store_relations_analysis(
+            session_id,
+            job_id,
+            analysis.model_dump(by_alias=True, mode="json"),
+        )
+    except Exception:
+        logger.exception("[%s] Failed to persist relation analysis", LOG_SCOPE)
+        return
+    if not stored:
+        logger.info("[%s] Relation analysis not stored; a newer relations job owns the session", LOG_SCOPE)
+
+
+def _relevant_documentations(analyses: List[RelationPairAnalysis]) -> List[Dict[str, str]]:
+    """Chunks backing accepted relations, falling back to every chunk that produced evidence."""
+    accepted: List[Dict[str, str]] = []
+    observed: List[Dict[str, str]] = []
+    for analysis in analyses:
+        for ref in analysis.relevant_documentations:
+            doc_id = ref.get("doc_id") or ref.get("docId") or ""
+            chunk_id = ref.get("chunk_id") or ref.get("chunkId") or ""
+            if not doc_id or not chunk_id:
+                continue
+            normalized = {"doc_id": doc_id, "chunk_id": chunk_id}
+            if normalized not in observed:
+                observed.append(normalized)
+            if analysis.accepted and normalized not in accepted:
+                accepted.append(normalized)
+    return accepted or observed

@@ -5,7 +5,6 @@
 import re
 from typing import Dict, List, Optional, Tuple
 
-from src.config import config
 from src.documents.normalize import normalize_object_class_name
 from src.modules.digester.schemas import RelationRecord
 
@@ -16,32 +15,15 @@ def split_relation_tokens(value: str) -> List[str]:
     return [token.lower() for token in re.sub(r"[^A-Za-z0-9]+", " ", with_spaces).split() if token]
 
 
-def _singularize_relation_token(token: str) -> str:
-    if token.endswith("ies") and len(token) > 4:
-        return f"{token[:-3]}y"
-    if token.endswith("s") and not token.endswith("ss") and len(token) > 3:
-        return token[:-1]
-    return token
-
-
-def _generic_attribute_tokens() -> set[str]:
-    return {token.casefold() for token in config.digester.relation_generic_attribute_tokens}
-
-
 def canonical_relation_attribute(value: Optional[str]) -> str:
     """
-    Normalize relation attribute wording for duplicate detection.
+    Normalize separators and casing for duplicate detection without interpreting words.
 
-    This intentionally removes generic relation words so variants such as
-    `hasMembership`, `membershipIds`, and `membership` collapse to the same key.
+    Attribute vocabulary is application-specific. Removing English words or applying
+    English singularization can merge two distinct attributes from an unrelated API, so
+    semantic deduplication is left to the adjudication LLM.
     """
-    generic_tokens = _generic_attribute_tokens()
-    tokens = [
-        _singularize_relation_token(token)
-        for token in split_relation_tokens(value or "")
-        if token not in generic_tokens
-    ]
-    return " ".join(tokens)
+    return " ".join(split_relation_tokens(value or ""))
 
 
 def _normalize_relation_id(value: str) -> str:
@@ -93,7 +75,7 @@ def merge_duplicate_relation(left: RelationRecord, right: RelationRecord) -> Rel
     """
     Merge wording-only duplicates while preserving the richest metadata.
 
-    The LLM sometimes emits both `user has membership` and `user to membership`.
+    The LLM can emit two differently worded labels for the same association.
     In ConnId/midPoint relationship terms those are one subject->object association;
     the difference belongs in the relation label, not in a second relation record.
     """

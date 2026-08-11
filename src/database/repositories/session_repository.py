@@ -5,7 +5,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -233,6 +233,27 @@ class SessionRepository:
                 )
             )
         ).scalar_one_or_none()
+
+    async def get_session_values(self, session_id: UUID, keys: Sequence[str]) -> Dict[str, Any]:
+        """Read a selected set of top-level session values in one query.
+
+        This is intended for workers that need the same result kind for many entities. It
+        avoids both the N+1 query pattern of repeated ``get_session_data`` calls and the
+        memory cost of materializing every value stored in the session.
+        """
+        unique_keys = list(dict.fromkeys(key for key in keys if key))
+        if not unique_keys:
+            return {}
+
+        rows = (
+            await self.db.execute(
+                select(SessionData.key, SessionData.value).where(
+                    SessionData.session_id == session_id,
+                    SessionData.key.in_(unique_keys),
+                )
+            )
+        ).all()
+        return {key: value for key, value in rows}
 
     async def get_session_data(self, session_id: UUID, key: Optional[Union[str, List[str]]] = None) -> Optional[Any]:
         """

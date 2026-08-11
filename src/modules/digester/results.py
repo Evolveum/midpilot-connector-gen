@@ -19,6 +19,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.db import async_session_maker
 from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
@@ -57,6 +58,11 @@ OBJECT_CLASSES_RESULT_KEY = "objectClassesOutput"
 CONNECTIVITY_ENDPOINT_RESULT_KEY = "connectivityEndpointOutput"
 RELATIONS_RESULT_KEY = "relationsOutput"
 METADATA_RESULT_KEY = "metadataOutput"
+
+# Working state of the relation pipeline. Not part of the midPoint-facing contract and not
+# returned by any endpoint; kept so a reviewer can see why a relation was accepted or rejected.
+RELATIONS_ANALYSIS_RESULT_KEY = "relationsAnalysisOutput"
+RELATIONS_JOB_POINTER_KEY = "relationsJobId"
 
 
 def attributes_result_key(object_class: str) -> str:
@@ -308,6 +314,38 @@ async def store_relations_override(
     payload: Dict[str, Any],
 ) -> None:
     await repo.update_session(session_id, {RELATIONS_RESULT_KEY: payload})
+
+
+async def store_relations_analysis(
+    session_id: UUID,
+    job_id: UUID,
+    payload: Dict[str, Any],
+) -> bool:
+    """Persist the relation pipeline's working state alongside the relation result.
+
+    The analysis holds the observations, the per-pair verdicts and the explicit rejections
+    that the ``RelationsResponse`` contract has no room for. It is written under its own key
+    rather than folded into ``relationsOutput`` so the midPoint-facing payload keeps its
+    exact shape, and it is skipped when a newer relations job already owns the session, so a
+    late finisher cannot describe a result it did not produce.
+
+    Opens its own session because the caller is a background worker, not a request.
+    """
+    async with async_session_maker() as db:
+        repo = SessionRepository(db)
+        if not await repo.is_current_job_pointer(
+            session_id=session_id,
+            pointer_key=RELATIONS_JOB_POINTER_KEY,
+            job_id=job_id,
+            lock=True,
+        ):
+            return False
+        updated = await repo.update_session(session_id, {RELATIONS_ANALYSIS_RESULT_KEY: payload})
+        if not updated:
+            await db.rollback()
+            return False
+        await db.commit()
+        return True
 
 
 async def store_metadata_output(

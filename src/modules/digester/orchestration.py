@@ -242,6 +242,7 @@ async def schedule_relations_extraction(
         worker_args=(
             job_input_reference("documentationItems"),
             job_input_reference("relevantObjectClasses"),
+            session_id,
         ),
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
