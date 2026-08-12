@@ -199,6 +199,7 @@ async def adjudicate_pair(
     class_b: str,
     class_metadata: Sequence[Dict[str, Any]],
     known_attributes: Dict[str, List[str]],
+    observed_attributes: Dict[str, List[str]],
     observations: Sequence[RelationObservation],
     job_id: UUID,
 ) -> Optional[RelationPairJudgement]:
@@ -218,6 +219,7 @@ async def adjudicate_pair(
             "class_b": class_b,
             "class_metadata": json.dumps(list(class_metadata), ensure_ascii=False, indent=1),
             "known_attributes": json.dumps(known_attributes, ensure_ascii=False, indent=1),
+            "observed_attributes": json.dumps(observed_attributes, ensure_ascii=False, indent=1),
             "observations": _observations_json(observations),
         },
         run_name="Adjudicate",

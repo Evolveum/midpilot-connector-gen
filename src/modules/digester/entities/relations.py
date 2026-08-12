@@ -49,11 +49,23 @@ def _select_preferred_attribute(values: List[Optional[str]]) -> str:
 
 
 def _relation_semantic_key(relation: RelationRecord) -> Tuple[str, str, str, str]:
+    """Key that collapses wording-only duplicates of the same association.
+
+    The attribute pair is what distinguishes two associations between the same classes - a
+    user that is both a member and an owner of a group holds two of them. When neither side
+    names an attribute there is nothing structural left to tell them apart, so the relation
+    identifier stands in: it was assigned by the stage that saw all the evidence, and two
+    differently named entries from that stage are a deliberate distinction, not a duplicate.
+    """
+    subject_attribute = canonical_relation_attribute(relation.subject_attribute)
+    object_attribute = canonical_relation_attribute(relation.object_attribute)
+    if not subject_attribute and not object_attribute:
+        subject_attribute = _normalize_relation_id(relation.name)
     return (
         normalize_object_class_name(relation.subject),
         normalize_object_class_name(relation.object),
-        canonical_relation_attribute(relation.subject_attribute),
-        canonical_relation_attribute(relation.object_attribute),
+        subject_attribute,
+        object_attribute,
     )
 
 

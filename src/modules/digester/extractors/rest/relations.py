@@ -20,8 +20,13 @@ to judge one. The pipeline therefore separates observing from deciding.
 Stages 1-4 only produce observations, which are folded onto an **unordered class pair**;
 that is what makes two documented navigation directions one relation rather than two
 half-populated records. Stage 5 is the only stage that accepts, rejects, assigns the
-subject/object orientation, and decides whether distinct documented attributes express
-separate associations.
+subject/object orientation, and decides how many associations the pair holds.
+
+One pair can hold several: a class that records both the instances belonging to it and the
+instances responsible for it is connected to the same partner class twice. Each association
+is its own :class:`RelationDecision`, verified and projected separately, and the stages that
+could quietly collapse them back into one - attribute grounding, verification corrections and
+semantic deduplication - are each constrained so they cannot.
 
 Everything the pipeline learns beyond the seven contract fields - relation kind, per-side
 cardinality, link class, confidence, rationale and the explicit rejections - is persisted
@@ -42,6 +47,8 @@ from src.modules.digester.entities.relation_candidates import (
     ObjectClassInfo,
     ObservedPair,
     deduplicate_relation_names,
+    disambiguate_relation_labels,
+    expand_link_object_pairs,
     grounded_attribute_names,
     group_observations,
     is_attribute_grounded,
@@ -115,6 +122,19 @@ async def extract_relations(
     entries.extend(_seed_from_session(index, attributes_by_class, endpoints_by_class, chunk_lookup, stats))
     entries.extend(await _harvest(doc_items, object_classes_json, job_id, stats))
     entries.extend(await _sweep_classes(index, object_classes_json, class_chunk_ids, chunk_lookup, job_id, stats))
+
+    # An association class connects two ends that no stage ever pairs directly; its evidence has
+    # to be reshaped before grouping, or the pair the domain needs is never formed.
+    link_entries, link_summary = expand_link_object_pairs(entries, index, attributes_by_class)
+    if link_entries:
+        stats.link_object_pairs_expanded = len(link_entries)
+        logger.info(
+            "[%s] Expanded %d association-class pair(s): %s",
+            LOG_SCOPE,
+            len(link_entries),
+            "; ".join(link_summary[:10]),
+        )
+        entries.extend(link_entries)
 
     # Grouped twice on purpose: the focused re-read needs to know which pairs are weak, and its
     # own observations then have to land on those same pairs.
@@ -436,6 +456,7 @@ async def _adjudicate_pairs(
                 [info for info in (index.resolve(pair.class_a), index.resolve(pair.class_b)) if info]
             ),
             known_attributes=relation_context.known_attributes_for((pair.class_a, pair.class_b), attributes_by_class),
+            observed_attributes=_observed_attributes(pair),
             observations=pair.observations,
             job_id=job_id,
         )
@@ -478,6 +499,17 @@ async def _adjudicate_pairs(
     candidates = sum(len(analysis.decisions) for analysis in analyses)
     logger.info("[%s] Adjudicated %d pairs into %d candidate association(s)", LOG_SCOPE, len(analyses), candidates)
     return analyses
+
+
+def _observed_attributes(pair: ObservedPair) -> Dict[str, List[str]]:
+    """Distinct attributes the evidence attached to each side of the pair.
+
+    Handed to adjudication because an uneven split is the signature of a pair carrying more
+    than one association: a class listing both its members and its owners against a partner
+    that names only one attribute has a second association still missing its other end.
+    """
+    side_a, side_b = pair.attributes_per_side()
+    return {pair.class_a: side_a, pair.class_b: side_b}
 
 
 def _normalize_verdict(
@@ -538,8 +570,10 @@ async def _verify_and_collect(
             *(_verify_one(analysis, decision, index, attributes_by_class, job_id) for analysis, decision in pending)
         )
         stats.relations_verified = len(pending)
+        for analysis in {id(item[0]): item[0] for item in pending}.values():
+            _apply_verification_corrections(analysis)
 
-    records: List[RelationRecord] = []
+    projected: List[Tuple[RelationPairAnalysis, RelationDecision, RelationRecord]] = []
     for analysis, decision in pending:
         if decision.rejection_reason:
             continue
@@ -548,14 +582,57 @@ async def _verify_and_collect(
         if record is None:
             decision.rejection_reason = "Verdict could not be projected onto a relation record"
             continue
-        decision.accepted = True
-        analysis.accepted = True
-        records.append(record)
+        projected.append((analysis, decision, record))
 
-    relations = deduplicate_relation_names(deduplicate_semantic_relations(records))
+    relations = deduplicate_semantic_relations([record for _analysis, _decision, record in projected])
+    _record_merged_away_decisions(projected, relations)
+
+    relations = disambiguate_relation_labels(deduplicate_relation_names(relations))
     relations = sort_relations_by_iga_priority(relations, index)
     stats.relations_emitted = len(relations)
     return relations
+
+
+def _record_merged_away_decisions(
+    projected: Sequence[Tuple[RelationPairAnalysis, RelationDecision, RelationRecord]],
+    surviving: Sequence[RelationRecord],
+) -> None:
+    """Mark decisions whose record was merged away, so the analysis matches the response.
+
+    Semantic deduplication is a safety net against wording-only duplicates, but it works on
+    records and cannot report which decision it dropped. Without this reconciliation the
+    persisted analysis claims two accepted associations while midPoint receives one, and the
+    loss appears nowhere - not in the response, the analysis, the job errors or the log.
+    """
+    remaining: Dict[Tuple[str, str, str, str], int] = {}
+    for record in surviving:
+        remaining[_record_identity(record)] = remaining.get(_record_identity(record), 0) + 1
+
+    for analysis, decision, record in projected:
+        identity = _record_identity(record)
+        if remaining.get(identity, 0) > 0:
+            remaining[identity] -= 1
+            decision.accepted = True
+            analysis.accepted = True
+            continue
+        decision.accepted = False
+        decision.rejection_reason = "Merged into another association of the same pair as a duplicate"
+        logger.warning(
+            "[%s] Association %s on %s was merged into a duplicate and is not in the response",
+            LOG_SCOPE,
+            decision.verdict.name or "<unnamed>",
+            analysis.pair_key,
+        )
+
+
+def _record_identity(record: RelationRecord) -> Tuple[str, str, str, str]:
+    """What semantic deduplication treats as the same relation."""
+    return (
+        normalize_object_class_name(record.subject),
+        normalize_object_class_name(record.object),
+        "".join(split_relation_tokens(record.subject_attribute or "")),
+        "".join(split_relation_tokens(record.object_attribute or "")),
+    )
 
 
 async def _verify_one(
@@ -583,15 +660,52 @@ async def _verify_one(
 
     if refutation.refuted:
         decision.rejection_reason = refutation.reason.strip() or "Refuted during verification"
-        return
+    # Attribute corrections are applied later, in _apply_verification_corrections: they have to
+    # be checked against the pair's other associations, which are still being verified here.
 
-    updates: Dict[str, Any] = {}
-    if refutation.corrected_subject_attribute.strip():
-        updates["subject_attribute"] = refutation.corrected_subject_attribute.strip()
-    if refutation.corrected_object_attribute.strip():
-        updates["object_attribute"] = refutation.corrected_object_attribute.strip()
-    if updates:
-        decision.verdict = decision.verdict.model_copy(update=updates)
+
+def _apply_verification_corrections(analysis: RelationPairAnalysis) -> None:
+    """
+    Apply the attribute corrections verification asked for, unless they erase an association.
+
+    A skeptic judges one association but is shown the whole pair's evidence, so it can propose
+    the attributes of a sibling association - membership's ``groups``/``members`` while judging
+    ownership. Applying that would make the two records identical and the later semantic dedup
+    would silently drop one, turning two real associations into one. A correction that collides
+    with a sibling is therefore refused and recorded rather than applied.
+    """
+    live = [decision for decision in analysis.decisions if not decision.rejection_reason]
+
+    def attribute_pair(verdict: RelationVerdict) -> Tuple[str, str]:
+        return (
+            "".join(split_relation_tokens(verdict.subject_attribute)),
+            "".join(split_relation_tokens(verdict.object_attribute)),
+        )
+
+    for decision in live:
+        refutation = decision.refutation
+        if refutation is None:
+            continue
+
+        updates: Dict[str, Any] = {}
+        if refutation.corrected_subject_attribute.strip():
+            updates["subject_attribute"] = refutation.corrected_subject_attribute.strip()
+        if refutation.corrected_object_attribute.strip():
+            updates["object_attribute"] = refutation.corrected_object_attribute.strip()
+        if not updates:
+            continue
+
+        corrected = decision.verdict.model_copy(update=updates)
+        siblings = {attribute_pair(other.verdict) for other in live if other is not decision}
+        if attribute_pair(corrected) in siblings:
+            logger.info(
+                "[%s] Refused a verification correction on %s that would duplicate another "
+                "association of the same pair",
+                LOG_SCOPE,
+                analysis.pair_key,
+            )
+            continue
+        decision.verdict = corrected
 
 
 def _ground_decision_attributes(
@@ -606,12 +720,20 @@ def _ground_decision_attributes(
     better than an invented one. The relation itself survives - only the name is cleared.
     """
     verdict = decision.verdict
-    observed_names = {
-        "".join(split_relation_tokens(name))
-        for observation in analysis.observations
-        for name in (observation.source_attribute, observation.target_attribute)
-        if name.strip()
-    }
+
+    # Per class, not pooled across the pair: `members` is evidence for Group, and accepting it
+    # as a User attribute just because it was observed somewhere on this pair would let the
+    # two sides of an association borrow each other's names.
+    observed_by_class: Dict[str, set[str]] = {}
+    for observation in analysis.observations:
+        for class_name, attribute in (
+            (observation.source_class, observation.source_attribute),
+            (observation.target_class, observation.target_attribute),
+        ):
+            if not attribute.strip():
+                continue
+            bucket = observed_by_class.setdefault(normalize_object_class_name(class_name), set())
+            bucket.add("".join(split_relation_tokens(attribute)))
 
     updates: Dict[str, Any] = {}
     for field_name, class_name, attribute in (
@@ -623,7 +745,8 @@ def _ground_decision_attributes(
         known = grounded_attribute_names(attributes_by_class.get(normalize_object_class_name(class_name)))
         if is_attribute_grounded(attribute, known):
             continue
-        if "".join(split_relation_tokens(attribute)) in observed_names:
+        observed = observed_by_class.get(normalize_object_class_name(class_name), set())
+        if "".join(split_relation_tokens(attribute)) in observed:
             continue
         decision.ungrounded_attributes.append(f"{class_name}.{attribute}")
         updates[field_name] = ""

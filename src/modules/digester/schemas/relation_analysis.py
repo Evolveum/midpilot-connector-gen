@@ -61,6 +61,7 @@ EvidenceSource = Literal[
     "attribute_schema",
     "endpoint_schema",
     "object_class_metadata",
+    "link_object_expansion",
 ]
 """Which pipeline stage produced an observation."""
 
@@ -155,6 +156,14 @@ class RelationObservation(CamelCaseModel):
     note: str = Field(
         default="",
         description="Optional one-line remark, e.g. that a third class links the two.",
+    )
+    via_class: str = Field(
+        default="",
+        description=(
+            "Name of a third class that carries this link, when the two ends are only connected through "
+            "it. System-populated: leave this empty, the pipeline fills it when it derives an observation "
+            "from an association class."
+        ),
     )
 
 
@@ -270,9 +279,13 @@ class RelationPairJudgement(BaseModel):
     relations: List[RelationVerdict] = Field(
         default_factory=list,
         description=(
-            "One entry per DISTINCT association between the two classes. Emit several only when the evidence "
-            "shows genuinely different meanings carried by different documented attributes. Two descriptions "
-            "of the same association are one entry, not two. Empty when the pair carries no association."
+            "One entry per DISTINCT association between the two classes. Two classes are often connected in "
+            "several ways at once - one class can both contain instances of the other and record which of them "
+            "are responsible for it - and each way is its own entry, whether the evidence for it is an "
+            "attribute, an endpoint surface or prose. Emit one entry only when the evidence describes a single "
+            "way, restated or seen from both ends. Give each entry a name, displayName and shortDescription "
+            "that say which way it is, so two entries are never interchangeable. Empty when the pair carries "
+            "no association at all."
         ),
     )
     rejection_kind: ToleratedRelationKind = Field(
@@ -292,7 +305,7 @@ class RelationPairJudgement(BaseModel):
 # --- Stage 6: verification ---
 
 
-class RelationRefutation(BaseModel):
+class RelationRefutation(CamelCaseModel):
     """
     Adversarial second opinion on an accepted relation.
     """
@@ -387,6 +400,7 @@ class RelationAnalysisStats(CamelCaseModel):
     chunks_harvested: int = 0
     classes_swept: int = 0
     pairs_refocused: int = 0
+    link_object_pairs_expanded: int = 0
     pairs_adjudicated: int = 0
     relations_verified: int = 0
     observations_total: int = 0

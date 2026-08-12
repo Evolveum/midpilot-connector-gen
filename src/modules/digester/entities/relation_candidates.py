@@ -209,45 +209,206 @@ class ObservedPair:
             if chunk_ref not in self.chunk_refs:
                 self.chunk_refs.append(chunk_ref)
 
-    def evidence_strength(self) -> Tuple[int, int, int]:
+    def evidence_strength(self) -> Tuple[int, int, int, int]:
         """How well supported this pair is, for ordering when a stage has to pick a subset.
 
         Deterministic evidence outranks prose because it comes from an already-validated
-        schema; a pair documented from both ends outranks a one-sided mention.
+        schema. Attribute breadth ranks next: a pair whose evidence names several distinct
+        attributes on one side probably carries several associations, so dropping it costs
+        more than dropping a pair with repeated evidence for a single attribute pairing.
         """
         deterministic = sum(
             1
             for observation in self.observations
             if observation.evidence_kind in {"attribute_metadata", "endpoint_path", "schema_reference"}
         )
-        return (deterministic, int(self.has_both_sides()), len(self.observations))
+        side_a, side_b = self.attributes_per_side()
+        return (deterministic, max(len(side_a), len(side_b)), int(self.has_both_sides()), len(self.observations))
 
     @property
     def is_self_pair(self) -> bool:
         return normalize_object_class_name(self.class_a) == normalize_object_class_name(self.class_b)
 
+    def attributes_per_side(self) -> Tuple[List[str], List[str]]:
+        """Distinct attribute names observed on each side, in first-seen order.
+
+        One pair can carry several associations - a user may be both a member and an owner of
+        a group - and each association is its own pair of reference attributes. Tracking the
+        attributes per side, rather than a single "both sides seen" flag, is what lets the
+        later stages notice that one side names more attributes than the other and that some
+        association is therefore still only half-observed.
+        """
+        left = normalize_object_class_name(self.class_a)
+        side_a: List[str] = []
+        side_b: List[str] = []
+
+        def record(bucket: List[str], attribute: str) -> None:
+            name = attribute.strip()
+            if name and name not in bucket:
+                bucket.append(name)
+
+        for observation in self.observations:
+            source_is_a = normalize_object_class_name(observation.source_class) == left
+            record(side_a if source_is_a else side_b, observation.source_attribute)
+            record(side_b if source_is_a else side_a, observation.target_attribute)
+        return side_a, side_b
+
     def has_both_sides(self) -> bool:
         """True when some observation names an attribute on each side of the pair."""
-        left = normalize_object_class_name(self.class_a)
-        sides_with_attribute: set[str] = set()
-        for observation in self.observations:
-            if observation.source_attribute.strip():
-                sides_with_attribute.add("a" if normalize_object_class_name(observation.source_class) == left else "b")
-            if observation.target_attribute.strip():
-                sides_with_attribute.add("b" if normalize_object_class_name(observation.source_class) == left else "a")
-        return len(sides_with_attribute) >= 2
+        side_a, side_b = self.attributes_per_side()
+        return bool(side_a) and bool(side_b)
 
     def is_weak(self) -> bool:
         """Pairs worth a second, focused look before they are judged.
 
-        Weak means the picture is incomplete, not that it is untrustworthy: a single
-        observation, or observations that never name an attribute on both sides. A pair
-        documented from both ends is already complete enough to judge, however few passes
-        found it.
+        Weak means the picture is incomplete, not that it is untrustworthy. Three ways it can
+        be incomplete:
+
+        * a single observation, so nothing corroborates it;
+        * no attribute named on one of the sides;
+        * more distinct attributes on one side than the other, which is the signature of a
+          second association that has only been seen from one end. ``Group.members`` and
+          ``Group.owners`` against a lone ``User.groups`` means the ownership association is
+          still missing its subject side, even though membership looks complete.
         """
         if self.is_self_pair:
             return False
-        return len(self.observations) <= 1 or not self.has_both_sides()
+        if len(self.observations) <= 1:
+            return True
+        side_a, side_b = self.attributes_per_side()
+        if not side_a or not side_b:
+            return True
+        return len(side_a) != len(side_b)
+
+
+ObservationEntry = Tuple[RelationObservation, EvidenceSource, Optional[Sequence[Dict[str, str]]]]
+"""One observation plus the stage that produced it and the chunks backing it."""
+
+_NON_REFERENCE_EVIDENCE = frozenset({"embedded_metadata", "inheritance_metadata"})
+
+
+def expand_link_object_pairs(
+    entries: Sequence[ObservationEntry],
+    index: ObjectClassIndex,
+    attributes_by_class: Mapping[str, Any],
+) -> Tuple[List[ObservationEntry], List[str]]:
+    """
+    Connect the two ends of an association class, which no other stage ever does.
+
+    A membership modelled as its own class - ``Membership.user -> User`` and
+    ``Membership.group -> Group`` plus a few qualifying attributes - produces observations
+    that fold onto the pairs ``Membership|User`` and ``Group|Membership``. The pair the
+    domain actually needs, ``User|Group``, is never formed, and because adjudication may only
+    name classes belonging to the pair it is judging, no call can return ``kind=link_object``
+    with ``linkObjectClass=Membership``. The evidence has to be reshaped before the LLM sees
+    it; a prompt cannot recover a pair that was never created.
+
+    Runs over observations from every stage, not just deterministic seeding, so a link object
+    described only in prose is expanded too.
+
+    Returns the synthetic entries and one human-readable line per expansion for logging.
+    """
+    max_pairs = config.digester.relation_link_object_max_expanded_pairs
+    if max_pairs <= 0:
+        return [], []
+
+    outgoing: Dict[str, Dict[str, List[RelationObservation]]] = {}
+    for observation, _source, _refs in entries:
+        if observation.evidence_kind in _NON_REFERENCE_EVIDENCE:
+            continue
+        source = index.resolve(observation.source_class)
+        target = index.resolve(observation.target_class)
+        if source is None or target is None:
+            continue
+        if normalize_object_class_name(source.name) == normalize_object_class_name(target.name):
+            continue
+        outgoing.setdefault(source.name, {}).setdefault(target.name, []).append(observation)
+
+    candidates: List[Tuple[float, str, Dict[str, List[RelationObservation]]]] = []
+    for link_class, targets in outgoing.items():
+        if len(targets) < 2:
+            continue
+        info = index.resolve(link_class)
+        if info is None or info.embedded or info.abstract:
+            continue
+        ratio = _reference_ratio(link_class, targets, attributes_by_class)
+        if ratio is not None and ratio < config.digester.relation_link_object_min_reference_ratio:
+            continue
+        candidates.append((ratio if ratio is not None else 0.0, link_class, targets))
+
+    # Most reference-dense classes first: they are the likeliest association classes, so if the
+    # ceiling bites it drops the weakest candidates rather than an arbitrary tail.
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+
+    synthetic: List[ObservationEntry] = []
+    summary: List[str] = []
+    skipped = 0
+    for ratio, link_class, targets in candidates:
+        ends = sorted(targets, key=normalize_object_class_name)
+        for position, end_a in enumerate(ends):
+            for end_b in ends[position + 1 :]:
+                if len(synthetic) >= max_pairs:
+                    skipped += 1
+                    continue
+                synthetic.append(_link_object_entry(link_class, end_a, end_b, targets))
+                summary.append(f"{end_a}|{end_b} via {link_class}")
+
+    if skipped:
+        summary.append(f"{skipped} further association-class pair(s) skipped by the expansion ceiling")
+    return synthetic, summary
+
+
+def _reference_ratio(
+    link_class: str,
+    targets: Mapping[str, List[RelationObservation]],
+    attributes_by_class: Mapping[str, Any],
+) -> Optional[float]:
+    """Share of the class's attributes that point at other object classes, or None if unknown."""
+    payload = attributes_by_class.get(normalize_object_class_name(link_class))
+    attributes = select_attributes_map(payload)
+    if not attributes:
+        return None
+
+    referencing = {
+        observation.source_attribute.strip()
+        for observations in targets.values()
+        for observation in observations
+        if observation.source_attribute.strip()
+    }
+    return len(referencing) / len(attributes)
+
+
+def _link_object_entry(
+    link_class: str,
+    end_a: str,
+    end_b: str,
+    targets: Mapping[str, List[RelationObservation]],
+) -> ObservationEntry:
+    """Build the observation that connects two ends of an association class.
+
+    Both attribute names are left empty on purpose: ``Membership.user`` is an attribute of
+    Membership, not of User, so naming it here would hand adjudication an attribute that the
+    grounding check would rightly reject.
+    """
+
+    def describe(end: str) -> str:
+        for observation in targets.get(end, []):
+            if observation.source_attribute.strip():
+                return f"{link_class}.{observation.source_attribute.strip()} -> {end}"
+        return f"{link_class} -> {end}"
+
+    observation = RelationObservation(
+        source_class=end_a,
+        target_class=end_b,
+        source_attribute="",
+        target_attribute="",
+        multi_valued=None,
+        evidence_kind="schema_reference",
+        quote=f"{describe(end_a)}; {describe(end_b)}",
+        note=f"Connected only through {link_class}, which references both ends.",
+        via_class=link_class,
+    )
+    return (observation, "link_object_expansion", None)
 
 
 def group_observations(
@@ -372,7 +533,7 @@ def observations_from_endpoints(
         return []
 
     observations: List[RelationObservation] = []
-    seen: set[Tuple[str, str]] = set()
+    seen: set[Tuple[str, str, str]] = set()
     for endpoint in endpoints:
         if not isinstance(endpoint, Mapping):
             continue
@@ -390,7 +551,10 @@ def observations_from_endpoints(
                 continue
             if normalize_object_class_name(head_info.name) == normalize_object_class_name(tail_info.name):
                 continue
-            dedup_key = (head_info.name, tail_info.name)
+            # Keyed on the path, not just the class pair: two sub-resource surfaces between the
+            # same classes are usually two associations, and the path is the only role-bearing
+            # evidence an endpoint observation carries.
+            dedup_key = (head_info.name, tail_info.name, path)
             if dedup_key in seen:
                 continue
             seen.add(dedup_key)
@@ -503,6 +667,46 @@ def sort_relations_by_iga_priority(
             relation.name,
         ),
     )
+
+
+def disambiguate_relation_labels(relations: List[RelationRecord]) -> List[RelationRecord]:
+    """Ensure two relations between the same classes never carry the same display name.
+
+    The adjudication prompt asks for role-bearing labels, but a lazy answer would leave a
+    reviewer with two entries both reading "User to Group". Renaming only the machine
+    identifier does not help them; the human-facing label has to differ too, so the
+    distinguishing attribute is appended when the model did not distinguish them itself.
+    """
+    by_label: Dict[Tuple[str, str, str], List[RelationRecord]] = {}
+    for relation in relations:
+        key = (
+            normalize_object_class_name(relation.subject),
+            normalize_object_class_name(relation.object),
+            relation.display_name.strip().casefold(),
+        )
+        by_label.setdefault(key, []).append(relation)
+
+    adjusted: Dict[int, RelationRecord] = {}
+    for group in by_label.values():
+        if len(group) < 2:
+            continue
+        for relation in group:
+            marker = (relation.subject_attribute or relation.object_attribute or "").strip()
+            if not marker:
+                marker = relation.name
+            if not marker:
+                continue
+            adjusted[id(relation)] = relation.model_copy(
+                update={"display_name": f"{relation.display_name} via {marker}".strip()}
+            )
+            logger.info(
+                "[Digester:Relations] Disambiguated the display name of relation %s on %s -> %s",
+                relation.name,
+                relation.subject,
+                relation.object,
+            )
+
+    return [adjusted.get(id(relation), relation) for relation in relations]
 
 
 def deduplicate_relation_names(relations: List[RelationRecord]) -> List[RelationRecord]:

@@ -205,6 +205,12 @@ Look specifically for what is still missing:
 - Whether either attribute holds one value or many.
 - Whether a third class sits between the two and carries the association.
 - Whether the link exists only as an endpoint path rather than a schema property.
+- Whether these two classes are connected in MORE THAN ONE way. A class often relates to the
+  same partner class through several attributes with different meanings, and the earlier
+  stages usually catch only the most prominent one. `<known_observations>` may already list
+  several attributes on one side and only one on the other; when it does, the missing
+  counterparts are the most valuable thing you can find here. Report one observation per
+  attribute pairing, never a single merged observation.
 
 If the documentation shows the pair is NOT associated - the names merely look similar, one is
 an embedded structure of the other, or one extends the other - return an observation with
@@ -264,7 +270,22 @@ FIRST decide whether the pair is associated at all. Return an empty `relations` 
 - either side's documented purpose is transport-only, session-oriented or audit-only, or the
   only support is name similarity (`not_a_relation`).
 
-OTHERWISE emit one entry per DISTINCT association. Most pairs hold exactly one. Emit more only
+An observation carrying `viaClass` means the two classes are connected only THROUGH that third
+class, which references both ends and usually adds its own qualifying attributes. That is the
+`link_object` kind: emit the association between the two ends and name the third class in
+`linkObjectClass`. Its attribute names belong to the third class, not to either end, so leave
+`subjectAttribute` and `objectAttribute` empty unless the evidence names an attribute on an end
+itself. Confirm from the evidence that the third class really is an association carrier before
+using this kind - a class that merely references two others is not automatically one.
+
+A pair can hold MORE THAN ONE association. The clearest signal is one side carrying several
+attributes that mean different things - a class that separately records the instances that
+belong to it and the instances responsible for it holds two associations with the same partner
+class, not one. `<observed_attributes>` below shows what the evidence attached to each side;
+when the two sides list different numbers of attributes, some association is usually still
+missing its other end, and you should say so rather than merge the attributes into one entry.
+
+OTHERWISE emit one entry per DISTINCT association. Emit more only
 when different attributes carry genuinely different roles:
 - Two different documented attributes with different relationship meanings are two relations.
 - Two inverse descriptions or navigation directions of the same documented association are one
@@ -290,8 +311,23 @@ For each association:
 
 `subject` and `object` must both be one of the two class names given in the task, spelled
 exactly as provided. `name` is lowercase snake_case, default `{{subject}}_to_{{object}}`; when
-the pair holds several associations, suffix each with the documented attribute that distinguishes
-it.
+the pair holds several associations, suffix each with what distinguishes it - the documented
+attribute when there is one, otherwise the role it expresses.
+
+When you emit more than one entry for a pair, `displayName` and `shortDescription` must also
+differ and must each say WHICH association it is. Two entries that both read "A to B" with the
+same description are unusable to the person reviewing them, even when their identifiers differ.
+
+Worked example - one pair, two associations, nothing documented on the subject side:
+
+    entry 1: name=<subject>_to_<object>_membership
+             displayName="<Subject> to <Object> (membership)"
+             subjectAttribute=""  objectAttribute=<the attribute listing contained instances>
+             shortDescription="<Subject>s listed as belonging to a <object>."
+    entry 2: name=<subject>_to_<object>_ownership
+             displayName="<Subject> to <Object> (ownership)"
+             subjectAttribute=""  objectAttribute=<the attribute listing responsible instances>
+             shortDescription="<Subject>s recorded as responsible for a <object>."
 </task>
 """
 )
@@ -321,6 +357,14 @@ unless the observations show it verbatim:
 {known_attributes}
 </known_attributes>
 
+Distinct attributes the evidence associates with each side of this pair. When one side carries
+several, check whether they express different roles and therefore different associations, and
+whether each has a counterpart on the other side:
+
+<observed_attributes>
+{observed_attributes}
+</observed_attributes>
+
 Everything observed about this pair:
 
 <observations>
@@ -340,6 +384,16 @@ get_relation_verification_system_prompt = RELATION_ONTOLOGY + textwrap.dedent(
 A relation has been proposed. Your job is to REFUTE it, not to confirm it. Assume it is wrong
 until the evidence forces you to accept it.
 
+ONE ASSOCIATION AT A TIME
+These two classes may be connected in several ways, and the evidence you are given covers ALL
+of them, not only the proposed one. Judge the proposed association alone:
+- Evidence for a DIFFERENT association between the same two classes neither supports nor
+  refutes this one. Do not refute an ownership association because the evidence mostly
+  describes membership.
+- Never rewrite an attribute into the one belonging to another association. That silently
+  turns two distinct associations into duplicates of each other, which is worse than either
+  keeping or dropping the one you were asked about.
+
 Set `refuted` to true when any of these holds:
 - The evidence supports no link at all, only that both classes are mentioned nearby.
 - The claimed relation is really an embedded structure of one class, or schema inheritance.
@@ -349,8 +403,10 @@ Set `refuted` to true when any of these holds:
 - An attribute name in the proposal appears nowhere in the evidence or the known attribute
   lists, and no documented alternative exists.
 
-When an attribute name is wrong but a correct one is visible in the evidence, keep `refuted`
-false and put the correct name in the matching `corrected...` field.
+When an attribute name is wrong but a correct one is visible in the evidence *for this
+association*, keep `refuted` false and put the correct name in the matching `corrected...`
+field. Leave the correction fields empty when the only alternatives you can see belong to a
+different association.
 
 Default to `refuted` true when you cannot point at concrete evidence. A relation dropped here
 costs one missing suggestion; a wrong one costs a connector that does not work.

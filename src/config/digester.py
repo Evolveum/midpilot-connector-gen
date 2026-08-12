@@ -239,6 +239,26 @@ class DigesterSettings(BaseModel):
             "number dropped is always logged."
         ),
     )
+    relation_link_object_min_reference_ratio: float = Field(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum share of an object class's attributes that must reference other object classes "
+            "before it is treated as an association class carrying a relation between them. Structural, "
+            "not name-based: a join class is mostly references plus a few qualifying columns. Applied "
+            "only when the class's attributes have been extracted."
+        ),
+    )
+    relation_link_object_max_expanded_pairs: int = Field(
+        50,
+        ge=0,
+        description=(
+            "Maximum class pairs synthesized from association classes in one run. 0 disables the "
+            "expansion. A class referencing many others would otherwise contribute a pair per "
+            "combination; the number skipped is always logged."
+        ),
+    )
     relation_max_stored_observations_per_pair: int = Field(
         40,
         ge=1,

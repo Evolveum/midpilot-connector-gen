@@ -5,11 +5,15 @@
 """Pure-logic tests for relation candidate derivation, pairing and projection."""
 
 from typing import Any, Dict, List
+from unittest.mock import patch
 
+from src.config import config
 from src.modules.digester.entities.relation_candidates import (
     ObjectClassIndex,
     deduplicate_relation_names,
     default_relation_name,
+    disambiguate_relation_labels,
+    expand_link_object_pairs,
     grounded_attribute_names,
     group_observations,
     is_attribute_grounded,
@@ -410,6 +414,210 @@ def test_attribute_grounding_is_skipped_when_no_attributes_were_extracted():
     """Absent attribute output means unknown, not disproven."""
     assert is_attribute_grounded("anything", set())
     assert is_attribute_grounded("", {"known"})
+
+
+# ==================== ASSOCIATION CLASSES ====================
+
+
+def _membership_index() -> ObjectClassIndex:
+    return _index(
+        {"name": "User", "description": "An account", "confidence": "high"},
+        {"name": "Group", "description": "An entitlement container", "confidence": "high"},
+        {"name": "Membership", "description": "Links a user to a group", "confidence": "high"},
+    )
+
+
+_MEMBERSHIP_ATTRIBUTES = {
+    "membership": {
+        "attributes": {
+            "user": {"type": "User", "format": "reference"},
+            "group": {"type": "Group", "format": "reference"},
+            "role": {"type": "string"},
+            "validFrom": {"type": "string"},
+        }
+    }
+}
+
+
+def test_association_class_creates_the_pair_between_its_two_ends():
+    """
+    Without this, ``kind=link_object`` is unreachable from its own canonical evidence.
+
+    ``Membership.user`` and ``Membership.group`` fold onto Membership|User and Group|Membership.
+    The pair the domain needs, User|Group, is formed by no other stage, and adjudication may
+    only name classes belonging to the pair it judges - so no call could ever return the
+    association with Membership as the link.
+    """
+    index = _membership_index()
+    entries = [
+        (observation, "attribute_schema", None)
+        for observation in observations_from_attributes("Membership", _MEMBERSHIP_ATTRIBUTES["membership"], index)
+    ]
+
+    synthetic, summary = expand_link_object_pairs(entries, index, _MEMBERSHIP_ATTRIBUTES)
+    pairs, _ = group_observations(entries + synthetic, index)
+
+    assert summary == ["Group|User via Membership"]
+    assert "group|user" in pairs
+    observation = pairs["group|user"].observations[0]
+    assert observation.via_class == "Membership"
+    # The attributes belong to Membership, not to either end; naming them here would hand
+    # adjudication a name the grounding check would rightly reject.
+    assert (observation.source_attribute, observation.target_attribute) == ("", "")
+
+
+def test_a_class_that_is_mostly_plain_data_is_not_treated_as_an_association_class():
+    """A user referencing a group and an org is not a link between them."""
+    index = _index(
+        {"name": "User", "confidence": "high"},
+        {"name": "Group", "confidence": "high"},
+        {"name": "Organization", "confidence": "high"},
+    )
+    payload = {
+        "attributes": {
+            "group": {"type": "Group", "format": "reference"},
+            "org": {"type": "Organization", "format": "reference"},
+            "name": {"type": "string"},
+            "email": {"type": "string"},
+            "phone": {"type": "string"},
+            "title": {"type": "string"},
+        }
+    }
+    entries = [(o, "attribute_schema", None) for o in observations_from_attributes("User", payload, index)]
+
+    synthetic, summary = expand_link_object_pairs(entries, index, {"user": payload})
+
+    assert synthetic == []
+    assert summary == []
+
+
+def test_association_class_expansion_respects_its_ceiling():
+    index = _membership_index()
+    entries = [
+        (observation, "attribute_schema", None)
+        for observation in observations_from_attributes("Membership", _MEMBERSHIP_ATTRIBUTES["membership"], index)
+    ]
+
+    with patch.object(config.digester, "relation_link_object_max_expanded_pairs", 0):
+        assert expand_link_object_pairs(entries, index, _MEMBERSHIP_ATTRIBUTES) == ([], [])
+
+
+# ==================== SEVERAL ASSOCIATIONS ON ONE PAIR ====================
+
+
+def test_a_half_seen_second_association_keeps_the_pair_weak():
+    """
+    The reviewer's case: user is both a member and an owner of a group.
+
+    Membership is documented from both ends, ownership only from the group side. The pair
+    must still be re-read, or the ownership association never gets its other end - a plain
+    "some attribute on each side" check would call this pair complete.
+    """
+    index = _user_group_index()
+    entries = [
+        (_observation(sourceClass="User", targetClass="Group", sourceAttribute="groups"), "chunk_harvest", None),
+        (_observation(sourceClass="Group", targetClass="User", sourceAttribute="members"), "chunk_harvest", None),
+        (_observation(sourceClass="Group", targetClass="User", sourceAttribute="owners"), "chunk_harvest", None),
+    ]
+
+    pairs, _ = group_observations(entries, index)
+    pair = next(iter(pairs.values()))
+
+    group_side, user_side = pair.attributes_per_side()
+    assert group_side == ["members", "owners"]
+    assert user_side == ["groups"]
+    assert pair.is_weak(), "an uneven attribute split means an association is still half-seen"
+
+
+def test_a_pair_with_both_associations_complete_is_not_weak():
+    index = _user_group_index()
+    entries = [
+        (_observation(sourceClass="User", targetClass="Group", sourceAttribute="groups"), "chunk_harvest", None),
+        (_observation(sourceClass="Group", targetClass="User", sourceAttribute="members"), "chunk_harvest", None),
+        (_observation(sourceClass="User", targetClass="Group", sourceAttribute="ownedGroups"), "chunk_harvest", None),
+        (_observation(sourceClass="Group", targetClass="User", sourceAttribute="owners"), "chunk_harvest", None),
+    ]
+
+    pairs, _ = group_observations(entries, index)
+    assert not next(iter(pairs.values())).is_weak()
+
+
+def test_attribute_breadth_outranks_repeated_evidence_for_one_association():
+    """The adjudication ceiling should drop the pair worth fewer relations."""
+    index = _user_group_index()
+
+    two_associations, _ = group_observations(
+        [
+            (_observation(sourceClass="User", targetClass="Group", sourceAttribute="groups"), "attribute_schema", None),
+            (
+                _observation(sourceClass="Group", targetClass="User", sourceAttribute="members"),
+                "attribute_schema",
+                None,
+            ),
+            (_observation(sourceClass="Group", targetClass="User", sourceAttribute="owners"), "attribute_schema", None),
+        ],
+        index,
+    )
+    one_association, _ = group_observations(
+        [
+            (_observation(sourceClass="User", targetClass="Group", sourceAttribute="groups"), "attribute_schema", None),
+            (
+                _observation(sourceClass="Group", targetClass="User", sourceAttribute="members"),
+                "attribute_schema",
+                None,
+            ),
+        ]
+        * 2,
+        index,
+    )
+
+    assert (
+        next(iter(two_associations.values())).evidence_strength()
+        > next(iter(one_association.values())).evidence_strength()
+    )
+
+
+def test_identical_display_names_on_one_pair_are_disambiguated():
+    relations = [
+        RelationRecord(
+            name="a",
+            display_name="User to Group",
+            subject="user",
+            subject_attribute="",
+            object="group",
+            object_attribute="members",
+        ),
+        RelationRecord(
+            name="b",
+            display_name="User to Group",
+            subject="user",
+            subject_attribute="",
+            object="group",
+            object_attribute="owners",
+        ),
+    ]
+
+    labelled = disambiguate_relation_labels(relations)
+
+    assert {relation.display_name for relation in labelled} == {
+        "User to Group via members",
+        "User to Group via owners",
+    }
+
+
+def test_a_single_relation_keeps_its_display_name_untouched():
+    relations = [
+        RelationRecord(
+            name="a",
+            display_name="User to Group",
+            subject="user",
+            subject_attribute="groups",
+            object="group",
+            object_attribute="members",
+        )
+    ]
+
+    assert disambiguate_relation_labels(relations)[0].display_name == "User to Group"
 
 
 # ==================== LLM VOCABULARY TOLERANCE ====================

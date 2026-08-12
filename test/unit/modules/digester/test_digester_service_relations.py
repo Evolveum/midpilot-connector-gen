@@ -13,9 +13,12 @@ import pytest
 
 from src.modules.digester.extractors.rest.relations import extract_relations
 from src.modules.digester.schemas.relation_analysis import (
+    RelationDecision,
     RelationObservation,
+    RelationPairAnalysis,
     RelationPairJudgement,
     RelationRefutation,
+    RelationsAnalysis,
     RelationVerdict,
 )
 
@@ -100,6 +103,36 @@ def _judgement(*verdicts: RelationVerdict, rejection_kind: str = "not_a_relation
         rejection_kind=rejection_kind,
         rationale=rationale,
     )
+
+
+def test_nested_refutation_serializes_corrections_in_camel_case():
+    """The stored analysis uses one consistent camelCase contract at every nesting level."""
+    analysis = RelationsAnalysis(
+        pairs=[
+            RelationPairAnalysis(
+                pair_key="group|user",
+                class_a="Group",
+                class_b="User",
+                decisions=[
+                    RelationDecision(
+                        verdict=_verdict(),
+                        refutation=RelationRefutation(
+                            refuted=False,
+                            corrected_subject_attribute="memberOf",
+                            corrected_object_attribute="members",
+                        ),
+                    )
+                ],
+            )
+        ]
+    )
+
+    refutation = analysis.model_dump(by_alias=True, mode="json")["pairs"][0]["decisions"][0]["refutation"]
+
+    assert refutation["correctedSubjectAttribute"] == "memberOf"
+    assert refutation["correctedObjectAttribute"] == "members"
+    assert "corrected_subject_attribute" not in refutation
+    assert "corrected_object_attribute" not in refutation
 
 
 def _harvest_results(per_chunk: Dict[UUID, List[RelationObservation]]):
@@ -210,6 +243,7 @@ def test_every_relation_prompt_renders_through_langchain():
                 "class_b": "Group",
                 "class_metadata": "[]",
                 "known_attributes": "{}",
+                "observed_attributes": "{}",
                 "observations": "[]",
             },
         ),
@@ -512,6 +546,149 @@ async def test_one_class_pair_can_carry_several_distinct_associations():
     assert {relation["objectAttribute"] for relation in relations} == {"owners", "members"}
     # Colliding names are renamed, never dropped: codegen resolves a relation by name.
     assert len({relation["name"] for relation in relations}) == 2
+
+
+@pytest.mark.asyncio
+async def test_two_endpoint_only_associations_are_kept_apart_by_their_names():
+    """
+    Membership and ownership can both be endpoint-only, with no attribute named on either side.
+
+    Nothing structural then distinguishes the two records, so the identifiers the adjudication
+    stage assigned have to carry the distinction instead of being collapsed as duplicates.
+    """
+    with ExitStack() as stack:
+        _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [_observation()]},
+            judgement=_judgement(
+                _verdict(
+                    name="user_to_group_membership",
+                    displayName="User to Group (membership)",
+                    kind="virtual_endpoint",
+                    subjectAttribute="",
+                    objectAttribute="",
+                ),
+                _verdict(
+                    name="user_to_group_ownership",
+                    displayName="User to Group (ownership)",
+                    kind="virtual_endpoint",
+                    subjectAttribute="",
+                    objectAttribute="",
+                ),
+            ),
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    relations = result["result"]["relations"]
+    assert len(relations) == 2
+    assert {relation["name"] for relation in relations} == {
+        "user_to_group_membership",
+        "user_to_group_ownership",
+    }
+
+
+@pytest.mark.asyncio
+async def test_verification_does_not_rewrite_one_association_into_another():
+    """
+    Verification judges one association but sees the whole pair's evidence.
+
+    A correction lifted from a sibling association would turn two distinct relations into
+    duplicates, so a correction is only applied where it does not collide with a sibling.
+    """
+    with ExitStack() as stack:
+        _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [_observation(sourceAttribute="groups", targetAttribute="members")]},
+            judgement=_judgement(
+                _verdict(name="user_to_group_membership", subjectAttribute="groups", objectAttribute="members"),
+                _verdict(name="user_to_group_ownership", subjectAttribute="ownedGroups", objectAttribute="owners"),
+            ),
+            refutation=RelationRefutation(
+                refuted=False,
+                reason="the evidence names groups/members",
+                corrected_subject_attribute="groups",
+                corrected_object_attribute="members",
+            ),
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    relations = result["result"]["relations"]
+    assert len(relations) == 2, "a sibling correction must not collapse the two associations"
+    assert {relation["objectAttribute"] for relation in relations} == {"members", "owners"}
+
+
+@pytest.mark.asyncio
+async def test_attribute_observed_on_the_other_class_does_not_ground_this_side():
+    """`members` is evidence for Group; it must not pass as a User attribute."""
+    with ExitStack() as stack:
+        mocks = _pipeline_patches(
+            stack,
+            harvest={},
+            judgement=_judgement(_verdict(subjectAttribute="members", objectAttribute="members")),
+            attributes={
+                "userAttributesOutput": {"attributes": {"id": {"type": "string"}, "groups": {"type": "Group"}}},
+                "groupAttributesOutput": {"attributes": {"id": {"type": "string"}, "members": {"type": "User"}}},
+            },
+            sweep=[_observation(sourceClass="Group", targetClass="User", sourceAttribute="members")],
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    relation = result["result"]["relations"][0]
+    assert relation["objectAttribute"] == "members", "Group.members is grounded"
+    assert relation["subjectAttribute"] == "", "User.members is not, and must be cleared"
+
+    stored = mocks["store"].await_args.args[2]
+    assert stored["pairs"][0]["decisions"][0]["ungroundedAttributes"] == ["User.members"]
+
+
+@pytest.mark.asyncio
+async def test_two_associations_are_distinguishable_to_a_human():
+    """Identifiers differing is not enough; a reviewer reads the display name."""
+    with ExitStack() as stack:
+        _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [_observation()]},
+            judgement=_judgement(
+                _verdict(name="a", displayName="User to Group", subjectAttribute="", objectAttribute="members"),
+                _verdict(name="b", displayName="User to Group", subjectAttribute="", objectAttribute="owners"),
+            ),
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    labels = {relation["displayName"] for relation in result["result"]["relations"]}
+    assert len(labels) == 2, f"both associations still read the same: {labels}"
+
+
+@pytest.mark.asyncio
+async def test_an_association_merged_away_is_recorded_as_such():
+    """
+    The persisted analysis must not claim an association that midPoint never received.
+
+    Two verdicts that end up structurally identical are collapsed by semantic deduplication;
+    the decision that lost has to say so rather than stay marked accepted.
+    """
+    with ExitStack() as stack:
+        mocks = _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [_observation(sourceAttribute="groups", targetAttribute="members")]},
+            judgement=_judgement(
+                _verdict(name="first", subjectAttribute="groups", objectAttribute="members"),
+                _verdict(name="second", subjectAttribute="groups", objectAttribute="members"),
+            ),
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    assert len(result["result"]["relations"]) == 1
+    stored = mocks["store"].await_args.args[2]
+    decisions = stored["pairs"][0]["decisions"]
+    assert [decision["accepted"] for decision in decisions] == [True, False]
+    assert "Merged into" in decisions[1]["rejectionReason"]
+    assert stored["stats"]["relationsEmitted"] == 1
 
 
 @pytest.mark.asyncio
