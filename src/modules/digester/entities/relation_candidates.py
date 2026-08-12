@@ -223,7 +223,12 @@ class ObservedPair:
             if observation.evidence_kind in {"attribute_metadata", "endpoint_path", "schema_reference"}
         )
         side_a, side_b = self.attributes_per_side()
-        return (deterministic, max(len(side_a), len(side_b)), int(self.has_both_sides()), len(self.observations))
+        return (
+            deterministic,
+            max(len(side_a), len(side_b)),
+            int(bool(side_a) and bool(side_b)),
+            len(self.observations),
+        )
 
     @property
     def is_self_pair(self) -> bool:

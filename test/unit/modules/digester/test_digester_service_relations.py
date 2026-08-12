@@ -135,6 +135,13 @@ def test_nested_refutation_serializes_corrections_in_camel_case():
     assert "corrected_object_attribute" not in refutation
 
 
+def test_unknown_pair_rejection_kind_falls_back_to_not_a_relation():
+    """An unknown LLM rejection label must not be converted into an accepted relation kind."""
+    judgement = RelationPairJudgement.model_validate({"relations": [], "rejection_kind": "unsupported_relation_kind"})
+
+    assert judgement.rejection_kind == "not_a_relation"
+
+
 def _harvest_results(per_chunk: Dict[UUID, List[RelationObservation]]):
     async def run_chunks_concurrently(*, chunk_items, job_id, extractor, set_total=True):
         results = []
@@ -178,6 +185,10 @@ def _pipeline_patches(
         "verify": AsyncMock(return_value=refutation),
         "sweep": AsyncMock(return_value=sweep or []),
         "focus": AsyncMock(return_value=[]),
+        "sweep_chain": MagicMock(),
+        "focus_chain": MagicMock(),
+        "adjudication_chain": MagicMock(),
+        "verification_chain": MagicMock(),
         "store": AsyncMock(return_value=True),
         "progress": AsyncMock(),
         "error": AsyncMock(),
@@ -189,6 +200,18 @@ def _pipeline_patches(
     stack.enter_context(patch(f"{CONTEXT}.RelevantChunkRepository", return_value=relevant_repo))
     stack.enter_context(patch(f"{MODULE}.run_chunks_concurrently", _harvest_results(harvest)))
     stack.enter_context(patch(f"{MODULE}.relation_passes.build_harvest_chain", return_value=MagicMock()))
+    mocks["build_sweep_chain"] = stack.enter_context(
+        patch(f"{MODULE}.relation_passes.build_class_sweep_chain", return_value=mocks["sweep_chain"])
+    )
+    mocks["build_focus_chain"] = stack.enter_context(
+        patch(f"{MODULE}.relation_passes.build_pair_focus_chain", return_value=mocks["focus_chain"])
+    )
+    mocks["build_adjudication_chain"] = stack.enter_context(
+        patch(f"{MODULE}.relation_passes.build_adjudication_chain", return_value=mocks["adjudication_chain"])
+    )
+    mocks["build_verification_chain"] = stack.enter_context(
+        patch(f"{MODULE}.relation_passes.build_verification_chain", return_value=mocks["verification_chain"])
+    )
     stack.enter_context(patch(f"{MODULE}.relation_passes.sweep_class", mocks["sweep"]))
     stack.enter_context(patch(f"{MODULE}.relation_passes.focus_pair", mocks["focus"]))
     stack.enter_context(patch(f"{MODULE}.relation_passes.adjudicate_pair", mocks["adjudicate"]))
@@ -296,6 +319,9 @@ async def test_opposite_sides_in_two_chunks_yield_one_relation():
     mocks["adjudicate"].assert_awaited_once()
     observations = mocks["adjudicate"].await_args.kwargs["observations"]
     assert len(observations) == 2, "both halves must reach the same adjudication call"
+    assert mocks["sweep"].await_count == 2
+    mocks["build_sweep_chain"].assert_called_once_with()
+    assert all(call.kwargs["chain"] is mocks["sweep_chain"] for call in mocks["sweep"].await_args_list)
 
 
 @pytest.mark.asyncio

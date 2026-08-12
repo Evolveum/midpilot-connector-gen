@@ -43,6 +43,9 @@ RELATION_KINDS_ACCEPTED: frozenset[str] = frozenset(
 )
 """Kinds that become a relation record in the API response."""
 
+RejectionKind = Literal["embedded", "inheritance", "not_a_relation"]
+"""Valid reasons for rejecting a class pair during adjudication."""
+
 EvidenceKind = Literal[
     "schema_property",
     "schema_reference",
@@ -91,13 +94,14 @@ ToleratedRelationKind = Annotated[
     RelationKind,
     BeforeValidator(_coerce_to_vocabulary(get_args(RelationKind), "reference")),
 ]
+ToleratedRejectionKind = Annotated[
+    RejectionKind,
+    BeforeValidator(_coerce_to_vocabulary(get_args(RejectionKind), "not_a_relation")),
+]
 ToleratedConfidence = Annotated[
     ConfidenceLevel,
     BeforeValidator(_coerce_to_vocabulary(tuple(level.value for level in ConfidenceLevel), ConfidenceLevel.LOW.value)),
 ]
-
-
-# --- Stage 1/3/4: LLM observations ---
 
 
 class RelationObservation(CamelCaseModel):
@@ -178,9 +182,6 @@ class RelationObservationsResponse(BaseModel):
         default_factory=list,
         description="Every class-to-class link the fragment supports, including ones you are unsure about.",
     )
-
-
-# --- Stage 5: adjudication ---
 
 
 class RelationVerdict(CamelCaseModel):
@@ -288,7 +289,7 @@ class RelationPairJudgement(BaseModel):
             "no association at all."
         ),
     )
-    rejection_kind: ToleratedRelationKind = Field(
+    rejection_kind: ToleratedRejectionKind = Field(
         default="not_a_relation",
         description=(
             "Why the pair carries no association, used only when `relations` is empty: 'embedded' when one "
@@ -300,9 +301,6 @@ class RelationPairJudgement(BaseModel):
         default="",
         description="One or two sentences explaining the decision for the pair, naming the evidence.",
     )
-
-
-# --- Stage 6: verification ---
 
 
 class RelationRefutation(CamelCaseModel):
@@ -335,9 +333,6 @@ class RelationRefutation(CamelCaseModel):
             "another one clearly does. Empty when no correction is needed."
         ),
     )
-
-
-# --- Persisted analysis ---
 
 
 class RelationDecision(CamelCaseModel):

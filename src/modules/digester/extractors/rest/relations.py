@@ -104,9 +104,9 @@ async def extract_relations(
     if skipped_classes:
         logger.warning("[%s] Skipped %d malformed object-class entries while indexing", LOG_SCOPE, skipped_classes)
     if not len(index):
-        message = f"[{LOG_SCOPE}] No usable object classes in objectClassesOutput; nothing to relate"
-        logger.error(message)
-        await append_job_error(job_id, message)
+        detail = "No usable object classes in objectClassesOutput; nothing to relate"
+        logger.error("[%s] %s", LOG_SCOPE, detail)
+        await append_job_error(job_id, f"[{LOG_SCOPE}] {detail}")
         return _empty_result()
 
     chunk_lookup = relation_context.build_chunk_lookup(doc_items)
@@ -312,6 +312,7 @@ async def _sweep_classes(
         processing_completed=0,
         message=f"Sweeping {len(swept)} object classes for relations",
     )
+    chain = relation_passes.build_class_sweep_chain()
 
     async def sweep(info: ObjectClassInfo) -> List[ObservationEntry]:
         chunk_ids = class_chunk_ids[normalize_object_class_name(info.name)]
@@ -329,6 +330,7 @@ async def _sweep_classes(
             object_classes_json=object_classes_json,
             documentation=documentation,
             job_id=job_id,
+            chain=chain,
         )
         refs = relation_context.chunk_refs(chunk_ids, chunk_lookup)
         return [(observation, "class_sweep", refs) for observation in observations]
@@ -363,6 +365,7 @@ async def _focus_weak_pairs(
         processing_completed=0,
         message=f"Re-reading documentation for {len(weak)} uncertain relation candidates",
     )
+    chain = relation_passes.build_pair_focus_chain()
 
     async def focus(pair: ObservedPair) -> Tuple[List[ObservationEntry], bool]:
         chunk_ids = relation_context.pair_chunk_ids(pair, class_chunk_ids)
@@ -388,6 +391,7 @@ async def _focus_weak_pairs(
             known_observations=pair.observations,
             documentation=documentation,
             job_id=job_id,
+            chain=chain,
         )
         refs = relation_context.chunk_refs(chunk_ids, chunk_lookup)
         return [(observation, "pair_focus", refs) for observation in observations], True
@@ -447,6 +451,7 @@ async def _adjudicate_pairs(
         processing_completed=0,
         message=f"Judging {len(ordered)} relation candidates",
     )
+    chain = relation_passes.build_adjudication_chain()
 
     async def judge(pair: ObservedPair) -> RelationPairAnalysis:
         judgement = await relation_passes.adjudicate_pair(
@@ -459,6 +464,7 @@ async def _adjudicate_pairs(
             observed_attributes=_observed_attributes(pair),
             observations=pair.observations,
             job_id=job_id,
+            chain=chain,
         )
         analysis = RelationPairAnalysis(
             pair_key=pair.key,
@@ -566,8 +572,12 @@ async def _verify_and_collect(
             processing_completed=0,
             message=f"Verifying {len(pending)} relation candidates",
         )
+        chain = relation_passes.build_verification_chain()
         await asyncio.gather(
-            *(_verify_one(analysis, decision, index, attributes_by_class, job_id) for analysis, decision in pending)
+            *(
+                _verify_one(analysis, decision, index, attributes_by_class, job_id, chain)
+                for analysis, decision in pending
+            )
         )
         stats.relations_verified = len(pending)
         for analysis in {id(item[0]): item[0] for item in pending}.values():
@@ -641,6 +651,7 @@ async def _verify_one(
     index: ObjectClassIndex,
     attributes_by_class: Dict[str, Any],
     job_id: UUID,
+    chain: Any,
 ) -> None:
     """Ask a skeptic to refute one relation; a failed verification keeps the relation."""
     refutation = await relation_passes.verify_relation(
@@ -653,6 +664,7 @@ async def _verify_one(
             (analysis.class_a, analysis.class_b), attributes_by_class
         ),
         job_id=job_id,
+        chain=chain,
     )
     decision.refutation = refutation
     if refutation is None:
@@ -660,8 +672,6 @@ async def _verify_one(
 
     if refutation.refuted:
         decision.rejection_reason = refutation.reason.strip() or "Refuted during verification"
-    # Attribute corrections are applied later, in _apply_verification_corrections: they have to
-    # be checked against the pair's other associations, which are still being verified here.
 
 
 def _apply_verification_corrections(analysis: RelationPairAnalysis) -> None:

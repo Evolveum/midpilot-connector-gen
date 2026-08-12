@@ -18,8 +18,6 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence, cast
 from uuid import UUID
 
-from pydantic import BaseModel
-
 from src.core.llm import build_structured_chain, raise_if_llm_unavailable
 from src.jobs import append_job_error
 from src.modules.digester.extraction.chunk_extraction import (
@@ -61,6 +59,46 @@ def build_harvest_chain() -> Any:
     )
 
 
+def build_class_sweep_chain() -> Any:
+    """One reusable chain for the per-class sweep pass."""
+    return build_structured_chain(
+        get_relation_class_sweep_system_prompt,
+        get_relation_class_sweep_user_prompt,
+        RelationObservationsResponse,
+        user_role="human",
+    )
+
+
+def build_pair_focus_chain() -> Any:
+    """One reusable chain for the focused pair re-read pass."""
+    return build_structured_chain(
+        get_relation_pair_focus_system_prompt,
+        get_relation_pair_focus_user_prompt,
+        RelationObservationsResponse,
+        user_role="human",
+    )
+
+
+def build_adjudication_chain() -> Any:
+    """One reusable chain for the pair adjudication pass."""
+    return build_structured_chain(
+        get_relation_adjudication_system_prompt,
+        get_relation_adjudication_user_prompt,
+        RelationPairJudgement,
+        user_role="human",
+    )
+
+
+def build_verification_chain() -> Any:
+    """One reusable chain for the adversarial verification pass."""
+    return build_structured_chain(
+        get_relation_verification_system_prompt,
+        get_relation_verification_user_prompt,
+        RelationRefutation,
+        user_role="human",
+    )
+
+
 async def harvest_chunk(
     *,
     content: str,
@@ -98,9 +136,7 @@ async def harvest_chunk(
 
 async def _invoke_pass(
     *,
-    system_prompt: str,
-    user_prompt: str,
-    response_model: type[BaseModel],
+    chain: Any,
     payload: Dict[str, Any],
     run_name: str,
     job_id: UUID,
@@ -111,7 +147,6 @@ async def _invoke_pass(
     A single pair failing must not lose the other pairs, so the exception is recorded and
     the caller continues with what it has. An unreachable LLM still propagates.
     """
-    chain = build_structured_chain(system_prompt, user_prompt, response_model, user_role="human")
     try:
         return await invoke_extraction_chain_with_retry(
             chain,
@@ -132,6 +167,7 @@ async def sweep_class(
     object_classes_json: str,
     documentation: str,
     job_id: UUID,
+    chain: Any,
 ) -> List[RelationObservation]:
     """
     Stage 3: ask what one object class relates to, with all of that class's documentation in view.
@@ -140,9 +176,7 @@ async def sweep_class(
     what recovers links whose two ends are described in different fragments.
     """
     result = await _invoke_pass(
-        system_prompt=get_relation_class_sweep_system_prompt,
-        user_prompt=get_relation_class_sweep_user_prompt,
-        response_model=RelationObservationsResponse,
+        chain=chain,
         payload={
             "focus_class": focus_class,
             "focus_description": focus_description,
@@ -166,6 +200,7 @@ async def focus_pair(
     known_observations: Sequence[RelationObservation],
     documentation: str,
     job_id: UUID,
+    chain: Any,
 ) -> List[RelationObservation]:
     """
     Stage 4: re-read the documentation for one pair whose evidence is thin or one-sided.
@@ -174,9 +209,7 @@ async def focus_pair(
     cardinality that a broad question against an arbitrary fragment cannot.
     """
     result = await _invoke_pass(
-        system_prompt=get_relation_pair_focus_system_prompt,
-        user_prompt=get_relation_pair_focus_user_prompt,
-        response_model=RelationObservationsResponse,
+        chain=chain,
         payload={
             "class_a": class_a,
             "class_b": class_b,
@@ -202,6 +235,7 @@ async def adjudicate_pair(
     observed_attributes: Dict[str, List[str]],
     observations: Sequence[RelationObservation],
     job_id: UUID,
+    chain: Any,
 ) -> Optional[RelationPairJudgement]:
     """
     Stage 5: decide what one class pair holds, with every observation for it in view.
@@ -211,9 +245,7 @@ async def adjudicate_pair(
     that different documented attributes on one pair may carry separate associations.
     """
     result = await _invoke_pass(
-        system_prompt=get_relation_adjudication_system_prompt,
-        user_prompt=get_relation_adjudication_user_prompt,
-        response_model=RelationPairJudgement,
+        chain=chain,
         payload={
             "class_a": class_a,
             "class_b": class_b,
@@ -236,6 +268,7 @@ async def verify_relation(
     observations: Sequence[RelationObservation],
     known_attributes: Dict[str, List[str]],
     job_id: UUID,
+    chain: Any,
 ) -> Optional[RelationRefutation]:
     """
     Stage 6: try to refute an accepted relation.
@@ -244,9 +277,7 @@ async def verify_relation(
     relation rather than dropping it for an infrastructure reason.
     """
     result = await _invoke_pass(
-        system_prompt=get_relation_verification_system_prompt,
-        user_prompt=get_relation_verification_user_prompt,
-        response_model=RelationRefutation,
+        chain=chain,
         payload={
             "relation": relation_json,
             "class_metadata": json.dumps(list(class_metadata), ensure_ascii=False, indent=1),
