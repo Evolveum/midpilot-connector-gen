@@ -247,11 +247,65 @@ def test_embedded_attribute_is_recorded_as_a_rejection_signal():
     assert observations[0].evidence_kind == "embedded_metadata"
 
 
-def test_attributes_pointing_at_their_own_class_are_ignored():
+def test_reference_prefixed_type_resolves_to_the_target_class():
+    """REST extraction encodes a $ref as type="reference NAME"; that must still seed a relation."""
     index = _user_group_index()
-    payload = {"attributes": {"self": {"type": "User", "format": "reference"}}}
+    payload = {"attributes": {"groups": {"type": "reference Group", "format": "reference"}}}
 
-    assert observations_from_attributes("User", payload, index) == []
+    observations = observations_from_attributes("User", payload, index)
+
+    assert len(observations) == 1
+    assert observations[0].target_class == "Group"
+    assert observations[0].evidence_kind == "attribute_metadata"
+
+
+def test_an_exact_class_name_wins_over_the_reference_marker():
+    """The marker is a producer convention, not a naming rule: it must not merge distinct classes."""
+    index = _index(
+        {"name": "User", "confidence": "high"},
+        {"name": "Group", "confidence": "high"},
+        {"name": "reference Group", "description": "A distinct class that starts with the marker"},
+    )
+    payload = {"attributes": {"groups": {"type": "reference Group", "format": "reference"}}}
+
+    observations = observations_from_attributes("User", payload, index)
+
+    assert observations[0].target_class == "reference Group"
+
+
+def test_recursive_reference_attribute_seeds_a_self_relation():
+    """Group.parentGroup -> Group is a hierarchy, and this schema evidence is its strongest source."""
+    index = _user_group_index()
+    payload = {"attributes": {"parentGroup": {"type": "Group", "format": "reference"}}}
+
+    observations = observations_from_attributes("Group", payload, index)
+
+    assert len(observations) == 1
+    assert observations[0].source_class == "Group"
+    assert observations[0].target_class == "Group"
+    assert observations[0].source_attribute == "parentGroup"
+    assert observations[0].evidence_kind == "attribute_metadata"
+
+
+def test_recursive_embedded_attribute_stays_a_rejection_signal():
+    """Recursion is classified by format like any other target, not excluded before it is read."""
+    index = _index(
+        {"name": "Group", "confidence": "high"},
+        {"name": "GroupDetail", "confidence": "medium", "embedded": True},
+    )
+    payload = {
+        "attributes": {
+            "nested": {"type": "Group", "format": "embedded"},
+            "detail": {"type": "GroupDetail", "format": "embedded"},
+        }
+    }
+
+    observations = observations_from_attributes("Group", payload, index)
+
+    assert [observation.evidence_kind for observation in observations] == [
+        "embedded_metadata",
+        "embedded_metadata",
+    ]
 
 
 def test_sub_resource_endpoint_becomes_an_observation():
@@ -270,6 +324,19 @@ def test_sub_resource_endpoint_becomes_an_observation():
     # The other tail is an attribute, not an exact class identifier, and is left to the LLM.
     assert len(observations) == 1
     assert observations[0].source_class == "User"
+    assert observations[0].target_class == "Group"
+    assert observations[0].evidence_kind == "endpoint_path"
+
+
+def test_recursive_sub_resource_endpoint_becomes_an_observation():
+    """A sub-resource path from a class to itself is how a hierarchy is exposed over REST."""
+    index = _user_group_index()
+    payload = {"endpoints": [{"path": "/Group/{id}/Group", "method": "GET"}]}
+
+    observations = observations_from_endpoints("Group", payload, index)
+
+    assert len(observations) == 1
+    assert observations[0].source_class == "Group"
     assert observations[0].target_class == "Group"
     assert observations[0].evidence_kind == "endpoint_path"
 

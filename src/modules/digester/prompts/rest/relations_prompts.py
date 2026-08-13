@@ -70,6 +70,9 @@ REPORT GENEROUSLY
   other side is usually in a different fragment.
 - Report the same link once per distinct piece of evidence in this fragment. Repetition across
   fragments is expected and handled later.
+- Include self-links when the class genuinely references itself, with the class on both sides.
+  A parent, manager or nested-membership attribute pointing back at its own class is an
+  ordinary hierarchical link.
 
 STAY LITERAL
 - Copy class names and attribute names exactly as the fragment writes them. Do not translate,
@@ -79,7 +82,7 @@ STAY LITERAL
   Direction here is observational, not a subject/object decision - that is decided later.
 
 WHAT NOT TO REPORT
-- Links where both names refer to the same class.
+- Two different names that the fragment shows are the same class under an alias.
 - Transport wrappers, pagination envelopes, error payloads.
 - Authentication, session or token references.
 - A pair supported by nothing but similar names.

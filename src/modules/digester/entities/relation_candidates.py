@@ -20,7 +20,11 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from src.config import config
-from src.documents.normalize import canonical_object_class_key, normalize_object_class_name
+from src.documents.normalize import (
+    canonical_object_class_key,
+    dereference_attribute_type,
+    normalize_object_class_name,
+)
 from src.modules.digester.entities.relations import split_relation_tokens
 from src.modules.digester.enums import ConfidenceLevel
 from src.modules.digester.schemas import RelationRecord
@@ -486,13 +490,23 @@ def observations_from_attributes(
     means the attribute points at another object class, ``embedded`` means it is a complex
     attribute of this one. Both are recorded - the embedded case as a rejection signal, so
     it is not re-proposed as a relation by a later stage.
+
+    A self-target is not excluded. ``Group.parentGroup -> Group`` and ``User.manager -> User``
+    are ordinary hierarchical associations, and this schema evidence is the strongest signal
+    the pipeline has for them; the class sweep that would otherwise be their only source is
+    capped, confidence-filtered and skipped for classes without mapped documentation.
+    Recursion is classified by ``format`` like any other target, so recursive embedded
+    structures still land as ``embedded_metadata`` and are rejected explicitly.
     """
     observations: List[RelationObservation] = []
     for attribute_name, raw_attribute in select_attributes_map(attributes_payload).items():
         if not isinstance(raw_attribute, Mapping):
             continue
-        target = index.resolve(raw_attribute.get("type"))
-        if target is None or normalize_object_class_name(target.name) == normalize_object_class_name(object_class):
+        # Exact match first: the reference marker is a producer convention, not a naming rule,
+        # so a class actually named "Reference <something>" must not be collapsed into <something>.
+        raw_type = raw_attribute.get("type")
+        target = index.resolve(raw_type) or index.resolve(dereference_attribute_type(raw_type))
+        if target is None:
             continue
 
         attribute_format = str(raw_attribute.get("format") or "").strip().lower()
@@ -530,6 +544,10 @@ def observations_from_endpoints(
     Only paths whose both literal segments resolve to extracted object classes are used.
     A path whose tail names an attribute rather than a known class is left to the
     attribute-derived and LLM stages instead of being guessed at.
+
+    ``/Group/{id}/Group`` is kept: a sub-resource path from a class to itself is exactly the
+    API surface a hierarchical association is exposed through, and dropping it would leave
+    the recursive case to the capped class sweep alone.
     """
     if not isinstance(endpoints_payload, Mapping):
         return []
@@ -553,8 +571,6 @@ def observations_from_endpoints(
             head_info = index.resolve(head)
             tail_info = index.resolve(tail)
             if head_info is None or tail_info is None:
-                continue
-            if normalize_object_class_name(head_info.name) == normalize_object_class_name(tail_info.name):
                 continue
             # Keyed on the path, not just the class pair: two sub-resource surfaces between the
             # same classes are usually two associations, and the path is the only role-bearing

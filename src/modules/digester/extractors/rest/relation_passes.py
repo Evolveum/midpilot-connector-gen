@@ -130,6 +130,9 @@ async def harvest_chunk(
         chunk_metadata=chunk_metadata,
         extra_llm_attrs={"object_classes": object_classes_json},
         extraction_chain=chain,
+        # The relation pipeline announces its own step, with the chunk count it is working
+        # through; the generic per-chunk wording would replace it on every single chunk.
+        progress_message=None,
     )
     return observations, has_relevant_data
 

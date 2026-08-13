@@ -515,6 +515,10 @@ def _result_snippet(result: Any, limit: int = 2000) -> str:
     return raw if len(raw) <= limit else raw[:limit] + "...(truncated)"
 
 
+DEFAULT_CHUNK_PROGRESS_MESSAGE = "Processing chunk and extracting relevant information"
+"""Progress message written per chunk unless the caller supplies its own wording."""
+
+
 def build_chunk_extraction_chain(
     *,
     pydantic_model: type[T],
@@ -548,6 +552,7 @@ async def extract_single_chunk(
     max_end_sequence_length: Optional[int] = None,
     marker_word_cutoff_length: Optional[int] = None,
     extraction_chain: Any | None = None,
+    progress_message: Optional[str] = DEFAULT_CHUNK_PROGRESS_MESSAGE,
 ) -> Tuple[List[Any], bool]:
     """
     Run LLM extraction on a pre-chunked documentation item.
@@ -576,6 +581,10 @@ async def extract_single_chunk(
         max_end_sequence_length: Maximum length for the end sequence
         marker_word_cutoff_length: Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance
         extraction_chain: Optional pre-built reusable extraction chain. When not provided, one is built from prompts.
+        progress_message: Per-chunk progress message. Defaults to the generic wording every
+            chunk extractor has always written. Pass None when the calling pipeline sets a
+            richer stage message of its own that must survive the whole chunk loop; the stage
+            is still written either way, so progress reporting is unaffected.
 
     Returns:
         - Flat list of extracted items
@@ -619,11 +628,12 @@ async def extract_single_chunk(
         max_end_sequence_length if max_end_sequence_length is not None else digester_config.max_end_sequence_length
     )
 
-    # Progress: start processing
+    # Progress: start processing. A None message leaves the caller's wording in place -
+    # update_job_progress only writes the fields it is given.
     await update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
-        message="Processing chunk and extracting relevant information",
+        message=progress_message,
     )
 
     logger.info("%sLLM call for chunk %s", logger_prefix, chunk_id)

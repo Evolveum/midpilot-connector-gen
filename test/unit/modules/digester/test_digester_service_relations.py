@@ -55,6 +55,16 @@ DOC_ITEMS = [
     },
 ]
 
+UNRELATED_DOC_ITEMS = [
+    {
+        "docId": str(DOC_ID),
+        "chunkId": str(USER_CHUNK),
+        "content": "Rate limiting: the API allows 100 requests per minute.",
+        "summary": "Rate limits",
+        "@metadata": {"tags": ["limits"]},
+    },
+]
+
 EMPTY_CLASS_SCHEMA_SNAPSHOT: Dict[str, Dict[str, Any]] = {
     "attributesByClass": {},
     "endpointsByClass": {},
@@ -90,6 +100,13 @@ class _FakeSessionMaker:
 
     async def __aexit__(self, *args: Any) -> bool:
         return False
+
+
+def _repo_without_mapped_chunks() -> MagicMock:
+    """Relevant-chunk repository for a session where no documentation maps to any class."""
+    repo = MagicMock()
+    repo.get_relevant_chunks_grouped_by_entity = AsyncMock(return_value={})
+    return repo
 
 
 def _observation(**overrides: Any) -> RelationObservation:
@@ -211,6 +228,7 @@ def _pipeline_patches(
         "verification_chain": MagicMock(),
         "store": AsyncMock(return_value=True),
         "progress": AsyncMock(),
+        "increment": AsyncMock(),
         "error": AsyncMock(),
         "class_schema_snapshot": class_schema_snapshot,
     }
@@ -237,6 +255,7 @@ def _pipeline_patches(
     stack.enter_context(patch(f"{MODULE}.relation_passes.verify_relation", mocks["verify"]))
     stack.enter_context(patch(f"{MODULE}.store_relations_analysis", mocks["store"]))
     stack.enter_context(patch(f"{MODULE}.update_job_progress", mocks["progress"]))
+    stack.enter_context(patch(f"{MODULE}.increment_processed_documents", mocks["increment"]))
     stack.enter_context(patch(f"{MODULE}.append_job_error", mocks["error"]))
     return mocks
 
@@ -546,6 +565,171 @@ async def test_stored_attribute_schema_seeds_a_pair_without_any_harvest_evidence
     stored = mocks["store"].await_args.args[2]
     assert stored["stats"]["observationsDeterministic"] == 1
     assert "attribute_schema" in stored["pairs"][0]["observationSources"]
+
+
+@pytest.mark.asyncio
+async def test_recursive_reference_attributes_seed_and_emit_a_self_relation():
+    """A hierarchy must survive on schema evidence alone, without depending on the capped sweep.
+
+    Uses the ``reference NAME`` spelling REST extraction actually produces, so the test fails
+    if either the reference marker or the self-target is dropped before the pair is formed.
+    """
+    with ExitStack() as stack:
+        mocks = _pipeline_patches(
+            stack,
+            harvest={},
+            judgement=_judgement(
+                _verdict(
+                    subject="Group",
+                    subjectAttribute="parentGroup",
+                    object="Group",
+                    objectAttribute="childGroups",
+                    name="group_to_group",
+                    displayName="Group hierarchy",
+                )
+            ),
+            attributes={
+                "groupAttributesOutput": {
+                    "attributes": {
+                        "parentGroup": {"type": "reference Group", "format": "reference"},
+                        "childGroups": {"type": "reference Group", "format": "reference", "multivalue": True},
+                    }
+                },
+            },
+        )
+
+        result = await extract_relations(
+            DOC_ITEMS,
+            OBJECT_CLASSES,
+            uuid4(),
+            uuid4(),
+            class_schema_snapshot=mocks["class_schema_snapshot"],
+        )
+
+    relations = result["result"]["relations"]
+    assert len(relations) == 1
+    # The response contract normalizes class names, as it does for every other relation.
+    assert relations[0]["subject"] == "group"
+    assert relations[0]["object"] == "group"
+    # Both sides stay named: grounding resolves them against the one class of a self pair.
+    assert relations[0]["subjectAttribute"] == "parentGroup"
+    assert relations[0]["objectAttribute"] == "childGroups"
+
+    stored = mocks["store"].await_args.args[2]
+    assert stored["stats"]["observationsDeterministic"] == 2
+
+    # A self pair has one class on both sides, so its two attribute buckets must be merged
+    # rather than collapsed onto a single key that hides one of them.
+    observed = mocks["adjudicate"].await_args.kwargs["observed_attributes"]
+    assert observed == {"Group": ["parentGroup", "childGroups"]}
+
+    # The judged class is described once, not twice, even though it is both sides of the pair.
+    class_metadata = mocks["adjudicate"].await_args.kwargs["class_metadata"]
+    assert [item["name"] for item in class_metadata] == ["Group"]
+
+
+@pytest.mark.asyncio
+async def test_every_step_announces_itself_and_resets_its_counters():
+    """The CLI must be able to say which step is running, over what, and how far along it is."""
+    with ExitStack() as stack:
+        mocks = _pipeline_patches(
+            stack,
+            harvest={},
+            judgement=_judgement(_verdict()),
+            attributes={
+                "userAttributesOutput": {"attributes": {"groups": {"type": "Group", "format": "reference"}}},
+            },
+        )
+
+        await extract_relations(
+            DOC_ITEMS,
+            OBJECT_CLASSES,
+            uuid4(),
+            uuid4(),
+            class_schema_snapshot=mocks["class_schema_snapshot"],
+        )
+
+    steps = [call.kwargs for call in mocks["progress"].await_args_list if call.kwargs.get("message")]
+    messages = [step["message"] for step in steps]
+
+    assert [message.split(" - ")[0] for message in messages] == [
+        "Step 1/6",
+        "Step 2/6",
+        "Step 3/6",
+        "Step 4/6",
+        "Step 5/6",
+        "Step 6/6",
+    ]
+    # Each step names its own unit of work, so completed/total is never ambiguous.
+    assert "object classes" in messages[0]
+    assert "documentation chunks" in messages[1]
+    assert "candidate pairs" in messages[4]
+
+    # Every step rebases the counters onto its own unit instead of inheriting the previous one.
+    assert all(step["total_processing"] is not None for step in steps)
+    assert all(step["processing_completed"] is not None for step in steps)
+
+
+@pytest.mark.asyncio
+async def test_long_running_steps_report_each_finished_unit():
+    """Without a per-unit increment the CLI sits at 0/N for the whole step, which is the bug."""
+    with ExitStack() as stack:
+        mocks = _pipeline_patches(
+            stack,
+            harvest={},
+            judgement=_judgement(_verdict()),
+            attributes={
+                "userAttributesOutput": {"attributes": {"groups": {"type": "Group", "format": "reference"}}},
+            },
+        )
+
+        await extract_relations(
+            DOC_ITEMS,
+            OBJECT_CLASSES,
+            uuid4(),
+            uuid4(),
+            class_schema_snapshot=mocks["class_schema_snapshot"],
+        )
+
+    # Two swept classes, one weak pair re-read, one pair judged and one relation verified.
+    assert mocks["increment"].await_count == 5
+    assert all(call.kwargs["delta"] == 1 for call in mocks["increment"].await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_a_unit_that_never_reaches_the_llm_is_still_counted():
+    """An early exit that skips its increment would strand the step below its own total."""
+    with ExitStack() as stack:
+        mocks = _pipeline_patches(
+            stack,
+            harvest={},
+            judgement=_judgement(_verdict()),
+            attributes={
+                "userAttributesOutput": {"attributes": {"groups": {"type": "Group", "format": "reference"}}},
+            },
+        )
+        # Neither recorded relevance nor the name-scan fallback maps a chunk to a class, so the
+        # focused re-read bails out before its LLM call - the pair still has to be counted.
+        stack.enter_context(patch(f"{CONTEXT}.RelevantChunkRepository", return_value=_repo_without_mapped_chunks()))
+
+        await extract_relations(
+            UNRELATED_DOC_ITEMS,
+            OBJECT_CLASSES,
+            uuid4(),
+            uuid4(),
+            class_schema_snapshot=mocks["class_schema_snapshot"],
+        )
+
+    focus_step = next(
+        call.kwargs
+        for call in mocks["progress"].await_args_list
+        if str(call.kwargs.get("message", "")).startswith("Step 4/6")
+    )
+    assert mocks["focus"].await_count == 0
+    # One unit announced, one unit counted, even though the LLM was never called for it.
+    assert focus_step["total_processing"] == 1
+    # Focus, judge and verify: the sweep is skipped outright when nothing maps to a class.
+    assert mocks["increment"].await_count == 3
 
 
 @pytest.mark.asyncio

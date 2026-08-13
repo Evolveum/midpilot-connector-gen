@@ -36,12 +36,13 @@ under ``relationsAnalysisOutput`` instead of being thrown away.
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from enum import IntEnum
+from typing import Any, Awaitable, Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar
 from uuid import UUID
 
 from src.config import config
 from src.documents.normalize import normalize_object_class_name
-from src.jobs import append_job_error, update_job_progress
+from src.jobs import append_job_error, increment_processed_documents, update_job_progress
 from src.modules.digester.entities.relation_candidates import (
     ObjectClassIndex,
     ObjectClassInfo,
@@ -81,6 +82,85 @@ logger = logging.getLogger(__name__)
 
 # One observation plus where it came from and which chunk backs it.
 ObservationEntry = Tuple[RelationObservation, EvidenceSource, Optional[Sequence[Dict[str, str]]]]
+
+T = TypeVar("T")
+
+
+# --- Progress reporting ---
+
+
+class RelationStep(IntEnum):
+    """Ordered user-visible steps of the relation pipeline.
+
+    Six stages run over four different units of work - chunks, object classes, candidate
+    pairs and accepted relations - so a bare completed/total pair cannot say what is being
+    counted. The step number and its unit go into the progress message; the counters carry
+    the position within the running step.
+
+    The numbering is fixed rather than derived from what actually runs. A step can be
+    skipped (no chunks selected, sweep disabled, no weak pairs, verification turned off),
+    and a gap in the sequence is more honest than renumbering the remaining steps mid-run.
+    """
+
+    seed = 1
+    harvest = 2
+    sweep = 3
+    focus = 4
+    judge = 5
+    verify = 6
+
+
+_STEP_LABELS: Dict[RelationStep, str] = {
+    RelationStep.seed: "Reading extracted schema",
+    RelationStep.harvest: "Harvesting evidence from documentation",
+    RelationStep.sweep: "Sweeping object classes",
+    RelationStep.focus: "Re-reading uncertain candidates",
+    RelationStep.judge: "Judging relation candidates",
+    RelationStep.verify: "Verifying relations",
+}
+
+
+def _step_message(step: RelationStep, detail: str) -> str:
+    """Progress message naming the step, its position in the pipeline and its unit of work."""
+    return f"Step {int(step)}/{len(RelationStep)} - {_STEP_LABELS[step]}: {detail}"
+
+
+async def _start_step(
+    job_id: UUID,
+    step: RelationStep,
+    *,
+    stage: JobStage,
+    total: int,
+    detail: str,
+    completed: int = 0,
+) -> None:
+    """Announce a step and reset the counters to its own unit of work.
+
+    ``processing_completed`` is written explicitly on every step: progress updates are
+    partial, so a step that only set a new total would leave the previous step's completed
+    count in place and report progress it has not made.
+    """
+    await update_job_progress(
+        job_id,
+        stage=stage,
+        total_processing=total,
+        processing_completed=completed,
+        message=_step_message(step, detail),
+    )
+
+
+async def _counted(work: Awaitable[T], job_id: UUID) -> T:
+    """Run one unit of a step and count it, whichever way the unit ends.
+
+    Wrapping the whole unit rather than incrementing before each ``return`` is what keeps the
+    counter honest: several of these stages bail out early for units with no documentation,
+    and an uncounted early exit leaves the step permanently short of its total.
+    """
+    try:
+        return await work
+    finally:
+        await increment_processed_documents(job_id, delta=1)
+
 
 # --- Entry point ---
 
@@ -125,6 +205,19 @@ async def extract_relations(
     stats = RelationAnalysisStats()
 
     entries.extend(_seed_from_session(index, attributes_by_class, endpoints_by_class, chunk_lookup, stats))
+    # Seeding is deterministic and needs no I/O, so it is reported as already complete; the
+    # step still gets its own line so the counts it worked from are visible in the CLI.
+    await _start_step(
+        job_id,
+        RelationStep.seed,
+        stage=JobStage.processing,
+        total=len(index),
+        completed=len(index),
+        detail=(
+            f"{len(index)} object classes, {len(attributes_by_class)} with extracted attributes, "
+            f"{len(endpoints_by_class)} with extracted endpoints"
+        ),
+    )
     entries.extend(await _harvest(doc_items, object_classes_json, job_id, stats))
     entries.extend(await _sweep_classes(index, object_classes_json, class_chunk_ids, chunk_lookup, job_id, stats))
 
@@ -228,10 +321,12 @@ async def _harvest(
     if not doc_items:
         return []
 
-    await update_job_progress(
+    await _start_step(
         job_id,
+        RelationStep.harvest,
         stage=JobStage.processing_chunks,
-        message=f"Harvesting relation evidence from {len(doc_items)} chunks",
+        total=len(doc_items),
+        detail=f"{len(doc_items)} documentation chunks",
     )
 
     chain = relation_passes.build_harvest_chain()
@@ -250,7 +345,15 @@ async def _harvest(
             chain=chain,
         )
 
-    results = await run_chunks_concurrently(chunk_items=doc_items, job_id=job_id, extractor=extractor)
+    # set_total=False keeps this step's message and counter reset: the shared helper would
+    # otherwise overwrite them with its own generic "Processing chunks" line. It still
+    # increments the completed count per chunk.
+    results = await run_chunks_concurrently(
+        chunk_items=doc_items,
+        job_id=job_id,
+        extractor=extractor,
+        set_total=False,
+    )
 
     entries: List[ObservationEntry] = []
     for observations, _has_relevant_data, chunk_id in results:
@@ -310,12 +413,12 @@ async def _sweep_classes(
             limit,
         )
 
-    await update_job_progress(
+    await _start_step(
         job_id,
+        RelationStep.sweep,
         stage=JobStage.processing_chunks,
-        total_processing=len(swept),
-        processing_completed=0,
-        message=f"Sweeping {len(swept)} object classes for relations",
+        total=len(swept),
+        detail=f"{len(swept)} of {eligible} eligible object classes",
     )
     chain = relation_passes.build_class_sweep_chain()
 
@@ -340,7 +443,7 @@ async def _sweep_classes(
         refs = relation_context.chunk_refs(chunk_ids, chunk_lookup)
         return [(observation, "class_sweep", refs) for observation in observations]
 
-    swept_results = await asyncio.gather(*(sweep(info) for info in swept))
+    swept_results = await asyncio.gather(*(_counted(sweep(info), job_id) for info in swept))
     entries = [entry for group in swept_results for entry in group]
     stats.classes_swept = len(swept)
     logger.info("[%s] Class sweep produced %d observations over %d classes", LOG_SCOPE, len(entries), len(swept))
@@ -363,12 +466,12 @@ async def _focus_weak_pairs(
     if not weak:
         return []
 
-    await update_job_progress(
+    await _start_step(
         job_id,
+        RelationStep.focus,
         stage=JobStage.processing_chunks,
-        total_processing=len(weak),
-        processing_completed=0,
-        message=f"Re-reading documentation for {len(weak)} uncertain relation candidates",
+        total=len(weak),
+        detail=f"{len(weak)} of {len(pairs)} candidate pairs have thin or one-sided evidence",
     )
     chain = relation_passes.build_pair_focus_chain()
 
@@ -401,7 +504,7 @@ async def _focus_weak_pairs(
         refs = relation_context.chunk_refs(chunk_ids, chunk_lookup)
         return [(observation, "pair_focus", refs) for observation in observations], True
 
-    focused = await asyncio.gather(*(focus(pair) for pair in weak))
+    focused = await asyncio.gather(*(_counted(focus(pair), job_id) for pair in weak))
     entries = [entry for group, _called in focused for entry in group]
     stats.pairs_refocused = sum(1 for _group, called in focused if called)
     logger.info(
@@ -449,22 +552,29 @@ async def _adjudicate_pairs(
             f"relation_max_adjudicated_pairs limit of {limit} was reached",
         )
 
-    await update_job_progress(
+    detail = f"{len(ordered)} candidate pairs"
+    if len(ranked) > limit:
+        detail = f"{len(ordered)} of {len(ranked)} candidate pairs (capped by relation_max_adjudicated_pairs)"
+    await _start_step(
         job_id,
+        RelationStep.judge,
         stage=JobStage.building,
-        total_processing=len(ordered),
-        processing_completed=0,
-        message=f"Judging {len(ordered)} relation candidates",
+        total=len(ordered),
+        detail=detail,
     )
     chain = relation_passes.build_adjudication_chain()
+
+    def pair_class_metadata(pair: ObservedPair) -> List[Dict[str, Any]]:
+        """Class descriptions for the judged pair, listed once even when both sides are one class."""
+        resolved = [info for info in (index.resolve(pair.class_a), index.resolve(pair.class_b)) if info]
+        unique = {normalize_object_class_name(info.name): info for info in resolved}
+        return index.to_prompt_payload(list(unique.values()))
 
     async def judge(pair: ObservedPair) -> RelationPairAnalysis:
         judgement = await relation_passes.adjudicate_pair(
             class_a=pair.class_a,
             class_b=pair.class_b,
-            class_metadata=index.to_prompt_payload(
-                [info for info in (index.resolve(pair.class_a), index.resolve(pair.class_b)) if info]
-            ),
+            class_metadata=pair_class_metadata(pair),
             known_attributes=relation_context.known_attributes_for((pair.class_a, pair.class_b), attributes_by_class),
             observed_attributes=_observed_attributes(pair),
             observations=pair.observations,
@@ -505,7 +615,7 @@ async def _adjudicate_pairs(
             analysis.rejection_reason = judgement.rationale.strip() or f"Classified as {judgement.rejection_kind}"
         return analysis
 
-    analyses = list(await asyncio.gather(*(judge(pair) for pair in ordered)))
+    analyses = list(await asyncio.gather(*(_counted(judge(pair), job_id) for pair in ordered)))
     stats.pairs_adjudicated = len(analyses)
     candidates = sum(len(analysis.decisions) for analysis in analyses)
     logger.info("[%s] Adjudicated %d pairs into %d candidate association(s)", LOG_SCOPE, len(analyses), candidates)
@@ -518,8 +628,14 @@ def _observed_attributes(pair: ObservedPair) -> Dict[str, List[str]]:
     Handed to adjudication because an uneven split is the signature of a pair carrying more
     than one association: a class listing both its members and its owners against a partner
     that names only one attribute has a second association still missing its other end.
+
+    A self-pair has one class on both sides, so its two buckets are merged: keyed by class
+    name they would otherwise collapse onto a single entry and the surviving side would hide
+    every attribute observed on the other.
     """
     side_a, side_b = pair.attributes_per_side()
+    if pair.is_self_pair:
+        return {pair.class_a: list(dict.fromkeys(side_a + side_b))}
     return {pair.class_a: side_a, pair.class_b: side_b}
 
 
@@ -570,17 +686,17 @@ async def _verify_and_collect(
         return []
 
     if config.digester.relation_verification_enabled:
-        await update_job_progress(
+        await _start_step(
             job_id,
+            RelationStep.verify,
             stage=JobStage.building,
-            total_processing=len(pending),
-            processing_completed=0,
-            message=f"Verifying {len(pending)} relation candidates",
+            total=len(pending),
+            detail=f"{len(pending)} associations accepted by adjudication",
         )
         chain = relation_passes.build_verification_chain()
         await asyncio.gather(
             *(
-                _verify_one(analysis, decision, index, attributes_by_class, job_id, chain)
+                _counted(_verify_one(analysis, decision, index, attributes_by_class, job_id, chain), job_id)
                 for analysis, decision in pending
             )
         )
