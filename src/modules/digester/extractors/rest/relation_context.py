@@ -14,13 +14,12 @@ Keeping it here leaves :mod:`relations` reading as a sequence of stages.
 """
 
 import logging
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
 from uuid import UUID
 
 from src.config import config
 from src.core.db import async_session_maker
 from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
-from src.database.repositories.session_repository import SessionRepository
 from src.documents.chunking import normalize_to_text
 from src.documents.normalize import normalize_object_class_name
 from src.modules.digester.entities.relation_candidates import (
@@ -78,15 +77,9 @@ def classes_for_prompt(index: ObjectClassIndex) -> List[ObjectClassInfo]:
     return ordered
 
 
-async def load_class_schemas(
-    session_id: UUID,
-    index: ObjectClassIndex,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Read the per-class attribute and endpoint output already stored in the session."""
-    attributes_by_class: Dict[str, Any] = {}
-    endpoints_by_class: Dict[str, Any] = {}
-
-    result_keys = [
+def relation_schema_output_keys(index: ObjectClassIndex) -> List[str]:
+    """Return every session-data key that can affect relation schema evidence."""
+    return [
         result_key
         for info in index.all
         for result_key in (
@@ -95,9 +88,19 @@ async def load_class_schemas(
         )
     ]
 
-    async with async_session_maker() as db:
-        repo = SessionRepository(db)
-        stored_values = await repo.get_session_values(session_id, result_keys)
+
+def build_relation_schema_snapshot(
+    index: ObjectClassIndex,
+    stored_values: Mapping[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Capture the exact attribute and endpoint outputs used by relation extraction.
+
+    The snapshot is stored in the durable job input, making these session dependencies
+    part of cache identity and ensuring the worker consumes the same values that were
+    fingerprinted when the job was scheduled.
+    """
+    attributes_by_class: Dict[str, Any] = {}
+    endpoints_by_class: Dict[str, Any] = {}
 
     for info in index.all:
         key = normalize_object_class_name(info.name)
@@ -107,6 +110,22 @@ async def load_class_schemas(
         endpoints = stored_values.get(f"{key}EndpointsOutput")
         if endpoints:
             endpoints_by_class[key] = endpoints
+
+    return {
+        "attributesByClass": attributes_by_class,
+        "endpointsByClass": endpoints_by_class,
+    }
+
+
+def unpack_relation_schema_snapshot(
+    snapshot: Mapping[str, Any],
+    index: ObjectClassIndex,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Validate and unpack a relation schema snapshot from durable job input."""
+    attributes_by_class = snapshot.get("attributesByClass")
+    endpoints_by_class = snapshot.get("endpointsByClass")
+    if not isinstance(attributes_by_class, Mapping) or not isinstance(endpoints_by_class, Mapping):
+        raise TypeError("Relation schema snapshot must contain attribute and endpoint mappings")
 
     missing_attributes = [
         info.name for info in index.all if normalize_object_class_name(info.name) not in attributes_by_class
@@ -118,7 +137,7 @@ async def load_class_schemas(
             len(missing_attributes),
             ", ".join(missing_attributes[:10]),
         )
-    return attributes_by_class, endpoints_by_class
+    return dict(attributes_by_class), dict(endpoints_by_class)
 
 
 async def load_class_chunk_ids(

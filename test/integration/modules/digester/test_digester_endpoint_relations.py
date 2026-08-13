@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.jobs import job_input_reference
 from src.modules.digester.errors import ObjectClassesNotFoundError
 from src.modules.digester.routes.relations import extract_relations, get_relations_status, override_relations
 from src.modules.digester.schemas import RelationsResponse
@@ -23,10 +24,18 @@ async def test_extract_relations_success():
     job_id = uuid4()
 
     fake_docs = [{"docId": "page-1", "chunkId": "doc-1", "content": "fake content for testing"}]
+    attribute_output = {"attributes": {"groups": {"type": "Group", "format": "reference"}}}
+    endpoint_output = {"endpoints": [{"method": "GET", "path": "/Users/{id}/Groups"}]}
 
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.get_session_data = AsyncMock(return_value={"objectClasses": [{"name": "User", "relevant": "true"}]})
+    mock_repo.get_session_values = AsyncMock(
+        return_value={
+            "userAttributesOutput": attribute_output,
+            "userEndpointsOutput": endpoint_output,
+        }
+    )
     mock_repo.update_session = AsyncMock()
 
     with (
@@ -42,13 +51,24 @@ async def test_extract_relations_success():
 
         response = await extract_relations(
             session_id=session_id,
+            skip_cache=False,
             db=MagicMock(),
         )
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "objectClassesOutput")
+        mock_repo.get_session_values.assert_awaited_once_with(
+            session_id,
+            ["userAttributesOutput", "userEndpointsOutput"],
+        )
         mock_schedule.assert_awaited_once()
+        schedule_kwargs = mock_schedule.await_args.kwargs
+        assert schedule_kwargs["input_payload"]["classSchemaSnapshot"] == {
+            "attributesByClass": {"user": attribute_output},
+            "endpointsByClass": {"user": endpoint_output},
+        }
+        assert schedule_kwargs["worker_args"][2] == job_input_reference("classSchemaSnapshot")
         mock_repo.update_session.assert_awaited_once()
 
 

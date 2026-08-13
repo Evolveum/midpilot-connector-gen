@@ -13,7 +13,7 @@ from src.jobs.cache import reuse_or_run
 from src.jobs.errors import JobClaimLostError
 from src.modules.discovery.schema import CandidateLinksInput
 from src.modules.scrape.schema import ScrapeRequest
-from src.shared.normalize import normalize_input
+from src.shared.normalize import normalize_input, normalized_input_fingerprint
 
 
 class _AsyncSessionContext:
@@ -65,6 +65,31 @@ def test_normalize_input_handles_missing_relevant_documentations() -> None:
         {"name": "Group"},
         {"name": "Role"},
     ]
+
+
+def test_relation_schema_changes_produce_distinct_cache_fingerprints() -> None:
+    def relation_input(*, attribute_type: str, endpoint_path: str) -> dict:
+        return {
+            "documentationItems": [{"content": "User and Group schemas"}],
+            "relevantObjectClasses": {"objectClasses": [{"name": "User"}, {"name": "Group"}]},
+            "classSchemaSnapshot": {
+                "attributesByClass": {
+                    "user": {"attributes": {"groups": {"type": attribute_type, "format": "reference"}}}
+                },
+                "endpointsByClass": {"user": {"endpoints": {"groups": {"method": "GET", "path": endpoint_path}}}},
+            },
+            "skipCache": False,
+        }
+
+    original = normalized_input_fingerprint(relation_input(attribute_type="Group", endpoint_path="/Users/{id}/Groups"))
+    changed_attribute = normalized_input_fingerprint(
+        relation_input(attribute_type="Role", endpoint_path="/Users/{id}/Groups")
+    )
+    changed_endpoint = normalized_input_fingerprint(
+        relation_input(attribute_type="Group", endpoint_path="/Users/{id}/Roles")
+    )
+
+    assert len({original, changed_attribute, changed_endpoint}) == 3
 
 
 @pytest.mark.asyncio

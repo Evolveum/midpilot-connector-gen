@@ -36,7 +36,7 @@ under ``relationsAnalysisOutput`` instead of being thrown away.
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from uuid import UUID
 
 from src.config import config
@@ -88,6 +88,7 @@ ObservationEntry = Tuple[RelationObservation, EvidenceSource, Optional[Sequence[
 async def extract_relations(
     doc_items: List[dict],
     relevant_object_classes: Any,
+    class_schema_snapshot: Mapping[str, Any],
     session_id: UUID,
     job_id: UUID,
 ) -> Dict[str, Any]:
@@ -97,7 +98,8 @@ async def extract_relations(
     Args:
         doc_items: Documentation chunks selected for this session.
         relevant_object_classes: Stored ``objectClassesOutput`` payload.
-        session_id: Session whose attribute and endpoint output is reused as evidence.
+        class_schema_snapshot: Attribute and endpoint outputs captured when the job was scheduled.
+        session_id: Session receiving relation analysis state.
         job_id: Job used for progress, errors and the stale-write guard on the analysis.
     """
     index, skipped_classes = ObjectClassIndex.from_payload(relevant_object_classes)
@@ -113,7 +115,10 @@ async def extract_relations(
     prompt_classes = relation_context.classes_for_prompt(index)
     object_classes_json = json.dumps(index.to_prompt_payload(prompt_classes), ensure_ascii=False, indent=1)
 
-    attributes_by_class, endpoints_by_class = await relation_context.load_class_schemas(session_id, index)
+    attributes_by_class, endpoints_by_class = relation_context.unpack_relation_schema_snapshot(
+        class_schema_snapshot,
+        index,
+    )
     class_chunk_ids = await relation_context.load_class_chunk_ids(session_id, index, chunk_lookup)
 
     entries: List[ObservationEntry] = []

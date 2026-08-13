@@ -330,17 +330,26 @@ async def store_relations_analysis(
     late finisher cannot describe a result it did not produce.
 
     Opens its own session because the caller is a background worker, not a request.
+
+    Locks the session row before the job-pointer row, matching the order used by
+    ``update_result_if_current_job`` and by job scheduling. Taking the pointer lock first
+    would let a concurrent scheduling transaction (session row first, then the pointer
+    upsert) form a lock cycle that PostgreSQL resolves by aborting one of the two.
     """
     async with async_session_maker() as db:
         repo = SessionRepository(db)
+        if not await repo.lock_session(session_id):
+            await db.rollback()
+            return False
         if not await repo.is_current_job_pointer(
             session_id=session_id,
             pointer_key=RELATIONS_JOB_POINTER_KEY,
             job_id=job_id,
             lock=True,
         ):
+            await db.rollback()
             return False
-        updated = await repo.update_session(session_id, {RELATIONS_ANALYSIS_RESULT_KEY: payload})
+        updated = await repo.update_locked_session(session_id, {RELATIONS_ANALYSIS_RESULT_KEY: payload})
         if not updated:
             await db.rollback()
             return False

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.filtering.filter import filter_documentation_items
 from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
+from src.modules.digester.entities.relation_candidates import ObjectClassIndex
 from src.modules.digester.errors import EndpointExtractionNotSupportedError, ObjectClassesNotFoundError
 from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.extractors.auth import extract_auth
@@ -30,6 +31,7 @@ from src.modules.digester.extractors.connectivity_endpoint import extract_connec
 from src.modules.digester.extractors.endpoints import extract_endpoints
 from src.modules.digester.extractors.info import extract_info_metadata
 from src.modules.digester.extractors.object_class import extract_object_classes
+from src.modules.digester.extractors.rest import relation_context
 from src.modules.digester.extractors.rest.relations import extract_relations
 from src.modules.digester.selection import (
     DEFAULT_CRITERIA,
@@ -230,18 +232,27 @@ async def schedule_relations_extraction(
     if not relevant:
         raise ObjectClassesNotFoundError(session_id)
 
+    object_class_index, _ = ObjectClassIndex.from_payload(relevant)
+    schema_values = await repo.get_session_values(
+        session_id,
+        relation_context.relation_schema_output_keys(object_class_index),
+    )
+    class_schema_snapshot = relation_context.build_relation_schema_snapshot(object_class_index, schema_values)
+
     job_id = await schedule_coroutine_job(
         db=repo.db,
         job_type="digester.getRelations",
         input_payload={
             "documentationItems": doc_items,
             "relevantObjectClasses": relevant,
+            "classSchemaSnapshot": class_schema_snapshot,
             "skipCache": skip_cache,
         },
         worker=extract_relations,
         worker_args=(
             job_input_reference("documentationItems"),
             job_input_reference("relevantObjectClasses"),
+            job_input_reference("classSchemaSnapshot"),
             session_id,
         ),
         initial_stage="chunking",

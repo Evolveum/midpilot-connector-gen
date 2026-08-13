@@ -11,7 +11,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.modules.digester.extractors.rest.relations import extract_relations
+from src.modules.digester.entities.relation_candidates import ObjectClassIndex
+from src.modules.digester.extractors.rest import relation_context
+from src.modules.digester.extractors.rest.relations import extract_relations as run_relations_worker
 from src.modules.digester.schemas.relation_analysis import (
     RelationDecision,
     RelationObservation,
@@ -52,6 +54,29 @@ DOC_ITEMS = [
         "@metadata": {"tags": ["group"]},
     },
 ]
+
+EMPTY_CLASS_SCHEMA_SNAPSHOT: Dict[str, Dict[str, Any]] = {
+    "attributesByClass": {},
+    "endpointsByClass": {},
+}
+
+
+async def extract_relations(
+    doc_items: List[dict],
+    relevant_object_classes: Any,
+    session_id: UUID,
+    job_id: UUID,
+    *,
+    class_schema_snapshot: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Run the worker with an explicit durable schema snapshot."""
+    return await run_relations_worker(
+        doc_items,
+        relevant_object_classes,
+        class_schema_snapshot or EMPTY_CLASS_SCHEMA_SNAPSHOT,
+        session_id,
+        job_id,
+    )
 
 
 class _FakeSessionMaker:
@@ -164,13 +189,8 @@ def _pipeline_patches(
 ) -> Dict[str, Any]:
     """Patch every boundary of the pipeline: the DB reads and each LLM pass."""
     attributes = attributes or {}
-
-    session_repo = MagicMock()
-
-    async def get_session_values(_session_id: UUID, keys: List[str]) -> Dict[str, Any]:
-        return {key: attributes[key] for key in keys if key in attributes}
-
-    session_repo.get_session_values = AsyncMock(side_effect=get_session_values)
+    object_class_index, _ = ObjectClassIndex.from_payload(OBJECT_CLASSES)
+    class_schema_snapshot = relation_context.build_relation_schema_snapshot(object_class_index, attributes)
 
     relevant_repo = MagicMock()
     relevant_repo.get_relevant_chunks_grouped_by_entity = AsyncMock(
@@ -192,11 +212,10 @@ def _pipeline_patches(
         "store": AsyncMock(return_value=True),
         "progress": AsyncMock(),
         "error": AsyncMock(),
-        "session_values": session_repo.get_session_values,
+        "class_schema_snapshot": class_schema_snapshot,
     }
 
     stack.enter_context(patch(f"{CONTEXT}.async_session_maker", _FakeSessionMaker()))
-    stack.enter_context(patch(f"{CONTEXT}.SessionRepository", return_value=session_repo))
     stack.enter_context(patch(f"{CONTEXT}.RelevantChunkRepository", return_value=relevant_repo))
     stack.enter_context(patch(f"{MODULE}.run_chunks_concurrently", _harvest_results(harvest)))
     stack.enter_context(patch(f"{MODULE}.relation_passes.build_harvest_chain", return_value=MagicMock()))
@@ -412,7 +431,13 @@ async def test_invented_attribute_name_is_cleared_but_the_relation_survives():
             },
         )
 
-        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+        result = await extract_relations(
+            DOC_ITEMS,
+            OBJECT_CLASSES,
+            uuid4(),
+            uuid4(),
+            class_schema_snapshot=mocks["class_schema_snapshot"],
+        )
 
     relation = result["result"]["relations"][0]
     assert relation["subjectAttribute"] == "groups"
@@ -509,7 +534,13 @@ async def test_stored_attribute_schema_seeds_a_pair_without_any_harvest_evidence
             },
         )
 
-        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+        result = await extract_relations(
+            DOC_ITEMS,
+            OBJECT_CLASSES,
+            uuid4(),
+            uuid4(),
+            class_schema_snapshot=mocks["class_schema_snapshot"],
+        )
 
     assert len(result["result"]["relations"]) == 1
     stored = mocks["store"].await_args.args[2]
@@ -660,7 +691,13 @@ async def test_attribute_observed_on_the_other_class_does_not_ground_this_side()
             sweep=[_observation(sourceClass="Group", targetClass="User", sourceAttribute="members")],
         )
 
-        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+        result = await extract_relations(
+            DOC_ITEMS,
+            OBJECT_CLASSES,
+            uuid4(),
+            uuid4(),
+            class_schema_snapshot=mocks["class_schema_snapshot"],
+        )
 
     relation = result["result"]["relations"][0]
     assert relation["objectAttribute"] == "members", "Group.members is grounded"
@@ -736,24 +773,25 @@ async def test_relevant_documentations_point_at_the_accepted_relation_evidence()
     assert all(ref["doc_id"] == str(DOC_ID) for ref in refs)
 
 
-@pytest.mark.asyncio
-async def test_class_schema_outputs_are_loaded_in_one_batch():
-    with ExitStack() as stack:
-        mocks = _pipeline_patches(
-            stack,
-            harvest={USER_CHUNK: [_observation()]},
-            judgement=_judgement(_verdict()),
-        )
+def test_class_schema_snapshot_captures_all_relation_dependencies():
+    object_class_index, _ = ObjectClassIndex.from_payload(OBJECT_CLASSES)
+    requested_keys = set(relation_context.relation_schema_output_keys(object_class_index))
+    stored_values = {
+        "userAttributesOutput": {"attributes": {"groups": {"type": "Group"}}},
+        "userEndpointsOutput": {"endpoints": {"groups": {"path": "/Users/{id}/Groups"}}},
+    }
 
-        await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+    snapshot = relation_context.build_relation_schema_snapshot(object_class_index, stored_values)
 
-    mocks["session_values"].assert_awaited_once()
-    requested_keys = set(mocks["session_values"].await_args.args[1])
     assert requested_keys == {
         "userAttributesOutput",
         "userEndpointsOutput",
         "groupAttributesOutput",
         "groupEndpointsOutput",
+    }
+    assert snapshot == {
+        "attributesByClass": {"user": stored_values["userAttributesOutput"]},
+        "endpointsByClass": {"user": stored_values["userEndpointsOutput"]},
     }
 
 
