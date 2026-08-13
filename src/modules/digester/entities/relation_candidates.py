@@ -29,6 +29,8 @@ from src.modules.digester.entities.relations import split_relation_tokens
 from src.modules.digester.enums import ConfidenceLevel
 from src.modules.digester.schemas import RelationRecord
 from src.modules.digester.schemas.relation_analysis import (
+    DETERMINISTIC_EVIDENCE_KINDS,
+    NON_REFERENCE_EVIDENCE_KINDS,
     EvidenceSource,
     RelationObservation,
     RelationVerdict,
@@ -222,9 +224,7 @@ class ObservedPair:
         more than dropping a pair with repeated evidence for a single attribute pairing.
         """
         deterministic = sum(
-            1
-            for observation in self.observations
-            if observation.evidence_kind in {"attribute_metadata", "endpoint_path", "schema_reference"}
+            1 for observation in self.observations if observation.evidence_kind in DETERMINISTIC_EVIDENCE_KINDS
         )
         side_a, side_b = self.attributes_per_side()
         return (
@@ -293,8 +293,6 @@ class ObservedPair:
 ObservationEntry = Tuple[RelationObservation, EvidenceSource, Optional[Sequence[Dict[str, str]]]]
 """One observation plus the stage that produced it and the chunks backing it."""
 
-_NON_REFERENCE_EVIDENCE = frozenset({"embedded_metadata", "inheritance_metadata"})
-
 
 def expand_link_object_pairs(
     entries: Sequence[ObservationEntry],
@@ -323,7 +321,7 @@ def expand_link_object_pairs(
 
     outgoing: Dict[str, Dict[str, List[RelationObservation]]] = {}
     for observation, _source, _refs in entries:
-        if observation.evidence_kind in _NON_REFERENCE_EVIDENCE:
+        if observation.evidence_kind in NON_REFERENCE_EVIDENCE_KINDS:
             continue
         source = index.resolve(observation.source_class)
         target = index.resolve(observation.target_class)

@@ -57,6 +57,20 @@ EvidenceKind = Literal[
 ]
 """What kind of documentation evidence an observation rests on."""
 
+DETERMINISTIC_EVIDENCE_KINDS: frozenset[str] = frozenset({"attribute_metadata", "endpoint_path", "schema_reference"})
+"""Evidence read off an already-validated schema rather than interpreted from prose.
+
+Every stage that has to rank or pick among observations prefers these, so the preference is
+stated once here instead of being restated as a literal set at each use.
+"""
+
+NON_REFERENCE_EVIDENCE_KINDS: frozenset[str] = frozenset({"embedded_metadata", "inheritance_metadata"})
+"""Evidence recorded so it can be rejected explicitly, never a pointer at another object class.
+
+An embedded structure is a complex attribute of its own class and inheritance is a schema
+relationship, so neither can carry an association between two classes.
+"""
+
 EvidenceSource = Literal[
     "chunk_harvest",
     "class_sweep",

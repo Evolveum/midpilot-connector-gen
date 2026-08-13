@@ -15,6 +15,15 @@ from src.modules.digester.errors import InvalidRelationsOutputError, RelationNot
 from src.shared.enums import JobStatus
 
 
+def _session_data_reader(**payloads):
+    """Read the session keys the relation route asks for, one payload per key."""
+
+    async def read(_session_id, key):
+        return payloads.get(key)
+
+    return AsyncMock(side_effect=read)
+
+
 # RELATION
 @pytest.mark.asyncio
 async def test_generate_relation_code_success():
@@ -34,7 +43,7 @@ async def test_generate_relation_code_success():
             }
         ]
     }
-    mock_repo.get_session_data = AsyncMock(return_value=relations_payload)
+    mock_repo.get_session_data = _session_data_reader(relationsOutput=relations_payload)
     mock_repo.update_session = AsyncMock()
 
     with (
@@ -49,15 +58,21 @@ async def test_generate_relation_code_success():
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
-        mock_repo.get_session_data.assert_awaited_once_with(session_id, "relationsOutput")
+        assert [call.args[1] for call in mock_repo.get_session_data.await_args_list] == [
+            "relationsOutput",
+            "relationsAnalysisOutput",
+        ]
         mock_schedule.assert_awaited_once()
         schedule_kwargs = mock_schedule.await_args.kwargs
         assert schedule_kwargs["input_payload"]["relationName"] == "user_to_group"
         assert [item["name"] for item in schedule_kwargs["input_payload"]["relations"]["relations"]] == [
             "user_to_group"
         ]
+        # No stored analysis: the job still records the absence explicitly.
+        assert schedule_kwargs["input_payload"]["relationContext"] is None
         assert schedule_kwargs["worker_kwargs"]["relations"] == job_input_reference("relations")
         assert schedule_kwargs["worker_kwargs"]["relation_name"] == "user_to_group"
+        assert schedule_kwargs["worker_kwargs"]["relation_context"] == job_input_reference("relationContext")
         mock_repo.update_session.assert_awaited_once()
 
 
@@ -88,7 +103,7 @@ async def test_generate_relation_code_selects_relation_by_name():
             },
         ]
     }
-    mock_repo.get_session_data = AsyncMock(return_value=relations_payload)
+    mock_repo.get_session_data = _session_data_reader(relationsOutput=relations_payload)
     mock_repo.update_session = AsyncMock()
 
     with (
@@ -120,6 +135,106 @@ async def test_generate_relation_code_selects_relation_by_name():
 
 
 @pytest.mark.asyncio
+async def test_generate_relation_code_snapshots_link_object_context():
+    """An association carried by a third class must reach the job with that class named."""
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    relations_payload = {
+        "relations": [
+            {
+                "subject": "user",
+                "object": "group",
+                "subjectAttribute": "",
+                "objectAttribute": "",
+                "shortDescription": "",
+                "name": "user_to_group",
+                "displayName": "User to Group",
+            }
+        ]
+    }
+    analysis_payload = {
+        "pairs": [
+            {
+                "pairKey": "group|user",
+                "classA": "Group",
+                "classB": "User",
+                "accepted": True,
+                "observations": [
+                    {
+                        "sourceClass": "User",
+                        "targetClass": "Group",
+                        "evidenceKind": "schema_reference",
+                        "viaClass": "Membership",
+                    }
+                ],
+                "decisions": [
+                    {
+                        "accepted": True,
+                        "verdict": {
+                            "isRelation": True,
+                            "kind": "link_object",
+                            "subject": "User",
+                            "object": "Group",
+                            "linkObjectClass": "Membership",
+                            "name": "user_to_group",
+                        },
+                    }
+                ],
+            },
+            {
+                "pairKey": "membership|user",
+                "classA": "Membership",
+                "classB": "User",
+                "observations": [
+                    {
+                        "sourceClass": "Membership",
+                        "targetClass": "User",
+                        "sourceAttribute": "userId",
+                        "evidenceKind": "attribute_metadata",
+                    }
+                ],
+            },
+            {
+                "pairKey": "group|membership",
+                "classA": "Group",
+                "classB": "Membership",
+                "observations": [
+                    {
+                        "sourceClass": "Membership",
+                        "targetClass": "Group",
+                        "sourceAttribute": "groupId",
+                        "evidenceKind": "attribute_metadata",
+                    }
+                ],
+            },
+        ]
+    }
+    mock_repo.get_session_data = _session_data_reader(
+        relationsOutput=relations_payload,
+        relationsAnalysisOutput=analysis_payload,
+    )
+    mock_repo.update_session = AsyncMock()
+
+    with (
+        patch("src.modules.codegen.routes.relations.SessionRepository", return_value=mock_repo),
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+    ):
+        mock_schedule.return_value = uuid4()
+
+        await generate_relation_code(uuid4(), "user_to_group", db=MagicMock())
+
+    schedule_kwargs = mock_schedule.await_args.kwargs
+    assert schedule_kwargs["input_payload"]["relationContext"] == {
+        "kind": "link_object",
+        "linkObjectClass": "Membership",
+        "linkAttributes": [
+            {"attribute": "userId", "references": "user"},
+            {"attribute": "groupId", "references": "group"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_generate_relation_code_rejects_missing_display_name():
     """Relation codegen should require the current RelationsResponse format."""
     mock_repo = MagicMock()
@@ -136,7 +251,7 @@ async def test_generate_relation_code_rejects_missing_display_name():
             }
         ]
     }
-    mock_repo.get_session_data = AsyncMock(return_value=relations_payload)
+    mock_repo.get_session_data = _session_data_reader(relationsOutput=relations_payload)
     mock_repo.update_session = AsyncMock()
 
     with (
@@ -171,7 +286,7 @@ async def test_generate_relation_code_rejects_unknown_relation_name():
             }
         ]
     }
-    mock_repo.get_session_data = AsyncMock(return_value=relations_payload)
+    mock_repo.get_session_data = _session_data_reader(relationsOutput=relations_payload)
     mock_repo.update_session = AsyncMock()
 
     with (

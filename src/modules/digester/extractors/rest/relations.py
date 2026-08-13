@@ -59,7 +59,11 @@ from src.modules.digester.entities.relation_candidates import (
     sort_relations_by_iga_priority,
     verdict_to_relation_record,
 )
-from src.modules.digester.entities.relations import deduplicate_semantic_relations, split_relation_tokens
+from src.modules.digester.entities.relations import (
+    deduplicate_semantic_relations,
+    relation_identity,
+    split_relation_tokens,
+)
 from src.modules.digester.extraction.llm_execution import run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest import relation_context, relation_passes
@@ -758,12 +762,7 @@ def _record_merged_away_decisions(
 
 def _record_identity(record: RelationRecord) -> Tuple[str, str, str, str]:
     """What semantic deduplication treats as the same relation."""
-    return (
-        normalize_object_class_name(record.subject),
-        normalize_object_class_name(record.object),
-        "".join(split_relation_tokens(record.subject_attribute or "")),
-        "".join(split_relation_tokens(record.object_attribute or "")),
-    )
+    return relation_identity(record.subject, record.object, record.subject_attribute, record.object_attribute)
 
 
 async def _verify_one(

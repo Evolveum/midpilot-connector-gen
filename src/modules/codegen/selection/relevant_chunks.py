@@ -11,7 +11,7 @@ lists consumed by the Groovy generators. Pure selection logic — no generation.
 """
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from src.core.db import async_session_maker
@@ -22,7 +22,6 @@ from src.modules.codegen.selection.authorization import (
     has_matching_preferred_authorization,
     select_authorization_chunk_refs,
 )
-from src.modules.digester.schemas import RelationsResponse
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +86,17 @@ def _merge_unique_pairs(*seqs: Iterable[Tuple[int, Optional[str]]]) -> List[Tupl
 
 
 async def _collect_relation_object_class_pairs(
-    relations: RelationsResponse,
     session_id: UUID,
+    object_class_names: Sequence[str],
 ) -> List[Dict[str, str]]:
     """
-    Select object-class documentation chunks for the relation subject and object.
+    Select object-class documentation chunks for the classes a relation is built from.
+
+    Which classes those are is decided by the caller: besides the subject and the object it
+    can include the class carrying the association, whose documentation holds the endpoints
+    implementing the link and appears in neither end's own documentation.
     """
-    if not relations.relations:
+    if not object_class_names:
         return []
 
     async with async_session_maker() as db:
@@ -103,11 +106,10 @@ async def _collect_relation_object_class_pairs(
             result_key="objectClassesOutput",
         )
 
-    selected_relation = relations.relations[0]
     selected_chunks: List[Dict[str, str]] = []
     seen_chunk_ids: set[str] = set()
 
-    for class_name in (selected_relation.subject, selected_relation.object):
+    for class_name in object_class_names:
         class_key = normalize_object_class_name(class_name)
         relevant_refs = chunk_map.get(class_key, [])
         if not relevant_refs:

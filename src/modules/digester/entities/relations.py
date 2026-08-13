@@ -48,6 +48,28 @@ def _select_preferred_attribute(values: List[Optional[str]]) -> str:
     return max(non_empty_values, key=_attribute_preference_key)
 
 
+def relation_identity(
+    subject: str,
+    object_class: str,
+    subject_attribute: Optional[str],
+    object_attribute: Optional[str],
+) -> Tuple[str, str, str, str]:
+    """
+    Canonical identity of one association: the class pair plus the attributes that distinguish it.
+
+    One class pair can carry several associations, so the pair alone does not identify one.
+    The attribute names do, once separators and casing are normalized away - which is what
+    lets a projected ``RelationRecord`` be joined back onto the verdict it came from, even
+    after duplicate merging swapped one raw spelling of an attribute for another.
+    """
+    return (
+        normalize_object_class_name(subject),
+        normalize_object_class_name(object_class),
+        "".join(split_relation_tokens(subject_attribute or "")),
+        "".join(split_relation_tokens(object_attribute or "")),
+    )
+
+
 def _relation_semantic_key(relation: RelationRecord) -> Tuple[str, str, str, str]:
     """Key that collapses wording-only duplicates of the same association.
 
