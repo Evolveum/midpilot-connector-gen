@@ -77,7 +77,7 @@ fix = [
   { cmd = "ruff check  --fix" },
   { cmd = "ruff format" },
 ]
-qa = ["typecheck", "lint", "stylecheck", "importcheck", "test test/unit"]
+qa = ["typecheck", "lint", "stylecheck", "importcheck", "test"]
 
 # Architecture enforcement: layered imports. Run with `uv run poe importcheck`.
 # Layers are top-down: an item may import anything below it, never above.

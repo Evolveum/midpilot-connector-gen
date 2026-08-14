@@ -152,30 +152,6 @@ async def test_generate_native_schema_passes_bounded_scim_context_to_prompt():
 
 
 @pytest.mark.asyncio
-async def test_generate_conn_id():
-    """Test generating ConnID code from attributes."""
-    test_attributes = {
-        "username": {"type": "string", "description": "User's login name", "mandatory": True},
-        "id": {"type": "string", "format": "uuid", "description": "Unique identifier"},
-    }
-
-    with patch("src.modules.codegen.generation.generate_groovy") as mock_generate_groovy:
-        mock_generate_groovy.return_value = "mocked connid code"
-
-        result = await generation.generate_conn_id_code(
-            test_attributes,
-            "User",
-            job_id=uuid4(),
-        )
-
-        assert isinstance(result, dict)
-        assert "code" in result
-        assert result["code"] == "mocked connid code"
-
-        mock_generate_groovy.assert_called_once()
-
-
-@pytest.mark.asyncio
 async def test_generate_conn_id_uses_scim_connector_projection():
     payload = {
         "attributes": {
@@ -195,7 +171,9 @@ async def test_generate_conn_id_uses_scim_connector_projection():
     with patch("src.modules.codegen.generation.generate_groovy") as mock_generate_groovy:
         mock_generate_groovy.return_value = "mocked connid code"
 
-        await generation.generate_conn_id_code(payload, "User", job_id=uuid4())
+        result = await generation.generate_conn_id_code(payload, "User", job_id=uuid4())
 
+    assert result == {"code": "mocked connid code"}
+    mock_generate_groovy.assert_called_once()
     _, kwargs = mock_generate_groovy.call_args
     assert [record["name"] for record in kwargs["records"]] == ["id", "userName"]
