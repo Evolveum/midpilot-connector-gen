@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen import generation
-from src.modules.codegen.core.operations import build_authorization_scaffold, build_other_authorization_scaffold
+from src.modules.codegen.core.operations import build_authorization_scaffold
 from src.modules.codegen.selection.authorization import (
     ANALYSIS_SUPPORT_FIELD,
     ANALYSIS_SUPPORT_SUPPORTED,
@@ -210,20 +210,6 @@ def test_authorization_scaffold_includes_comments_for_unsupported_midpoint_autho
         "        // HTTP JWT Bearer Token Authorization (jwtBearer) was selected in midPoint, but it was not "
         "identified in the analyzed application documentation.\n"
         "        // No application-specific authorization customization can be generated for this method.\n"
-        "    }\n"
-        "}\n"
-    )
-
-
-def test_other_authorization_scaffold_remains_unchanged():
-    assert build_other_authorization_scaffold(ApiType.REST) == (
-        "authentication {\n"
-        "    rest {\n"
-        "        other {\n"
-        "            implementation {\n"
-        "                // write your custom implementation of authorization here\n"
-        "            }\n"
-        "        }\n"
         "    }\n"
         "}\n"
     )

@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Integration tests for codegen relation endpoint."""
+"""Unit tests for the codegen relation routes and their job scheduling."""
 
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4

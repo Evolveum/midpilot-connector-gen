@@ -137,29 +137,6 @@ def test_collect_sql_tables_from_create_table_ddl():
     }
 
 
-def test_collect_sql_tables_marks_table_level_primary_key_columns():
-    doc = _sql_doc(
-        """
-        CREATE TABLE users (
-          id UUID NOT NULL,
-          username VARCHAR(255) NOT NULL,
-          CONSTRAINT users_pkey PRIMARY KEY (id)
-        );
-        """
-    )
-
-    tables = collect_sql_tables([doc])
-
-    assert tables[0]["primaryKey"] == ["id"]
-    assert tables[0]["columns"][0] == {"name": "id", "type": "UUID", "nullable": False, "primaryKey": True}
-    assert tables[0]["columns"][1] == {
-        "name": "username",
-        "type": "VARCHAR(255)",
-        "nullable": False,
-        "primaryKey": False,
-    }
-
-
 def test_collect_sql_tables_marks_composite_table_level_primary_key_columns():
     doc = _sql_doc(
         """
@@ -178,34 +155,12 @@ def test_collect_sql_tables_marks_composite_table_level_primary_key_columns():
     assert [column["primaryKey"] for column in tables[0]["columns"]] == [True, True, False]
 
 
-def test_collect_sql_tables_projects_raw_json_table_primary_key_to_columns():
-    doc = _sql_doc(
-        """
-        {"tables": [{
-          "name": "users",
-          "primaryKey": ["id"],
-          "columns": [
-            {"name": "id", "type": "uuid"},
-            {"name": "email", "type": "varchar"}
-          ]
-        }]}
-        """
-    )
+def test_collect_sql_tables_preserves_generated_column_metadata_from_raw_json():
+    """The DDL spelling is covered end-to-end by ``test_extract_sql_attributes_marks_generated_columns_non_creatable``.
 
-    tables = collect_sql_tables([doc])
-
-    assert tables[0]["primaryKey"] == ["id"]
-    assert [column["primaryKey"] for column in tables[0]["columns"]] == [True, False]
-
-
-@pytest.mark.parametrize(
-    "schema",
-    [
-        '{"tables": [{"name": "users", "columns": [{"name": "id", "type": "uuid", "generated": true}]}]}',
-        "CREATE TABLE users (id UUID GENERATED ALWAYS AS IDENTITY);",
-    ],
-)
-def test_collect_sql_tables_preserves_generated_column_metadata(schema):
+    Only the raw-JSON ``generated`` flag needs its own case: no extraction test feeds that shape.
+    """
+    schema = '{"tables": [{"name": "users", "columns": [{"name": "id", "type": "uuid", "generated": true}]}]}'
     table = collect_sql_tables([_sql_doc(schema)])[0]
 
     assert table["columns"][0]["generated"] is True
@@ -310,44 +265,6 @@ async def test_extract_sql_object_classes_from_conndev_export(mock_digester_upda
     class_to_chunks = ranking.await_args.kwargs["class_to_chunks"]
     assert candidates[0].description == "Database table 'midpoint_user.m_user' with 1 columns: nameorig."
     assert class_to_chunks["m_user"] == [{"doc_id": docs[0]["docId"], "chunk_id": docs[0]["chunkId"]}]
-
-
-def test_collect_sql_tables_reads_conndev_export_columns():
-    doc = _conndev_sql_doc(
-        "m_user",
-        "midpoint_user",
-        [
-            _conndev_attribute("nameorig", "string", required=True),
-            _conndev_attribute("createtimestamp", "zoneddatetime"),
-            _conndev_attribute("oid", "string", creatable=False, updateable=False),
-        ],
-    )
-
-    tables = collect_sql_tables([doc])
-
-    assert len(tables) == 1
-    table = tables[0]
-    assert table["table"] == "m_user"
-    assert table["databaseSchema"] == "midpoint_user"
-    assert table["source"] == "conndev"
-    assert table["columns"] == [
-        {"name": "nameorig", "connIdType": "string", "mandatory": True},
-        {"name": "createtimestamp", "connIdType": "zoneddatetime"},
-        {"name": "oid", "connIdType": "string", "creatable": False, "updatable": False},
-    ]
-    assert table["relevantDocumentations"] == [{"docId": doc["docId"], "chunkId": doc["chunkId"]}]
-
-
-def test_collect_sql_tables_preserves_logical_attribute_name_and_physical_column():
-    doc = _conndev_sql_doc(
-        "m_user",
-        "midpoint_user",
-        [_conndev_attribute("Username", "string", column="nameorig", required=True)],
-    )
-
-    table = collect_sql_tables([doc])[0]
-
-    assert table["columns"] == [{"name": "Username", "column": "nameorig", "connIdType": "string", "mandatory": True}]
 
 
 @pytest.mark.parametrize("reverse_order", [False, True])

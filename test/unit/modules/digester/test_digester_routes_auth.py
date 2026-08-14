@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Integration tests for digester auth endpoints."""
+"""Unit tests for the digester auth routes and their job scheduling."""
 
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -18,7 +18,7 @@ from src.shared.enums import JobStatus
 
 # AUTH
 @pytest.mark.asyncio
-async def test_extract_auth_success():
+async def test_extract_auth_schedules_job():
     """Test extracting auth info."""
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)

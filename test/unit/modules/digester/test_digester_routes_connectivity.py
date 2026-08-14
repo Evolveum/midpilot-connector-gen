@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Integration tests for digester connectivity endpoint routes."""
+"""Unit tests for the digester connectivity-endpoint routes and their job scheduling."""
 
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 from uuid import uuid4

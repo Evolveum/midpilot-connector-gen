@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Integration tests for digester object-class endpoints."""
+"""Unit tests for the digester object-class routes and their job scheduling."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -17,7 +17,7 @@ from src.shared.enums import JobStatus
 
 
 @pytest.mark.asyncio
-async def test_extract_object_classes_success():
+async def test_extract_object_classes_schedules_job():
     """Test successful extraction of object classes."""
     session_id = uuid4()
     job_id = uuid4()
