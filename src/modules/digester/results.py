@@ -19,7 +19,6 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.db import async_session_maker
 from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
@@ -62,7 +61,6 @@ METADATA_RESULT_KEY = "metadataOutput"
 # Working state of the relation pipeline. Not part of the midPoint-facing contract and not
 # returned by any endpoint; kept so a reviewer can see why a relation was accepted or rejected.
 RELATIONS_ANALYSIS_RESULT_KEY = "relationsAnalysisOutput"
-RELATIONS_JOB_POINTER_KEY = "relationsJobId"
 
 
 def attributes_result_key(object_class: str) -> str:
@@ -313,48 +311,15 @@ async def store_relations_override(
     session_id: UUID,
     payload: Dict[str, Any],
 ) -> None:
-    await repo.update_session(session_id, {RELATIONS_RESULT_KEY: payload})
-
-
-async def store_relations_analysis(
-    session_id: UUID,
-    job_id: UUID,
-    payload: Dict[str, Any],
-) -> bool:
-    """Persist the relation pipeline's working state alongside the relation result.
-
-    The analysis holds the observations, the per-pair verdicts and the explicit rejections
-    that the ``RelationsResponse`` contract has no room for. It is written under its own key
-    rather than folded into ``relationsOutput`` so the midPoint-facing payload keeps its
-    exact shape, and it is skipped when a newer relations job already owns the session, so a
-    late finisher cannot describe a result it did not produce.
-
-    Opens its own session because the caller is a background worker, not a request.
-
-    Locks the session row before the job-pointer row, matching the order used by
-    ``update_result_if_current_job`` and by job scheduling. Taking the pointer lock first
-    would let a concurrent scheduling transaction (session row first, then the pointer
-    upsert) form a lock cycle that PostgreSQL resolves by aborting one of the two.
-    """
-    async with async_session_maker() as db:
-        repo = SessionRepository(db)
-        if not await repo.lock_session(session_id):
-            await db.rollback()
-            return False
-        if not await repo.is_current_job_pointer(
-            session_id=session_id,
-            pointer_key=RELATIONS_JOB_POINTER_KEY,
-            job_id=job_id,
-            lock=True,
-        ):
-            await db.rollback()
-            return False
-        updated = await repo.update_locked_session(session_id, {RELATIONS_ANALYSIS_RESULT_KEY: payload})
-        if not updated:
-            await db.rollback()
-            return False
-        await db.commit()
-        return True
+    # A manual contract override has no machine analysis. Clear the old companion in the
+    # same session-row transaction so codegen can never attach another run's analysis.
+    await repo.update_session(
+        session_id,
+        {
+            RELATIONS_RESULT_KEY: payload,
+            RELATIONS_ANALYSIS_RESULT_KEY: None,
+        },
+    )
 
 
 async def store_metadata_output(

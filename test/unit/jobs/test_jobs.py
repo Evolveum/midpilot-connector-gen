@@ -14,6 +14,7 @@ from src.jobs import runner
 from src.jobs.errors import JobClaimLostError
 from src.jobs.lifecycle import increment_processed_documents
 from src.jobs.payload import build_execution_payload
+from src.jobs.result_envelope import SESSION_COMPANION_OUTPUTS_KEY
 from src.jobs.runner import _resolve_dynamic_input, _run_claimed_job, schedule_coroutine_job
 from src.jobs.session_persistence import persist_result_to_session
 
@@ -194,7 +195,7 @@ async def test_session_persistence_failure_is_recorded_and_fails_the_job_executi
     job_id = uuid4()
     session_id = uuid4()
     repo = MagicMock()
-    repo.update_result_if_current_job = AsyncMock(side_effect=RuntimeError("database write failed"))
+    repo.update_results_if_current_job = AsyncMock(side_effect=RuntimeError("database write failed"))
 
     with (
         patch("src.jobs.session_persistence.async_session_maker", return_value=_AsyncSessionContext()),
@@ -211,6 +212,62 @@ async def test_session_persistence_failure_is_recorded_and_fails_the_job_executi
 
     append_error.assert_awaited_once()
     assert "Session persistence failed" in append_error.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_primary_and_companion_outputs_are_persisted_together():
+    job_id = uuid4()
+    session_id = uuid4()
+    repo = MagicMock()
+    repo.update_results_if_current_job = AsyncMock(return_value=True)
+    relevant_repo = MagicMock()
+    relevant_repo.replace_relevant_chunks_for_result = AsyncMock()
+    result = {
+        "result": {"relations": []},
+        SESSION_COMPANION_OUTPUTS_KEY: {
+            "relationsAnalysisOutput": {"outputFingerprint": "fingerprint", "pairs": []},
+        },
+    }
+
+    with (
+        patch("src.jobs.session_persistence.async_session_maker", return_value=_AsyncSessionContext()),
+        patch("src.jobs.session_persistence.SessionRepository", return_value=repo),
+        patch("src.jobs.session_persistence.RelevantChunkRepository", return_value=relevant_repo),
+    ):
+        persisted = await persist_result_to_session(
+            job_id=job_id,
+            session_id=session_id,
+            session_result_key="relationsOutput",
+            result_dict=result,
+            required_companion_keys=("relationsAnalysisOutput",),
+        )
+
+    assert persisted is True
+    repo.update_results_if_current_job.assert_awaited_once_with(
+        session_id=session_id,
+        result_key="relationsOutput",
+        job_id=job_id,
+        values={
+            "relationsOutput": {"relations": []},
+            "relationsAnalysisOutput": {"outputFingerprint": "fingerprint", "pairs": []},
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_required_companion_output_cannot_be_silently_omitted():
+    with (
+        patch("src.jobs.session_persistence.async_session_maker", return_value=_AsyncSessionContext()),
+        patch("src.jobs.session_persistence.lifecycle._append_job_error_now", new_callable=AsyncMock),
+    ):
+        with pytest.raises(ValueError, match="relationsAnalysisOutput"):
+            await persist_result_to_session(
+                job_id=uuid4(),
+                session_id=uuid4(),
+                session_result_key="relationsOutput",
+                result_dict={"result": {"relations": []}},
+                required_companion_keys=("relationsAnalysisOutput",),
+            )
 
 
 @pytest.mark.asyncio

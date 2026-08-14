@@ -16,6 +16,7 @@ from src.modules.digester.entities.relation_candidates import (
     expand_link_object_pairs,
     grounded_attribute_names,
     group_observations,
+    inspect_attribute_schema,
     is_attribute_grounded,
     observations_from_attributes,
     observations_from_class_metadata,
@@ -167,6 +168,90 @@ def test_observations_naming_unknown_classes_are_dropped_and_counted():
 
     assert len(pairs) == 1
     assert unresolved == 1
+
+
+def test_semantically_duplicate_observations_are_merged_with_richer_evidence():
+    index = _user_group_index()
+    entries = [
+        (
+            _observation(sourceAttribute="groups", quote="short", multiValued=None),
+            "chunk_harvest",
+            [{"doc_id": "doc-1", "chunk_id": "chunk-1"}],
+        ),
+        (
+            _observation(
+                sourceAttribute="groups",
+                quote="A longer citation naming the same relation",
+                multiValued=True,
+            ),
+            "class_sweep",
+            [{"doc_id": "doc-2", "chunk_id": "chunk-2"}],
+        ),
+    ]
+
+    pairs, _ = group_observations(entries, index)
+    pair = next(iter(pairs.values()))
+
+    assert len(pair.observations) == 1
+    assert pair.observations[0].multi_valued is True
+    assert pair.observations[0].quote == "A longer citation naming the same relation"
+    assert pair.sources == ["chunk_harvest", "class_sweep"]
+    assert pair.chunk_refs == [
+        {"doc_id": "doc-1", "chunk_id": "chunk-1"},
+        {"doc_id": "doc-2", "chunk_id": "chunk-2"},
+    ]
+
+
+def test_attribute_less_observations_with_distinct_role_evidence_are_preserved():
+    index = _user_group_index()
+    entries = [
+        (
+            _observation(
+                evidenceKind="narrative",
+                quote="Groups the user belongs to.",
+                note="Membership association.",
+            ),
+            "chunk_harvest",
+            None,
+        ),
+        (
+            _observation(
+                evidenceKind="narrative",
+                quote="Groups the user administers.",
+                note="Administrative association.",
+            ),
+            "chunk_harvest",
+            None,
+        ),
+    ]
+
+    pairs, _ = group_observations(entries, index)
+    pair = next(iter(pairs.values()))
+
+    assert [observation.quote for observation in pair.observations] == [
+        "Groups the user belongs to.",
+        "Groups the user administers.",
+    ]
+
+
+def test_exact_duplicate_attribute_less_observations_are_merged():
+    index = _user_group_index()
+    observation = _observation(
+        evidenceKind="endpoint_path",
+        quote="GET /Users/{id}/Groups",
+        note="Sub-resource path exposes the link as an API surface.",
+    )
+    entries = [
+        (observation, "endpoint_seed", [{"doc_id": "doc-1", "chunk_id": "chunk-1"}]),
+        (observation.model_copy(), "chunk_harvest", [{"doc_id": "doc-2", "chunk_id": "chunk-2"}]),
+    ]
+
+    pairs, _ = group_observations(entries, index)
+    pair = next(iter(pairs.values()))
+
+    assert pair.observations == [observation]
+    assert pair.sources == ["endpoint_seed", "chunk_harvest"]
+    assert len(pair.chunk_refs) == 2
 
 
 def test_single_sided_pair_is_weak_and_two_source_pair_is_not():
@@ -477,10 +562,20 @@ def test_attribute_grounding_ignores_case_and_separators():
     assert not is_attribute_grounded("memberOf", known)
 
 
-def test_attribute_grounding_is_skipped_when_no_attributes_were_extracted():
-    """Absent attribute output means unknown, not disproven."""
-    assert is_attribute_grounded("anything", set())
+def test_unknown_attributes_are_not_grounded_without_observed_evidence():
+    assert not is_attribute_grounded("anything", set())
     assert is_attribute_grounded("", {"known"})
+
+
+def test_attribute_schema_states_distinguish_missing_invalid_empty_and_available():
+    assert inspect_attribute_schema(None, present=False) == ("missing", set())
+    assert inspect_attribute_schema(None, present=True) == ("invalid", set())
+    assert inspect_attribute_schema({"attributes": None}, present=True) == ("invalid", set())
+    assert inspect_attribute_schema({"attributes": {}}, present=True) == ("empty", set())
+    assert inspect_attribute_schema({"attributes": {"groupIds": {}}}, present=True) == (
+        "available",
+        {"groupids"},
+    )
 
 
 # ==================== ASSOCIATION CLASSES ====================

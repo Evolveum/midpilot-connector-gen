@@ -34,6 +34,7 @@ from src.modules.codegen.schema import (
 )
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
 from src.modules.codegen.selection.relation_analysis import select_relation_codegen_context
+from src.modules.digester.entities.relations import relation_output_fingerprint
 from src.modules.digester.errors import (
     AttributesNotFoundError,
     InvalidRelationsOutputError,
@@ -358,7 +359,11 @@ async def schedule_relation_job(
     exactly what generation ran with, and so a later relation run cannot change the context
     of an already queued job.
     """
-    relations_json = await repo.get_session_data(session_id, "relationsOutput")
+    stored_relation_values = await repo.get_session_values(
+        session_id,
+        ("relationsOutput", "relationsAnalysisOutput"),
+    )
+    relations_json = stored_relation_values.get("relationsOutput")
     if not relations_json:
         raise RelationsNotFoundError(session_id)
 
@@ -376,8 +381,12 @@ async def schedule_relation_job(
     selected_relations_model = RelationsResponse(relations=[selected_relation])
     relations_payload = selected_relations_model.model_dump(by_alias=True, mode="json")
 
-    analysis_json = await repo.get_session_data(session_id, "relationsAnalysisOutput")
-    relation_context = select_relation_codegen_context(analysis_json, selected_relation)
+    analysis_json = stored_relation_values.get("relationsAnalysisOutput")
+    relation_context = select_relation_codegen_context(
+        analysis_json,
+        selected_relation,
+        output_fingerprint=relation_output_fingerprint(relations_model),
+    )
     relation_context_payload = (
         relation_context.model_dump(by_alias=True, mode="json") if relation_context is not None else None
     )

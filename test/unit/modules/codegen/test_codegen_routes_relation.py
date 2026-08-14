@@ -11,15 +11,16 @@ import pytest
 
 from src.jobs import job_input_reference
 from src.modules.codegen.routes.relations import generate_relation_code, get_relation_code_status
+from src.modules.digester.entities.relations import relation_output_fingerprint
 from src.modules.digester.errors import InvalidRelationsOutputError, RelationNotFoundError
 from src.shared.enums import JobStatus
 
 
-def _session_data_reader(**payloads):
-    """Read the session keys the relation route asks for, one payload per key."""
+def _session_values_reader(**payloads):
+    """Read the relation session snapshot requested by orchestration."""
 
-    async def read(_session_id, key):
-        return payloads.get(key)
+    async def read(_session_id, keys):
+        return {key: payloads[key] for key in keys if key in payloads}
 
     return AsyncMock(side_effect=read)
 
@@ -43,7 +44,7 @@ async def test_generate_relation_code_success():
             }
         ]
     }
-    mock_repo.get_session_data = _session_data_reader(relationsOutput=relations_payload)
+    mock_repo.get_session_values = _session_values_reader(relationsOutput=relations_payload)
     mock_repo.update_session = AsyncMock()
 
     with (
@@ -58,10 +59,10 @@ async def test_generate_relation_code_success():
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
-        assert [call.args[1] for call in mock_repo.get_session_data.await_args_list] == [
-            "relationsOutput",
-            "relationsAnalysisOutput",
-        ]
+        mock_repo.get_session_values.assert_awaited_once_with(
+            session_id,
+            ("relationsOutput", "relationsAnalysisOutput"),
+        )
         mock_schedule.assert_awaited_once()
         schedule_kwargs = mock_schedule.await_args.kwargs
         assert schedule_kwargs["input_payload"]["relationName"] == "user_to_group"
@@ -103,7 +104,7 @@ async def test_generate_relation_code_selects_relation_by_name():
             },
         ]
     }
-    mock_repo.get_session_data = _session_data_reader(relationsOutput=relations_payload)
+    mock_repo.get_session_values = _session_values_reader(relationsOutput=relations_payload)
     mock_repo.update_session = AsyncMock()
 
     with (
@@ -153,6 +154,7 @@ async def test_generate_relation_code_snapshots_link_object_context():
         ]
     }
     analysis_payload = {
+        "outputFingerprint": relation_output_fingerprint(relations_payload),
         "pairs": [
             {
                 "pairKey": "group|user",
@@ -207,9 +209,9 @@ async def test_generate_relation_code_snapshots_link_object_context():
                     }
                 ],
             },
-        ]
+        ],
     }
-    mock_repo.get_session_data = _session_data_reader(
+    mock_repo.get_session_values = _session_values_reader(
         relationsOutput=relations_payload,
         relationsAnalysisOutput=analysis_payload,
     )
@@ -251,7 +253,7 @@ async def test_generate_relation_code_rejects_missing_display_name():
             }
         ]
     }
-    mock_repo.get_session_data = _session_data_reader(relationsOutput=relations_payload)
+    mock_repo.get_session_values = _session_values_reader(relationsOutput=relations_payload)
     mock_repo.update_session = AsyncMock()
 
     with (
@@ -286,7 +288,7 @@ async def test_generate_relation_code_rejects_unknown_relation_name():
             }
         ]
     }
-    mock_repo.get_session_data = _session_data_reader(relationsOutput=relations_payload)
+    mock_repo.get_session_values = _session_values_reader(relationsOutput=relations_payload)
     mock_repo.update_session = AsyncMock()
 
     with (

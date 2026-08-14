@@ -25,6 +25,21 @@ from src.modules.digester.schemas import (
     RelationVerdict,
 )
 
+_TEST_OUTPUT_FINGERPRINT = "f" * 64
+
+
+def _select_context(analysis: Any, record: RelationRecord):
+    if isinstance(analysis, RelationsAnalysis):
+        analysis = analysis.model_copy(update={"output_fingerprint": _TEST_OUTPUT_FINGERPRINT})
+    elif isinstance(analysis, dict):
+        analysis = dict(analysis)
+        analysis["outputFingerprint"] = _TEST_OUTPUT_FINGERPRINT
+    return select_relation_codegen_context(
+        analysis,
+        record,
+        output_fingerprint=_TEST_OUTPUT_FINGERPRINT,
+    )
+
 
 def _record(
     *,
@@ -133,7 +148,7 @@ def _link_object_analysis(**verdict_overrides: Any) -> Dict[str, Any]:
 
 
 def test_link_object_context_carries_the_class_and_its_attributes():
-    context = select_relation_codegen_context(_link_object_analysis(), _record())
+    context = _select_context(_link_object_analysis(), _record())
 
     assert context is not None
     assert context.kind == "link_object"
@@ -153,7 +168,7 @@ def test_link_object_context_carries_the_class_and_its_attributes():
 
 
 def test_link_object_class_documentation_is_selected_alongside_both_ends():
-    context = select_relation_codegen_context(_link_object_analysis(), _record())
+    context = _select_context(_link_object_analysis(), _record())
 
     assert relation_documentation_classes(_record(), context) == ["user", "group", "Membership"]
 
@@ -166,7 +181,7 @@ def test_direct_reference_context_names_no_carrying_class():
     analysis = _link_object_analysis(kind="reference", subject_attribute="groups", link_object_class="")
     record = _record(subject_attribute="groups")
 
-    context = select_relation_codegen_context(analysis, record)
+    context = _select_context(analysis, record)
 
     assert context is not None
     assert context.kind == "reference"
@@ -177,7 +192,7 @@ def test_direct_reference_context_names_no_carrying_class():
 
 def test_carrying_class_is_recovered_from_the_evidence_when_the_verdict_omits_it():
     """Adjudication can classify link_object without naming the class the pair was built from."""
-    context = select_relation_codegen_context(_link_object_analysis(link_object_class=""), _record())
+    context = _select_context(_link_object_analysis(link_object_class=""), _record())
 
     assert context is not None
     assert context.link_object_class == "Membership"
@@ -187,7 +202,7 @@ def test_via_class_is_ignored_for_a_kind_that_is_not_link_object():
     """Adjudication decided the association is direct; the observed carrier does not override it."""
     analysis = _link_object_analysis(kind="reference", link_object_class="")
 
-    context = select_relation_codegen_context(analysis, _record())
+    context = _select_context(analysis, _record())
 
     assert context is not None
     assert context.link_object_class == ""
@@ -197,7 +212,7 @@ def test_an_end_named_as_its_own_carrier_is_rejected():
     """A carrier is a third class; the generator must not be told to resolve a class through itself."""
     analysis = _link_object_analysis(link_object_class="Group")
 
-    context = select_relation_codegen_context(analysis, _record())
+    context = _select_context(analysis, _record())
 
     assert context is not None
     assert context.link_object_class == ""
@@ -205,31 +220,45 @@ def test_an_end_named_as_its_own_carrier_is_rejected():
 
 
 def test_missing_analysis_yields_no_context():
-    assert select_relation_codegen_context(None, _record()) is None
+    assert _select_context(None, _record()) is None
 
 
 def test_unreadable_analysis_yields_no_context():
-    assert select_relation_codegen_context({"pairs": "not-a-list"}, _record()) is None
+    assert _select_context({"pairs": "not-a-list"}, _record()) is None
+
+
+def test_analysis_for_another_relation_output_is_not_used():
+    analysis = _link_object_analysis()
+    analysis["outputFingerprint"] = "a" * 64
+
+    assert (
+        select_relation_codegen_context(
+            analysis,
+            _record(),
+            output_fingerprint="b" * 64,
+        )
+        is None
+    )
 
 
 def test_relation_absent_from_the_analysis_yields_no_context():
     analysis = _link_object_analysis(subject="Principal", object_class="Role")
 
-    assert select_relation_codegen_context(analysis, _record()) is None
+    assert _select_context(analysis, _record()) is None
 
 
 def test_rejected_decision_is_not_used():
     analysis = _link_object_analysis()
     analysis["pairs"][0]["decisions"][0]["accepted"] = False
 
-    assert select_relation_codegen_context(analysis, _record()) is None
+    assert _select_context(analysis, _record()) is None
 
 
 def test_attribute_spelling_differences_still_match_the_verdict():
     """Duplicate merging can swap one raw spelling of an attribute for a canonically equal one."""
     analysis = _link_object_analysis(kind="reference", subject_attribute="group_ids", link_object_class="")
 
-    context = select_relation_codegen_context(analysis, _record(subject_attribute="groupIds"))
+    context = _select_context(analysis, _record(subject_attribute="groupIds"))
 
     assert context is not None
     assert context.kind == "reference"
@@ -244,8 +273,8 @@ def test_two_associations_of_one_pair_without_attributes_are_told_apart_by_name(
         }
     )
 
-    owned = select_relation_codegen_context(analysis, _record(name="user_owns_group"))
-    carried = select_relation_codegen_context(analysis, _record(name="user_to_group"))
+    owned = _select_context(analysis, _record(name="user_owns_group"))
+    carried = _select_context(analysis, _record(name="user_to_group"))
 
     assert owned is not None and owned.kind == "reference"
     assert carried is not None and carried.kind == "link_object"
@@ -258,7 +287,7 @@ def test_an_unresolvable_tie_yields_no_context():
         {"accepted": True, "verdict": _verdict(kind="reference", link_object_class="", name="something_else")}
     )
 
-    assert select_relation_codegen_context(analysis, _record(name="user_to_group_v2")) is None
+    assert _select_context(analysis, _record(name="user_to_group_v2")) is None
 
 
 def test_schema_evidence_outranks_prose_for_the_carrier_attributes():
@@ -273,7 +302,7 @@ def test_schema_evidence_outranks_prose_for_the_carrier_attributes():
         },
     )
 
-    context = select_relation_codegen_context(analysis, _record())
+    context = _select_context(analysis, _record())
 
     assert context is not None
     assert [item.attribute for item in context.link_attributes if item.references == "user"] == [
@@ -293,7 +322,7 @@ def test_inheritance_evidence_never_becomes_a_carrier_attribute():
         }
     ]
 
-    context = select_relation_codegen_context(analysis, _record())
+    context = _select_context(analysis, _record())
 
     assert context is not None
     assert [item.references for item in context.link_attributes] == ["group"]
@@ -362,7 +391,7 @@ def test_context_survives_a_round_trip_through_the_real_pipeline_code():
     # The record midPoint receives: no attribute on either side, no trace of Membership.
     assert (record.subject_attribute, record.object_attribute) == ("", "")
 
-    context = select_relation_codegen_context(analysis.model_dump(by_alias=True, mode="json"), record)
+    context = _select_context(analysis.model_dump(by_alias=True, mode="json"), record)
 
     assert context is not None
     assert context.link_object_class == "Membership"
@@ -385,7 +414,7 @@ def test_all_carrier_attributes_pointing_at_an_end_are_kept():
         for index in range(4)
     ]
 
-    context = select_relation_codegen_context(analysis, _record())
+    context = _select_context(analysis, _record())
 
     assert context is not None
     assert [item.attribute for item in context.link_attributes if item.references == "user"] == [

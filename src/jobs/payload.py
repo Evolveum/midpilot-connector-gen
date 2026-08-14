@@ -178,6 +178,7 @@ def build_execution_payload(
     session_result_key: str | None,
     await_documentation: bool,
     await_documentation_timeout: float | None,
+    session_companion_result_keys: Sequence[str] = (),
     binary_artifacts: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
     """Build the versioned JSONB execution contract stored with a job."""
@@ -191,6 +192,7 @@ def build_execution_payload(
             callable_reference(dynamic_input_provider) if dynamic_input_provider is not None else None
         ),
         "sessionResultKey": session_result_key,
+        "sessionCompanionResultKeys": list(session_companion_result_keys),
         "awaitDocumentation": await_documentation,
         "awaitDocumentationTimeout": await_documentation_timeout,
     }
@@ -203,6 +205,11 @@ def validate_execution_payload(payload: Mapping[str, Any] | None) -> Mapping[str
         raise InvalidJobPayloadError("Background-job execution payload has no worker")
     if not isinstance(payload.get("args"), list) or not isinstance(payload.get("kwargs"), dict):
         raise InvalidJobPayloadError("Background-job execution arguments are invalid")
+    companion_keys = payload.get("sessionCompanionResultKeys", [])
+    if not isinstance(companion_keys, list) or any(
+        not isinstance(key, str) or not key.endswith("Output") for key in companion_keys
+    ):
+        raise InvalidJobPayloadError("Background-job companion result keys are invalid")
     return payload
 
 

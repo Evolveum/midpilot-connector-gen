@@ -69,6 +69,7 @@ async def test_extract_relations_success():
             "endpointsByClass": {"user": endpoint_output},
         }
         assert schedule_kwargs["worker_args"][2] == job_input_reference("classSchemaSnapshot")
+        assert schedule_kwargs["session_companion_result_keys"] == ("relationsAnalysisOutput",)
         mock_repo.update_session.assert_awaited_once()
 
 
@@ -162,7 +163,10 @@ async def test_override_relations_success():
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_repo.update_session.assert_awaited_once_with(
         session_id,
-        {"relationsOutput": relations_payload.model_dump(by_alias=True, mode="json")},
+        {
+            "relationsOutput": relations_payload.model_dump(by_alias=True, mode="json"),
+            "relationsAnalysisOutput": None,
+        },
     )
     assert response["message"].startswith("Relations overridden successfully")
     assert response["sessionId"] == session_id

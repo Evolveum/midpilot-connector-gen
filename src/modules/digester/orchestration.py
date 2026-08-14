@@ -33,6 +33,7 @@ from src.modules.digester.extractors.info import extract_info_metadata
 from src.modules.digester.extractors.object_class import extract_object_classes
 from src.modules.digester.extractors.rest import relation_context
 from src.modules.digester.extractors.rest.relations import extract_relations
+from src.modules.digester.results import RELATIONS_ANALYSIS_RESULT_KEY
 from src.modules.digester.selection import (
     DEFAULT_CRITERIA,
     DocumentationSelector,
@@ -259,6 +260,7 @@ async def schedule_relations_extraction(
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
         session_result_key="relationsOutput",
+        session_companion_result_keys=(RELATIONS_ANALYSIS_RESULT_KEY,),
     )
 
     await persist_job_pointer(

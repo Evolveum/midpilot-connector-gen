@@ -2,11 +2,24 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import hashlib
+import json
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.documents.normalize import normalize_object_class_name
-from src.modules.digester.schemas import RelationRecord
+from src.modules.digester.schemas import RelationRecord, RelationsResponse
+
+
+def relation_output_fingerprint(payload: Any) -> str:
+    """Return a deterministic identity for one exact midPoint relation output.
+
+    The fingerprint pairs ``relationsOutput`` with its separately stored analysis without
+    adding metadata to the stable midPoint-facing payload.
+    """
+    normalized = RelationsResponse.model_validate(payload).model_dump(by_alias=True, mode="json")
+    canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def split_relation_tokens(value: str) -> List[str]:

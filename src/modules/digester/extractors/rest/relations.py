@@ -43,6 +43,7 @@ from uuid import UUID
 from src.config import config
 from src.documents.normalize import normalize_object_class_name
 from src.jobs import append_job_error, increment_processed_documents, update_job_progress
+from src.jobs.result_envelope import SESSION_COMPANION_OUTPUTS_KEY
 from src.modules.digester.entities.relation_candidates import (
     ObjectClassIndex,
     ObjectClassInfo,
@@ -50,9 +51,10 @@ from src.modules.digester.entities.relation_candidates import (
     deduplicate_relation_names,
     disambiguate_relation_labels,
     expand_link_object_pairs,
-    grounded_attribute_names,
     group_observations,
+    inspect_attribute_schema,
     is_attribute_grounded,
+    observation_identity,
     observations_from_attributes,
     observations_from_class_metadata,
     observations_from_endpoints,
@@ -62,15 +64,17 @@ from src.modules.digester.entities.relation_candidates import (
 from src.modules.digester.entities.relations import (
     deduplicate_semantic_relations,
     relation_identity,
+    relation_output_fingerprint,
     split_relation_tokens,
 )
 from src.modules.digester.extraction.llm_execution import run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest import relation_context, relation_passes
 from src.modules.digester.extractors.rest.relation_context import LOG_SCOPE
-from src.modules.digester.results import store_relations_analysis
+from src.modules.digester.results import RELATIONS_ANALYSIS_RESULT_KEY
 from src.modules.digester.schemas import RelationRecord, RelationsResponse
 from src.modules.digester.schemas.relation_analysis import (
+    DETERMINISTIC_EVIDENCE_KINDS,
     RELATION_KINDS_ACCEPTED,
     EvidenceSource,
     RelationAnalysisStats,
@@ -166,6 +170,78 @@ async def _counted(work: Awaitable[T], job_id: UUID) -> T:
         await increment_processed_documents(job_id, delta=1)
 
 
+def _rank_pairs(pairs: Sequence[ObservedPair], index: ObjectClassIndex) -> List[ObservedPair]:
+    """Rank pairs by object-class confidence, then by evidence strength.
+
+    Both-high pairs come first, followed by high/medium and then progressively less
+    confident combinations. Evidence strength breaks ties inside the same confidence tier.
+    """
+    missing_rank = 3
+
+    def priority(pair: ObservedPair) -> Tuple[Any, ...]:
+        ranks = sorted(
+            (
+                info.confidence_rank if info is not None else missing_rank
+                for info in (index.resolve(pair.class_a), index.resolve(pair.class_b))
+            )
+        )
+        strength = pair.evidence_strength()
+        return (
+            max(ranks),
+            sum(ranks),
+            tuple(-value for value in strength),
+            pair.key,
+        )
+
+    return sorted(pairs, key=priority)
+
+
+def _observation_priority(observation: RelationObservation) -> Tuple[Any, ...]:
+    """Put carrier and deterministic evidence first when a context must be bounded."""
+    attributes_named = int(bool(observation.source_attribute.strip())) + int(bool(observation.target_attribute.strip()))
+    return (
+        0 if observation.via_class.strip() else 1,
+        0 if observation.evidence_kind in DETERMINISTIC_EVIDENCE_KINDS else 1,
+        -attributes_named,
+        0 if observation.multi_valued is not None else 1,
+        observation_identity(observation),
+    )
+
+
+def _select_observations(
+    observations: Sequence[RelationObservation],
+    *,
+    limit: int,
+) -> List[RelationObservation]:
+    """Return distinct observations ordered by downstream value and bounded by ``limit``."""
+    distinct: Dict[Tuple[Any, ...], RelationObservation] = {}
+    for observation in observations:
+        distinct.setdefault(observation_identity(observation), observation)
+    return sorted(distinct.values(), key=_observation_priority)[:limit]
+
+
+def _prompt_observations(
+    observations: Sequence[RelationObservation],
+    *,
+    pair_key: str,
+    stage: str,
+) -> List[RelationObservation]:
+    selected = _select_observations(
+        observations,
+        limit=config.digester.relation_max_prompt_observations_per_pair,
+    )
+    if len(selected) < len(observations):
+        logger.info(
+            "[%s] %s prompt for %s uses %d of %d distinct observations",
+            LOG_SCOPE,
+            stage,
+            pair_key,
+            len(selected),
+            len(observations),
+        )
+    return selected
+
+
 # --- Entry point ---
 
 
@@ -183,9 +259,10 @@ async def extract_relations(
         doc_items: Documentation chunks selected for this session.
         relevant_object_classes: Stored ``objectClassesOutput`` payload.
         class_schema_snapshot: Attribute and endpoint outputs captured when the job was scheduled.
-        session_id: Session receiving relation analysis state.
-        job_id: Job used for progress, errors and the stale-write guard on the analysis.
+        session_id: Session whose object-class relevance mapping selects focused context.
+        job_id: Job used for progress, errors and analysis producer identity.
     """
+    stats = RelationAnalysisStats()
     index, skipped_classes = ObjectClassIndex.from_payload(relevant_object_classes)
     if skipped_classes:
         logger.warning("[%s] Skipped %d malformed object-class entries while indexing", LOG_SCOPE, skipped_classes)
@@ -193,7 +270,7 @@ async def extract_relations(
         detail = "No usable object classes in objectClassesOutput; nothing to relate"
         logger.error("[%s] %s", LOG_SCOPE, detail)
         await append_job_error(job_id, f"[{LOG_SCOPE}] {detail}")
-        return _empty_result()
+        return _result_with_analysis([], [], stats, [], job_id)
 
     chunk_lookup = relation_context.build_chunk_lookup(doc_items)
     prompt_classes = relation_context.classes_for_prompt(index)
@@ -206,8 +283,6 @@ async def extract_relations(
     class_chunk_ids = await relation_context.load_class_chunk_ids(session_id, index, chunk_lookup)
 
     entries: List[ObservationEntry] = []
-    stats = RelationAnalysisStats()
-
     entries.extend(_seed_from_session(index, attributes_by_class, endpoints_by_class, chunk_lookup, stats))
     # Seeding is deterministic and needs no I/O, so it is reported as already complete; the
     # step still gets its own line so the counts it worked from are visible in the CLI.
@@ -218,8 +293,8 @@ async def extract_relations(
         total=len(index),
         completed=len(index),
         detail=(
-            f"{len(index)} object classes, {len(attributes_by_class)} with extracted attributes, "
-            f"{len(endpoints_by_class)} with extracted endpoints"
+            f"{len(index)} object classes, {len(attributes_by_class)} with stored attribute results, "
+            f"{len(endpoints_by_class)} with stored endpoint results"
         ),
     )
     entries.extend(await _harvest(doc_items, object_classes_json, job_id, stats))
@@ -251,8 +326,6 @@ async def extract_relations(
     analyses = await _adjudicate_pairs(pairs, index, attributes_by_class, job_id, stats)
     relations = await _verify_and_collect(analyses, index, attributes_by_class, job_id, stats)
 
-    await _persist_analysis(session_id, job_id, analyses, stats)
-
     relevant_documentations = _relevant_documentations(analyses)
     logger.info(
         "[%s] Completed: %d pairs analyzed, %d relations emitted, %d observations from %d chunks",
@@ -263,14 +336,29 @@ async def extract_relations(
         stats.chunks_harvested,
     )
 
+    return _result_with_analysis(relations, analyses, stats, relevant_documentations, job_id)
+
+
+def _result_with_analysis(
+    relations: List[RelationRecord],
+    analyses: List[RelationPairAnalysis],
+    stats: RelationAnalysisStats,
+    relevant_documentations: List[Dict[str, str]],
+    job_id: UUID,
+) -> Dict[str, Any]:
+    """Build the public result and its separately persisted, cacheable analysis companion."""
+    relation_payload = RelationsResponse(relations=relations).model_dump(by_alias=True, mode="json")
+    analysis_payload = _build_analysis_payload(
+        job_id,
+        analyses,
+        stats,
+        output_fingerprint=relation_output_fingerprint(relation_payload),
+    )
     return {
-        "result": RelationsResponse(relations=relations).model_dump(by_alias=True),
+        "result": relation_payload,
         "relevantDocumentations": relevant_documentations,
+        SESSION_COMPANION_OUTPUTS_KEY: {RELATIONS_ANALYSIS_RESULT_KEY: analysis_payload},
     }
-
-
-def _empty_result() -> Dict[str, Any]:
-    return {"result": RelationsResponse(relations=[]).model_dump(by_alias=True), "relevantDocumentations": []}
 
 
 # --- Stage 2: deterministic seeding ---
@@ -466,16 +554,38 @@ async def _focus_weak_pairs(
     stats: RelationAnalysisStats,
 ) -> List[ObservationEntry]:
     """Re-read the documentation for pairs whose evidence is thin or one-sided."""
-    weak = [pair for pair in pairs.values() if pair.is_weak()]
+    ranked_weak = _rank_pairs([pair for pair in pairs.values() if pair.is_weak()], index)
+    limit = config.digester.relation_max_refocused_pairs
+    weak = ranked_weak[:limit]
     if not weak:
         return []
+
+    if len(ranked_weak) > limit:
+        dropped = ranked_weak[limit:]
+        logger.warning(
+            "[%s] Re-reading %d of %d weak pairs (relation_max_refocused_pairs=%d); dropped: %s",
+            LOG_SCOPE,
+            len(weak),
+            len(ranked_weak),
+            limit,
+            ", ".join(pair.key for pair in dropped[:20]),
+        )
+        await append_job_error(
+            job_id,
+            f"[{LOG_SCOPE}] {len(dropped)} weak relation candidate pair(s) were not re-read because the "
+            f"relation_max_refocused_pairs limit of {limit} was reached",
+        )
 
     await _start_step(
         job_id,
         RelationStep.focus,
         stage=JobStage.processing_chunks,
         total=len(weak),
-        detail=f"{len(weak)} of {len(pairs)} candidate pairs have thin or one-sided evidence",
+        detail=(
+            f"{len(weak)} of {len(ranked_weak)} weak candidate pairs selected by class confidence"
+            if len(ranked_weak) > len(weak)
+            else f"{len(weak)} of {len(pairs)} candidate pairs have thin or one-sided evidence"
+        ),
     )
     chain = relation_passes.build_pair_focus_chain()
 
@@ -500,7 +610,11 @@ async def _focus_weak_pairs(
             class_metadata=index.to_prompt_payload(
                 [info for info in (index.resolve(pair.class_a), index.resolve(pair.class_b)) if info]
             ),
-            known_observations=pair.observations,
+            known_observations=_prompt_observations(
+                pair.observations,
+                pair_key=pair.key,
+                stage="Focus",
+            ),
             documentation=documentation,
             job_id=job_id,
             chain=chain,
@@ -535,9 +649,9 @@ async def _adjudicate_pairs(
     if not pairs:
         return []
 
-    # Ordered by evidence strength so the safety ceiling, if it bites, drops the weakest
-    # candidates rather than an arbitrary alphabetical tail.
-    ranked = sorted(pairs.values(), key=lambda pair: (tuple(-value for value in pair.evidence_strength()), pair.key))
+    # Object-class confidence is the primary safety signal requested by the product. Within
+    # one confidence tier, evidence strength drops the thinnest candidates first.
+    ranked = _rank_pairs(list(pairs.values()), index)
     limit = config.digester.relation_max_adjudicated_pairs
     ordered = ranked[:limit]
     if len(ranked) > limit:
@@ -575,13 +689,18 @@ async def _adjudicate_pairs(
         return index.to_prompt_payload(list(unique.values()))
 
     async def judge(pair: ObservedPair) -> RelationPairAnalysis:
+        prompt_observations = _prompt_observations(
+            pair.observations,
+            pair_key=pair.key,
+            stage="Adjudication",
+        )
         judgement = await relation_passes.adjudicate_pair(
             class_a=pair.class_a,
             class_b=pair.class_b,
             class_metadata=pair_class_metadata(pair),
             known_attributes=relation_context.known_attributes_for((pair.class_a, pair.class_b), attributes_by_class),
             observed_attributes=_observed_attributes(pair),
-            observations=pair.observations,
+            observations=prompt_observations,
             job_id=job_id,
             chain=chain,
         )
@@ -779,7 +898,11 @@ async def _verify_one(
         class_metadata=index.to_prompt_payload(
             [info for info in (index.resolve(analysis.class_a), index.resolve(analysis.class_b)) if info]
         ),
-        observations=analysis.observations,
+        observations=_prompt_observations(
+            analysis.observations,
+            pair_key=analysis.pair_key,
+            stage="Verification",
+        ),
         known_attributes=relation_context.known_attributes_for(
             (analysis.class_a, analysis.class_b), attributes_by_class
         ),
@@ -872,10 +995,15 @@ def _ground_decision_attributes(
     ):
         if not attribute.strip():
             continue
-        known = grounded_attribute_names(attributes_by_class.get(normalize_object_class_name(class_name)))
+        schema_key = normalize_object_class_name(class_name)
+        schema_state, known = inspect_attribute_schema(
+            attributes_by_class.get(schema_key),
+            present=schema_key in attributes_by_class,
+        )
+        decision.attribute_schema_states[class_name] = schema_state
         if is_attribute_grounded(attribute, known):
             continue
-        observed = observed_by_class.get(normalize_object_class_name(class_name), set())
+        observed = observed_by_class.get(schema_key, set())
         if "".join(split_relation_tokens(attribute)) in observed:
             continue
         decision.ungrounded_attributes.append(f"{class_name}.{attribute}")
@@ -894,13 +1022,14 @@ def _ground_decision_attributes(
 # --- Persistence and evidence ---
 
 
-async def _persist_analysis(
-    session_id: UUID,
+def _build_analysis_payload(
     job_id: UUID,
     analyses: List[RelationPairAnalysis],
     stats: RelationAnalysisStats,
-) -> None:
-    """Store the working state; a failure here must not fail the extraction."""
+    *,
+    output_fingerprint: str,
+) -> Dict[str, Any]:
+    """Build the bounded working state persisted beside the public relation output."""
     observation_limit = config.digester.relation_max_stored_observations_per_pair
     stored_pairs: List[RelationPairAnalysis] = []
     truncated_observations = 0
@@ -909,7 +1038,16 @@ async def _persist_analysis(
             stored_pairs.append(pair)
             continue
         truncated_observations += len(pair.observations) - observation_limit
-        stored_pairs.append(pair.model_copy(update={"observations": pair.observations[:observation_limit]}))
+        stored_pairs.append(
+            pair.model_copy(
+                update={
+                    "observations": _select_observations(
+                        pair.observations,
+                        limit=observation_limit,
+                    )
+                }
+            )
+        )
 
     if truncated_observations:
         logger.info(
@@ -918,18 +1056,13 @@ async def _persist_analysis(
             truncated_observations,
         )
 
-    analysis = RelationsAnalysis(job_id=str(job_id), stats=stats, pairs=stored_pairs)
-    try:
-        stored = await store_relations_analysis(
-            session_id,
-            job_id,
-            analysis.model_dump(by_alias=True, mode="json"),
-        )
-    except Exception:
-        logger.exception("[%s] Failed to persist relation analysis", LOG_SCOPE)
-        return
-    if not stored:
-        logger.info("[%s] Relation analysis not stored; a newer relations job owns the session", LOG_SCOPE)
+    analysis = RelationsAnalysis(
+        job_id=str(job_id),
+        output_fingerprint=output_fingerprint,
+        stats=stats,
+        pairs=stored_pairs,
+    )
+    return analysis.model_dump(by_alias=True, mode="json")
 
 
 def _relevant_documentations(analyses: List[RelationPairAnalysis]) -> List[Dict[str, str]]:

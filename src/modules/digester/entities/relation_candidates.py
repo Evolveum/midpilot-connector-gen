@@ -31,6 +31,7 @@ from src.modules.digester.schemas import RelationRecord
 from src.modules.digester.schemas.relation_analysis import (
     DETERMINISTIC_EVIDENCE_KINDS,
     NON_REFERENCE_EVIDENCE_KINDS,
+    AttributeSchemaState,
     EvidenceSource,
     RelationObservation,
     RelationVerdict,
@@ -201,6 +202,7 @@ class ObservedPair:
     observations: List[RelationObservation] = field(default_factory=list)
     sources: List[EvidenceSource] = field(default_factory=list)
     chunk_refs: List[Dict[str, str]] = field(default_factory=list)
+    _observation_positions: Dict[Tuple[Any, ...], int] = field(default_factory=dict, repr=False)
 
     def add(
         self,
@@ -208,7 +210,15 @@ class ObservedPair:
         source: EvidenceSource,
         refs: Optional[Sequence[Dict[str, str]]] = None,
     ) -> None:
-        self.observations.append(observation)
+        identity = observation_identity(observation)
+        position = self._observation_positions.get(identity)
+        if position is None:
+            self._observation_positions[identity] = len(self.observations)
+            self.observations.append(observation)
+        elif _observation_detail_strength(observation) > _observation_detail_strength(self.observations[position]):
+            # The semantic evidence is the same. Keep the richer representative rather
+            # than serializing another copy of it into every downstream prompt.
+            self.observations[position] = observation
         if source not in self.sources:
             self.sources.append(source)
         for chunk_ref in refs or ():
@@ -292,6 +302,44 @@ class ObservedPair:
 
 ObservationEntry = Tuple[RelationObservation, EvidenceSource, Optional[Sequence[Dict[str, str]]]]
 """One observation plus the stage that produced it and the chunks backing it."""
+
+
+def observation_identity(observation: RelationObservation) -> Tuple[Any, ...]:
+    """Semantic observation key used to merge repeated evidence across chunks/stages.
+
+    Named attributes identify an association independently of the citation wording, so
+    repeated observations of the same attribute pair can safely share one representative.
+    Without attributes, however, the quote and note are the only role-bearing evidence:
+    ``groups a user belongs to`` and ``groups a user administers`` may describe different
+    associations between the same classes. Keep such evidence distinct unless all of its
+    meaningful fields match exactly; the later prompt limit remains the safety bound.
+    """
+    source_attribute = "".join(split_relation_tokens(observation.source_attribute))
+    target_attribute = "".join(split_relation_tokens(observation.target_attribute))
+    identity: Tuple[Any, ...] = (
+        normalize_object_class_name(observation.source_class),
+        normalize_object_class_name(observation.target_class),
+        source_attribute,
+        target_attribute,
+        observation.evidence_kind,
+        normalize_object_class_name(observation.via_class),
+    )
+    if source_attribute or target_attribute:
+        return identity
+    return identity + (
+        observation.quote.strip(),
+        observation.note.strip(),
+        observation.multi_valued,
+    )
+
+
+def _observation_detail_strength(observation: RelationObservation) -> Tuple[int, int, int]:
+    """Prefer a representative that carries cardinality and the richest citation."""
+    return (
+        int(observation.multi_valued is not None),
+        len(observation.quote.strip()),
+        len(observation.note.strip()),
+    )
 
 
 def expand_link_object_pairs(
@@ -764,10 +812,33 @@ def grounded_attribute_names(attributes_payload: Any) -> set[str]:
     }
 
 
+def inspect_attribute_schema(
+    attributes_payload: Any,
+    *,
+    present: bool,
+) -> Tuple[AttributeSchemaState, set[str]]:
+    """Classify attribute extraction state and return its canonical names.
+
+    ``missing`` means no session result was generated. ``invalid`` means a value exists but
+    cannot be interpreted as an attribute schema. A valid schema is distinguished as
+    ``empty`` or ``available`` so an empty result is never confused with an absent one.
+    """
+    if not present:
+        return "missing", set()
+    if not isinstance(attributes_payload, Mapping):
+        return "invalid", set()
+    if "attributes" in attributes_payload and not isinstance(attributes_payload.get("attributes"), Mapping):
+        return "invalid", set()
+
+    attributes = select_attributes_map(attributes_payload)
+    if not attributes and attributes_payload and "attributes" not in attributes_payload:
+        return "invalid", set()
+    names = grounded_attribute_names(attributes_payload)
+    return ("available" if names else "empty"), names
+
+
 def is_attribute_grounded(attribute: str, known_attributes: set[str]) -> bool:
     """True when the name matches a known attribute, ignoring case and separators."""
     if not attribute.strip():
-        return True
-    if not known_attributes:
         return True
     return "".join(split_relation_tokens(attribute)) in known_attributes

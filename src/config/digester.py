@@ -239,6 +239,15 @@ class DigesterSettings(BaseModel):
             "number dropped is always logged."
         ),
     )
+    relation_max_refocused_pairs: int = Field(
+        200,
+        ge=1,
+        description=(
+            "Maximum weak class pairs given a focused documentation re-read. Pairs whose "
+            "object classes have higher extraction confidence are selected first, followed "
+            "by evidence strength."
+        ),
+    )
     relation_link_object_min_reference_ratio: float = Field(
         0.5,
         ge=0.0,
@@ -265,6 +274,14 @@ class DigesterSettings(BaseModel):
         description=(
             "Maximum observations kept per pair in the persisted relationsAnalysisOutput. Bounds the "
             "session payload; the full set is still used for adjudication."
+        ),
+    )
+    relation_max_prompt_observations_per_pair: int = Field(
+        80,
+        ge=1,
+        description=(
+            "Maximum distinct, evidence-ranked observations serialized into one relation "
+            "focus, adjudication or verification prompt."
         ),
     )
     relation_prompt_max_description_chars: int = Field(

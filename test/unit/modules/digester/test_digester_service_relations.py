@@ -11,8 +11,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.modules.digester.entities.relation_candidates import ObjectClassIndex
+from src.jobs.result_envelope import SESSION_COMPANION_OUTPUTS_KEY
+from src.modules.digester.entities.relation_candidates import ObjectClassIndex, group_observations
+from src.modules.digester.entities.relations import relation_output_fingerprint
 from src.modules.digester.extractors.rest import relation_context
+from src.modules.digester.extractors.rest import relations as relations_module
 from src.modules.digester.extractors.rest.relations import extract_relations as run_relations_worker
 from src.modules.digester.schemas.relation_analysis import (
     RelationDecision,
@@ -37,6 +40,11 @@ OBJECT_CLASSES = {
         {"name": "Group", "description": "An entitlement container", "confidence": "high"},
     ]
 }
+
+
+def _analysis_output(worker_result: Dict[str, Any]) -> Dict[str, Any]:
+    return worker_result[SESSION_COMPANION_OUTPUTS_KEY]["relationsAnalysisOutput"]
+
 
 DOC_ITEMS = [
     {
@@ -226,7 +234,6 @@ def _pipeline_patches(
         "focus_chain": MagicMock(),
         "adjudication_chain": MagicMock(),
         "verification_chain": MagicMock(),
-        "store": AsyncMock(return_value=True),
         "progress": AsyncMock(),
         "increment": AsyncMock(),
         "error": AsyncMock(),
@@ -253,7 +260,6 @@ def _pipeline_patches(
     stack.enter_context(patch(f"{MODULE}.relation_passes.focus_pair", mocks["focus"]))
     stack.enter_context(patch(f"{MODULE}.relation_passes.adjudicate_pair", mocks["adjudicate"]))
     stack.enter_context(patch(f"{MODULE}.relation_passes.verify_relation", mocks["verify"]))
-    stack.enter_context(patch(f"{MODULE}.store_relations_analysis", mocks["store"]))
     stack.enter_context(patch(f"{MODULE}.update_job_progress", mocks["progress"]))
     stack.enter_context(patch(f"{MODULE}.increment_processed_documents", mocks["increment"]))
     stack.enter_context(patch(f"{MODULE}.append_job_error", mocks["error"]))
@@ -369,7 +375,7 @@ async def test_api_payload_keeps_the_relations_response_contract():
         _pipeline_patches(stack, harvest={USER_CHUNK: [_observation()]}, judgement=_judgement(_verdict()))
         result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
 
-    assert set(result) == {"result", "relevantDocumentations"}
+    assert set(result) == {"result", "relevantDocumentations", SESSION_COMPANION_OUTPUTS_KEY}
     assert set(result["result"]) == {"relations"}
     assert set(result["result"]["relations"][0]) == {
         "name",
@@ -380,13 +386,14 @@ async def test_api_payload_keeps_the_relations_response_contract():
         "object",
         "objectAttribute",
     }
+    assert _analysis_output(result)["outputFingerprint"] == relation_output_fingerprint(result["result"])
 
 
 @pytest.mark.asyncio
 async def test_analysis_is_persisted_with_the_rejected_pairs():
     """Rejections are recorded so a reviewer confirms them once instead of on every run."""
     with ExitStack() as stack:
-        mocks = _pipeline_patches(
+        _pipeline_patches(
             stack,
             harvest={USER_CHUNK: [_observation()]},
             judgement=_judgement(rejection_kind="embedded", rationale="Group is embedded in User."),
@@ -395,8 +402,7 @@ async def test_analysis_is_persisted_with_the_rejected_pairs():
         result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
 
     assert result["result"]["relations"] == []
-    mocks["store"].assert_awaited_once()
-    stored = mocks["store"].await_args.args[2]
+    stored = _analysis_output(result)
     assert stored["stats"]["pairsAdjudicated"] == 1
     assert stored["pairs"][0]["accepted"] is False
     assert stored["pairs"][0]["decisions"] == []
@@ -406,7 +412,7 @@ async def test_analysis_is_persisted_with_the_rejected_pairs():
 @pytest.mark.asyncio
 async def test_refuted_relation_is_dropped_with_a_recorded_reason():
     with ExitStack() as stack:
-        mocks = _pipeline_patches(
+        _pipeline_patches(
             stack,
             harvest={USER_CHUNK: [_observation()]},
             judgement=_judgement(_verdict()),
@@ -416,7 +422,7 @@ async def test_refuted_relation_is_dropped_with_a_recorded_reason():
         result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
 
     assert result["result"]["relations"] == []
-    stored = mocks["store"].await_args.args[2]
+    stored = _analysis_output(result)
     assert stored["pairs"][0]["decisions"][0]["rejectionReason"] == "Only a nearby mention, no reference."
     assert stored["pairs"][0]["accepted"] is False
 
@@ -462,8 +468,27 @@ async def test_invented_attribute_name_is_cleared_but_the_relation_survives():
     assert relation["subjectAttribute"] == "groups"
     assert relation["objectAttribute"] == ""
 
-    stored = mocks["store"].await_args.args[2]
+    stored = _analysis_output(result)
     assert stored["pairs"][0]["decisions"][0]["ungroundedAttributes"] == ["Group.totallyMadeUp"]
+
+
+@pytest.mark.asyncio
+async def test_missing_attribute_schema_requires_observed_evidence_and_records_its_state():
+    with ExitStack() as stack:
+        _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [_observation(sourceAttribute="groups")]},
+            judgement=_judgement(_verdict(subjectAttribute="groups", objectAttribute="inventedMembers")),
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    relation = result["result"]["relations"][0]
+    assert relation["subjectAttribute"] == "groups"
+    assert relation["objectAttribute"] == ""
+    decision = _analysis_output(result)["pairs"][0]["decisions"][0]
+    assert decision["attributeSchemaStates"] == {"User": "missing", "Group": "missing"}
+    assert decision["ungroundedAttributes"] == ["Group.inventedMembers"]
 
 
 @pytest.mark.asyncio
@@ -562,7 +587,7 @@ async def test_stored_attribute_schema_seeds_a_pair_without_any_harvest_evidence
         )
 
     assert len(result["result"]["relations"]) == 1
-    stored = mocks["store"].await_args.args[2]
+    stored = _analysis_output(result)
     assert stored["stats"]["observationsDeterministic"] == 1
     assert "attribute_schema" in stored["pairs"][0]["observationSources"]
 
@@ -615,7 +640,7 @@ async def test_recursive_reference_attributes_seed_and_emit_a_self_relation():
     assert relations[0]["subjectAttribute"] == "parentGroup"
     assert relations[0]["objectAttribute"] == "childGroups"
 
-    stored = mocks["store"].await_args.args[2]
+    stored = _analysis_output(result)
     assert stored["stats"]["observationsDeterministic"] == 2
 
     # A self pair has one class on both sides, so its two attribute buckets must be merged
@@ -765,6 +790,65 @@ async def test_weak_pair_triggers_a_focused_reread():
 
 
 @pytest.mark.asyncio
+async def test_focused_reread_limit_prefers_pairs_with_high_confidence_classes():
+    index, _ = ObjectClassIndex.from_payload(
+        {
+            "objectClasses": [
+                {"name": "HighA", "confidence": "high"},
+                {"name": "HighB", "confidence": "high"},
+                {"name": "LowA", "confidence": "low"},
+                {"name": "LowB", "confidence": "low"},
+            ]
+        }
+    )
+    entries = [
+        (
+            _observation(sourceClass="LowA", targetClass="LowB"),
+            "chunk_harvest",
+            None,
+        ),
+        (
+            _observation(sourceClass="HighA", targetClass="HighB"),
+            "chunk_harvest",
+            None,
+        ),
+    ]
+    pairs, _ = group_observations(entries, index)
+    chunk_lookup = {
+        "high": {"content": "HighA relates to HighB", "ref": None},
+        "low": {"content": "LowA relates to LowB", "ref": None},
+    }
+    class_chunk_ids = {
+        "higha": ["high"],
+        "highb": ["high"],
+        "lowa": ["low"],
+        "lowb": ["low"],
+    }
+    focus = AsyncMock(return_value=[])
+
+    with (
+        patch.object(relations_module.config.digester, "relation_max_refocused_pairs", 1),
+        patch.object(relations_module.relation_passes, "build_pair_focus_chain", return_value=MagicMock()),
+        patch.object(relations_module.relation_passes, "focus_pair", focus),
+        patch.object(relations_module, "update_job_progress", new_callable=AsyncMock),
+        patch.object(relations_module, "increment_processed_documents", new_callable=AsyncMock),
+        patch.object(relations_module, "append_job_error", new_callable=AsyncMock) as append_error,
+    ):
+        await relations_module._focus_weak_pairs(
+            pairs,
+            index,
+            class_chunk_ids,
+            chunk_lookup,
+            uuid4(),
+            relations_module.RelationAnalysisStats(),
+        )
+
+    focus.assert_awaited_once()
+    assert {focus.await_args.kwargs["class_a"], focus.await_args.kwargs["class_b"]} == {"HighA", "HighB"}
+    append_error.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_one_class_pair_can_carry_several_distinct_associations():
     """
     ``Project.owners`` and ``Project.members`` both point at User and are two ConnId
@@ -773,7 +857,12 @@ async def test_one_class_pair_can_carry_several_distinct_associations():
     with ExitStack() as stack:
         _pipeline_patches(
             stack,
-            harvest={USER_CHUNK: [_observation(sourceClass="Group", targetClass="User", sourceAttribute="owners")]},
+            harvest={
+                USER_CHUNK: [
+                    _observation(sourceAttribute="ownedGroups", targetAttribute="owners"),
+                    _observation(sourceAttribute="groups", targetAttribute="members"),
+                ]
+            },
             judgement=_judgement(
                 _verdict(name="user_to_group", subjectAttribute="ownedGroups", objectAttribute="owners"),
                 _verdict(name="user_to_group", subjectAttribute="groups", objectAttribute="members"),
@@ -840,7 +929,12 @@ async def test_verification_does_not_rewrite_one_association_into_another():
     with ExitStack() as stack:
         _pipeline_patches(
             stack,
-            harvest={USER_CHUNK: [_observation(sourceAttribute="groups", targetAttribute="members")]},
+            harvest={
+                USER_CHUNK: [
+                    _observation(sourceAttribute="groups", targetAttribute="members"),
+                    _observation(sourceAttribute="ownedGroups", targetAttribute="owners"),
+                ]
+            },
             judgement=_judgement(
                 _verdict(name="user_to_group_membership", subjectAttribute="groups", objectAttribute="members"),
                 _verdict(name="user_to_group_ownership", subjectAttribute="ownedGroups", objectAttribute="owners"),
@@ -887,7 +981,7 @@ async def test_attribute_observed_on_the_other_class_does_not_ground_this_side()
     assert relation["objectAttribute"] == "members", "Group.members is grounded"
     assert relation["subjectAttribute"] == "", "User.members is not, and must be cleared"
 
-    stored = mocks["store"].await_args.args[2]
+    stored = _analysis_output(result)
     assert stored["pairs"][0]["decisions"][0]["ungroundedAttributes"] == ["User.members"]
 
 
@@ -919,7 +1013,7 @@ async def test_an_association_merged_away_is_recorded_as_such():
     the decision that lost has to say so rather than stay marked accepted.
     """
     with ExitStack() as stack:
-        mocks = _pipeline_patches(
+        _pipeline_patches(
             stack,
             harvest={USER_CHUNK: [_observation(sourceAttribute="groups", targetAttribute="members")]},
             judgement=_judgement(
@@ -931,7 +1025,7 @@ async def test_an_association_merged_away_is_recorded_as_such():
         result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
 
     assert len(result["result"]["relations"]) == 1
-    stored = mocks["store"].await_args.args[2]
+    stored = _analysis_output(result)
     decisions = stored["pairs"][0]["decisions"]
     assert [decision["accepted"] for decision in decisions] == [True, False]
     assert "Merged into" in decisions[1]["rejectionReason"]
@@ -963,6 +1057,8 @@ def test_class_schema_snapshot_captures_all_relation_dependencies():
     stored_values = {
         "userAttributesOutput": {"attributes": {"groups": {"type": "Group"}}},
         "userEndpointsOutput": {"endpoints": {"groups": {"path": "/Users/{id}/Groups"}}},
+        "groupAttributesOutput": {"attributes": {}},
+        "groupEndpointsOutput": None,
     }
 
     snapshot = relation_context.build_relation_schema_snapshot(object_class_index, stored_values)
@@ -974,8 +1070,14 @@ def test_class_schema_snapshot_captures_all_relation_dependencies():
         "groupEndpointsOutput",
     }
     assert snapshot == {
-        "attributesByClass": {"user": stored_values["userAttributesOutput"]},
-        "endpointsByClass": {"user": stored_values["userEndpointsOutput"]},
+        "attributesByClass": {
+            "user": stored_values["userAttributesOutput"],
+            "group": stored_values["groupAttributesOutput"],
+        },
+        "endpointsByClass": {
+            "user": stored_values["userEndpointsOutput"],
+            "group": stored_values["groupEndpointsOutput"],
+        },
     }
 
 
@@ -992,9 +1094,53 @@ async def test_persisted_observations_respect_the_storage_limit():
         )
         stack.enter_context(patch(f"{MODULE}.config.digester.relation_max_stored_observations_per_pair", 1))
 
-        await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
 
-    stored = mocks["store"].await_args.args[2]
+    stored = _analysis_output(result)
     assert stored["stats"]["observationsTotal"] == 2
     assert len(stored["pairs"][0]["observations"]) == 1
     assert len(mocks["adjudicate"].await_args.kwargs["observations"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_pair_prompts_are_bounded_and_keep_deterministic_evidence_first():
+    with ExitStack() as stack:
+        mocks = _pipeline_patches(
+            stack,
+            harvest={
+                USER_CHUNK: [
+                    _observation(sourceAttribute="narrativeGroups", evidenceKind="narrative"),
+                    _observation(sourceAttribute="schemaGroups", evidenceKind="schema_reference"),
+                ]
+            },
+            judgement=_judgement(_verdict(subjectAttribute="schemaGroups", objectAttribute="")),
+        )
+        stack.enter_context(patch(f"{MODULE}.config.digester.relation_max_prompt_observations_per_pair", 1))
+
+        await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    prompt_observations = mocks["adjudicate"].await_args.kwargs["observations"]
+    assert len(prompt_observations) == 1
+    assert prompt_observations[0].source_attribute == "schemaGroups"
+
+
+def test_prompt_selection_preserves_distinct_attribute_less_role_evidence():
+    observations = [
+        _observation(
+            evidenceKind="narrative",
+            quote="Groups the user belongs to.",
+            note="Membership association.",
+        ),
+        _observation(
+            evidenceKind="narrative",
+            quote="Groups the user administers.",
+            note="Administrative association.",
+        ),
+    ]
+
+    selected = relations_module._select_observations(observations, limit=10)
+
+    assert {observation.quote for observation in selected} == {
+        "Groups the user belongs to.",
+        "Groups the user administers.",
+    }

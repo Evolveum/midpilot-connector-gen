@@ -104,12 +104,14 @@ def build_relation_schema_snapshot(
 
     for info in index.all:
         key = normalize_object_class_name(info.name)
-        attributes = stored_values.get(f"{key}AttributesOutput")
-        if attributes:
-            attributes_by_class[key] = attributes
-        endpoints = stored_values.get(f"{key}EndpointsOutput")
-        if endpoints:
-            endpoints_by_class[key] = endpoints
+        attributes_key = f"{key}AttributesOutput"
+        if attributes_key in stored_values:
+            # Preserve empty/null/malformed outputs so grounding can distinguish an
+            # available empty schema from a missing or invalid extraction result.
+            attributes_by_class[key] = stored_values[attributes_key]
+        endpoints_key = f"{key}EndpointsOutput"
+        if endpoints_key in stored_values:
+            endpoints_by_class[key] = stored_values[endpoints_key]
 
     return {
         "attributesByClass": attributes_by_class,

@@ -82,6 +82,9 @@ EvidenceSource = Literal[
 ]
 """Which pipeline stage produced an observation."""
 
+AttributeSchemaState = Literal["missing", "invalid", "empty", "available"]
+"""Availability of one class's extracted attribute schema during grounding."""
+
 
 def _coerce_to_vocabulary(allowed: tuple[str, ...], fallback: str):
     """Map an out-of-vocabulary LLM value onto the nearest safe member of a Literal.
@@ -368,6 +371,13 @@ class RelationDecision(CamelCaseModel):
             "in the cited evidence. They are cleared on the emitted record rather than kept."
         ),
     )
+    attribute_schema_states: dict[str, AttributeSchemaState] = Field(
+        default_factory=dict,
+        description=(
+            "Per-class attribute-schema availability used while grounding this decision: "
+            "missing, invalid, empty or available."
+        ),
+    )
 
 
 class RelationPairAnalysis(CamelCaseModel, RelevantDocumentationsMixin):
@@ -423,6 +433,10 @@ class RelationsAnalysis(CamelCaseModel):
     """
 
     job_id: str = Field(default="", description="Job that produced this analysis.")
+    output_fingerprint: str = Field(
+        default="",
+        description="SHA-256 identity of the exact relationsOutput this analysis describes.",
+    )
     stats: RelationAnalysisStats = Field(default_factory=RelationAnalysisStats)
     pairs: List[RelationPairAnalysis] = Field(
         default_factory=list,

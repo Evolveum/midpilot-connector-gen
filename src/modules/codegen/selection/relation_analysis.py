@@ -46,6 +46,8 @@ _LINK_OBJECT_KIND = "link_object"
 def select_relation_codegen_context(
     analysis_payload: Any,
     relation: RelationRecord,
+    *,
+    output_fingerprint: str,
 ) -> Optional[RelationCodegenContext]:
     """
     Project the stored relation analysis onto the context for one emitted relation.
@@ -68,6 +70,15 @@ def select_relation_codegen_context(
     except ValidationError:
         logger.warning(
             "[%s] Stored relation analysis is not readable; generating %s from the record alone",
+            LOG_SCOPE,
+            relation.name,
+        )
+        return None
+
+    if not analysis.output_fingerprint or analysis.output_fingerprint != output_fingerprint:
+        logger.warning(
+            "[%s] Stored relation analysis does not match the current relations output; "
+            "generating %s from the record alone",
             LOG_SCOPE,
             relation.name,
         )

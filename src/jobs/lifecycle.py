@@ -17,6 +17,7 @@ from src.core.db import async_session_maker
 from src.core.job_execution import get_current_execution
 from src.database.repositories.job_repository import JobRepository
 from src.jobs.errors import JobClaimLostError
+from src.jobs.result_envelope import strip_internal_result_fields
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
@@ -138,7 +139,10 @@ async def get_job_status(job_id: UUID | None) -> Dict[str, Any]:
         return {"jobId": None, "status": "not_found"}
     async with async_session_maker() as db:
         repo = JobRepository(db)
-        return await repo.get_job_status(job_id)
+        status = await repo.get_job_status(job_id)
+        if "result" in status:
+            status["result"] = strip_internal_result_fields(status["result"])
+        return status
 
 
 async def append_job_error(job_id: UUID, message: str) -> None:

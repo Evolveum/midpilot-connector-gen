@@ -29,6 +29,7 @@ from src.documents.relevance import (
 )
 from src.jobs import lifecycle
 from src.jobs.errors import JobClaimLostError
+from src.jobs.result_envelope import get_session_companion_outputs, missing_session_companion_outputs
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +63,12 @@ async def persist_result_to_session(
     session_id: UUID,
     session_result_key: str,
     result_dict: Any,
+    required_companion_keys: tuple[str, ...] = (),
 ) -> bool:
-    """Store the job result under ``session_result_key`` and refresh relevant-chunk rows.
+    """Store the primary and companion outputs and refresh primary relevance rows.
 
-    Failures are recorded on the job and re-raised so the execution cannot be
-    reported as finished without its promised session result.
+    All session values are published in one transaction. Failures are recorded on the job
+    and re-raised so execution cannot finish without every promised output.
     """
     try:
         async with async_session_maker() as db:
@@ -80,6 +82,12 @@ async def persist_result_to_session(
                     execution_token=execution.execution_token,
                 )
 
+            missing_companions = missing_session_companion_outputs(result_dict, required_companion_keys)
+            if missing_companions:
+                raise ValueError(
+                    "Worker result is missing required session companion output(s): " + ", ".join(missing_companions)
+                )
+
             if isinstance(result_dict, dict):
                 session_payload: Any
                 if isinstance(result_dict.get("result"), dict):
@@ -91,11 +99,14 @@ async def persist_result_to_session(
                     session_payload,
                     result_key=session_result_key,
                 )
-                persisted = await repo.update_result_if_current_job(
+                companion_outputs = get_session_companion_outputs(result_dict)
+                if session_result_key in companion_outputs:
+                    raise ValueError(f"Companion outputs cannot replace primary result {session_result_key!r}")
+                persisted = await repo.update_results_if_current_job(
                     session_id=session_id,
                     result_key=session_result_key,
                     job_id=job_id,
-                    value=session_payload,
+                    values={session_result_key: session_payload, **companion_outputs},
                 )
                 if not persisted:
                     await db.rollback()
