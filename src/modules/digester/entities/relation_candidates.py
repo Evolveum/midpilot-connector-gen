@@ -37,10 +37,12 @@ from src.modules.digester.schemas.relation_analysis import (
     RelationVerdict,
 )
 from src.shared.coerce import is_true
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 
 _PATH_PARAMETER_RE = re.compile(r"^[{:<].*[}>]?$")
+_SCIM_REFERENCE_LEAF_NAMES = frozenset({"$ref", "value"})
 
 CONFIDENCE_RANK: Dict[ConfidenceLevel, int] = {
     ConfidenceLevel.HIGH: 0,
@@ -333,6 +335,131 @@ def observation_identity(observation: RelationObservation) -> Tuple[Any, ...]:
     )
 
 
+def normalize_scim_reference_observation(observation: RelationObservation) -> RelationObservation:
+    """Keep a SCIM relation's logical carrier separate from its nested wire reference.
+
+    SCIM represents references conventionally as a ``$ref`` (and vendor mappings sometimes
+    as a ``value``) sub-attribute of a complex carrier. ConnId relations act on that carrier:
+    ``groups``/``members``/``manager``. The complete path remains in ``scimEvidence.scimPath``
+    for code generation and review.
+
+    A source-side ``scimEvidence`` belongs only to ``sourceAttribute``. A bare ``$ref`` placed
+    on ``targetAttribute`` has no target-side path proving its parent, so it is cleared rather
+    than allowed to masquerade as a top-level attribute.
+    """
+    source_attribute = _scim_logical_attribute(
+        observation.source_attribute,
+        observation.scim_evidence.application_attribute if observation.scim_evidence else "",
+        observation.scim_evidence.scim_path if observation.scim_evidence else "",
+    )
+    target_attribute = _scim_path_parent(observation.target_attribute)
+    if _is_scim_reference_leaf(observation.target_attribute):
+        target_attribute = ""
+
+    if source_attribute == observation.source_attribute and target_attribute == observation.target_attribute:
+        return observation
+    return observation.model_copy(
+        update={
+            "source_attribute": source_attribute,
+            "target_attribute": target_attribute,
+        }
+    )
+
+
+def normalize_scim_reference_verdict(
+    verdict: RelationVerdict,
+    observations: Sequence[RelationObservation],
+) -> RelationVerdict:
+    """Repair a verdict that used ``$ref``/``value`` instead of its complex carrier.
+
+    The replacement is evidence-driven. For each side, it must be the sole matching logical
+    carrier observed from that class to the other class, after cardinality is considered.
+    Ambiguous cases are deliberately left for the verification LLM instead of being guessed.
+    """
+    if not verdict.is_relation:
+        return verdict
+
+    updates: Dict[str, Any] = {}
+    for attribute_field, class_name, target_name, attribute, multi_valued in (
+        (
+            "subject_attribute",
+            verdict.subject,
+            verdict.object,
+            verdict.subject_attribute,
+            verdict.subject_multi_valued,
+        ),
+        (
+            "object_attribute",
+            verdict.object,
+            verdict.subject,
+            verdict.object_attribute,
+            verdict.object_multi_valued,
+        ),
+    ):
+        nested_parent = _scim_path_parent(attribute)
+        if nested_parent != attribute:
+            updates[attribute_field] = nested_parent
+            continue
+        if not _is_scim_reference_leaf(attribute):
+            continue
+
+        candidates: Dict[str, str] = {}
+        for observation in observations:
+            if observation.scim_evidence is None:
+                continue
+            if normalize_object_class_name(observation.source_class) != normalize_object_class_name(class_name):
+                continue
+            if normalize_object_class_name(observation.target_class) != normalize_object_class_name(target_name):
+                continue
+            if multi_valued is not None and observation.multi_valued is not None:
+                if multi_valued != observation.multi_valued:
+                    continue
+            logical_attribute = normalize_scim_reference_observation(observation).source_attribute.strip()
+            if not logical_attribute or _is_scim_reference_leaf(logical_attribute):
+                continue
+            candidates.setdefault("".join(split_relation_tokens(logical_attribute)), logical_attribute)
+
+        if len(candidates) == 1:
+            updates[attribute_field] = next(iter(candidates.values()))
+
+    return verdict.model_copy(update=updates) if updates else verdict
+
+
+def _scim_logical_attribute(attribute: str, application_attribute: str, scim_path: str) -> str:
+    """Resolve a parent relation attribute without normalizing vendor spelling."""
+    current = attribute.strip()
+    current_parent = _scim_path_parent(current)
+    if current_parent != current:
+        return current_parent
+    if not _is_scim_reference_leaf(current):
+        return current
+
+    application_name = application_attribute.strip()
+    application_parent = _scim_path_parent(application_name)
+    if application_parent and not _is_scim_reference_leaf(application_parent):
+        return application_parent
+
+    wire_parent = _scim_path_parent(scim_path)
+    return wire_parent if wire_parent and not _is_scim_reference_leaf(wire_parent) else current
+
+
+def _scim_path_parent(path: str) -> str:
+    """Return the carrier before a terminal SCIM ``$ref``/``value`` sub-attribute."""
+    original = path.strip()
+    if not original:
+        return ""
+    attribute_path = original.rsplit(":", 1)[-1]
+    segments = [segment.strip() for segment in attribute_path.split(".")]
+    if len(segments) < 2 or segments[-1].casefold() not in _SCIM_REFERENCE_LEAF_NAMES:
+        return original
+    parent = segments[0].split("[", 1)[0].strip()
+    return parent or original
+
+
+def _is_scim_reference_leaf(attribute: str) -> bool:
+    return attribute.strip().casefold() in _SCIM_REFERENCE_LEAF_NAMES
+
+
 def _observation_detail_strength(observation: RelationObservation) -> Tuple[int, int, int]:
     """Prefer a representative that carries cardinality and the richest citation."""
     return (
@@ -346,6 +473,7 @@ def expand_link_object_pairs(
     entries: Sequence[ObservationEntry],
     index: ObjectClassIndex,
     attributes_by_class: Mapping[str, Any],
+    api_type: Optional[ApiType] = None,
 ) -> Tuple[List[ObservationEntry], List[str]]:
     """
     Connect the two ends of an association class, which no other stage ever does.
@@ -358,8 +486,10 @@ def expand_link_object_pairs(
     with ``linkObjectClass=Membership``. The evidence has to be reshaped before the LLM sees
     it; a prompt cannot recover a pair that was never created.
 
-    Runs over observations from every stage, not just deterministic seeding, so a link object
-    described only in prose is expanded too.
+    Runs over observations from every stage, not just deterministic seeding. SCIM uses a
+    stricter threshold because expansion creates a previously unseen pair: prose and schema
+    mappings still reach direct-pair adjudication, but cannot synthesize a link-object pair
+    without explicit instance-reference evidence.
 
     Returns the synthetic entries and one human-readable line per expansion for logging.
     """
@@ -370,6 +500,8 @@ def expand_link_object_pairs(
     outgoing: Dict[str, Dict[str, List[RelationObservation]]] = {}
     for observation, _source, _refs in entries:
         if observation.evidence_kind in NON_REFERENCE_EVIDENCE_KINDS:
+            continue
+        if api_type == ApiType.SCIM and not _is_scim_instance_reference(observation):
             continue
         source = index.resolve(observation.source_class)
         target = index.resolve(observation.target_class)
@@ -411,6 +543,23 @@ def expand_link_object_pairs(
     if skipped:
         summary.append(f"{skipped} further association-class pair(s) skipped by the expansion ceiling")
     return synthetic, summary
+
+
+def _is_scim_instance_reference(observation: RelationObservation) -> bool:
+    """Whether SCIM evidence can participate in deterministic link-object expansion.
+
+    Expansion creates a class pair that was never directly observed, so schema mappings and
+    prose are too weak for it. An extracted ConnId reference is already validated structure;
+    an LLM SCIM observation must instead carry explicit ``referenceTypes`` or a nested
+    ``$ref`` path. Direct pairs still reach adjudication even when this stronger expansion
+    threshold is not met.
+    """
+    if observation.evidence_kind == "attribute_metadata":
+        return bool(observation.source_attribute.strip())
+    evidence = observation.scim_evidence
+    if evidence is None or not observation.source_attribute.strip():
+        return False
+    return bool(evidence.reference_types) or evidence.scim_path.strip().casefold().endswith(".$ref")
 
 
 def _reference_ratio(

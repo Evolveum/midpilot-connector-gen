@@ -190,6 +190,55 @@ def test_direct_reference_context_names_no_carrying_class():
     assert context.prompt_payload() == {"kind": "reference"}
 
 
+def test_scim_mapping_reaches_codegen_without_normalizing_the_application_attribute():
+    analysis = _link_object_analysis(kind="reference", subject_attribute="Username", link_object_class="")
+    analysis["apiType"] = "scim"
+    analysis["pairs"][0]["observations"][0].update(
+        {
+            "sourceAttribute": "Username",
+            "evidenceKind": "scim_mapping",
+            "scimEvidence": {
+                "applicationAttribute": "Username",
+                "scimPath": "userName",
+                "vendorDeviation": "Vendor-specific application casing.",
+            },
+        }
+    )
+
+    context = _select_context(analysis, _record(subject_attribute="Username"))
+
+    assert context is not None
+    assert context.api_type.value == "scim"
+    assert context.prompt_payload()["scimEvidence"][0]["applicationAttribute"] == "Username"
+    assert context.prompt_payload()["scimEvidence"][0]["scimPath"] == "userName"
+
+
+def test_sql_foreign_key_binding_reaches_codegen_as_ordered_physical_evidence():
+    analysis = _link_object_analysis(kind="reference", subject_attribute="roles", link_object_class="")
+    analysis["apiType"] = "sql"
+    analysis["pairs"][0]["observations"][0].update(
+        {
+            "sourceAttribute": "roles",
+            "evidenceKind": "sql_foreign_key",
+            "sqlEvidence": {
+                "logicalAttribute": "roles",
+                "sourceTable": "account_role",
+                "sourceColumns": ["tenant_id", "account_id"],
+                "targetTable": "role",
+                "targetColumns": ["tenant_id", "id"],
+                "constraintName": "fk_account_role_role",
+            },
+        }
+    )
+
+    context = _select_context(analysis, _record(subject_attribute="roles"))
+
+    assert context is not None
+    evidence = context.prompt_payload()["sqlEvidence"][0]
+    assert evidence["sourceColumns"] == ["tenant_id", "account_id"]
+    assert evidence["targetColumns"] == ["tenant_id", "id"]
+
+
 def test_carrying_class_is_recovered_from_the_evidence_when_the_verdict_omits_it():
     """Adjudication can classify link_object without naming the class the pair was built from."""
     context = _select_context(_link_object_analysis(link_object_class=""), _record())

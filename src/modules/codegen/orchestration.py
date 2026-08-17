@@ -17,6 +17,7 @@ raises domain errors (``AppError`` subclasses) rather than HTTP exceptions so
 the HTTP layer stays in the router / exception handlers.
 """
 
+import logging
 from typing import Any, Awaitable, Callable, Mapping, Optional, cast
 from uuid import UUID
 
@@ -49,6 +50,8 @@ from src.shared.enums import ApiType
 # Shared preparing-stage metadata for the search/create/update/delete jobs.
 _INITIAL_STAGE = "preparing"
 _INITIAL_MESSAGE = "Preparing code generation from relevant chunks"
+
+logger = logging.getLogger(__name__)
 
 
 _PROTOCOLS_REQUIRING_ENDPOINTS = frozenset({ApiType.REST})
@@ -346,6 +349,7 @@ async def schedule_relation_job(
     session_id: UUID,
     relation_name: str,
     skip_cache: bool,
+    api_type: Optional[ApiType],
 ) -> UUID:
     """
     Schedule the relation codegen job.
@@ -387,8 +391,25 @@ async def schedule_relation_job(
         selected_relation,
         output_fingerprint=relation_output_fingerprint(relations_model),
     )
+    protocol = await resolve_effective_api_type(
+        session_id,
+        api_type or (relation_context.api_type if relation_context is not None else None),
+    )
+    if relation_context is not None and relation_context.api_type not in (None, protocol):
+        logger.warning(
+            "[Codegen:Relation:%s] Request protocol overrides %s relation analysis; "
+            "discarding protocol-specific evidence",
+            protocol.value,
+            relation_context.api_type.value,
+        )
+        relation_context = relation_context.model_copy(
+            update={"api_type": protocol, "scim_evidence": [], "sql_evidence": []}
+        )
+
     relation_context_payload = (
-        relation_context.model_dump(by_alias=True, mode="json") if relation_context is not None else None
+        relation_context.model_dump(by_alias=True, mode="json", exclude_none=True, exclude_defaults=True)
+        if relation_context is not None
+        else None
     )
 
     job_id = await schedule_coroutine_job(
@@ -398,6 +419,7 @@ async def schedule_relation_job(
             "relations": relations_payload,
             "relationName": relation_name,
             "relationContext": relation_context_payload,
+            "apiType": protocol.value,
             "sessionId": session_id,
             "skipCache": skip_cache,
         },
@@ -407,6 +429,7 @@ async def schedule_relation_job(
             "relation_name": relation_name,
             "relation_context": job_input_reference("relationContext"),
             "session_id": session_id,
+            "protocol": protocol,
         },
         initial_stage="preparing",
         initial_message="Queued code generation from relevant chunks",
@@ -418,7 +441,11 @@ async def schedule_relation_job(
         repo,
         session_id,
         f"{relation_name}Code",
-        {"relations": relations_payload, "relationContext": relation_context_payload},
+        {
+            "relations": relations_payload,
+            "relationContext": relation_context_payload,
+            "apiType": protocol.value,
+        },
         job_id,
     )
 

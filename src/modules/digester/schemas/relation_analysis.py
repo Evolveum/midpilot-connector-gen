@@ -14,11 +14,12 @@ reviewer can see why a relation was accepted or rejected, and so later stages
 
 from typing import Annotated, Any, List, Literal, Optional, get_args
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
 from src.core.schema import CamelCaseModel
 from src.modules.digester.enums import ConfidenceLevel
 from src.modules.digester.schemas.common import RelevantDocumentationsMixin
+from src.shared.enums import ApiType
 
 # --- Vocabulary ---
 
@@ -54,6 +55,10 @@ EvidenceKind = Literal[
     "attribute_metadata",
     "inheritance_metadata",
     "embedded_metadata",
+    "scim_reference",
+    "scim_mapping",
+    "sql_foreign_key",
+    "sql_junction_table",
 ]
 """What kind of documentation evidence an observation rests on."""
 
@@ -121,6 +126,55 @@ ToleratedConfidence = Annotated[
 ]
 
 
+class ScimRelationEvidence(CamelCaseModel):
+    """SCIM wire-level evidence kept beside a logical relation observation."""
+
+    application_attribute: str = Field(
+        default="",
+        description="Exact application/ConnId attribute name, which may intentionally differ from SCIM.",
+    )
+    scim_path: str = Field(
+        default="",
+        description=(
+            "Exact SCIM schema path or sub-attribute path documented on the wire, such as "
+            "groups.$ref. The public relation attribute remains the parent logical attribute "
+            "(groups), never the leaf $ref/value sub-attribute."
+        ),
+    )
+    reference_types: List[str] = Field(
+        default_factory=list,
+        description="Documented SCIM referenceTypes values, copied without normalization.",
+    )
+    vendor_deviation: str = Field(
+        default="",
+        description="Concise description of a documented vendor-specific mapping or behavior.",
+    )
+
+
+class SqlRelationEvidence(CamelCaseModel):
+    """Physical SQL binding kept beside a logical relation observation."""
+
+    logical_attribute: str = Field(
+        default="",
+        description="Logical connector attribute name when it differs from the database column.",
+    )
+    source_table: str = Field(default="", description="Exact physical source table or view name.")
+    source_columns: List[str] = Field(
+        default_factory=list,
+        description="Ordered physical source columns, including every column of a composite key.",
+    )
+    target_table: str = Field(default="", description="Exact physical target table or view name.")
+    target_columns: List[str] = Field(
+        default_factory=list,
+        description="Ordered referenced columns corresponding to sourceColumns.",
+    )
+    constraint_name: str = Field(default="", description="Exact FOREIGN KEY constraint name when documented.")
+    junction_table: str = Field(
+        default="",
+        description="Exact association/junction table name when a third table carries the link.",
+    )
+
+
 class RelationObservation(CamelCaseModel):
     """
     One raw observation that a class appears to point at another class.
@@ -164,7 +218,9 @@ class RelationObservation(CamelCaseModel):
         default="narrative",
         description=(
             "What the observation rests on: 'schema_property' for a declared property, 'schema_reference' for "
-            "a $ref or explicit type reference, 'endpoint_path' for a sub-resource path, 'narrative' for prose."
+            "a $ref or explicit type reference, 'endpoint_path' for a sub-resource path, 'scim_reference' or "
+            "'scim_mapping' for SCIM metadata/vendor mappings, 'sql_foreign_key' or 'sql_junction_table' for "
+            "SQL constraints, and 'narrative' for prose."
         ),
     )
     quote: str = Field(
@@ -184,6 +240,20 @@ class RelationObservation(CamelCaseModel):
             "Name of a third class that carries this link, when the two ends are only connected through "
             "it. System-populated: leave this empty, the pipeline fills it when it derives an observation "
             "from an association class."
+        ),
+    )
+    scim_evidence: Optional[ScimRelationEvidence] = Field(
+        default=None,
+        description=(
+            "SCIM application-to-wire mapping supporting this observation. Populate only for SCIM evidence; "
+            "preserve custom casing and vendor-specific names."
+        ),
+    )
+    sql_evidence: Optional[SqlRelationEvidence] = Field(
+        default=None,
+        description=(
+            "Physical table/column/constraint binding supporting this observation. Populate only for SQL "
+            "evidence and preserve composite-column order."
         ),
     )
 
@@ -328,8 +398,17 @@ class RelationRefutation(CamelCaseModel):
     refuted: bool = Field(
         ...,
         description=(
-            "True when the evidence does not actually support the claimed relation. Default to true when the "
-            "evidence is only a name similarity or an unrelated mention."
+            "True when the evidence does not actually support the underlying relation. An incorrect attribute "
+            "representation on an otherwise supported relation is a correction, not by itself a refutation. "
+            "Default to true when the evidence is only a name similarity or an unrelated mention."
+        ),
+    )
+    relation_supported_after_correction: bool = Field(
+        default=False,
+        description=(
+            "True only when the association itself is supported and the proposed relation becomes correct after "
+            "applying correctedSubjectAttribute and/or correctedObjectAttribute. This lets verification repair a "
+            "nested SCIM path such as groups.$ref -> groups without discarding the real association."
         ),
     )
     reason: str = Field(
@@ -350,6 +429,21 @@ class RelationRefutation(CamelCaseModel):
             "another one clearly does. Empty when no correction is needed."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_supported_correction(self) -> "RelationRefutation":
+        """A correction-only outcome must identify what is safe to repair."""
+        if self.relation_supported_after_correction and not (
+            self.corrected_subject_attribute.strip() or self.corrected_object_attribute.strip()
+        ):
+            raise ValueError(
+                "relationSupportedAfterCorrection requires correctedSubjectAttribute or correctedObjectAttribute"
+            )
+        if self.relation_supported_after_correction:
+            # Keep the persisted audit state coherent even if the LLM marked the malformed
+            # original fields as refuted while also saying the underlying relation survives.
+            self.refuted = False
+        return self
 
 
 class RelationDecision(CamelCaseModel):
@@ -433,6 +527,10 @@ class RelationsAnalysis(CamelCaseModel):
     """
 
     job_id: str = Field(default="", description="Job that produced this analysis.")
+    api_type: Optional[ApiType] = Field(
+        default=None,
+        description="Protocol profile used by every LLM stage in this analysis run.",
+    )
     output_fingerprint: str = Field(
         default="",
         description="SHA-256 identity of the exact relationsOutput this analysis describes.",

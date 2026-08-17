@@ -18,6 +18,8 @@ from src.modules.digester.entities.relation_candidates import (
     group_observations,
     inspect_attribute_schema,
     is_attribute_grounded,
+    normalize_scim_reference_observation,
+    normalize_scim_reference_verdict,
     observations_from_attributes,
     observations_from_class_metadata,
     observations_from_endpoints,
@@ -28,6 +30,7 @@ from src.modules.digester.entities.relation_candidates import (
 )
 from src.modules.digester.schemas import RelationRecord
 from src.modules.digester.schemas.relation_analysis import RelationObservation, RelationVerdict
+from src.shared.enums import ApiType
 
 
 def _object_classes(*entries: Dict[str, Any]) -> Dict[str, Any]:
@@ -56,6 +59,71 @@ def _observation(**overrides: Any) -> RelationObservation:
     }
     payload.update(overrides)
     return RelationObservation.model_validate(payload)
+
+
+# ==================== SCIM REFERENCE PATHS ====================
+
+
+def test_scim_reference_observation_keeps_parent_attribute_and_full_wire_path():
+    observation = _observation(
+        sourceAttribute="$ref",
+        targetAttribute="$ref",
+        multiValued=True,
+        evidenceKind="scim_reference",
+        scimEvidence={
+            "scimPath": "groups.$ref",
+            "referenceTypes": ["Group"],
+        },
+    )
+
+    normalized = normalize_scim_reference_observation(observation)
+
+    assert normalized.source_attribute == "groups"
+    assert normalized.target_attribute == ""
+    assert normalized.multi_valued is True
+    assert normalized.scim_evidence is not None
+    assert normalized.scim_evidence.scim_path == "groups.$ref"
+
+
+def test_scim_verdict_resolves_manager_and_nested_group_carriers_by_cardinality():
+    observations = [
+        _observation(
+            sourceClass="User",
+            targetClass="User",
+            sourceAttribute="$ref",
+            multiValued=False,
+            evidenceKind="scim_reference",
+            scimEvidence={"scimPath": "manager.$ref", "referenceTypes": ["User"]},
+        ),
+        _observation(
+            sourceClass="User",
+            targetClass="User",
+            sourceAttribute="$ref",
+            multiValued=True,
+            evidenceKind="scim_reference",
+            scimEvidence={"scimPath": "groups.$ref", "referenceTypes": ["User", "Group"]},
+        ),
+    ]
+    manager = RelationVerdict(
+        is_relation=True,
+        subject="User",
+        subject_attribute="$ref",
+        subject_multi_valued=False,
+        object="User",
+    )
+
+    normalized_manager = normalize_scim_reference_verdict(manager, observations)
+
+    assert normalized_manager.subject_attribute == "manager"
+
+    nested_group = RelationVerdict(
+        is_relation=True,
+        subject="Group",
+        subject_attribute="members.$ref",
+        subject_multi_valued=True,
+        object="Group",
+    )
+    assert normalize_scim_reference_verdict(nested_group, []).subject_attribute == "members"
 
 
 # ==================== OBJECT CLASS INDEX ====================
@@ -662,6 +730,64 @@ def test_association_class_expansion_respects_its_ceiling():
 
     with patch.object(config.digester, "relation_link_object_max_expanded_pairs", 0):
         assert expand_link_object_pairs(entries, index, _MEMBERSHIP_ATTRIBUTES) == ([], [])
+
+
+def test_scim_link_object_expansion_ignores_schema_mapping_metadata():
+    index = _index(
+        {"name": "Mapping", "confidence": "high"},
+        {"name": "User", "confidence": "high"},
+        {"name": "Group", "confidence": "high"},
+    )
+    entries = [
+        (
+            _observation(
+                sourceClass="Mapping",
+                targetClass=target,
+                sourceAttribute="objectClass",
+                evidenceKind="schema_reference",
+                quote=f"objectClass = {target}",
+            ),
+            "chunk_harvest",
+            None,
+        )
+        for target in ("User", "Group")
+    ]
+
+    synthetic, summary = expand_link_object_pairs(entries, index, {}, api_type=ApiType.SCIM)
+
+    assert synthetic == []
+    assert summary == []
+
+
+def test_scim_link_object_expansion_keeps_explicit_instance_references():
+    index = _index(
+        {"name": "Membership", "confidence": "high"},
+        {"name": "User", "confidence": "high"},
+        {"name": "Group", "confidence": "high"},
+    )
+    entries = [
+        (
+            _observation(
+                sourceClass="Membership",
+                targetClass=target,
+                sourceAttribute=attribute,
+                evidenceKind="scim_reference",
+                scimEvidence={
+                    "scimPath": f"{attribute}.$ref",
+                    "referenceTypes": [target],
+                },
+            ),
+            "chunk_harvest",
+            None,
+        )
+        for target, attribute in (("User", "user"), ("Group", "group"))
+    ]
+
+    synthetic, summary = expand_link_object_pairs(entries, index, {}, api_type=ApiType.SCIM)
+
+    assert len(synthetic) == 1
+    assert synthetic[0][0].via_class == "Membership"
+    assert summary == ["Group|User via Membership"]
 
 
 # ==================== SEVERAL ASSOCIATIONS ON ONE PAIR ====================

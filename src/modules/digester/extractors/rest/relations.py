@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 """
-Staged relation detection for REST documentation.
+Staged relation detection for REST, SCIM, and SQL documentation.
 
 A relation is a cross-chunk object: chunking splits the subject schema, the object schema
 and the sub-resource endpoint into different fragments, so no single fragment holds enough
@@ -54,6 +54,8 @@ from src.modules.digester.entities.relation_candidates import (
     group_observations,
     inspect_attribute_schema,
     is_attribute_grounded,
+    normalize_scim_reference_observation,
+    normalize_scim_reference_verdict,
     observation_identity,
     observations_from_attributes,
     observations_from_class_metadata,
@@ -71,6 +73,7 @@ from src.modules.digester.extraction.llm_execution import run_chunks_concurrentl
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest import relation_context, relation_passes
 from src.modules.digester.extractors.rest.relation_context import LOG_SCOPE
+from src.modules.digester.prompts.relation_profiles import RelationPromptSet, get_relation_prompt_set
 from src.modules.digester.results import RELATIONS_ANALYSIS_RESULT_KEY
 from src.modules.digester.schemas import RelationRecord, RelationsResponse
 from src.modules.digester.schemas.relation_analysis import (
@@ -84,7 +87,7 @@ from src.modules.digester.schemas.relation_analysis import (
     RelationsAnalysis,
     RelationVerdict,
 )
-from src.shared.enums import JobStage
+from src.shared.enums import ApiType, JobStage
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +252,7 @@ async def extract_relations(
     doc_items: List[dict],
     relevant_object_classes: Any,
     class_schema_snapshot: Mapping[str, Any],
+    api_type: ApiType,
     session_id: UUID,
     job_id: UUID,
 ) -> Dict[str, Any]:
@@ -259,9 +263,12 @@ async def extract_relations(
         doc_items: Documentation chunks selected for this session.
         relevant_object_classes: Stored ``objectClassesOutput`` payload.
         class_schema_snapshot: Attribute and endpoint outputs captured when the job was scheduled.
+        api_type: Protocol selected and persisted when the job was scheduled.
         session_id: Session whose object-class relevance mapping selects focused context.
         job_id: Job used for progress, errors and analysis producer identity.
     """
+    prompts = get_relation_prompt_set(ApiType(api_type))
+    logger.info("[%s:%s] Using protocol-specific relation analysis prompts", LOG_SCOPE, prompts.protocol.value)
     stats = RelationAnalysisStats()
     index, skipped_classes = ObjectClassIndex.from_payload(relevant_object_classes)
     if skipped_classes:
@@ -270,7 +277,7 @@ async def extract_relations(
         detail = "No usable object classes in objectClassesOutput; nothing to relate"
         logger.error("[%s] %s", LOG_SCOPE, detail)
         await append_job_error(job_id, f"[{LOG_SCOPE}] {detail}")
-        return _result_with_analysis([], [], stats, [], job_id)
+        return _result_with_analysis([], [], stats, [], job_id, prompts.protocol)
 
     chunk_lookup = relation_context.build_chunk_lookup(doc_items)
     prompt_classes = relation_context.classes_for_prompt(index)
@@ -297,12 +304,20 @@ async def extract_relations(
             f"{len(endpoints_by_class)} with stored endpoint results"
         ),
     )
-    entries.extend(await _harvest(doc_items, object_classes_json, job_id, stats))
-    entries.extend(await _sweep_classes(index, object_classes_json, class_chunk_ids, chunk_lookup, job_id, stats))
+    entries.extend(await _harvest(doc_items, object_classes_json, job_id, stats, prompts))
+    entries.extend(
+        await _sweep_classes(index, object_classes_json, class_chunk_ids, chunk_lookup, job_id, stats, prompts)
+    )
+    entries = _normalize_protocol_entries(entries, prompts.protocol)
 
     # An association class connects two ends that no stage ever pairs directly; its evidence has
     # to be reshaped before grouping, or the pair the domain needs is never formed.
-    link_entries, link_summary = expand_link_object_pairs(entries, index, attributes_by_class)
+    link_entries, link_summary = expand_link_object_pairs(
+        entries,
+        index,
+        attributes_by_class,
+        api_type=prompts.protocol,
+    )
     if link_entries:
         stats.link_object_pairs_expanded = len(link_entries)
         logger.info(
@@ -316,15 +331,16 @@ async def extract_relations(
     # Grouped twice on purpose: the focused re-read needs to know which pairs are weak, and its
     # own observations then have to land on those same pairs.
     pairs, _ = group_observations(entries, index)
-    entries.extend(await _focus_weak_pairs(pairs, index, class_chunk_ids, chunk_lookup, job_id, stats))
+    entries.extend(await _focus_weak_pairs(pairs, index, class_chunk_ids, chunk_lookup, job_id, stats, prompts))
+    entries = _normalize_protocol_entries(entries, prompts.protocol)
     pairs, unresolved = group_observations(entries, index)
 
     stats.observations_total = len(entries)
     if unresolved:
         logger.info("[%s] Dropped %d observations naming classes that were never extracted", LOG_SCOPE, unresolved)
 
-    analyses = await _adjudicate_pairs(pairs, index, attributes_by_class, job_id, stats)
-    relations = await _verify_and_collect(analyses, index, attributes_by_class, job_id, stats)
+    analyses = await _adjudicate_pairs(pairs, index, attributes_by_class, job_id, stats, prompts)
+    relations = await _verify_and_collect(analyses, index, attributes_by_class, job_id, stats, prompts)
 
     relevant_documentations = _relevant_documentations(analyses)
     logger.info(
@@ -336,7 +352,7 @@ async def extract_relations(
         stats.chunks_harvested,
     )
 
-    return _result_with_analysis(relations, analyses, stats, relevant_documentations, job_id)
+    return _result_with_analysis(relations, analyses, stats, relevant_documentations, job_id, prompts.protocol)
 
 
 def _result_with_analysis(
@@ -345,6 +361,7 @@ def _result_with_analysis(
     stats: RelationAnalysisStats,
     relevant_documentations: List[Dict[str, str]],
     job_id: UUID,
+    api_type: ApiType,
 ) -> Dict[str, Any]:
     """Build the public result and its separately persisted, cacheable analysis companion."""
     relation_payload = RelationsResponse(relations=relations).model_dump(by_alias=True, mode="json")
@@ -352,6 +369,7 @@ def _result_with_analysis(
         job_id,
         analyses,
         stats,
+        api_type=api_type,
         output_fingerprint=relation_output_fingerprint(relation_payload),
     )
     return {
@@ -400,6 +418,13 @@ def _seed_from_session(
     return entries
 
 
+def _normalize_protocol_entries(entries: Sequence[ObservationEntry], api_type: ApiType) -> List[ObservationEntry]:
+    """Apply protocol representation rules before observations reach pair inference."""
+    if api_type != ApiType.SCIM:
+        return list(entries)
+    return [(normalize_scim_reference_observation(observation), source, refs) for observation, source, refs in entries]
+
+
 # --- Stage 1: per-chunk harvest ---
 
 
@@ -408,6 +433,7 @@ async def _harvest(
     object_classes_json: str,
     job_id: UUID,
     stats: RelationAnalysisStats,
+    prompts: RelationPromptSet,
 ) -> List[ObservationEntry]:
     """Run the recall-first harvest over every selected chunk."""
     if not doc_items:
@@ -421,7 +447,7 @@ async def _harvest(
         detail=f"{len(doc_items)} documentation chunks",
     )
 
-    chain = relation_passes.build_harvest_chain()
+    chain = relation_passes.build_harvest_chain(prompts)
     metadata_map = build_doc_metadata_map(doc_items)
     chunk_id_to_doc_id = {
         str(item["chunkId"]): str(item["docId"]) for item in doc_items if item.get("chunkId") and item.get("docId")
@@ -434,6 +460,7 @@ async def _harvest(
             chunk_id=chunk_id,
             chunk_metadata=metadata_map.get(str(chunk_id)),
             object_classes_json=object_classes_json,
+            prompts=prompts,
             chain=chain,
         )
 
@@ -469,6 +496,7 @@ async def _sweep_classes(
     chunk_lookup: Dict[str, Dict[str, Any]],
     job_id: UUID,
     stats: RelationAnalysisStats,
+    prompts: RelationPromptSet,
 ) -> List[ObservationEntry]:
     """
     Ask, per object class, what it relates to - with that class's whole documentation in view.
@@ -512,7 +540,7 @@ async def _sweep_classes(
         total=len(swept),
         detail=f"{len(swept)} of {eligible} eligible object classes",
     )
-    chain = relation_passes.build_class_sweep_chain()
+    chain = relation_passes.build_class_sweep_chain(prompts)
 
     async def sweep(info: ObjectClassInfo) -> List[ObservationEntry]:
         chunk_ids = class_chunk_ids[normalize_object_class_name(info.name)]
@@ -552,6 +580,7 @@ async def _focus_weak_pairs(
     chunk_lookup: Dict[str, Dict[str, Any]],
     job_id: UUID,
     stats: RelationAnalysisStats,
+    prompts: RelationPromptSet,
 ) -> List[ObservationEntry]:
     """Re-read the documentation for pairs whose evidence is thin or one-sided."""
     ranked_weak = _rank_pairs([pair for pair in pairs.values() if pair.is_weak()], index)
@@ -587,7 +616,7 @@ async def _focus_weak_pairs(
             else f"{len(weak)} of {len(pairs)} candidate pairs have thin or one-sided evidence"
         ),
     )
-    chain = relation_passes.build_pair_focus_chain()
+    chain = relation_passes.build_pair_focus_chain(prompts)
 
     async def focus(pair: ObservedPair) -> Tuple[List[ObservationEntry], bool]:
         chunk_ids = relation_context.pair_chunk_ids(pair, class_chunk_ids)
@@ -644,6 +673,7 @@ async def _adjudicate_pairs(
     attributes_by_class: Dict[str, Any],
     job_id: UUID,
     stats: RelationAnalysisStats,
+    prompts: RelationPromptSet,
 ) -> List[RelationPairAnalysis]:
     """Decide every pair, with all of its observations in view."""
     if not pairs:
@@ -680,7 +710,7 @@ async def _adjudicate_pairs(
         total=len(ordered),
         detail=detail,
     )
-    chain = relation_passes.build_adjudication_chain()
+    chain = relation_passes.build_adjudication_chain(prompts)
 
     def pair_class_metadata(pair: ObservedPair) -> List[Dict[str, Any]]:
         """Class descriptions for the judged pair, listed once even when both sides are one class."""
@@ -729,6 +759,8 @@ async def _adjudicate_pairs(
                     )
                 )
                 continue
+            if prompts.protocol == ApiType.SCIM:
+                normalized = normalize_scim_reference_verdict(normalized, pair.observations)
             decision = RelationDecision(verdict=normalized)
             if not normalized.is_relation or normalized.kind not in RELATION_KINDS_ACCEPTED:
                 decision.rejection_reason = normalized.rationale.strip() or f"Classified as {normalized.kind}"
@@ -797,6 +829,7 @@ async def _verify_and_collect(
     attributes_by_class: Dict[str, Any],
     job_id: UUID,
     stats: RelationAnalysisStats,
+    prompts: RelationPromptSet,
 ) -> List[RelationRecord]:
     """Refute what survived adjudication, then project the survivors onto the API contract."""
     pending = [
@@ -816,7 +849,7 @@ async def _verify_and_collect(
             total=len(pending),
             detail=f"{len(pending)} associations accepted by adjudication",
         )
-        chain = relation_passes.build_verification_chain()
+        chain = relation_passes.build_verification_chain(prompts)
         await asyncio.gather(
             *(
                 _counted(_verify_one(analysis, decision, index, attributes_by_class, job_id, chain), job_id)
@@ -913,7 +946,7 @@ async def _verify_one(
     if refutation is None:
         return
 
-    if refutation.refuted:
+    if refutation.refuted and not refutation.relation_supported_after_correction:
         decision.rejection_reason = refutation.reason.strip() or "Refuted during verification"
 
 
@@ -1027,6 +1060,7 @@ def _build_analysis_payload(
     analyses: List[RelationPairAnalysis],
     stats: RelationAnalysisStats,
     *,
+    api_type: ApiType,
     output_fingerprint: str,
 ) -> Dict[str, Any]:
     """Build the bounded working state persisted beside the public relation output."""
@@ -1058,6 +1092,7 @@ def _build_analysis_payload(
 
     analysis = RelationsAnalysis(
         job_id=str(job_id),
+        api_type=api_type,
         output_fingerprint=output_fingerprint,
         stats=stats,
         pairs=stored_pairs,

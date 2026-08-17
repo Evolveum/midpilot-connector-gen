@@ -17,6 +17,7 @@ from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.digester import orchestration, results
 from src.modules.digester.schemas import RelationsResponse
 from src.session.access import ensure_session_exists, resolve_session_job_id
+from src.shared.enums import ApiType
 
 router = APIRouter(tags=["Digester: Relations"])
 
@@ -29,6 +30,11 @@ router = APIRouter(tags=["Digester: Relations"])
 async def extract_relations(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the integration protocol (REST/SCIM/SQL); uses detected apiType when omitted.",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -45,6 +51,7 @@ async def extract_relations(
         repo=repo,
         session_id=session_id,
         skip_cache=skip_cache,
+        api_type=api_type,
     )
 
     return JobCreateResponse(jobId=job_id)

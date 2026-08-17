@@ -10,6 +10,7 @@ from src.modules.digester.selection.criteria import (
     ENDPOINT_CRITERIA,
     EXTENDED_AUTH_CRITERIA,
     METADATA_CRITERIA,
+    RELATION_CRITERIA,
 )
 from src.modules.digester.selection.doc_chunk import (
     build_chunk_id_to_doc_id,
@@ -38,6 +39,7 @@ __all__ = [
     "ENDPOINT_CRITERIA",
     "EXTENDED_AUTH_CRITERIA",
     "METADATA_CRITERIA",
+    "RELATION_CRITERIA",
     "DocumentationSelector",
     "auth_input",
     "build_chunk_id_to_doc_id",

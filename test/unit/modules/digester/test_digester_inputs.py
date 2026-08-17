@@ -15,11 +15,25 @@ from src.modules.digester.selection import (
     DEFAULT_CRITERIA,
     EXTENDED_AUTH_CRITERIA,
     METADATA_CRITERIA,
+    RELATION_CRITERIA,
     auth_input,
     build_object_class_extraction_input,
     connectivity_endpoint_input,
     metadata_input,
 )
+
+
+def test_relation_criteria_include_scim_and_sql_schema_evidence():
+    assert RELATION_CRITERIA.category_override_tags == [
+        "relationship",
+        "relationships",
+        "relations",
+        "schema",
+        "scim",
+        "sql",
+        "db",
+        "provisioning",
+    ]
 
 
 @pytest.mark.asyncio

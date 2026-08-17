@@ -35,7 +35,7 @@ from src.modules.digester.extractors.rest import relation_context
 from src.modules.digester.extractors.rest.relations import extract_relations
 from src.modules.digester.results import RELATIONS_ANALYSIS_RESULT_KEY
 from src.modules.digester.selection import (
-    DEFAULT_CRITERIA,
+    RELATION_CRITERIA,
     DocumentationSelector,
     auth_input,
     build_object_class_extraction_input,
@@ -219,13 +219,16 @@ async def schedule_relations_extraction(
     repo: SessionRepository,
     session_id: UUID,
     skip_cache: bool,
+    api_type: Optional[ApiType],
 ) -> UUID:
     """
     Schedule relation extraction and persist ``relationsJobId`` /
     ``relationsInput``.
     """
+    protocol = await resolve_effective_api_type(session_id, api_type)
+
     try:
-        doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
+        doc_items = await filter_documentation_items(RELATION_CRITERIA, session_id, db=db)
     except ValueError as e:
         raise SessionNotFoundError(session_id) from e
 
@@ -247,6 +250,7 @@ async def schedule_relations_extraction(
             "documentationItems": doc_items,
             "relevantObjectClasses": relevant,
             "classSchemaSnapshot": class_schema_snapshot,
+            "apiType": protocol.value,
             "skipCache": skip_cache,
         },
         worker=extract_relations,
@@ -254,6 +258,7 @@ async def schedule_relations_extraction(
             job_input_reference("documentationItems"),
             job_input_reference("relevantObjectClasses"),
             job_input_reference("classSchemaSnapshot"),
+            job_input_reference("apiType"),
             session_id,
         ),
         initial_stage="chunking",
@@ -267,7 +272,11 @@ async def schedule_relations_extraction(
         repo,
         session_id,
         "relations",
-        {"relevantObjectClasses": relevant, "skipCache": skip_cache},
+        {
+            "relevantObjectClasses": relevant,
+            "apiType": protocol.value,
+            "skipCache": skip_cache,
+        },
         job_id,
     )
     return job_id
