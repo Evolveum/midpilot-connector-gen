@@ -584,6 +584,60 @@ async def test_refuted_relation_is_dropped_with_a_recorded_reason():
 
 
 @pytest.mark.asyncio
+async def test_refutation_without_a_named_correction_still_drops_the_relation():
+    """A skeptic that claims a correction but names none must not weaken into an acceptance."""
+    refutation = RelationRefutation(
+        refuted=True,
+        relation_supported_after_correction=True,
+        reason="The documentation never describes a group membership attribute on User.",
+    )
+    assert refutation.relation_supported_after_correction is False
+    assert refutation.refuted is True
+
+    with ExitStack() as stack:
+        _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [_observation()]},
+            judgement=_judgement(_verdict()),
+            refutation=refutation,
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    assert result["result"]["relations"] == []
+    stored = _analysis_output(result)
+    decision = stored["pairs"][0]["decisions"][0]
+    assert decision["accepted"] is False
+    assert decision["rejectionReason"] == "The documentation never describes a group membership attribute on User."
+
+
+@pytest.mark.asyncio
+async def test_one_sided_correction_keeps_the_relation_and_repairs_that_side_only():
+    """Only the named side is replaced; the flag clears `refuted` because a repair exists."""
+    refutation = RelationRefutation(
+        refuted=True,
+        relation_supported_after_correction=True,
+        reason="The association is real, but the subject attribute is a nested sub-attribute.",
+        corrected_subject_attribute="groups",
+    )
+    assert refutation.refuted is False
+
+    with ExitStack() as stack:
+        _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [_observation(sourceAttribute="groups", targetAttribute="members")]},
+            judgement=_judgement(_verdict(subjectAttribute="$ref", objectAttribute="members")),
+            refutation=refutation,
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    relation = result["result"]["relations"][0]
+    assert relation["subjectAttribute"] == "groups"
+    assert relation["objectAttribute"] == "members"
+
+
+@pytest.mark.asyncio
 async def test_verification_correction_is_applied_to_the_attribute_name():
     with ExitStack() as stack:
         _pipeline_patches(

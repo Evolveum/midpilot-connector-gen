@@ -62,11 +62,24 @@ EvidenceKind = Literal[
 ]
 """What kind of documentation evidence an observation rests on."""
 
-DETERMINISTIC_EVIDENCE_KINDS: frozenset[str] = frozenset({"attribute_metadata", "endpoint_path", "schema_reference"})
+DETERMINISTIC_EVIDENCE_KINDS: frozenset[str] = frozenset(
+    {
+        "attribute_metadata",
+        "endpoint_path",
+        "schema_reference",
+        "sql_foreign_key",
+        "sql_junction_table",
+    }
+)
 """Evidence read off an already-validated schema rather than interpreted from prose.
 
 Every stage that has to rank or pick among observations prefers these, so the preference is
 stated once here instead of being restated as a literal set at each use.
+
+A declared FOREIGN KEY or junction table is DDL, so it belongs here for the same reason
+``attribute_metadata`` does. ``scim_reference`` deliberately does not: it is the LLM's reading
+of documentation prose, and ``scim_mapping`` is weaker still - the link-object expansion
+threshold in ``relation_candidates`` rejects it outright.
 """
 
 NON_REFERENCE_EVIDENCE_KINDS: frozenset[str] = frozenset({"embedded_metadata", "inheritance_metadata"})
@@ -436,12 +449,8 @@ class RelationRefutation(CamelCaseModel):
         if self.relation_supported_after_correction and not (
             self.corrected_subject_attribute.strip() or self.corrected_object_attribute.strip()
         ):
-            raise ValueError(
-                "relationSupportedAfterCorrection requires correctedSubjectAttribute or correctedObjectAttribute"
-            )
+            self.relation_supported_after_correction = False
         if self.relation_supported_after_correction:
-            # Keep the persisted audit state coherent even if the LLM marked the malformed
-            # original fields as refuted while also saying the underlying relation survives.
             self.refuted = False
         return self
 

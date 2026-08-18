@@ -85,6 +85,84 @@ def test_scim_reference_observation_keeps_parent_attribute_and_full_wire_path():
     assert normalized.scim_evidence.scim_path == "groups.$ref"
 
 
+def test_urn_qualified_scim_path_yields_the_attribute_without_its_namespace():
+    """The URN names the extension schema, never the attribute a relation acts on."""
+    observation = _observation(
+        sourceAttribute="$ref",
+        evidenceKind="scim_reference",
+        scimEvidence={
+            "scimPath": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:manager",
+            "referenceTypes": ["User"],
+        },
+    )
+
+    normalized = normalize_scim_reference_observation(observation)
+
+    assert normalized.source_attribute == "manager"
+
+
+def test_urn_qualified_scim_path_with_a_reference_leaf_yields_its_carrier():
+    observation = _observation(
+        sourceAttribute="$ref",
+        evidenceKind="scim_reference",
+        scimEvidence={
+            "scimPath": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:manager.value",
+            "referenceTypes": ["User"],
+        },
+    )
+
+    normalized = normalize_scim_reference_observation(observation)
+
+    assert normalized.source_attribute == "manager"
+
+
+def test_the_representative_of_merged_evidence_keeps_the_wire_binding():
+    """SCIM normalization folds several $ref observations onto one carrier; they collide here."""
+    index = _user_group_index()
+    with_evidence = _observation(
+        sourceAttribute="groups",
+        evidenceKind="scim_reference",
+        quote="groups",
+        scimEvidence={"scimPath": "groups.$ref", "referenceTypes": ["Group"]},
+    )
+    without_evidence = _observation(
+        sourceAttribute="groups",
+        evidenceKind="scim_reference",
+        quote="The groups attribute lists every group the user is currently a member of.",
+    )
+
+    pairs, _skipped = group_observations(
+        [(with_evidence, "attribute_schema", None), (without_evidence, "chunk_harvest", None)],
+        index,
+    )
+
+    observations = pairs[pair_key("User", "Group")].observations
+    assert len(observations) == 1
+    assert observations[0].scim_evidence is not None
+    assert observations[0].scim_evidence.scim_path == "groups.$ref"
+
+
+def test_a_declared_foreign_key_counts_as_deterministic_evidence():
+    """DDL is validated structure, so it must not rank as prose when a stage picks a subset."""
+    index = _user_group_index()
+    foreign_key = _observation(
+        sourceAttribute="group_id",
+        targetAttribute="id",
+        evidenceKind="sql_foreign_key",
+        sqlEvidence={
+            "sourceTable": "app_user",
+            "sourceColumns": ["group_id"],
+            "targetTable": "app_group",
+            "targetColumns": ["id"],
+            "constraintName": "fk_app_user_group",
+        },
+    )
+
+    pairs, _skipped = group_observations([(foreign_key, "chunk_harvest", None)], index)
+
+    assert pairs[pair_key("User", "Group")].evidence_strength()[0] == 1
+
+
 def test_scim_verdict_resolves_manager_and_nested_group_carriers_by_cardinality():
     observations = [
         _observation(
@@ -782,6 +860,32 @@ def test_scim_link_object_expansion_keeps_explicit_instance_references():
         )
         for target, attribute in (("User", "user"), ("Group", "group"))
     ]
+
+    synthetic, summary = expand_link_object_pairs(entries, index, {}, api_type=ApiType.SCIM)
+
+    assert len(synthetic) == 1
+    assert synthetic[0][0].via_class == "Membership"
+    assert summary == ["Group|User via Membership"]
+
+
+def test_scim_link_object_expansion_keeps_deterministic_endpoint_paths():
+    """Endpoint evidence is extracted structure; it names no attribute by design."""
+    index = _index(
+        {"name": "Membership", "confidence": "high"},
+        {"name": "User", "confidence": "high"},
+        {"name": "Group", "confidence": "high"},
+    )
+    endpoints = {
+        "endpoints": [
+            {"path": "/Membership/{id}/User", "method": "GET"},
+            {"path": "/Membership/{id}/Group", "method": "GET"},
+        ]
+    }
+    entries = [
+        (observation, "endpoint_schema", None)
+        for observation in observations_from_endpoints("Membership", endpoints, index)
+    ]
+    assert len(entries) == 2
 
     synthetic, summary = expand_link_object_pairs(entries, index, {}, api_type=ApiType.SCIM)
 

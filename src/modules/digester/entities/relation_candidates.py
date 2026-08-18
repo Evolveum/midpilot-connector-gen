@@ -444,25 +444,39 @@ def _scim_logical_attribute(attribute: str, application_attribute: str, scim_pat
 
 
 def _scim_path_parent(path: str) -> str:
-    """Return the carrier before a terminal SCIM ``$ref``/``value`` sub-attribute."""
+    """Return the carrier before a terminal SCIM ``$ref``/``value`` sub-attribute.
+
+    The URN prefix of an extension path is dropped in every branch: a schema URN identifies
+    the namespace an attribute lives in, never the attribute a relation acts on, and the
+    result of this function can become the midPoint-facing relation attribute.
+    """
     original = path.strip()
     if not original:
         return ""
-    attribute_path = original.rsplit(":", 1)[-1]
+    attribute_path = original.rsplit(":", 1)[-1].strip()
+    if not attribute_path:
+        return original
     segments = [segment.strip() for segment in attribute_path.split(".")]
     if len(segments) < 2 or segments[-1].casefold() not in _SCIM_REFERENCE_LEAF_NAMES:
-        return original
+        return attribute_path
     parent = segments[0].split("[", 1)[0].strip()
-    return parent or original
+    return parent or attribute_path
 
 
 def _is_scim_reference_leaf(attribute: str) -> bool:
     return attribute.strip().casefold() in _SCIM_REFERENCE_LEAF_NAMES
 
 
-def _observation_detail_strength(observation: RelationObservation) -> Tuple[int, int, int]:
-    """Prefer a representative that carries cardinality and the richest citation."""
+def _observation_detail_strength(observation: RelationObservation) -> Tuple[int, int, int, int]:
+    """Prefer a representative that carries a wire binding, cardinality and the richest citation.
+
+    Protocol evidence ranks first and is not part of ``observation_identity``: SCIM
+    normalization rewrites several nested ``$ref`` observations onto the same logical carrier,
+    so they collide here, and the wire path is the one thing codegen cannot re-derive from a
+    longer prose quote.
+    """
     return (
+        int(observation.scim_evidence is not None or observation.sql_evidence is not None),
         int(observation.multi_valued is not None),
         len(observation.quote.strip()),
         len(observation.note.strip()),
@@ -554,6 +568,11 @@ def _is_scim_instance_reference(observation: RelationObservation) -> bool:
     ``$ref`` path. Direct pairs still reach adjudication even when this stronger expansion
     threshold is not met.
     """
+    if observation.evidence_kind == "endpoint_path":
+        # A sub-resource path is extracted structure, not an interpreted mapping. It is
+        # checked before the attribute test because such an observation names no attribute
+        # by design - the attribute belongs to the association class, not to either end.
+        return True
     if observation.evidence_kind == "attribute_metadata":
         return bool(observation.source_attribute.strip())
     evidence = observation.scim_evidence

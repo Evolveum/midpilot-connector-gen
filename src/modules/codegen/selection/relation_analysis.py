@@ -26,6 +26,7 @@ from src.modules.codegen.schema import RelationCodegenContext, RelationLinkAttri
 from src.modules.digester.entities.relations import relation_identity, split_relation_tokens
 from src.modules.digester.schemas import (
     RelationDecision,
+    RelationObservation,
     RelationPairAnalysis,
     RelationRecord,
     RelationsAnalysis,
@@ -96,8 +97,9 @@ def select_relation_codegen_context(
     link_attributes = (
         _link_attributes(analysis, link_object_class, (relation.subject, relation.object)) if link_object_class else []
     )
-    scim_evidence = _distinct_protocol_evidence([observation.scim_evidence for observation in pair.observations])
-    sql_evidence = _distinct_protocol_evidence([observation.sql_evidence for observation in pair.observations])
+    observations = _decision_observations(pair, verdict)
+    scim_evidence = _distinct_protocol_evidence([observation.scim_evidence for observation in observations])
+    sql_evidence = _distinct_protocol_evidence([observation.sql_evidence for observation in observations])
 
     if link_object_class and not link_attributes:
         logger.warning(
@@ -116,6 +118,49 @@ def select_relation_codegen_context(
         scim_evidence=scim_evidence,
         sql_evidence=sql_evidence,
     )
+
+
+def _canonical_attributes(*attributes: str) -> set[str]:
+    """Canonical spelling of the attribute names that distinguish one association."""
+    return {canonical for canonical in ("".join(split_relation_tokens(item)) for item in attributes) if canonical}
+
+
+def _decision_observations(
+    pair: RelationPairAnalysis,
+    verdict: RelationVerdict,
+) -> List[RelationObservation]:
+    """Narrow a pair's evidence to the association actually being generated.
+
+    Observations are stored per class pair, but one pair can carry several associations -
+    membership and ownership between the same User and Group. Passing all of them on would ship
+    the sibling's wire binding to a generator that is told to read the nested SCIM path off
+    ``scimEvidence``, or the sibling's foreign-key columns in the SQL case.
+
+    Attribute names are what tell the associations apart, exactly as in ``relation_identity``.
+    An observation naming no attribute on either side is kept rather than dropped: it cannot be
+    attributed to one association of the pair, and for a link-object relation - whose verdict
+    carries no attributes at all - it is the only evidence there is.
+    """
+    wanted = _canonical_attributes(verdict.subject_attribute, verdict.object_attribute)
+    if not wanted:
+        return list(pair.observations)
+
+    selected = [
+        observation
+        for observation in pair.observations
+        if not (named := _canonical_attributes(observation.source_attribute, observation.target_attribute))
+        or named & wanted
+    ]
+    if len(selected) != len(pair.observations):
+        logger.debug(
+            "[%s] Kept %d of %d observations of %s as evidence for %s",
+            LOG_SCOPE,
+            len(selected),
+            len(pair.observations),
+            pair.pair_key,
+            verdict.name or "<unnamed>",
+        )
+    return selected
 
 
 def _distinct_protocol_evidence(
