@@ -59,13 +59,13 @@ AUTHORING REQUIREMENTS:
 - Prefer concise, deterministic code. Add short inline comments only when they clarify decisions or cite evidence.
 
 OUTPUT POLICY:
-- Always return the full, final Groovy `relation` block for the current iteration (do not return diffs).
+- Always return the full, final Groovy `relationship` block for the current iteration (do not return diffs).
 - If a chunk adds no useful information, keep the previous best result unchanged.
 - No prose before or after the code. Only the Groovy block.
 
 
 OUTPUT RULES:
-- Return ONLY Groovy `relation` block based on documentation. No extra commentary.
+- Return ONLY one Groovy `relationship` block based on documentation. No extra commentary.
 - The example is illustrative; adapt to the format defined in the reference documentation.
 - Do not introduce classes/attributes absent from the selected relation payload and its stored analysis;
   `linkObjectClass` and `linkAttributes` are part of the selected relation, not an addition to it.

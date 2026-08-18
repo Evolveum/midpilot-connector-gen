@@ -12,6 +12,7 @@ import pytest
 from src.modules.codegen import generation
 from src.modules.codegen.schema import RelationCodegenContext
 from src.modules.digester.schemas import RelationsResponse
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio
@@ -77,6 +78,7 @@ async def test_generate_relation():
             relation_name="project_to_membership",
             session_id=uuid4(),
             job_id=uuid4(),
+            protocol=ApiType.REST,
         )
 
         assert isinstance(result, dict)
@@ -145,6 +147,7 @@ async def test_generate_relation_loads_the_association_class_documentation():
             relation_name="user_to_group",
             session_id=uuid4(),
             job_id=uuid4(),
+            protocol=ApiType.REST,
             relation_context=relation_context,
         )
 

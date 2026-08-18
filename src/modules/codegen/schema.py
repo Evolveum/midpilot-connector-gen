@@ -11,7 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from src.core.schema import CamelCaseModel
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
 from src.modules.digester.schemas import RELATION_KINDS_ACCEPTED, AttributeResponse, EndpointResponse
+from src.modules.digester.schemas.relation_analysis import ScimRelationEvidence, SqlRelationEvidence
 from src.shared.auth import normalize_auth_type_value
+from src.shared.enums import ApiType
 
 AttributesPayload: TypeAlias = Union[AttributeResponse, Mapping[str, Any]]
 EndpointsPayload: TypeAlias = Union[EndpointResponse, Mapping[str, Any]]
@@ -160,6 +162,10 @@ class RelationCodegenContext(CamelCaseModel):
     back from ``relationsAnalysisOutput`` and travels beside the record instead of inside it.
     """
 
+    api_type: Optional[ApiType] = Field(
+        default=None,
+        description="Protocol used to produce the matching relation analysis.",
+    )
     kind: str = Field(
         ...,
         description=("How the association is carried: reference, inverse_reference, link_object or virtual_endpoint."),
@@ -171,6 +177,14 @@ class RelationCodegenContext(CamelCaseModel):
     link_attributes: List[RelationLinkAttribute] = Field(
         default_factory=list,
         description="Attributes on the association class that point at the subject and the object.",
+    )
+    scim_evidence: List[ScimRelationEvidence] = Field(
+        default_factory=list,
+        description="Application-to-SCIM wire mappings relevant to this relation.",
+    )
+    sql_evidence: List[SqlRelationEvidence] = Field(
+        default_factory=list,
+        description="Logical-to-physical SQL bindings relevant to this relation.",
     )
 
     @field_validator("kind")
@@ -184,10 +198,16 @@ class RelationCodegenContext(CamelCaseModel):
     def prompt_payload(self) -> Dict[str, Any]:
         """Compact JSON-ready view holding only the fields the generator can act on."""
         payload: Dict[str, Any] = {"kind": self.kind}
+        if self.api_type is not None:
+            payload["apiType"] = self.api_type.value
         if self.link_object_class:
             payload["linkObjectClass"] = self.link_object_class
         if self.link_attributes:
             payload["linkAttributes"] = [item.model_dump(by_alias=True) for item in self.link_attributes]
+        if self.scim_evidence:
+            payload["scimEvidence"] = [item.model_dump(by_alias=True) for item in self.scim_evidence]
+        if self.sql_evidence:
+            payload["sqlEvidence"] = [item.model_dump(by_alias=True) for item in self.sql_evidence]
         return payload
 
 

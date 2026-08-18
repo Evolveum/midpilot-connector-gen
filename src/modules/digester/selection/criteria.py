@@ -14,6 +14,29 @@ DEFAULT_CRITERIA = ChunkFilterCriteria(
     ],
 )
 
+RELATION_CRITERIA = ChunkFilterCriteria(
+    min_length=None,
+    min_endpoints_num=None,
+    allowed_categories=[
+        "spec_yaml",
+        "spec_json",
+        "reference_api",
+    ],
+    # Raw DDL, conndev contracts and protocol tutorials are not guaranteed to be
+    # classified as REST-style API references. Keep them when their deterministic
+    # processing metadata says they can carry relationship/schema evidence.
+    category_override_tags=[
+        "relationship",
+        "relationships",
+        "relations",
+        "schema",
+        "scim",
+        "sql",
+        "db",
+        "provisioning",
+    ],
+)
+
 METADATA_CRITERIA = ChunkFilterCriteria(
     min_length=None,
     min_endpoints_num=None,

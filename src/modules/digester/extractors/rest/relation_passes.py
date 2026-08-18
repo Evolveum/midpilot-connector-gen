@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 """
-The LLM stages of REST relation detection.
+The LLM stages of protocol-aware relation detection.
 
 Each function here is one pass with one prompt. They are kept separate from the pipeline
 in :mod:`relations` so that the pipeline reads as a sequence of stages and each stage can
@@ -26,18 +26,7 @@ from src.modules.digester.extraction.chunk_extraction import (
     invoke_extraction_chain_with_retry,
 )
 from src.modules.digester.extractors.rest.relation_context import LOG_SCOPE
-from src.modules.digester.prompts.rest.relations_prompts import (
-    get_relation_adjudication_system_prompt,
-    get_relation_adjudication_user_prompt,
-    get_relation_class_sweep_system_prompt,
-    get_relation_class_sweep_user_prompt,
-    get_relation_harvest_system_prompt,
-    get_relation_harvest_user_prompt,
-    get_relation_pair_focus_system_prompt,
-    get_relation_pair_focus_user_prompt,
-    get_relation_verification_system_prompt,
-    get_relation_verification_user_prompt,
-)
+from src.modules.digester.prompts.relation_profiles import RelationPromptSet
 from src.modules.digester.schemas.relation_analysis import (
     RelationObservation,
     RelationObservationsResponse,
@@ -50,50 +39,50 @@ logger = logging.getLogger(__name__)
 LOGGER_PREFIX = f"[{LOG_SCOPE}] "
 
 
-def build_harvest_chain() -> Any:
+def build_harvest_chain(prompts: RelationPromptSet) -> Any:
     """One reusable chain for the per-chunk harvest pass."""
     return build_chunk_extraction_chain(
         pydantic_model=RelationObservationsResponse,
-        system_prompt=get_relation_harvest_system_prompt,
-        user_prompt=get_relation_harvest_user_prompt,
+        system_prompt=prompts.harvest_system,
+        user_prompt=prompts.harvest_user,
     )
 
 
-def build_class_sweep_chain() -> Any:
+def build_class_sweep_chain(prompts: RelationPromptSet) -> Any:
     """One reusable chain for the per-class sweep pass."""
     return build_structured_chain(
-        get_relation_class_sweep_system_prompt,
-        get_relation_class_sweep_user_prompt,
+        prompts.class_sweep_system,
+        prompts.class_sweep_user,
         RelationObservationsResponse,
         user_role="human",
     )
 
 
-def build_pair_focus_chain() -> Any:
+def build_pair_focus_chain(prompts: RelationPromptSet) -> Any:
     """One reusable chain for the focused pair re-read pass."""
     return build_structured_chain(
-        get_relation_pair_focus_system_prompt,
-        get_relation_pair_focus_user_prompt,
+        prompts.pair_focus_system,
+        prompts.pair_focus_user,
         RelationObservationsResponse,
         user_role="human",
     )
 
 
-def build_adjudication_chain() -> Any:
+def build_adjudication_chain(prompts: RelationPromptSet) -> Any:
     """One reusable chain for the pair adjudication pass."""
     return build_structured_chain(
-        get_relation_adjudication_system_prompt,
-        get_relation_adjudication_user_prompt,
+        prompts.adjudication_system,
+        prompts.adjudication_user,
         RelationPairJudgement,
         user_role="human",
     )
 
 
-def build_verification_chain() -> Any:
+def build_verification_chain(prompts: RelationPromptSet) -> Any:
     """One reusable chain for the adversarial verification pass."""
     return build_structured_chain(
-        get_relation_verification_system_prompt,
-        get_relation_verification_user_prompt,
+        prompts.verification_system,
+        prompts.verification_user,
         RelationRefutation,
         user_role="human",
     )
@@ -106,6 +95,7 @@ async def harvest_chunk(
     chunk_id: Optional[UUID],
     chunk_metadata: Optional[Dict[str, Any]],
     object_classes_json: str,
+    prompts: RelationPromptSet,
     chain: Any,
 ) -> tuple[List[RelationObservation], bool]:
     """
@@ -121,8 +111,8 @@ async def harvest_chunk(
     observations, has_relevant_data = await extract_single_chunk(
         schema=content,
         pydantic_model=RelationObservationsResponse,
-        system_prompt=get_relation_harvest_system_prompt,
-        user_prompt=get_relation_harvest_user_prompt,
+        system_prompt=prompts.harvest_system,
+        user_prompt=prompts.harvest_user,
         parse_fn=parse_fn,
         job_id=job_id,
         logger_prefix=f"{LOGGER_PREFIX}[Harvest] ",

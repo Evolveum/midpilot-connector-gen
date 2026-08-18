@@ -378,6 +378,7 @@ async def generate_relation_code(
     relation_name: str,
     session_id: UUID,
     job_id: UUID,
+    protocol: ApiType,
     relation_context: Optional[RelationCodegenContext] = None,
 ) -> Dict[str, str]:
     """
@@ -388,7 +389,8 @@ async def generate_relation_code(
     documentation is selected alongside the subject's and the object's, because the endpoints
     implementing such an association are documented on it and nowhere else.
     """
-    relation_docs_text = load_required_adoc_text(__package__ + ".documentations" + ".rest", "50-relationship.adoc")
+    assets = get_operation_assets("relation", protocol)
+    relation_docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
 
     selected_relation = relations.relations[0] if relations.relations else None
     documentation_classes = (
@@ -397,16 +399,29 @@ async def generate_relation_code(
     relevant_pairs = await _collect_relation_object_class_pairs(session_id, documentation_classes)
     if relevant_pairs:
         logger.info(
-            "[Codegen:Relation] Relevant chunks from DB for %s: kind=%s, classes=%s, chunks=%d",
+            "[Codegen:Relation:%s] Relevant chunks from DB for %s: kind=%s, classes=%s, chunks=%d",
+            protocol.value,
             relation_name,
             relation_context.kind if relation_context is not None else "unknown",
             ", ".join(documentation_classes),
             len(relevant_pairs),
         )
     else:
-        logger.warning("[Codegen:Relation] No relevant object-class chunks found for relation %s", relation_name)
+        logger.warning(
+            "[Codegen:Relation:%s] No relevant object-class chunks found for relation %s",
+            protocol.value,
+            relation_name,
+        )
 
-    generator = RelationGenerator(docs_text=relation_docs_text, relation_context=relation_context)
+    generator = RelationGenerator(
+        relation_name=relation_name,
+        docs_text=relation_docs_text,
+        system_prompt=assets.system_prompt,
+        user_prompt=assets.user_prompt,
+        protocol=protocol,
+        relation_context=relation_context,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
+    )
     code = await generator.generate(
         session_id=session_id,
         relevant_chunk_pairs=relevant_pairs,

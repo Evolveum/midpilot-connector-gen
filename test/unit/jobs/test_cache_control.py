@@ -68,7 +68,7 @@ def test_normalize_input_handles_missing_relevant_documentations() -> None:
 
 
 def test_relation_schema_changes_produce_distinct_cache_fingerprints() -> None:
-    def relation_input(*, attribute_type: str, endpoint_path: str) -> dict:
+    def relation_input(*, attribute_type: str, endpoint_path: str, api_type: str = "rest") -> dict:
         return {
             "documentationItems": [{"content": "User and Group schemas"}],
             "relevantObjectClasses": {"objectClasses": [{"name": "User"}, {"name": "Group"}]},
@@ -78,6 +78,7 @@ def test_relation_schema_changes_produce_distinct_cache_fingerprints() -> None:
                 },
                 "endpointsByClass": {"user": {"endpoints": {"groups": {"method": "GET", "path": endpoint_path}}}},
             },
+            "apiType": api_type,
             "skipCache": False,
         }
 
@@ -88,8 +89,11 @@ def test_relation_schema_changes_produce_distinct_cache_fingerprints() -> None:
     changed_endpoint = normalized_input_fingerprint(
         relation_input(attribute_type="Group", endpoint_path="/Users/{id}/Roles")
     )
+    changed_protocol = normalized_input_fingerprint(
+        relation_input(attribute_type="Group", endpoint_path="/Users/{id}/Groups", api_type="scim")
+    )
 
-    assert len({original, changed_attribute, changed_endpoint}) == 3
+    assert len({original, changed_attribute, changed_endpoint, changed_protocol}) == 4
 
 
 @pytest.mark.asyncio

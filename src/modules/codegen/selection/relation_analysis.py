@@ -17,15 +17,16 @@ attributes of that class pointing at each end. Pure selection - no I/O, no promp
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TypeVar
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from src.documents.normalize import normalize_object_class_name
 from src.modules.codegen.schema import RelationCodegenContext, RelationLinkAttribute
 from src.modules.digester.entities.relations import relation_identity, split_relation_tokens
 from src.modules.digester.schemas import (
     RelationDecision,
+    RelationObservation,
     RelationPairAnalysis,
     RelationRecord,
     RelationsAnalysis,
@@ -41,6 +42,8 @@ logger = logging.getLogger(__name__)
 LOG_SCOPE = "Codegen:Relation"
 
 _LINK_OBJECT_KIND = "link_object"
+
+TProtocolEvidence = TypeVar("TProtocolEvidence", bound=BaseModel)
 
 
 def select_relation_codegen_context(
@@ -94,6 +97,9 @@ def select_relation_codegen_context(
     link_attributes = (
         _link_attributes(analysis, link_object_class, (relation.subject, relation.object)) if link_object_class else []
     )
+    observations = _decision_observations(pair, verdict)
+    scim_evidence = _distinct_protocol_evidence([observation.scim_evidence for observation in observations])
+    sql_evidence = _distinct_protocol_evidence([observation.sql_evidence for observation in observations])
 
     if link_object_class and not link_attributes:
         logger.warning(
@@ -105,10 +111,73 @@ def select_relation_codegen_context(
         )
 
     return RelationCodegenContext(
+        api_type=analysis.api_type,
         kind=verdict.kind,
         link_object_class=link_object_class,
         link_attributes=link_attributes,
+        scim_evidence=scim_evidence,
+        sql_evidence=sql_evidence,
     )
+
+
+def _canonical_attributes(*attributes: str) -> set[str]:
+    """Canonical spelling of the attribute names that distinguish one association."""
+    return {canonical for canonical in ("".join(split_relation_tokens(item)) for item in attributes) if canonical}
+
+
+def _decision_observations(
+    pair: RelationPairAnalysis,
+    verdict: RelationVerdict,
+) -> List[RelationObservation]:
+    """Narrow a pair's evidence to the association actually being generated.
+
+    Observations are stored per class pair, but one pair can carry several associations -
+    membership and ownership between the same User and Group. Passing all of them on would ship
+    the sibling's wire binding to a generator that is told to read the nested SCIM path off
+    ``scimEvidence``, or the sibling's foreign-key columns in the SQL case.
+
+    Attribute names are what tell the associations apart, exactly as in ``relation_identity``.
+    An observation naming no attribute on either side is kept rather than dropped: it cannot be
+    attributed to one association of the pair, and for a link-object relation - whose verdict
+    carries no attributes at all - it is the only evidence there is.
+    """
+    wanted = _canonical_attributes(verdict.subject_attribute, verdict.object_attribute)
+    if not wanted:
+        return list(pair.observations)
+
+    selected = [
+        observation
+        for observation in pair.observations
+        if not (named := _canonical_attributes(observation.source_attribute, observation.target_attribute))
+        or named & wanted
+    ]
+    if len(selected) != len(pair.observations):
+        logger.debug(
+            "[%s] Kept %d of %d observations of %s as evidence for %s",
+            LOG_SCOPE,
+            len(selected),
+            len(pair.observations),
+            pair.pair_key,
+            verdict.name or "<unnamed>",
+        )
+    return selected
+
+
+def _distinct_protocol_evidence(
+    evidence_items: Sequence[Optional[TProtocolEvidence]],
+) -> List[TProtocolEvidence]:
+    """Keep protocol bindings once, preserving the evidence order presented to adjudication."""
+    selected: List[TProtocolEvidence] = []
+    seen: set[str] = set()
+    for evidence in evidence_items:
+        if evidence is None:
+            continue
+        identity = evidence.model_dump_json(by_alias=True, exclude_defaults=True)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        selected.append(evidence)
+    return selected
 
 
 def relation_documentation_classes(

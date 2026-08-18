@@ -1,0 +1,52 @@
+= SQL relationship mapping
+
+The `relationship` declaration exposes a logical ConnId association between two managed SQL
+object classes. Relation analysis supplies the accepted logical subject/object orientation and,
+when available, the physical foreign-key or junction-table evidence.
+
+== Relationship declaration
+
+[source,groovy]
+----
+relationship("AccountToRole") {
+    subject("Account") {
+        attribute("roles") {
+            multiValued true
+            resolver {
+                resolutionType PER_OBJECT
+                search {
+                    attributeFilter("accounts").eq(value)
+                }
+            }
+        }
+    }
+
+    object("Role") {
+        attribute("accounts") {
+            multiValued true
+            resolver {
+                resolutionType PER_OBJECT
+                search {
+                    attributeFilter("roles").eq(value)
+                }
+            }
+        }
+    }
+}
+----
+
+Use logical connector attribute names inside the relationship declaration. Physical table,
+column, constraint, and junction-table names remain separate SQL bindings and must come from the
+extracted SQL evidence; do not derive them from logical names.
+
+== Foreign keys and junction tables
+
+* One composite foreign key is one association binding. Preserve all columns in declared order.
+* A junction table can carry a relationship and additional association data. Use it only when
+  relation analysis identifies it as the link object.
+* A technical, audit, staging, or partitioning foreign key is not an IGA relationship.
+* SQL relationships do not use HTTP endpoints or URL-path resolvers.
+
+The generated block must stay within the supported `relationship`, `subject`, `object`,
+`attribute`, and `resolver` DSL above. Do not invent database-query DSL that is absent from the
+available connector documentation.

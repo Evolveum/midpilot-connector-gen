@@ -13,7 +13,7 @@ from src.jobs import job_input_reference
 from src.modules.codegen.routes.relations import generate_relation_code, get_relation_code_status
 from src.modules.digester.entities.relations import relation_output_fingerprint
 from src.modules.digester.errors import InvalidRelationsOutputError, RelationNotFoundError
-from src.shared.enums import JobStatus
+from src.shared.enums import ApiType, JobStatus
 
 
 def _session_values_reader(**payloads):
@@ -55,7 +55,12 @@ async def test_generate_relation_code_success():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_relation_code(session_id, "user_to_group", db=MagicMock())
+        response = await generate_relation_code(
+            session_id,
+            "user_to_group",
+            api_type=ApiType.REST,
+            db=MagicMock(),
+        )
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
@@ -66,6 +71,7 @@ async def test_generate_relation_code_success():
         mock_schedule.assert_awaited_once()
         schedule_kwargs = mock_schedule.await_args.kwargs
         assert schedule_kwargs["input_payload"]["relationName"] == "user_to_group"
+        assert schedule_kwargs["input_payload"]["apiType"] == "rest"
         assert [item["name"] for item in schedule_kwargs["input_payload"]["relations"]["relations"]] == [
             "user_to_group"
         ]
@@ -74,6 +80,7 @@ async def test_generate_relation_code_success():
         assert schedule_kwargs["worker_kwargs"]["relations"] == job_input_reference("relations")
         assert schedule_kwargs["worker_kwargs"]["relation_name"] == "user_to_group"
         assert schedule_kwargs["worker_kwargs"]["relation_context"] == job_input_reference("relationContext")
+        assert schedule_kwargs["worker_kwargs"]["protocol"] == ApiType.REST
         mock_repo.update_session.assert_awaited_once()
 
 
@@ -115,7 +122,12 @@ async def test_generate_relation_code_selects_relation_by_name():
         session_id = uuid4()
         mock_schedule.return_value = job_id
 
-        response = await generate_relation_code(session_id, "principal_to_membership", db=MagicMock())
+        response = await generate_relation_code(
+            session_id,
+            "principal_to_membership",
+            api_type=ApiType.REST,
+            db=MagicMock(),
+        )
 
     assert response.jobId == job_id
     schedule_kwargs = mock_schedule.await_args.kwargs
@@ -154,6 +166,7 @@ async def test_generate_relation_code_snapshots_link_object_context():
         ]
     }
     analysis_payload = {
+        "apiType": "scim",
         "outputFingerprint": relation_output_fingerprint(relations_payload),
         "pairs": [
             {
@@ -223,10 +236,11 @@ async def test_generate_relation_code_snapshots_link_object_context():
     ):
         mock_schedule.return_value = uuid4()
 
-        await generate_relation_code(uuid4(), "user_to_group", db=MagicMock())
+        await generate_relation_code(uuid4(), "user_to_group", api_type=None, db=MagicMock())
 
     schedule_kwargs = mock_schedule.await_args.kwargs
     assert schedule_kwargs["input_payload"]["relationContext"] == {
+        "apiType": "scim",
         "kind": "link_object",
         "linkObjectClass": "Membership",
         "linkAttributes": [
@@ -234,6 +248,8 @@ async def test_generate_relation_code_snapshots_link_object_context():
             {"attribute": "groupId", "references": "group"},
         ],
     }
+    assert schedule_kwargs["input_payload"]["apiType"] == "scim"
+    assert schedule_kwargs["worker_kwargs"]["protocol"] == ApiType.SCIM
 
 
 @pytest.mark.asyncio
@@ -263,7 +279,12 @@ async def test_generate_relation_code_rejects_missing_display_name():
         session_id = uuid4()
 
         with pytest.raises(InvalidRelationsOutputError) as exc_info:
-            await generate_relation_code(session_id, "user_to_group", db=MagicMock())
+            await generate_relation_code(
+                session_id,
+                "user_to_group",
+                api_type=ApiType.REST,
+                db=MagicMock(),
+            )
 
     assert exc_info.value.status_code == 422
     assert "Stored relationsOutput is invalid" in exc_info.value.message
@@ -298,7 +319,12 @@ async def test_generate_relation_code_rejects_unknown_relation_name():
         session_id = uuid4()
 
         with pytest.raises(RelationNotFoundError) as exc_info:
-            await generate_relation_code(session_id, "principal_to_role", db=MagicMock())
+            await generate_relation_code(
+                session_id,
+                "principal_to_role",
+                api_type=ApiType.REST,
+                db=MagicMock(),
+            )
 
     assert exc_info.value.status_code == 404
     assert "Relation principal_to_role not found" in exc_info.value.message

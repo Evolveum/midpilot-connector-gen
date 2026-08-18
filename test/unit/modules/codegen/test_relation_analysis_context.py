@@ -190,6 +190,148 @@ def test_direct_reference_context_names_no_carrying_class():
     assert context.prompt_payload() == {"kind": "reference"}
 
 
+def test_scim_mapping_reaches_codegen_without_normalizing_the_application_attribute():
+    analysis = _link_object_analysis(kind="reference", subject_attribute="Username", link_object_class="")
+    analysis["apiType"] = "scim"
+    analysis["pairs"][0]["observations"][0].update(
+        {
+            "sourceAttribute": "Username",
+            "evidenceKind": "scim_mapping",
+            "scimEvidence": {
+                "applicationAttribute": "Username",
+                "scimPath": "userName",
+                "vendorDeviation": "Vendor-specific application casing.",
+            },
+        }
+    )
+
+    context = _select_context(analysis, _record(subject_attribute="Username"))
+
+    assert context is not None
+    assert context.api_type.value == "scim"
+    assert context.prompt_payload()["scimEvidence"][0]["applicationAttribute"] == "Username"
+    assert context.prompt_payload()["scimEvidence"][0]["scimPath"] == "userName"
+
+
+def test_sql_foreign_key_binding_reaches_codegen_as_ordered_physical_evidence():
+    analysis = _link_object_analysis(kind="reference", subject_attribute="roles", link_object_class="")
+    analysis["apiType"] = "sql"
+    analysis["pairs"][0]["observations"][0].update(
+        {
+            "sourceAttribute": "roles",
+            "evidenceKind": "sql_foreign_key",
+            "sqlEvidence": {
+                "logicalAttribute": "roles",
+                "sourceTable": "account_role",
+                "sourceColumns": ["tenant_id", "account_id"],
+                "targetTable": "role",
+                "targetColumns": ["tenant_id", "id"],
+                "constraintName": "fk_account_role_role",
+            },
+        }
+    )
+
+    context = _select_context(analysis, _record(subject_attribute="roles"))
+
+    assert context is not None
+    evidence = context.prompt_payload()["sqlEvidence"][0]
+    assert evidence["sourceColumns"] == ["tenant_id", "account_id"]
+    assert evidence["targetColumns"] == ["tenant_id", "id"]
+
+
+def _two_association_scim_analysis() -> Dict[str, Any]:
+    """One User<->Group pair carrying both membership and ownership, each with its own wire path."""
+    membership = _verdict(
+        kind="reference",
+        subject_attribute="groups",
+        object_attribute="members",
+        link_object_class="",
+        name="user_to_group",
+    )
+    ownership = _verdict(
+        kind="reference",
+        subject_attribute="ownedGroups",
+        object_attribute="owners",
+        link_object_class="",
+        name="user_owns_group",
+    )
+    return {
+        "apiType": "scim",
+        "pairs": [
+            _pair(
+                pair_key="group|user",
+                class_a="Group",
+                class_b="User",
+                observations=[
+                    {
+                        "sourceClass": "User",
+                        "targetClass": "Group",
+                        "sourceAttribute": "groups",
+                        "evidenceKind": "scim_reference",
+                        "scimEvidence": {"scimPath": "groups.$ref", "referenceTypes": ["Group"]},
+                    },
+                    {
+                        "sourceClass": "Group",
+                        "targetClass": "User",
+                        "sourceAttribute": "owners",
+                        "evidenceKind": "scim_reference",
+                        "scimEvidence": {"scimPath": "owners.$ref", "referenceTypes": ["User"]},
+                    },
+                ],
+                decisions=[
+                    {"accepted": True, "verdict": membership},
+                    {"accepted": True, "verdict": ownership},
+                ],
+            )
+        ],
+    }
+
+
+def test_protocol_evidence_is_scoped_to_the_generated_association_not_the_class_pair():
+    """A sibling association's wire path must not reach a prompt told to read scimEvidence."""
+    analysis = _two_association_scim_analysis()
+
+    membership = _select_context(analysis, _record(subject_attribute="groups", object_attribute="members"))
+    ownership = _select_context(
+        analysis,
+        _record(name="user_owns_group", subject_attribute="ownedGroups", object_attribute="owners"),
+    )
+
+    assert membership is not None and ownership is not None
+    assert [item.scim_path for item in membership.scim_evidence] == ["groups.$ref"]
+    assert [item.scim_path for item in ownership.scim_evidence] == ["owners.$ref"]
+
+
+def test_evidence_naming_no_attribute_stays_with_every_association_of_the_pair():
+    """It cannot be attributed to one association, and for a link-object relation it is all there is."""
+    analysis = _two_association_scim_analysis()
+    analysis["pairs"][0]["observations"].append(
+        {
+            "sourceClass": "User",
+            "targetClass": "Group",
+            "evidenceKind": "endpoint_path",
+            "scimEvidence": {"vendorDeviation": "Both links are exposed under /Users/{id}/groups."},
+        }
+    )
+
+    context = _select_context(analysis, _record(subject_attribute="groups", object_attribute="members"))
+
+    assert context is not None
+    assert [item.scim_path for item in context.scim_evidence] == ["groups.$ref", ""]
+
+
+def test_link_object_relation_keeps_the_whole_pair_evidence():
+    """Its verdict names no attribute, so there is nothing to scope the evidence by."""
+    analysis = _link_object_analysis()
+    analysis["apiType"] = "sql"
+    analysis["pairs"][0]["observations"][0]["sqlEvidence"] = {"junctionTable": "membership"}
+
+    context = _select_context(analysis, _record())
+
+    assert context is not None
+    assert [item.junction_table for item in context.sql_evidence] == ["membership"]
+
+
 def test_carrying_class_is_recovered_from_the_evidence_when_the_verdict_omits_it():
     """Adjudication can classify link_object without naming the class the pair was built from."""
     context = _select_context(_link_object_analysis(link_object_class=""), _record())

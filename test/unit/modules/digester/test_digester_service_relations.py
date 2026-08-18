@@ -6,7 +6,7 @@
 
 from contextlib import ExitStack
 from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -26,6 +26,7 @@ from src.modules.digester.schemas.relation_analysis import (
     RelationsAnalysis,
     RelationVerdict,
 )
+from src.shared.enums import ApiType
 
 MODULE = "src.modules.digester.extractors.rest.relations"
 CONTEXT = "src.modules.digester.extractors.rest.relation_context"
@@ -86,12 +87,14 @@ async def extract_relations(
     job_id: UUID,
     *,
     class_schema_snapshot: Dict[str, Any] | None = None,
+    api_type: ApiType = ApiType.REST,
 ) -> Dict[str, Any]:
     """Run the worker with an explicit durable schema snapshot."""
     return await run_relations_worker(
         doc_items,
         relevant_object_classes,
         class_schema_snapshot or EMPTY_CLASS_SCHEMA_SNAPSHOT,
+        api_type,
         session_id,
         job_id,
     )
@@ -243,7 +246,9 @@ def _pipeline_patches(
     stack.enter_context(patch(f"{CONTEXT}.async_session_maker", _FakeSessionMaker()))
     stack.enter_context(patch(f"{CONTEXT}.RelevantChunkRepository", return_value=relevant_repo))
     stack.enter_context(patch(f"{MODULE}.run_chunks_concurrently", _harvest_results(harvest)))
-    stack.enter_context(patch(f"{MODULE}.relation_passes.build_harvest_chain", return_value=MagicMock()))
+    mocks["build_harvest_chain"] = stack.enter_context(
+        patch(f"{MODULE}.relation_passes.build_harvest_chain", return_value=MagicMock())
+    )
     mocks["build_sweep_chain"] = stack.enter_context(
         patch(f"{MODULE}.relation_passes.build_class_sweep_chain", return_value=mocks["sweep_chain"])
     )
@@ -269,7 +274,8 @@ def _pipeline_patches(
 # ==================== PROMPT TEMPLATES ====================
 
 
-def test_every_relation_prompt_renders_through_langchain():
+@pytest.mark.parametrize("api_type", list(ApiType))
+def test_every_relation_prompt_profile_renders_through_langchain(api_type: ApiType):
     """
     An unescaped brace in a prompt only fails when the chain is built, at runtime.
 
@@ -278,22 +284,22 @@ def test_every_relation_prompt_renders_through_langchain():
     """
     from langchain_core.prompts import ChatPromptTemplate
 
-    from src.modules.digester.prompts.rest import relations_prompts as prompts
+    prompts = relations_module.get_relation_prompt_set(api_type)
 
     stages = [
         (
-            prompts.get_relation_harvest_system_prompt,
-            prompts.get_relation_harvest_user_prompt,
+            prompts.harvest_system,
+            prompts.harvest_user,
             {"object_classes": "[]", "summary": "s", "tags": "t", "chunk": "c"},
         ),
         (
-            prompts.get_relation_class_sweep_system_prompt,
-            prompts.get_relation_class_sweep_user_prompt,
+            prompts.class_sweep_system,
+            prompts.class_sweep_user,
             {"focus_class": "User", "focus_description": "d", "object_classes": "[]", "documentation": "doc"},
         ),
         (
-            prompts.get_relation_pair_focus_system_prompt,
-            prompts.get_relation_pair_focus_user_prompt,
+            prompts.pair_focus_system,
+            prompts.pair_focus_user,
             {
                 "class_a": "OpaqueA",
                 "class_b": "OpaqueB",
@@ -303,8 +309,8 @@ def test_every_relation_prompt_renders_through_langchain():
             },
         ),
         (
-            prompts.get_relation_adjudication_system_prompt,
-            prompts.get_relation_adjudication_user_prompt,
+            prompts.adjudication_system,
+            prompts.adjudication_user,
             {
                 "class_a": "User",
                 "class_b": "Group",
@@ -315,8 +321,8 @@ def test_every_relation_prompt_renders_through_langchain():
             },
         ),
         (
-            prompts.get_relation_verification_system_prompt,
-            prompts.get_relation_verification_user_prompt,
+            prompts.verification_system,
+            prompts.verification_user,
             {"relation": "{}", "class_metadata": "[]", "observations": "[]", "known_attributes": "{}"},
         ),
     ]
@@ -330,7 +336,157 @@ def test_every_relation_prompt_renders_through_langchain():
         assert "relation_ontology" in messages[0].content
 
 
+def test_scim_prompt_preserves_vendor_attribute_mapping_in_every_decision_stage():
+    prompts = relations_module.get_relation_prompt_set(ApiType.SCIM)
+
+    assert "Username" in prompts.harvest_system
+    assert "userName" in prompts.harvest_system
+    assert "scimEvidence" in prompts.harvest_system
+    assert "Username" in prompts.adjudication_system
+    assert "groups.$ref" in prompts.adjudication_system
+    assert "ResourceType" in prompts.adjudication_system
+    assert "must not be" in prompts.verification_system
+    assert "corrected to `userName`" in prompts.verification_system
+    assert "relationSupportedAfterCorrection=true" in prompts.verification_system
+
+
+def test_sql_prompt_uses_constraints_and_forbids_virtual_endpoints():
+    prompts = relations_module.get_relation_prompt_set(ApiType.SQL)
+
+    assert "FOREIGN KEY" in prompts.harvest_system
+    assert "composite" in prompts.pair_focus_system
+    assert "Never emit `virtual_endpoint`" in prompts.adjudication_system
+    assert "SQL cannot" in prompts.verification_system
+    assert "justify `virtual_endpoint`" in prompts.verification_system
+
+
 # ==================== PIPELINE ====================
+
+
+@pytest.mark.asyncio
+async def test_scim_vendor_mapping_survives_relation_output_and_analysis():
+    """Slack-style logical casing must survive while the standard SCIM path remains visible."""
+    observation = _observation(
+        sourceAttribute="Username",
+        evidenceKind="scim_mapping",
+        scimEvidence={
+            "applicationAttribute": "Username",
+            "scimPath": "userName",
+            "vendorDeviation": "Slack exposes Username as the application attribute.",
+        },
+    )
+    with ExitStack() as stack:
+        mocks = _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [observation]},
+            judgement=_judgement(_verdict(subjectAttribute="Username", objectAttribute="")),
+        )
+
+        result = await extract_relations(
+            DOC_ITEMS,
+            OBJECT_CLASSES,
+            uuid4(),
+            uuid4(),
+            api_type=ApiType.SCIM,
+        )
+
+    assert result["result"]["relations"][0]["subjectAttribute"] == "Username"
+    assert mocks["build_harvest_chain"].call_args.args[0].protocol == ApiType.SCIM
+    analysis = _analysis_output(result)
+    assert analysis["apiType"] == "scim"
+    assert analysis["pairs"][0]["observations"][0]["scimEvidence"] == {
+        "applicationAttribute": "Username",
+        "scimPath": "userName",
+        "referenceTypes": [],
+        "vendorDeviation": "Slack exposes Username as the application attribute.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_scim_user_group_path_correction_preserves_the_real_relation():
+    """A refuter may repair nested paths, but must not drop the supported membership."""
+    user_groups = _observation(
+        sourceClass="User",
+        targetClass="Group",
+        sourceAttribute="$ref",
+        targetAttribute="$ref",
+        multiValued=True,
+        evidenceKind="scim_reference",
+        scimEvidence={
+            "scimPath": "groups.$ref",
+            "referenceTypes": ["Group"],
+        },
+    )
+    group_members = _observation(
+        sourceClass="Group",
+        targetClass="User",
+        sourceAttribute="$ref",
+        multiValued=True,
+        evidenceKind="scim_reference",
+        scimEvidence={
+            "scimPath": "members.$ref",
+            "referenceTypes": ["User", "Group"],
+        },
+    )
+    refutation = RelationRefutation(
+        refuted=True,
+        relation_supported_after_correction=True,
+        reason="The relation exists, but $ref is a nested sub-attribute.",
+        corrected_subject_attribute="groups",
+        corrected_object_attribute="members",
+    )
+
+    with ExitStack() as stack:
+        mocks = _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [user_groups], GROUP_CHUNK: [group_members]},
+            judgement=_judgement(
+                _verdict(
+                    subjectAttribute="$ref",
+                    subjectMultiValued=True,
+                    objectAttribute="$ref",
+                    objectMultiValued=True,
+                )
+            ),
+            refutation=refutation,
+        )
+
+        result = await extract_relations(
+            DOC_ITEMS,
+            OBJECT_CLASSES,
+            uuid4(),
+            uuid4(),
+            api_type=ApiType.SCIM,
+        )
+
+    assert result["result"]["relations"] == [
+        {
+            "name": "user_to_group",
+            "displayName": "User to Group",
+            "shortDescription": "Users belong to groups.",
+            "subject": "user",
+            "subjectAttribute": "groups",
+            "object": "group",
+            "objectAttribute": "members",
+        }
+    ]
+    adjudication_observations = mocks["adjudicate"].await_args.kwargs["observations"]
+    assert {(item.source_class, item.source_attribute) for item in adjudication_observations} == {
+        ("User", "groups"),
+        ("Group", "members"),
+    }
+    verified_relation = mocks["verify"].await_args.kwargs["relation_json"]
+    assert '"subjectAttribute":"groups"' in verified_relation
+    assert '"objectAttribute":"members"' in verified_relation
+
+    decision = _analysis_output(result)["pairs"][0]["decisions"][0]
+    assert decision["accepted"] is True
+    assert decision["refutation"]["refuted"] is False
+    assert decision["refutation"]["relationSupportedAfterCorrection"] is True
+    assert {item["scimEvidence"]["scimPath"] for item in _analysis_output(result)["pairs"][0]["observations"]} == {
+        "groups.$ref",
+        "members.$ref",
+    }
 
 
 @pytest.mark.asyncio
@@ -364,7 +520,7 @@ async def test_opposite_sides_in_two_chunks_yield_one_relation():
     observations = mocks["adjudicate"].await_args.kwargs["observations"]
     assert len(observations) == 2, "both halves must reach the same adjudication call"
     assert mocks["sweep"].await_count == 2
-    mocks["build_sweep_chain"].assert_called_once_with()
+    mocks["build_sweep_chain"].assert_called_once_with(ANY)
     assert all(call.kwargs["chain"] is mocks["sweep_chain"] for call in mocks["sweep"].await_args_list)
 
 
@@ -425,6 +581,60 @@ async def test_refuted_relation_is_dropped_with_a_recorded_reason():
     stored = _analysis_output(result)
     assert stored["pairs"][0]["decisions"][0]["rejectionReason"] == "Only a nearby mention, no reference."
     assert stored["pairs"][0]["accepted"] is False
+
+
+@pytest.mark.asyncio
+async def test_refutation_without_a_named_correction_still_drops_the_relation():
+    """A skeptic that claims a correction but names none must not weaken into an acceptance."""
+    refutation = RelationRefutation(
+        refuted=True,
+        relation_supported_after_correction=True,
+        reason="The documentation never describes a group membership attribute on User.",
+    )
+    assert refutation.relation_supported_after_correction is False
+    assert refutation.refuted is True
+
+    with ExitStack() as stack:
+        _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [_observation()]},
+            judgement=_judgement(_verdict()),
+            refutation=refutation,
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    assert result["result"]["relations"] == []
+    stored = _analysis_output(result)
+    decision = stored["pairs"][0]["decisions"][0]
+    assert decision["accepted"] is False
+    assert decision["rejectionReason"] == "The documentation never describes a group membership attribute on User."
+
+
+@pytest.mark.asyncio
+async def test_one_sided_correction_keeps_the_relation_and_repairs_that_side_only():
+    """Only the named side is replaced; the flag clears `refuted` because a repair exists."""
+    refutation = RelationRefutation(
+        refuted=True,
+        relation_supported_after_correction=True,
+        reason="The association is real, but the subject attribute is a nested sub-attribute.",
+        corrected_subject_attribute="groups",
+    )
+    assert refutation.refuted is False
+
+    with ExitStack() as stack:
+        _pipeline_patches(
+            stack,
+            harvest={USER_CHUNK: [_observation(sourceAttribute="groups", targetAttribute="members")]},
+            judgement=_judgement(_verdict(subjectAttribute="$ref", objectAttribute="members")),
+            refutation=refutation,
+        )
+
+        result = await extract_relations(DOC_ITEMS, OBJECT_CLASSES, uuid4(), uuid4())
+
+    relation = result["result"]["relations"][0]
+    assert relation["subjectAttribute"] == "groups"
+    assert relation["objectAttribute"] == "members"
 
 
 @pytest.mark.asyncio
@@ -841,6 +1051,7 @@ async def test_focused_reread_limit_prefers_pairs_with_high_confidence_classes()
             chunk_lookup,
             uuid4(),
             relations_module.RelationAnalysisStats(),
+            relations_module.get_relation_prompt_set(ApiType.REST),
         )
 
     focus.assert_awaited_once()
