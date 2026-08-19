@@ -12,6 +12,7 @@ registered profile.
 """
 
 import pytest
+from langchain_core.prompts import ChatPromptTemplate
 
 from src.modules.digester.prompts.object_class_intents import get_intent_profile
 from src.modules.digester.prompts.rest.object_class_prompts import get_object_class_system_prompt
@@ -94,6 +95,20 @@ class TestScimExtractionPrompt:
             # no unresolved single-brace template markers should leak into prompt text
             assert "{name}" not in rendered
             assert "{schemaUrn}" not in rendered
+
+    def test_json_examples_do_not_break_chat_prompt_template_construction(self):
+        """The prompt is re-wrapped in an f-string ChatPromptTemplate by
+        build_structured_chain (src/core/llm.py). If the JSON example braces
+        aren't escaped one level deeper than the surrounding f-string, LangChain's
+        f-string parser raises ValueError before any LLM call is made."""
+        for intent in GenerationIntent:
+            rendered = scim_object_class_system_prompt(intent)
+            ChatPromptTemplate.from_messages(
+                [
+                    ("system", f"{rendered}\n\n{{format_instructions}}"),
+                    ("user", "{chunk}"),
+                ]
+            )
 
     def test_combined_prompt_carries_both_domains(self):
         combined = scim_object_class_system_prompt(GenerationIntent.MANAGEMENT_ITSM)

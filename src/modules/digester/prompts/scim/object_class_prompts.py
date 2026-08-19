@@ -60,34 +60,34 @@ For each custom extension or resource, provide:
 
 Example 1 - Slack custom extension:
 ```json
-{{
+{{{{
   "objectClasses": [
-    {{
+    {{{{
       "name": "SlackUserExtension",
       "schemaUrn": "urn:scim:schemas:extension:slack:2.0:User",
       "superclass": "User",
       "abstract": false,
       "embedded": true,
       "description": "Slack-specific user attributes including slack_id and workspace_id"
-    }}
+    }}}}
   ]
-}}
+}}}}
 ```
 
 Example 2 - Custom resource type:
 ```json
-{{
+{{{{
   "objectClasses": [
-    {{
+    {{{{
       "name": "Application",
       "schemaUrn": "urn:scim:schemas:core:2.0:Application",
       "superclass": null,
       "abstract": false,
       "embedded": false,
       "description": "SCIM Application resource representing installed applications in the workspace"
-    }}
+    }}}}
   ]
-}}
+}}}}
 ```
 
 If no custom extensions or additional resources are found in the chunk, return an empty list.
