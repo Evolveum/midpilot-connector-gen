@@ -39,7 +39,8 @@ async def extract_object_classes(
         None,
         alias="intent",
         description=(
-            "Business-domain lens for object-class prioritization (management/itsm); "
+            "Business-domain lens for object-class prioritization "
+            "(management/itsm/management_itsm); "
             "defaults to management when omitted."
         ),
     ),

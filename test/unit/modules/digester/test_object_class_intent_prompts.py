@@ -66,6 +66,13 @@ class TestRestExtractionPrompt:
         # from extraction - only ranking treats them as lower priority.
         assert "Identity / Organization" in itsm
 
+    def test_combined_prompt_carries_both_domains(self):
+        combined = get_object_class_system_prompt(GenerationIntent.MANAGEMENT_ITSM)
+        assert "Identity / User" in combined
+        assert "Role / Entitlement" in combined
+        assert "Ticket / Issue / Case / Work Package" in combined
+        assert "workPackage" in combined
+
 
 class TestScimExtractionPrompt:
     def test_defaults_to_management(self):
@@ -87,6 +94,11 @@ class TestScimExtractionPrompt:
             # no unresolved single-brace template markers should leak into prompt text
             assert "{name}" not in rendered
             assert "{schemaUrn}" not in rendered
+
+    def test_combined_prompt_carries_both_domains(self):
+        combined = scim_object_class_system_prompt(GenerationIntent.MANAGEMENT_ITSM)
+        assert "Application, License, Role, Entitlement" in combined
+        assert "Ticket, Case, Incident, ChangeRequest, WorkPackage" in combined
 
 
 class TestConfidenceRelevancyPrompt:
@@ -112,6 +124,23 @@ class TestConfidenceRelevancyPrompt:
         high_section = management.split("2) MEDIUM")[0]
         assert "User" in high_section
         assert "Role" in high_section
+
+    def test_single_domain_work_package_confidence_rules(self):
+        management = get_object_classes_relevancy_system_prompt(intent=GenerationIntent.MANAGEMENT)
+        itsm = get_object_classes_relevancy_system_prompt(intent=GenerationIntent.ITSM)
+        assert "WorkPackage" in management.split("3) LOW")[1]
+        assert "WorkPackage" in itsm.split("2) MEDIUM")[0]
+
+    def test_combined_ranks_management_and_itsm_core_classes_high(self):
+        combined = get_object_classes_relevancy_system_prompt(intent=GenerationIntent.MANAGEMENT_ITSM)
+        high_section, remainder = combined.split("2) MEDIUM", maxsplit=1)
+        low_section = remainder.split("3) LOW", maxsplit=1)[1]
+
+        for object_class in ("User", "Role", "Ticket", "WorkPackage"):
+            assert object_class in high_section
+        assert "Union rule" in high_section
+        assert "core identity/access class" in low_section
+        assert "core service-management work-item" in low_section
 
     def test_compact_output_contract_still_applies_regardless_of_intent(self):
         compact = get_object_classes_relevancy_system_prompt(compact_output=True, intent=GenerationIntent.ITSM)
@@ -140,3 +169,12 @@ class TestSortingPrompts:
         assert management != itsm
         assert "ITSM work-item entities" in itsm
         assert "IGA/IDM entities" in management
+
+    def test_combined_sorting_keeps_both_high_and_management_first(self):
+        rest_scim = sort_object_classes_system_prompt(GenerationIntent.MANAGEMENT_ITSM)
+        sql = sort_sql_object_classes_system_prompt(GenerationIntent.MANAGEMENT_ITSM)
+
+        assert "Keep both management and ITSM core resources in the HIGH bucket" in rest_scim
+        assert "rank management resources first" in rest_scim
+        assert "Keep both management and ITSM core entities in the high-confidence bucket" in sql
+        assert "put management entities first" in sql

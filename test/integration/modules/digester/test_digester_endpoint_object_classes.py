@@ -97,6 +97,39 @@ async def test_extract_object_classes_propagates_explicit_itsm_intent():
 
 
 @pytest.mark.asyncio
+async def test_extract_object_classes_propagates_combined_intent():
+    """The combined intent reaches the persisted input and worker call unchanged."""
+    session_id = uuid4()
+    job_id = uuid4()
+
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_repo.update_session = AsyncMock()
+
+    with (
+        patch("src.modules.digester.routes.object_classes.SessionRepository", return_value=mock_repo),
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+    ):
+        mock_schedule.return_value = job_id
+
+        await extract_object_classes(
+            session_id,
+            db=MagicMock(),
+            api_type=None,
+            intent=GenerationIntent.MANAGEMENT_ITSM,
+        )
+
+        input_payload = mock_schedule.call_args.kwargs["input_payload"]
+        assert input_payload["intent"] == GenerationIntent.MANAGEMENT_ITSM.value
+
+        worker_kwargs = mock_schedule.call_args.kwargs["worker_kwargs"]
+        assert worker_kwargs["intent"] == GenerationIntent.MANAGEMENT_ITSM
+
+        session_input = mock_repo.update_session.call_args.args[1]
+        assert session_input["objectClassesInput"]["intent"] == GenerationIntent.MANAGEMENT_ITSM.value
+
+
+@pytest.mark.asyncio
 async def test_extract_object_classes_session_not_found():
     """Test extraction with non-existent session."""
     mock_repo = MagicMock()

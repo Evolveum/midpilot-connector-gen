@@ -6,10 +6,10 @@
 Per-intent object-class vocabulary shared by extraction and ranking prompts.
 
 Object-class detection is judged through a business-domain lens (`GenerationIntent`):
-``management`` (IGA/IDM entities) or ``itsm`` (service-management entities). The lens
-changes what an extraction prompt treats as a primary bucket and what the ranking prompts
-treat as core/supporting/peripheral - it does not change which documentation is read or
-add a separate pipeline per intent.
+``management`` (IGA/IDM entities), ``itsm`` (service-management entities), or
+``management_itsm`` (both domains). The lens changes what an extraction prompt treats as
+a primary bucket and what the ranking prompts treat as core/supporting/peripheral - it
+does not change which documentation is read or add a separate pipeline per intent.
 
 Centralizing the wording here means every prompt that needs an intent-specific section
 (REST/SCIM extraction, confidence assignment, REST/SCIM/SQL sorting) picks the one
@@ -128,8 +128,8 @@ _MANAGEMENT_PROFILE = ObjectClassIntentProfile(
         3) LOW (Peripheral/technical artifacts)
         - Transport wrappers and technical DTO/Model/View/Response/Request style types
         - Collection wrappers/plural list containers
-        - Non-identity business artifacts and plumbing classes (e.g. tickets, workflows,
-          service-management objects that are not the target of this intent)
+        - Non-identity business artifacts and plumbing classes (e.g. tickets, WorkPackage,
+          workflows, and service-management objects that are not the target of this intent)
         """
     ).strip("\n"),
     ranking_signals=textwrap.dedent(
@@ -156,7 +156,7 @@ _ITSM_PROFILE = ObjectClassIntentProfile(
         """
         1) **Ticket / Issue / Case**
          Aliases: ticket, issue, case, incident, problem, changeRequest, serviceRequest,
-         workOrder, workItem,...
+         workOrder, workItem, workPackage,...
 
         2) **Queue / Project / Board (containers a ticket belongs to)**
          Aliases: queue, project, board, category, component, team (as a routing target),...
@@ -185,8 +185,8 @@ _ITSM_PROFILE = ObjectClassIntentProfile(
         """
         2) **Additional Resource Types** - New object classes beyond User/Group
            Examples:
-           - Ticket, Case, Incident, ChangeRequest (service-management work items, when
-             exposed as SCIM-like or adjacent custom resources)
+           - Ticket, Case, Incident, ChangeRequest, WorkPackage (service-management work
+             items, when exposed as SCIM-like or adjacent custom resources)
            - Queue, Project, Board (containers a ticket belongs to)
            - Custom domain objects specific to the application
 
@@ -200,7 +200,7 @@ _ITSM_PROFILE = ObjectClassIntentProfile(
         """
         1) HIGH (Core service-management work items)
         - Canonical ticket/work-item classes: Ticket, Issue, Case, Incident, Problem,
-          ChangeRequest, ServiceRequest, WorkOrder
+          ChangeRequest, ServiceRequest, WorkOrder, WorkItem, WorkPackage
         - Containers a ticket is organized by: Queue, Project, Board
         - Link classes connecting tickets to people or containers: Assignment, Watcher
         """
@@ -238,17 +238,141 @@ _ITSM_PROFILE = ObjectClassIntentProfile(
     ).strip("\n"),
     sql_ranking_signals=(
         "Put the most central and first-class ITSM work-item entities first. Prioritize "
-        "tickets/cases/incidents/problems/changes/work orders, the queues/projects that "
-        "contain them, and workflow/status/priority entities. Prefer canonical/base "
+        "tickets/cases/incidents/problems/changes/work orders/work packages, the "
+        "queues/projects that contain them, and workflow/status/priority entities. Prefer canonical/base "
         "classes over technical, partition, helper, audit, scheduler, or per-resource "
         "storage tables. Identity/organization tables (users, groups) that exist only to "
         "support relationships should rank below the core ITSM entities."
     ),
 )
 
+_MANAGEMENT_ITSM_PROFILE = ObjectClassIntentProfile(
+    persona_domain="Identity Governance & Administration (IGA/IDM) and IT Service Management (ITSM)",
+    rest_extraction_buckets=textwrap.dedent(
+        """
+        1) **Identity / User**
+         Aliases: user, identity, account holder, principal, member, person, profile,
+         userProfile, userIdentity, subject, actor, directoryUser, iamUser, team member,...
+
+        2) **Group / Team / Organization / Tenant / Workspace / Project**
+         Aliases: group, team, organization, orgUnit, tenant, company, businessUnit,
+         workspace, project, department,...
+
+        3) **Membership / Assignment (links between identities and containers)**
+         Aliases: membership, memberOf, groupMembership, teamMembership, orgMembership,
+         assignment, affiliation, enrollment,...
+
+        4) **Role / Entitlement / Access Profile / Permission / Policy**
+         Aliases: role, entitlement, accessProfile, permissionSet, privilege, grant,
+         scope, policy, rule,...
+
+        5) **Credential / Auth Factor / Secret**
+         Aliases: credential, password, passkey, token, apiToken, key, certificate,
+         mfaFactor, otpDevice, recoveryCode,...
+
+        6) **Ticket / Issue / Case / Work Package**
+         Aliases: ticket, issue, case, incident, problem, changeRequest, serviceRequest,
+         workOrder, workItem, workPackage,...
+
+        7) **Queue / Project / Board (containers a work item belongs to)**
+         Aliases: queue, project, board, category, component, routingTeam,...
+
+        8) **Workflow / Status / Priority / Type**
+         Aliases: workflow, status, transition, priority, severity, issueType, resolution,...
+
+        9) **Comment / Attachment / Worklog / Activity**
+         Aliases: comment, note, worklog, timeEntry, attachment, changelog, history,...
+
+        10) **SLA / Escalation / Approval / Participant**
+         Aliases: sla, escalationPolicy, approval, approvalStep, assignee, watcher,
+         participant, reporter, requester,...
+
+        11) **Attribute / Field Definitions (custom or per-entity)**
+         Aliases: attribute, field, customField, extendedAttribute, property, trait,
+         schemaField, profileField, organizationField, userField,...
+
+        Extract first-class resources from either domain. Do not demote or omit a resource
+        merely because it belongs primarily to the other domain; confidence assignment is
+        responsible for final prioritization.
+        """
+    ).strip("\n"),
+    scim_custom_guidance=textwrap.dedent(
+        """
+        2) **Additional Resource Types** - New object classes beyond User/Group
+           Examples:
+           - Application, License, Role, Entitlement (identity and access resources)
+           - Ticket, Case, Incident, ChangeRequest, WorkPackage (service-management work items)
+           - Queue, Project, Board (containers a work item belongs to)
+           - Custom domain objects specific to the application
+
+        3) **Custom Domain Objects** - Application-specific management or ITSM concepts
+           Examples:
+           - Workspace, Team, Organization, Permission, Entitlement
+           - Workflow, Status, Priority, SLA, Assignment, Watcher
+        """
+    ).strip("\n"),
+    confidence_high=textwrap.dedent(
+        """
+        1) HIGH (Core management resources and core service-management work items)
+        - Canonical identity/account classes: User, Account, Identity, Principal
+        - Entitlement containers: Role, Group, Entitlement, AccessProfile
+        - Identity links and security boundaries: Membership, Assignment, Organization,
+          Tenant, Workspace, Project
+        - Canonical work-item classes: Ticket, Issue, Case, Incident, Problem,
+          ChangeRequest, ServiceRequest, WorkOrder, WorkItem, WorkPackage
+        - Work-item containers and links: Queue, Board, Project, Assignment, Watcher
+        - Union rule: a class that is core to either management or ITSM is HIGH, even if
+          the other single-domain intent would classify it as LOW
+        """
+    ).strip("\n"),
+    confidence_medium=textwrap.dedent(
+        """
+        2) MEDIUM (Supporting or lifecycle-adjacent resources from either domain)
+        - Atomic permissions, policy/schema/config classes, and alternative lifecycle views
+        - Work-item activity: Comment, Worklog, Attachment, ChangeLog
+        - Process/classification config: Workflow, Status, Priority, Severity, SLA,
+          EscalationPolicy, Approval
+        - Embedded support classes, unless they are a core class in either domain
+        """
+    ).strip("\n"),
+    confidence_low=textwrap.dedent(
+        """
+        3) LOW (Artifacts peripheral to both management and ITSM)
+        - Transport wrappers and technical DTO/Model/View/Response/Request style types
+        - Collection wrappers/plural list containers
+        - Technical plumbing, audit, scheduler, partition, and per-resource storage types
+        - Never classify a core identity/access class or a core service-management work-item
+          class as LOW under this combined intent
+        """
+    ).strip("\n"),
+    ranking_signals=textwrap.dedent(
+        """
+        - Keep both management and ITSM core resources in the HIGH bucket.
+        - Within HIGH, rank management resources first: identities/accounts, groups,
+          organizations, roles/entitlements, and memberships/assignments.
+        - Rank ITSM work items and their containers next: tickets/cases/incidents/problems,
+          changes, work orders/work packages, queues/projects, and workflows/statuses.
+        - Within each domain, prefer first-class, widely referenced resources with stable
+          identifiers and own endpoints.
+        - Prefer canonical/base types over views/variants (but keep exact names as given).
+        - If uncertain, keep the original relative order.
+        """
+    ).strip("\n"),
+    sql_ranking_signals=(
+        "Keep both management and ITSM core entities in the high-confidence bucket. "
+        "Within that bucket, put management entities first: identities/accounts, groups, "
+        "organizations, roles/entitlements, and memberships/assignments. Then rank ITSM "
+        "work items and containers: tickets/cases/incidents/problems/changes, work "
+        "orders/work packages, queues/projects, and workflows/statuses. Within each "
+        "domain, prefer canonical, first-class, broadly referenced tables over technical, "
+        "partition, helper, audit, scheduler, or per-resource storage tables."
+    ),
+)
+
 _PROFILES: Mapping[GenerationIntent, ObjectClassIntentProfile] = {
     GenerationIntent.MANAGEMENT: _MANAGEMENT_PROFILE,
     GenerationIntent.ITSM: _ITSM_PROFILE,
+    GenerationIntent.MANAGEMENT_ITSM: _MANAGEMENT_ITSM_PROFILE,
 }
 
 

@@ -50,7 +50,8 @@ async def extract_object_classes(
         job_id: Job ID for progress tracking
         session_id: Session ID to retrieve api_type from infoMetadata
         api_type_override: Explicit protocol override; falls back to detected apiType when None
-        intent: Business-domain lens for object-class prioritization (management/itsm)
+        intent: Business-domain lens for object-class prioritization
+            (management/itsm/management_itsm)
 
     Returns:
         Dictionary with result and relevantDocumentations

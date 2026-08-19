@@ -20,12 +20,14 @@ class GenerationIntent(StrEnum):
     Does not change which documentation is read or how extraction runs mechanically; it
     changes what counts as a primary object class when object-class detection assigns
     confidence and ranks results (see
-    ``src/modules/digester/prompts/object_class_intents.py``). ``MANAGEMENT`` is the
-    default when a caller does not specify an intent.
+    ``src/modules/digester/prompts/object_class_intents.py``). ``MANAGEMENT_ITSM``
+    treats both domains as primary. ``MANAGEMENT`` is the default when a caller does
+    not specify an intent.
     """
 
     MANAGEMENT = "management"
     ITSM = "itsm"
+    MANAGEMENT_ITSM = "management_itsm"
 
 
 class ProtocolAvailability(StrEnum):

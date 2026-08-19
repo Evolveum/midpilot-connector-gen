@@ -17,26 +17,31 @@ prepare this page).
 
 == 0.1.0
 
-=== 2026-08-19 Object-class detection gains a management/itsm intent
+=== 2026-08-19 Object-class detection gains management and ITSM intents
 
 *Author:* Alexander Brecko
 
-*Description:* `POST /digester/{session_id}/classes` accepts a new optional `intent`
-query parameter (`GenerationIntent`: `management` by default, or `itsm`). The
-intent changes which object classes REST/SCIM extraction treats as primary and
-how the shared confidence and ranking step
-(`aggregation/object_class_ranking.py`) prioritizes them. The `itsm` intent still
-allows identity and management classes to be extracted, but ranks them lower.
+*Description:* `POST /digester/{session_id}/classes` accepts a new optional
+`intent` query parameter (`GenerationIntent`: `management` by default, `itsm`,
+or `management_itsm`). The intent changes which object classes REST/SCIM
+extraction treats as primary and how the shared confidence and ranking step
+(`aggregation/object_class_ranking.py`) prioritizes them. The `itsm` intent
+still allows identity and management classes to be extracted, but ranks them
+lower. The `management_itsm` intent treats core classes from both domains as
+high confidence and orders management classes first within the high bucket.
 
 Per-intent domain vocabulary (extraction buckets, confidence-bucket criteria,
 and ranking signals) is centralized in a new
 `GenerationIntent -> ObjectClassIntentProfile` registry
 (`src/modules/digester/prompts/object_class_intents.py`). REST, SCIM, and SQL
 prompts select only the relevant intent section instead of duplicating wording
-or leaking vocabulary for the other intent into the LLM call. Schema field
-descriptions injected by `PydanticOutputParser.get_format_instructions()` were
-also changed from hardcoded "IGA/IDM" language to intent-neutral wording so they
-do not contradict the `itsm` system prompt.
+or leaking unrelated vocabulary into the LLM call. The combined profile is
+explicit so the opposing low-confidence rules from the two single-domain
+profiles cannot override the union of their high-confidence classes. Schema
+field descriptions injected by
+`PydanticOutputParser.get_format_instructions()` were also changed from
+hardcoded "IGA/IDM" language to intent-neutral wording so they do not contradict
+the `itsm` system prompt.
 
 The `digester.getObjectClass` job's `worker_kwargs` now always includes `intent`,
 and the resolved value is always recorded in `objectClassesInput`. Because the
@@ -45,7 +50,9 @@ the executing process's function signature when claiming the job, a job
 scheduled by an upgraded API process fails with `InvalidJobPayloadError` if a
 worker from the previous snapshot claims it. The reverse direction is safe:
 jobs queued by the previous snapshot run on an upgraded worker because `intent`
-defaults to `management` in the new function signature.
+defaults to `management` in the new function signature. An intermediate worker
+that already accepts `intent` but predates `management_itsm` also cannot claim a
+combined-intent job: durable payload validation rejects the unknown enum value.
 
 There is no database schema change. The public `ObjectClassesResponse` result
 contract (`objectClassesOutput`) is unchanged; only the request-tracking
@@ -95,7 +102,8 @@ WHERE session_id = '<session_id>'
 ----
 +
 A `NULL` result is expected; treat it as `management`. To re-prioritize a
-session under `itsm`, send the following request:
+session under `itsm`, send the following request (use
+`intent=management_itsm` instead for the combined mode):
 +
 [source,http]
 ----
@@ -110,7 +118,8 @@ produced it.
 `digester.getObjectClass` with the SQL query above before rolling back. A job
 scheduled by this snapshot (whose `worker_kwargs` include `intent`) fails with
 `InvalidJobPayloadError` if the previous snapshot's worker claims it because
-that worker has no `intent` parameter.
+that worker has no `intent` parameter. A worker that accepts `intent` but
+predates `management_itsm` similarly rejects a queued combined-intent job.
 . Stop the updated API and workers, deploy the previous snapshot, and restart
 all processes together.
 . No database restore or downgrade is required. Re-submit any
@@ -121,6 +130,6 @@ if a caller still sends it, and always behaves as `management`.
 .Notes & References
 * *Related PR:* Not assigned.
 * *Docs:* `docs/pipeline/digester.adoc` ("Object-class intent (`management` /
-`itsm`)").
+`itsm` / `management_itsm`)").
 * *Affected configs:* None. `intent` uses the new `GenerationIntent` vocabulary
 (`src/shared/enums.py`) and has no environment/configuration dependency.

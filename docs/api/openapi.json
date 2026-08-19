@@ -1364,10 +1364,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Business-domain lens for object-class prioritization (management/itsm); defaults to management when omitted.",
+              "description": "Business-domain lens for object-class prioritization (management/itsm/management_itsm); defaults to management when omitted.",
               "title": "Intent"
             },
-            "description": "Business-domain lens for object-class prioritization (management/itsm); defaults to management when omitted."
+            "description": "Business-domain lens for object-class prioritization (management/itsm/management_itsm); defaults to management when omitted."
           }
         ],
         "responses": {
@@ -5543,10 +5543,11 @@
         "type": "string",
         "enum": [
           "management",
-          "itsm"
+          "itsm",
+          "management_itsm"
         ],
         "title": "GenerationIntent",
-        "description": "Business-domain lens object-class detection is judged through.\n\nDoes not change which documentation is read or how extraction runs mechanically; it\nchanges what counts as a primary object class when object-class detection assigns\nconfidence and ranks results (see\n``src/modules/digester/prompts/object_class_intents.py``). ``MANAGEMENT`` is the\ndefault when a caller does not specify an intent."
+        "description": "Business-domain lens object-class detection is judged through.\n\nDoes not change which documentation is read or how extraction runs mechanically; it\nchanges what counts as a primary object class when object-class detection assigns\nconfidence and ranks results (see\n``src/modules/digester/prompts/object_class_intents.py``). ``MANAGEMENT_ITSM``\ntreats both domains as primary. ``MANAGEMENT`` is the default when a caller does\nnot specify an intent."
       },
       "GroovyCodePayload": {
         "properties": {

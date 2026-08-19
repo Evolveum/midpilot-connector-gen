@@ -14,7 +14,7 @@ judge.
 That judgement is the shared
 :func:`~src.modules.digester.aggregation.object_class_ranking.deduplicate_and_sort_sql_object_classes`
 step, which assigns the confidence level and final ordering for the requested
-``GenerationIntent`` (management/itsm). SQL therefore behaves like SCIM: a deterministic contract
+``GenerationIntent`` (management/itsm/management_itsm). SQL therefore behaves like SCIM: a deterministic contract
 in, the same ranking out.
 """
 

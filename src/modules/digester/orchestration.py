@@ -58,10 +58,11 @@ async def schedule_object_class_extraction(
     Schedule object-class extraction and persist ``objectClassesJobId`` /
     ``objectClassesInput`` in the session.
 
-    ``intent`` is the business-domain lens (management/itsm) used to prioritize object
-    classes; it defaults to ``management`` when omitted. Unlike ``apiType``, the
-    resolved value is always recorded on ``objectClassesInput`` (not only when
-    explicitly passed) so every new job pointer states which intent produced it.
+    ``intent`` is the business-domain lens (management, itsm, or management_itsm) used
+    to prioritize object classes; it defaults to ``management`` when omitted. Unlike
+    ``apiType``, the resolved value is always recorded on ``objectClassesInput`` (not
+    only when explicitly passed) so every new job pointer states which intent produced
+    it.
     """
     effective_intent = intent or GenerationIntent.MANAGEMENT
     input_payload: dict[str, Any] = {"skipCache": skip_cache, "intent": effective_intent.value}
