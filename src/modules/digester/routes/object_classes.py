@@ -17,7 +17,7 @@ from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.digester import orchestration, results
 from src.modules.digester.schemas import ObjectClassesResponse
 from src.session.access import ensure_session_exists, resolve_session_job_id
-from src.shared.enums import ApiType
+from src.shared.enums import ApiType, GenerationIntent
 
 router = APIRouter(tags=["Digester: Object Classes"])
 
@@ -35,6 +35,14 @@ async def extract_object_classes(
         alias="apiType",
         description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
     ),
+    intent: Optional[GenerationIntent] = Query(
+        None,
+        alias="intent",
+        description=(
+            "Business-domain lens for object-class prioritization (management/itsm); "
+            "defaults to management when omitted."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -51,6 +59,7 @@ async def extract_object_classes(
         session_id=session_id,
         skip_cache=skip_cache,
         api_type=api_type,
+        intent=intent,
     )
 
     return JobCreateResponse(jobId=job_id)

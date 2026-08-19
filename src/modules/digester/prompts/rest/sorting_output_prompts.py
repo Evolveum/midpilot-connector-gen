@@ -4,28 +4,32 @@
 
 import textwrap
 
-# Sort ingObject classes
-sort_object_classes_system_prompt = textwrap.dedent("""
+from src.modules.digester.prompts.object_class_intents import get_intent_profile
+from src.shared.enums import GenerationIntent
+
+
+# Sorting object classes
+def sort_object_classes_system_prompt(intent: GenerationIntent = GenerationIntent.MANAGEMENT) -> str:
+    profile = get_intent_profile(intent)
+    return textwrap.dedent(f"""
     <instruction>
-    You are ranking extracted domain object classes by **IGA/IDM primacy** within one confidence bucket.
+    You are ranking extracted domain object classes by **{profile.persona_domain} primacy**
+    within one confidence bucket.
     You receive:
       - A list of object classes (already deduplicated) that all share the same confidence bucket.
       - Each item includes: name, description, superclass, abstract, embedded, relevant, confidence.
 
     Rank the list so that the most central, frequently-referenced, and first-class
-    IGA/IDM entities come first. Use these signals:
+    entities for this intent come first. Use these signals:
 
-    - Centrality to identity & access (users, groups/teams, orgs/tenants, roles/entitlements, memberships/assignments).
-    - First-class schema presence: stable identifiers, own endpoints, referenced widely.
-    - Cross-cutting impact (e.g., roles vs. per-resource helper types).
-    - Prefer canonical/base types over views/variants (but keep exact names as given).
-    - If uncertain, keep the original relative order.
+    {profile.ranking_signals}
 
     Use the structured output schema (ObjectClassesRankedResponse with field alias 'objectClasses').
     Do not edit, invent, or drop items—only reorder the same set.
     No comments or prose.
     </instruction>
 """)
+
 
 sort_object_classes_user_prompt = textwrap.dedent("""
     Confidence bucket: {confidence_level}

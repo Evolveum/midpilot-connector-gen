@@ -36,6 +36,7 @@ from src.modules.digester.schemas import (
 )
 from src.shared.coerce import as_dict_list
 from src.shared.content_types import is_conndev_documentation_item
+from src.shared.enums import GenerationIntent
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ async def extract_scim_object_classes(
     doc_items: List[dict],
     job_id: UUID,
     session_id: UUID,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
 ) -> Dict[str, Any]:
     """
     Extract SCIM object classes using guided approach:
@@ -141,7 +143,7 @@ async def extract_scim_object_classes(
     extraction_chain = (
         build_chunk_extraction_chain(
             pydantic_model=ObjectClassesExtendedResponse,
-            system_prompt=scim_object_class_system_prompt,
+            system_prompt=scim_object_class_system_prompt(intent),
             user_prompt=scim_object_class_user_prompt,
         )
         if llm_doc_items
@@ -158,6 +160,7 @@ async def extract_scim_object_classes(
             scim_base_schemas=scim_schemas,
             chunk_metadata=chunk_metadata,
             extraction_chain=extraction_chain,
+            intent=intent,
         )
         return custom_classes, has_relevant_data
 
@@ -223,6 +226,7 @@ async def extract_scim_object_classes(
         [*base_classes, *embedded_classes, *all_custom_classes],
         job_id,
         class_to_chunks,
+        intent=intent,
     )
 
     logger.info("[Digester:ObjectClasses] Completed. Total classes: %d", len(result.objectClasses))
@@ -309,6 +313,7 @@ async def extract_custom_scim_classes(
     chunk_metadata: Optional[Dict[str, Any]] = None,
     scim_base_schemas: Optional[Dict[str, Any]] = None,
     extraction_chain: Any | None = None,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
 ) -> Tuple[List[ExtendedObjectClass], bool]:
     """
     Extract ONLY custom SCIM extensions and additional resources from a chunk.
@@ -320,6 +325,8 @@ async def extract_custom_scim_classes(
         chunk_id: Optional chunk UUID
         scim_base_schemas: Optional SCIM base schemas for LLM context
         extraction_chain: Optional pre-built reusable extraction chain
+        intent: Business-domain lens; only used to build the system prompt when
+            ``extraction_chain`` is not already provided.
 
     Returns:
         - List of custom ExtendedObjectClass instances
@@ -332,7 +339,9 @@ async def extract_custom_scim_classes(
     extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
         pydantic_model=ObjectClassesExtendedResponse,
-        system_prompt=scim_object_class_system_prompt,
+        # Only actually used by extract_single_chunk to build a chain when extraction_chain is
+        # None; skip rebuilding the (intent-specific) prompt string on every chunk otherwise.
+        system_prompt=scim_object_class_system_prompt(intent) if extraction_chain is None else "",
         user_prompt=scim_object_class_user_prompt,
         parse_fn=parse_fn,
         logger_prefix="[Digester:SCIM:ObjectClasses] ",

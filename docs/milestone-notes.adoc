@@ -1,0 +1,126 @@
+= Milestone to Milestone upgrade instructions and notes
+:toc:
+:page-nav-title: Milestone upgrade instructions
+
+WARNING: This page is written for internal purposes, and we don't give any
+guarantee that these instructions and notes are complete, nor that it will work
+at all... but we do our best.
+
+This page contains the upgrade instructions and incompatibility changes that
+could cause problems during upgrades from a milestone to a milestone, before
+the "in development" version is released. Useful for continuous testing of the
+developed features etc.
+
+The upgrade instructions between releases are in the
+https://docs.evolveum.com/midpoint/release/[release notes] (for midPilot we will
+prepare this page).
+
+== 0.1.0
+
+=== 2026-08-19 Object-class detection gains a management/itsm intent
+
+*Author:* Alexander Brecko
+
+*Description:* `POST /digester/{session_id}/classes` accepts a new optional `intent`
+query parameter (`GenerationIntent`: `management` by default, or `itsm`). The
+intent changes which object classes REST/SCIM extraction treats as primary and
+how the shared confidence and ranking step
+(`aggregation/object_class_ranking.py`) prioritizes them. The `itsm` intent still
+allows identity and management classes to be extracted, but ranks them lower.
+
+Per-intent domain vocabulary (extraction buckets, confidence-bucket criteria,
+and ranking signals) is centralized in a new
+`GenerationIntent -> ObjectClassIntentProfile` registry
+(`src/modules/digester/prompts/object_class_intents.py`). REST, SCIM, and SQL
+prompts select only the relevant intent section instead of duplicating wording
+or leaking vocabulary for the other intent into the LLM call. Schema field
+descriptions injected by `PydanticOutputParser.get_format_instructions()` were
+also changed from hardcoded "IGA/IDM" language to intent-neutral wording so they
+do not contradict the `itsm` system prompt.
+
+The `digester.getObjectClass` job's `worker_kwargs` now always includes `intent`,
+and the resolved value is always recorded in `objectClassesInput`. Because the
+durable job queue serializes `worker_kwargs` when scheduling and binds them to
+the executing process's function signature when claiming the job, a job
+scheduled by an upgraded API process fails with `InvalidJobPayloadError` if a
+worker from the previous snapshot claims it. The reverse direction is safe:
+jobs queued by the previous snapshot run on an upgraded worker because `intent`
+defaults to `management` in the new function signature.
+
+There is no database schema change. The public `ObjectClassesResponse` result
+contract (`objectClassesOutput`) is unchanged; only the request-tracking
+`objectClassesInput` gains the new `intent` field.
+
+.Required Upgrade Steps
+. Stop accepting new `POST /digester/{session_id}/classes` requests before
+deploying.
+. Using the deployment's PostgreSQL client, run the following query:
++
+[source,sql]
+----
+SELECT job_id, status
+FROM jobs
+WHERE job_type = 'digester.getObjectClass'
+  AND status IN ('queued', 'running')
+ORDER BY created_at;
+----
++
+Continue only when the query returns no rows.
+. Deploy and restart the API and every worker process together so all processes
+use the same `digester.getObjectClass` worker contract.
+. No database migration or development-database recreation is required because
+no table or persisted-session schema changed.
+. Submit one classes request and run the following query:
++
+[source,sql]
+----
+SELECT input ->> 'intent' AS intent
+FROM jobs
+WHERE job_type = 'digester.getObjectClass'
+ORDER BY created_at DESC
+LIMIT 1;
+----
++
+Confirm that it returns `management` (or the requested value) and that the job
+finishes successfully.
+. For a session whose `objectClassesInput` predates this change and has no
+`intent` key, run the following query:
++
+[source,sql]
+----
+SELECT value ->> 'intent' AS intent
+FROM session_data
+WHERE session_id = '<session_id>'
+  AND key = 'objectClassesInput';
+----
++
+A `NULL` result is expected; treat it as `management`. To re-prioritize a
+session under `itsm`, send the following request:
++
+[source,http]
+----
+POST /digester/{session_id}/classes?intent=itsm&skipCache=true
+----
++
+This is necessary because a previous result is cached under the input that
+produced it.
+
+.Rollback Procedure (If Upgrade Fails)
+. Stop accepting new `POST /digester/{session_id}/classes` requests and drain
+`digester.getObjectClass` with the SQL query above before rolling back. A job
+scheduled by this snapshot (whose `worker_kwargs` include `intent`) fails with
+`InvalidJobPayloadError` if the previous snapshot's worker claims it because
+that worker has no `intent` parameter.
+. Stop the updated API and workers, deploy the previous snapshot, and restart
+all processes together.
+. No database restore or downgrade is required. Re-submit any
+`digester.getObjectClass` request that was still queued or running when rollback
+started. The previous snapshot ignores the now-unused `intent` query parameter
+if a caller still sends it, and always behaves as `management`.
+
+.Notes & References
+* *Related PR:* Not assigned.
+* *Docs:* `docs/pipeline/digester.adoc` ("Object-class intent (`management` /
+`itsm`)").
+* *Affected configs:* None. `intent` uses the new `GenerationIntent` vocabulary
+(`src/shared/enums.py`) and has no environment/configuration dependency.

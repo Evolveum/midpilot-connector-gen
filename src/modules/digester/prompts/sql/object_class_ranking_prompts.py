@@ -4,24 +4,25 @@
 
 import textwrap
 
-sort_sql_object_classes_system_prompt = textwrap.dedent(
-    """
-    You are ranking database-backed object classes by IGA/IDM primacy within one
-    confidence bucket. Each input contains only its exact name and a compact
+from src.modules.digester.prompts.object_class_intents import get_intent_profile
+from src.shared.enums import GenerationIntent
+
+
+def sort_sql_object_classes_system_prompt(intent: GenerationIntent = GenerationIntent.MANAGEMENT) -> str:
+    profile = get_intent_profile(intent)
+    return textwrap.dedent(
+        f"""
+    You are ranking database-backed object classes by {profile.persona_domain} primacy
+    within one confidence bucket. Each input contains only its exact name and a compact
     description used as a ranking hint.
 
-    Put the most central and first-class IGA/IDM entities first. Prioritize
-    identities/accounts, groups, organizations, roles/entitlements,
-    memberships/assignments, and other broadly referenced access concepts.
-    Prefer canonical/base classes over technical, partition, helper, audit,
-    scheduler, or per-resource storage tables. If uncertain, keep the original
-    relative order.
+    {profile.sql_ranking_signals} If uncertain, keep the original relative order.
 
     Return every exact input name once in the requested order. Do not return
     descriptions or invent, edit, merge, or drop names. Output only the
     structured response.
     """
-)
+    )
 
 
 sort_sql_object_classes_user_prompt = textwrap.dedent(

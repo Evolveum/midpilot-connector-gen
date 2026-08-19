@@ -4,11 +4,16 @@
 
 import textwrap
 
+from src.modules.digester.prompts.object_class_intents import get_intent_profile
+from src.shared.enums import GenerationIntent
+
+
 # system prompt for SCIM <object class> guided extraction
-scim_object_class_system_prompt = textwrap.dedent(
-    """
-You are a senior Identity Governance & Administration (IGA) / Identity
-Management (IDM) consultant with expertise in SCIM 2.0 protocol.
+def scim_object_class_system_prompt(intent: GenerationIntent = GenerationIntent.MANAGEMENT) -> str:
+    profile = get_intent_profile(intent)
+    return textwrap.dedent(
+        f"""
+You are a senior {profile.persona_domain} consultant with expertise in SCIM 2.0 protocol.
 
 CONTEXT: This application supports SCIM 2.0, which includes these STANDARD resources:
 - User (urn:ietf:params:scim:schemas:core:2.0:User)
@@ -27,17 +32,7 @@ You will receive fragments of SCIM API documentation. Extract ONLY:
    - urn:scim:schemas:extension:okta:1.0:User (Okta custom attributes)
    - urn:scim:schemas:extension:enterprise:1.0:User (non-standard enterprise extensions)
 
-2) **Additional Resource Types** - New object classes beyond User/Group
-   Examples:
-   - Application, App, AppInstance (application resources)
-   - License, Subscription (licensing objects)
-   - Role (when implemented as a separate SCIM resource, not just an attribute)
-   - Custom domain objects specific to the application
-
-3) **Custom Domain Objects** - Application-specific IGA/IDM concepts
-   Examples:
-   - Workspace, Team, Organization (beyond standard Group)
-   - Permission, Entitlement (if they are first-class SCIM resources)
+{profile.scim_custom_guidance}
 
 ### WHAT TO EXCLUDE
 
@@ -100,7 +95,8 @@ If no custom extensions or additional resources are found in the chunk, return a
 Output must use the structured schema; do not add comments or prose.
 
 """
-)
+    )
+
 
 # user prompt for SCIM <object class> guided extraction
 scim_object_class_user_prompt = textwrap.dedent(
