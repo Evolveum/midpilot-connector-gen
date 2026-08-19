@@ -16,15 +16,16 @@ from src.modules.digester.schemas import (
     ExtendedObjectClass,
     ObjectClassesExtendedResponse,
 )
+from src.shared.enums import GenerationIntent
 
 logger = logging.getLogger(__name__)
 
 
-def build_object_class_extraction_chain() -> Any:
+def build_object_class_extraction_chain(intent: GenerationIntent = GenerationIntent.MANAGEMENT) -> Any:
     """Build the reusable chain for REST object-class extraction across chunks."""
     return build_chunk_extraction_chain(
         pydantic_model=ObjectClassesExtendedResponse,
-        system_prompt=get_object_class_system_prompt,
+        system_prompt=get_object_class_system_prompt(intent),
         user_prompt=get_object_class_user_prompt,
     )
 
@@ -35,6 +36,7 @@ async def extract_object_classes_raw(
     chunk_id: Optional[UUID] = None,
     chunk_metadata: Optional[Dict[str, Any]] = None,
     extraction_chain: Any | None = None,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
 ) -> Tuple[List[ExtendedObjectClass], bool]:
     """
     Extract raw object classes from a single chunk with one LLM call.
@@ -46,6 +48,8 @@ async def extract_object_classes_raw(
         chunk_id: Optional chunk UUID.
         chunk_metadata: Optional metadata for summary/tag prompt context.
         extraction_chain: Optional pre-built reusable extraction chain.
+        intent: Business-domain lens; only used to build the system prompt when
+            ``extraction_chain`` is not already provided.
     """
 
     def parse_fn(result: ObjectClassesExtendedResponse) -> List[ExtendedObjectClass]:
@@ -54,7 +58,9 @@ async def extract_object_classes_raw(
     extracted, has_relevant_data = await extract_single_chunk(
         schema=schema,
         pydantic_model=ObjectClassesExtendedResponse,
-        system_prompt=get_object_class_system_prompt,
+        # Only actually used by extract_single_chunk to build a chain when extraction_chain is
+        # None; skip rebuilding the (intent-specific) prompt string on every chunk otherwise.
+        system_prompt=get_object_class_system_prompt(intent) if extraction_chain is None else "",
         user_prompt=get_object_class_user_prompt,
         parse_fn=parse_fn,
         logger_prefix="[Digester:REST:ObjectClasses] ",

@@ -87,8 +87,8 @@ class ObjectClassWithConfidence(BaseObjectClass):
     confidence: ConfidenceLevel = Field(
         ...,
         description=(
-            "Reliability/confidence for IGA/IDM relevance assigned in dedicated enrichment. "
-            "Allowed values: low, medium, high."
+            "Reliability/confidence for the requested intent's prioritization, assigned in dedicated "
+            "enrichment. Allowed values: low, medium, high."
         ),
     )
 
@@ -97,7 +97,9 @@ class ObjectClassConfidenceAssignment(CamelCaseModel):
     """Compact LLM-only confidence assignment used for large SQL schemas."""
 
     name: str = Field(..., description="Exact input object-class name.")
-    confidence: ConfidenceLevel = Field(..., description="Assigned IGA/IDM confidence: low, medium, or high.")
+    confidence: ConfidenceLevel = Field(
+        ..., description="Assigned confidence for the requested intent: low, medium, or high."
+    )
 
 
 class RankedObjectClass(ExtendedObjectClass):
@@ -108,11 +110,11 @@ class RankedObjectClass(ExtendedObjectClass):
 
     relevant: RelevantLevel = Field(
         default=RelevantLevel.TRUE,
-        description="IGA/IDM relevance marker for the final payload.",
+        description="Relevance marker for the final payload.",
     )
     confidence: ConfidenceLevel = Field(
         ...,
-        description="Reliability/confidence level for IGA/IDM relevance (low/medium/high).",
+        description="Reliability/confidence level for the requested intent's prioritization (low/medium/high).",
     )
 
 
@@ -202,7 +204,7 @@ class ObjectClassNameOrderResponse(CamelCaseModel):
 
     object_classes: List[str] = Field(
         default_factory=list,
-        description="Every input object-class name exactly once, ordered by IGA/IDM importance.",
+        description="Every input object-class name exactly once, ordered by importance for the requested intent.",
     )
 
     @property

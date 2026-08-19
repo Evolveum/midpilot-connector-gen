@@ -41,7 +41,7 @@ from src.modules.digester.selection import (
 )
 from src.session.errors import SessionNotFoundError
 from src.session.info_metadata import get_session_base_api_url, resolve_effective_api_type
-from src.shared.enums import ApiType
+from src.shared.enums import ApiType, GenerationIntent
 
 _DOCUMENTATION_WAIT_TIMEOUT_SECONDS = 750
 
@@ -52,12 +52,20 @@ async def schedule_object_class_extraction(
     session_id: UUID,
     skip_cache: bool,
     api_type: Optional[ApiType],
+    intent: Optional[GenerationIntent] = None,
 ) -> UUID:
     """
     Schedule object-class extraction and persist ``objectClassesJobId`` /
     ``objectClassesInput`` in the session.
+
+    ``intent`` is the business-domain lens (management, itsm, or management_itsm) used
+    to prioritize object classes; it defaults to ``management`` when omitted. Unlike
+    ``apiType``, the resolved value is always recorded on ``objectClassesInput`` (not
+    only when explicitly passed) so every new job pointer states which intent produced
+    it.
     """
-    input_payload: dict[str, Any] = {"skipCache": skip_cache}
+    effective_intent = intent or GenerationIntent.MANAGEMENT
+    input_payload: dict[str, Any] = {"skipCache": skip_cache, "intent": effective_intent.value}
     if api_type is not None:
         input_payload["apiType"] = api_type.value
 
@@ -71,6 +79,7 @@ async def schedule_object_class_extraction(
         worker_kwargs={
             "session_id": session_id,
             "api_type_override": api_type,
+            "intent": effective_intent,
         },
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",

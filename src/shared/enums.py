@@ -13,6 +13,23 @@ class ApiType(StrEnum):
     SQL = "sql"
 
 
+class GenerationIntent(StrEnum):
+    """
+    Business-domain lens object-class detection is judged through.
+
+    Does not change which documentation is read or how extraction runs mechanically; it
+    changes what counts as a primary object class when object-class detection assigns
+    confidence and ranks results (see
+    ``src/modules/digester/prompts/object_class_intents.py``). ``MANAGEMENT_ITSM``
+    treats both domains as primary. ``MANAGEMENT`` is the default when a caller does
+    not specify an intent.
+    """
+
+    MANAGEMENT = "management"
+    ITSM = "itsm"
+    MANAGEMENT_ITSM = "management_itsm"
+
+
 class ProtocolAvailability(StrEnum):
     """
     Whether a detected integration protocol is generally usable by the customer or gated.

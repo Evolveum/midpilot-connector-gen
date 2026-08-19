@@ -214,7 +214,15 @@ def test_collect_sql_tables_preserves_generated_column_metadata(schema):
 def _ranking_passthrough() -> AsyncMock:
     """Stand in for the shared ranking step, echoing the candidates it was handed."""
 
-    async def _rank(candidates, _job_id, _class_to_chunks=None, *, class_to_chunks=None, ranking_descriptions=None):
+    async def _rank(
+        candidates,
+        _job_id,
+        _class_to_chunks=None,
+        *,
+        class_to_chunks=None,
+        ranking_descriptions=None,
+        intent=None,
+    ):
         return ObjectClassesResponse(
             objectClasses=[
                 {
