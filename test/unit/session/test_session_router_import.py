@@ -6,8 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
-from src.session.errors import InvalidDocumentationImportError
+from src.session.errors import DocumentationImportConflictError, InvalidDocumentationImportError
 from src.session.routes import documentation
 from src.session.schema import Documentation
 
@@ -74,3 +75,43 @@ async def test_import_documentation_raises_domain_error_before_deleting_existing
     assert expected_message in exc_info.value.message
     doc_repo.remove_documentation_items_by_doc_id.assert_not_awaited()
     doc_repo.import_documentation_items_for_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_import_documentation_conflict_does_not_leak_database_message() -> None:
+    """A unique-constraint collision must surface as a domain 409, not as driver text."""
+    session_id = uuid4()
+    documentation_id = uuid4()
+    document = Documentation.model_validate({"chunks": [_chunk_payload(uuid4())]})
+
+    driver_message = (
+        'duplicate key value violates unique constraint "documentation_chunks_pkey"\n'
+        "DETAIL:  Key (chunk_id)=(2f1c8b04) already exists."
+    )
+    integrity_error = IntegrityError(
+        "INSERT INTO documentation_chunks (chunk_id, session_id) VALUES ($1, $2)",
+        {},
+        Exception(driver_message),
+    )
+
+    session_repo = MagicMock()
+    session_repo.session_exists = AsyncMock(return_value=True)
+
+    with (
+        patch("src.session.routes.documentation.SessionRepository", return_value=session_repo),
+        patch("src.session.routes.documentation.DocumentationRepository", return_value=MagicMock()),
+        patch(
+            "src.session.routes.documentation.service.import_documentation_document",
+            AsyncMock(side_effect=integrity_error),
+        ),
+        pytest.raises(DocumentationImportConflictError) as exc_info,
+    ):
+        await documentation.import_documentation_by_id(document, session_id, documentation_id, db=MagicMock())
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "documentation_import_conflict"
+    assert str(documentation_id) in exc_info.value.message
+    # Constraint names, columns and row values stay in the log, never in the response.
+    assert "documentation_chunks_pkey" not in exc_info.value.message
+    assert "DETAIL" not in exc_info.value.message
+    assert "INSERT INTO" not in exc_info.value.message

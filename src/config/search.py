@@ -4,7 +4,7 @@
 
 from datetime import timedelta
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 
 class SearchSettings(BaseModel):
@@ -20,5 +20,5 @@ class SearchSettings(BaseModel):
 class BraveSettings(BaseModel):
     """Configuration for Brave Search API."""
 
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
     endpoint: str = "https://api.search.brave.com/res/v1/web/search"

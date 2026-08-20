@@ -72,7 +72,7 @@ def search_with_brave(query: str, *, max_results: int = DEFAULT_MAX_RESULTS) -> 
     """Search via Brave Search API."""
     logger.info("Web search method: Brave API")
     endpoint = config.brave.endpoint
-    api_key = config.brave.api_key
+    api_key = config.brave.api_key.get_secret_value()
 
     if not endpoint or not api_key:
         logger.warning("Brave API not configured (missing endpoint or api_key).")
