@@ -17,6 +17,56 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-08-20 Security upgrade of pypdf, aiohttp, h2 and cryptography
+
+*Author:* Alexander Brecko
+
+*Description:* `pip-audit` reported seven advisories against packages pinned in
+`uv.lock`. All are fixed by upgrading:
+
+* `pypdf` 6.14.2 -> 6.16.1 - a crafted PDF
+  exhausts memory during text extraction. Reachable through every upload to
+  `POST /session/{session_id}/documentation`.
+* `aiohttp` 3.14.1 -> 3.14.3 - out-of-bounds read on a malformed server response, plus
+  request smuggling. Reachable through the scraper, which fetches
+  caller-supplied URLs.
+* `h2` 4.3.0 -> 4.4.1 - duplicate `Host` headers are a
+  smuggling primitive; relevant because Hypercorn serves h2c unless
+  `APP__SSL_CERTFILE` and `APP__SSL_KEYFILE` are set.
+* `cryptography` 49.0.0 -> 50.0.0 - precautionary, no PKCS#7
+  code path here. Drags `pyopenssl` 26.3.0 -> 26.4.0 with it.
+
+`pyproject.toml` also raises the `pypdf` floor to `>=6.15.0` and adds
+`aiohttp>=3.14.3`, which `src/integrations/web/fetch.py` imports but previously
+received only through `crawl4ai`.
+
+No application code, API contract, or database schema changed.
+
+.Required Upgrade Steps
+. Deploy `pyproject.toml` and `uv.lock` together, then run `uv sync --locked` in
+every environment. Five packages change.
+. Rebuild the application image. Its own `uv sync --locked --no-dev` picks up the
+new versions, so no base-image release is needed; rebuild `Dockerfile.base` when
+convenient to refresh its stale cache layer.
+. No database migration, development-database recreation, or configuration
+change is required - nothing persisted or configurable changed.
+. Validate with `uv run poe qa` and a `pip-audit` run over
+`uv export --no-dev`, then upload one PDF and confirm the
+`documentation.processUpload` job finishes.
+
+.Rollback Procedure (If Upgrade Fails)
+. Revert the `pyproject.toml` and `uv.lock` commit, run `uv sync --locked`, and
+rebuild the image.
+. No database restore or job drain is needed; queued jobs stay claimable by
+either snapshot.
+. Rolling back restores the reachable `pypdf` and `aiohttp` advisories - prefer
+pinning the single failing package forward instead.
+
+.Notes & References
+* *Related PR:* Not assigned.
+* *Affected files:* `pyproject.toml`, `uv.lock`.
+* *Affected configs:* None.
+
 === 2026-08-19 Object-class detection gains management and ITSM intents
 
 *Author:* Alexander Brecko

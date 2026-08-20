@@ -4,7 +4,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 
 class LangfuseSettings(BaseModel):
@@ -20,7 +20,7 @@ class LangfuseSettings(BaseModel):
     """
 
     public_key: str = "emptykey"
-    secret_key: str = "emptykey"
+    secret_key: SecretStr = SecretStr("emptykey")
     host: str = ""
     ca_cert_file: Optional[str] = None
     tracing_enabled: bool = False

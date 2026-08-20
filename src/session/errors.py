@@ -52,3 +52,22 @@ class InvalidDocumentationImportError(AppError):
 
     status_code = 422
     code = "invalid_documentation_import"
+
+
+class DocumentationImportConflictError(AppError):
+    """Raised when a documentation import collides with existing persisted data.
+
+    The most common cause is a ``chunkId`` that already exists: chunk ids are
+    globally unique across sessions. The underlying database message is logged
+    rather than returned, so constraint and column names stay internal.
+    """
+
+    status_code = 409
+    code = "documentation_import_conflict"
+
+    def __init__(self, documentation_id: UUID):
+        super().__init__(
+            f"Documentation {documentation_id} could not be imported because it conflicts with "
+            "existing data. The most likely cause is a chunkId that is already used by another "
+            "document; chunk ids must be unique across all sessions."
+        )
