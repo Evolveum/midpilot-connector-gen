@@ -10,10 +10,10 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from src.common.enums import JobStatus
 from src.modules.digester.extractors.info import extract_info_metadata as extract_info_metadata_worker
 from src.modules.digester.routes.metadata import extract_metadata, get_metadata_status, restore_metadata
 from src.modules.digester.schemas import InfoResponse
+from src.shared.enums import JobStatus
 
 
 # METADATA
@@ -37,6 +37,7 @@ async def test_extract_metadata_success():
     assert response.jobId == job_id
     mock_repo.session_exists.assert_awaited_once_with(session_id)
     mock_schedule.assert_awaited_once_with(
+        db=mock_repo.db,
         job_type="digester.getInfoMetadata",
         input_payload={"skipCache": True},
         dynamic_input_enabled=True,

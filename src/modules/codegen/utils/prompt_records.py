@@ -6,10 +6,13 @@ import json
 from collections.abc import Iterator
 from typing import Any, Dict, List, Mapping
 
-from src.common.utils.coerce import as_dict_list, as_mapping
-from src.common.utils.normalize import normalize_scim_path_for_lookup
+from src.documents.normalize import normalize_scim_path_for_lookup
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
+from src.shared.coerce import as_dict_list, as_mapping
+
+_ATTRIBUTE_MAPPING_OPTIONAL_FIELDS = ("scimAttribute", "connectorExposed")
+_SQL_ATTRIBUTE_BINDING_FIELDS = ("table", "column", "primaryKey")
 
 
 def _attribute_items(payload: AttributesPayload) -> Iterator[tuple[str, Any]]:
@@ -46,12 +49,12 @@ def build_attribute_context_records(payload: AttributesPayload) -> List[Dict[str
     return records
 
 
-def build_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
-    """
-    Convert attributes into records for ConnID/native-schema mapping prompts.
-
-    Note: Accepts either 'updatable' or legacy 'updateable' keys; 'updatable' wins.
-    """
+def _build_attribute_mapping_records(
+    payload: AttributesPayload,
+    *,
+    optional_fields: tuple[str, ...],
+) -> List[Dict[str, Any]]:
+    """Build the shared attribute mapping shape with explicitly selected protocol fields."""
     records: List[Dict[str, Any]] = []
     for norm_key, info in _attribute_items(payload):
         data = _attribute_data(info)
@@ -67,12 +70,32 @@ def build_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str
             "multivalue": bool(data.get("multivalue", False)),
             "returnedByDefault": bool(data.get("returnedByDefault", True)),
         }
-        for optional_key in ("scimAttribute", "connectorExposed"):
+        for optional_key in optional_fields:
             if optional_key in data:
                 record[optional_key] = data[optional_key]
         records.append(record)
     records.sort(key=lambda r: str(r.get("name", "")).lower())
     return records
+
+
+def build_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
+    """
+    Convert attributes into records for protocol-neutral mapping prompts.
+
+    Note: Accepts either 'updatable' or legacy 'updateable' keys; 'updatable' wins.
+    """
+    return _build_attribute_mapping_records(
+        payload,
+        optional_fields=_ATTRIBUTE_MAPPING_OPTIONAL_FIELDS,
+    )
+
+
+def build_sql_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
+    """Convert attributes into native-schema records that retain physical SQL bindings."""
+    return _build_attribute_mapping_records(
+        payload,
+        optional_fields=_ATTRIBUTE_MAPPING_OPTIONAL_FIELDS + _SQL_ATTRIBUTE_BINDING_FIELDS,
+    )
 
 
 def extract_scim_context(payload: AttributesPayload) -> Dict[str, Any]:

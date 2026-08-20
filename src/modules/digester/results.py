@@ -19,19 +19,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import JobStatus
-from src.common.errors import (
-    InvalidObjectClassesOutputError,
-    ObjectClassesNotFoundError,
-    ObjectClassNotFoundError,
-)
-from src.common.schema import JobStatusMultiDocResponse
-from src.common.session.session import get_session_documentation
-from src.common.utils.normalize import normalize_object_class_name
-from src.common.utils.relevance import (
-    build_chunk_to_doc_map,
+from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.database.repositories.session_repository import SessionRepository
+from src.documents.normalize import normalize_object_class_name
+from src.documents.relevance import (
     extract_attribute_relevance_rows,
     extract_endpoint_relevance_rows,
     extract_object_class_relevance_rows,
@@ -43,13 +34,20 @@ from src.common.utils.relevance import (
     strip_endpoints_relevance,
     strip_object_class_relevance,
 )
+from src.jobs.schema import JobStatusMultiDocResponse
 from src.modules.digester.entities.object_classes import find_object_class, upsert_object_class
+from src.modules.digester.errors import (
+    InvalidObjectClassesOutputError,
+    ObjectClassesNotFoundError,
+    ObjectClassNotFoundError,
+)
 from src.modules.digester.schemas import (
     AttributeResponse,
     ConnectivityEndpointResponse,
     EndpointResponse,
     ObjectClassesResponse,
 )
+from src.shared.enums import JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -274,8 +272,7 @@ async def store_attributes_override(
                 "attributes": stripped_attributes,
                 "scimContext": scim_context,
             }
-    chunk_to_doc = build_chunk_to_doc_map(await get_session_documentation(session_id, db=db))
-    relevance_rows = extract_attribute_relevance_rows(attributes, result_key, chunk_to_doc=chunk_to_doc)
+    relevance_rows = extract_attribute_relevance_rows(attributes, result_key)
     await _store_result_with_relevance(db, repo, session_id, result_key, stripped_attributes, relevance_rows)
 
 

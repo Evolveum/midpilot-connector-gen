@@ -10,15 +10,14 @@ from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.chunking import get_neighboring_tokens
-from src.common.enums import JobStage
-from src.common.jobs import (
+from src.core.llm import build_structured_chain, get_default_llm, raise_if_llm_unavailable
+from src.core.observability.langfuse import langfuse_handler
+from src.documents.chunking import get_neighboring_tokens
+from src.documents.normalize import normalize_endpoint_key
+from src.jobs import (
     append_job_error,
     update_job_progress,
 )
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain, get_default_llm, raise_if_llm_unavailable
-from src.common.utils.normalize import build_relevant_documentations, normalize_chunk_pair, normalize_endpoint_key
 from src.modules.digester.aggregation.merges import merge_endpoint_candidates
 from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.extraction.llm_execution import (
@@ -33,6 +32,8 @@ from src.modules.digester.prompts.rest.endpoints_prompts import (
     get_endpoints_user_prompt,
 )
 from src.modules.digester.schemas import EndpointParamInfo, ExtractedEndpointInfo, ExtractedEndpointResponse
+from src.shared.enums import JobStage
+from src.shared.normalize import build_relevant_documentations, normalize_chunk_pair
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +253,7 @@ async def extract_endpoints(
                 raise_if_llm_unavailable(exc, context="extracting endpoints")
                 error_message = f"[Digester:Endpoints] Failed to process chunk {chunk_id}: {exc}"
                 logger.exception(error_message)
-                append_job_error(job_id, error_message)
+                await append_job_error(job_id, error_message)
                 return []
 
         tasks = [_process_chunk(i, chunk_text) for i, chunk_text in enumerate(chunks_for_chunk_id)]

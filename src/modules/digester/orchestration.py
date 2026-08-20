@@ -20,12 +20,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import ApiType
-from src.common.errors import ObjectClassesNotFoundError, SessionNotFoundError
-from src.common.jobs import persist_job_pointer, schedule_coroutine_job
-from src.common.utils.session_info_metadata import get_session_base_api_url
+from src.database.repositories.session_repository import SessionRepository
+from src.documents.filtering.filter import filter_documentation_items
+from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
+from src.modules.digester.errors import EndpointExtractionNotSupportedError, ObjectClassesNotFoundError
 from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.extractors.auth import extract_auth
 from src.modules.digester.extractors.connectivity_endpoint import extract_connectivity_endpoint
@@ -41,6 +39,9 @@ from src.modules.digester.selection import (
     connectivity_endpoint_input,
     metadata_input,
 )
+from src.session.errors import SessionNotFoundError
+from src.session.info_metadata import get_session_base_api_url, resolve_effective_api_type
+from src.shared.enums import ApiType, GenerationIntent
 
 _DOCUMENTATION_WAIT_TIMEOUT_SECONDS = 750
 
@@ -51,16 +52,25 @@ async def schedule_object_class_extraction(
     session_id: UUID,
     skip_cache: bool,
     api_type: Optional[ApiType],
+    intent: Optional[GenerationIntent] = None,
 ) -> UUID:
     """
     Schedule object-class extraction and persist ``objectClassesJobId`` /
     ``objectClassesInput`` in the session.
+
+    ``intent`` is the business-domain lens (management, itsm, or management_itsm) used
+    to prioritize object classes; it defaults to ``management`` when omitted. Unlike
+    ``apiType``, the resolved value is always recorded on ``objectClassesInput`` (not
+    only when explicitly passed) so every new job pointer states which intent produced
+    it.
     """
-    input_payload: dict[str, Any] = {"skipCache": skip_cache}
+    effective_intent = intent or GenerationIntent.MANAGEMENT
+    input_payload: dict[str, Any] = {"skipCache": skip_cache, "intent": effective_intent.value}
     if api_type is not None:
         input_payload["apiType"] = api_type.value
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="digester.getObjectClass",
         input_payload=input_payload,
         dynamic_input_enabled=True,
@@ -69,6 +79,7 @@ async def schedule_object_class_extraction(
         worker_kwargs={
             "session_id": session_id,
             "api_type_override": api_type,
+            "intent": effective_intent,
         },
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
@@ -104,6 +115,7 @@ async def schedule_attribute_extraction(
 
     total_chunks = len(selection.relevant_chunks)
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="digester.getObjectClassSchema",
         input_payload={
             "documentationItems": selection.doc_items,
@@ -112,7 +124,12 @@ async def schedule_attribute_extraction(
             "skipCache": skip_cache,
         },
         worker=extract_attributes,
-        worker_args=(selection.doc_items, object_class, session_id, selection.relevant_chunks),
+        worker_args=(
+            job_input_reference("documentationItems"),
+            object_class,
+            session_id,
+            job_input_reference("relevantDocumentations"),
+        ),
         worker_kwargs={"api_type_override": api_type},
         initial_stage="chunking",
         initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
@@ -142,7 +159,14 @@ async def schedule_endpoint_extraction(
     """
     Schedule endpoint extraction for one normalized object class and persist
     ``{object_class}EndpointsJobId`` / ``{object_class}EndpointsInput``.
+
+    A SQL session is rejected before a job is created: a database connector has no
+    endpoints, so there is nothing to extract and nothing downstream consumes the result.
     """
+    protocol = await resolve_effective_api_type(session_id, api_type)
+    if protocol == ApiType.SQL:
+        raise EndpointExtractionNotSupportedError(object_class, protocol.value)
+
     selection = await DocumentationSelector(db).build_endpoint_plan(
         repo=repo,
         session_id=session_id,
@@ -152,6 +176,7 @@ async def schedule_endpoint_extraction(
 
     total_chunks = len(selection.relevant_chunks)
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="digester.getEndpoints",
         input_payload={
             "documentationItems": selection.doc_items,
@@ -162,11 +187,16 @@ async def schedule_endpoint_extraction(
             "skipCache": skip_cache,
         },
         worker=extract_endpoints,
-        worker_args=(selection.doc_items, object_class, session_id, selection.relevant_chunks),
+        worker_args=(
+            job_input_reference("documentationItems"),
+            object_class,
+            session_id,
+            job_input_reference("relevantDocumentations"),
+        ),
         worker_kwargs={
-            "base_api_url": selection.base_api_url,
+            "base_api_url": job_input_reference("baseApiUrl"),
             "api_type_override": api_type,
-            "object_class_flags": selection.object_class_flags,
+            "object_class_flags": job_input_reference("objectClassFlags"),
         },
         initial_stage="chunking",
         initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
@@ -210,6 +240,7 @@ async def schedule_relations_extraction(
         raise ObjectClassesNotFoundError(session_id)
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="digester.getRelations",
         input_payload={
             "documentationItems": doc_items,
@@ -217,7 +248,10 @@ async def schedule_relations_extraction(
             "skipCache": skip_cache,
         },
         worker=extract_relations,
-        worker_args=(doc_items, relevant),
+        worker_args=(
+            job_input_reference("documentationItems"),
+            job_input_reference("relevantObjectClasses"),
+        ),
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
@@ -246,6 +280,7 @@ async def schedule_connectivity_endpoint_extraction(
     """
     base_api_url = await get_session_base_api_url(session_id)
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="digester.getConnectivityEndpoint",
         input_payload={
             "baseApiUrl": base_api_url,
@@ -284,6 +319,7 @@ async def schedule_auth_extraction(
 ) -> UUID:
     """Schedule auth extraction and persist ``authJobId`` / ``authInput``."""
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="digester.getAuth",
         input_payload={"skipCache": skip_cache},
         dynamic_input_enabled=True,
@@ -310,6 +346,7 @@ async def schedule_metadata_extraction(
 ) -> UUID:
     """Schedule metadata extraction and persist ``metadataJobId`` / ``metadataInput``."""
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="digester.getInfoMetadata",
         input_payload={"skipCache": skip_cache},
         dynamic_input_enabled=True,

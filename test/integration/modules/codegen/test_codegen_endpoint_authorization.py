@@ -9,13 +9,14 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
+from src.jobs import job_input_reference
 from src.modules.codegen.routes.authorization import (
     generate_authorization,
     get_authorization_status,
     override_authorization,
 )
 from src.modules.codegen.schema import AuthorizationCodegenInput, GroovyCodePayload
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio
@@ -88,7 +89,9 @@ async def test_generate_authorization_includes_preferred_authorizations_in_job_a
     _, schedule_kwargs = mock_schedule.call_args
     assert schedule_kwargs["job_type"] == "codegen.getAuthorization"
     assert schedule_kwargs["input_payload"]["preferredAuthorizations"] == enriched_preferred_authorizations
-    assert schedule_kwargs["worker_kwargs"]["preferred_authorizations"] == enriched_preferred_authorizations
+    assert schedule_kwargs["worker_kwargs"]["preferred_authorizations"] == job_input_reference(
+        "preferredAuthorizations"
+    )
     assert schedule_kwargs["session_result_key"] == "authorizationOutput"
 
     update_args = mock_repo.update_session.call_args[0]
@@ -144,7 +147,9 @@ async def test_generate_authorization_allows_midpoint_authorization_when_auth_ou
     _, schedule_kwargs = mock_schedule.call_args
     assert schedule_kwargs["input_payload"]["auth"] == {"auth": []}
     assert schedule_kwargs["input_payload"]["preferredAuthorizations"] == expected_preferred_authorizations
-    assert schedule_kwargs["worker_kwargs"]["preferred_authorizations"] == expected_preferred_authorizations
+    assert schedule_kwargs["worker_kwargs"]["preferred_authorizations"] == job_input_reference(
+        "preferredAuthorizations"
+    )
 
 
 @pytest.mark.asyncio

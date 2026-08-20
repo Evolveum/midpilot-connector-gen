@@ -7,9 +7,10 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.errors import SessionNotFoundError
+from src.jobs import job_input_reference
 from src.modules.discovery.router import discover_candidate_links
 from src.modules.discovery.schema import CandidateLinksInput
+from src.session.errors import SessionNotFoundError
 
 
 @pytest.mark.asyncio
@@ -33,10 +34,11 @@ async def test_discover_candidate_links_success():
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_schedule.assert_awaited_once_with(
+            db=mock_repo.db,
             job_type="discovery.getCandidateLinks",
             input_payload=request.model_dump(by_alias=True),
             worker=ANY,
-            worker_args=(request, session_id),
+            worker_args=(job_input_reference(), session_id),
             initial_stage="queue",
             initial_message="Queued candidate links discovery",
             session_id=session_id,

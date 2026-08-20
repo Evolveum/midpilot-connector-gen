@@ -6,6 +6,7 @@
 
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
 
@@ -14,11 +15,10 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.enums import JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain, get_default_llm, make_basic_chain
-from src.common.utils.normalize import canonical_object_class_key
+from src.core.llm import build_structured_chain, get_default_llm, make_basic_chain
+from src.core.observability.langfuse import langfuse_handler
+from src.documents.normalize import canonical_object_class_key
+from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.merges import merge_object_classes
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.extraction.llm_execution import invoke_llm
@@ -30,15 +30,22 @@ from src.modules.digester.prompts.rest.sorting_output_prompts import (
     sort_object_classes_system_prompt,
     sort_object_classes_user_prompt,
 )
+from src.modules.digester.prompts.sql.object_class_ranking_prompts import (
+    sort_sql_object_classes_system_prompt,
+    sort_sql_object_classes_user_prompt,
+)
 from src.modules.digester.schemas import (
     BaseObjectClass,
     ExtendedObjectClass,
     FinalObjectClass,
+    ObjectClassConfidenceAssignmentsResponse,
     ObjectClassesConfidenceResponse,
     ObjectClassesRankedResponse,
     ObjectClassesResponse,
+    ObjectClassNameOrderResponse,
     RankedObjectClass,
 )
+from src.shared.enums import GenerationIntent, JobStage
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +61,22 @@ def _alpha_sort_key(obj_class: BaseObjectClass) -> str:
     return obj_class.name.strip().lower()
 
 
-def _to_confidence_payload(obj_class: ExtendedObjectClass) -> Dict[str, Any]:
+def _ranking_description(
+    obj_class: ExtendedObjectClass,
+    ranking_descriptions: Mapping[str, str] | None,
+) -> str:
+    if ranking_descriptions is None:
+        return obj_class.description
+    return ranking_descriptions.get(canonical_object_class_key(obj_class.name), obj_class.description)
+
+
+def _to_confidence_payload(
+    obj_class: ExtendedObjectClass,
+    ranking_descriptions: Mapping[str, str] | None = None,
+) -> Dict[str, Any]:
     return {
         "name": obj_class.name,
-        "description": obj_class.description,
+        "description": _ranking_description(obj_class, ranking_descriptions),
     }
 
 
@@ -106,23 +125,48 @@ def _to_final_object_class(
 async def _sort_bucket_by_importance(
     object_classes: List[RankedObjectClass],
     confidence_level: ConfidenceLevel,
+    *,
+    sql_compact: bool = False,
+    ranking_descriptions: Mapping[str, str] | None = None,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
 ) -> List[RankedObjectClass]:
     if len(object_classes) <= 1:
         return list(object_classes)
 
     llm_sort = get_default_llm()
-    sort_chain = build_structured_chain(
-        sort_object_classes_system_prompt,
-        sort_object_classes_user_prompt,
-        ObjectClassesRankedResponse,
-        llm=llm_sort,
-        user_role="human",
-    )
+    if sql_compact:
+        sort_chain = build_structured_chain(
+            sort_sql_object_classes_system_prompt(intent),
+            sort_sql_object_classes_user_prompt,
+            ObjectClassNameOrderResponse,
+            llm=llm_sort,
+            user_role="human",
+        )
+    else:
+        sort_chain = build_structured_chain(
+            sort_object_classes_system_prompt(intent),
+            sort_object_classes_user_prompt,
+            ObjectClassesRankedResponse,
+            llm=llm_sort,
+            user_role="human",
+        )
 
     original_map = {obj.name.strip().lower(): obj for obj in object_classes}
     alphabetical_bucket = sorted(object_classes, key=lambda item: item.name.strip().lower())
-    items_for_sorting = [item.model_dump(by_alias=True, exclude={"endpoints", "attributes"}) for item in object_classes]
-    items_json = json.dumps(items_for_sorting)
+    if sql_compact:
+        items_for_sorting = [
+            {
+                "name": item.name,
+                "description": _ranking_description(item, ranking_descriptions),
+            }
+            for item in object_classes
+        ]
+        items_json = json.dumps(items_for_sorting, separators=(",", ":"))
+    else:
+        items_for_sorting = [
+            item.model_dump(by_alias=True, exclude={"endpoints", "attributes"}) for item in object_classes
+        ]
+        items_json = json.dumps(items_for_sorting)
 
     try:
         logger.info(
@@ -130,12 +174,12 @@ async def _sort_bucket_by_importance(
             confidence_level,
             len(object_classes),
         )
-        sort_result = cast(
-            ObjectClassesRankedResponse,
-            await invoke_llm(
-                sort_chain,
-                {"items_json": items_json, "confidence_level": confidence_level},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:SortObjectClasses"),
+        sort_result = await invoke_llm(
+            sort_chain,
+            {"items_json": items_json, "confidence_level": confidence_level},
+            config=RunnableConfig(
+                callbacks=[langfuse_handler],
+                run_name="Digester:SortSqlObjectClasses" if sql_compact else "Digester:SortObjectClasses",
             ),
         )
         logger.debug("[Digester:ObjectClasses] Bucket sorting LLM raw (%s): %r", confidence_level, (sort_result or ""))
@@ -144,8 +188,13 @@ async def _sort_bucket_by_importance(
             used: set[str] = set()
             sorted_bucket: List[RankedObjectClass] = []
 
-            for ranked in sort_result.objectClasses:
-                key = ranked.name.strip().lower()
+            ordered_names = (
+                sort_result.objectClasses
+                if sql_compact
+                else [ranked.name for ranked in cast(ObjectClassesRankedResponse, sort_result).objectClasses]
+            )
+            for ranked_name in ordered_names:
+                key = ranked_name.strip().lower()
                 if key in original_map and key not in used:
                     sorted_bucket.append(original_map[key])
                     used.add(key)
@@ -171,12 +220,50 @@ async def deduplicate_and_sort_object_classes(
     all_object_classes: List[ExtendedObjectClass],
     job_id: UUID,
     class_to_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
+) -> ObjectClassesResponse:
+    """Apply the shared REST/SCIM confidence and ordering contract."""
+    return await _deduplicate_and_sort_object_classes(
+        all_object_classes,
+        job_id,
+        class_to_chunks,
+        sql_compact=False,
+        intent=intent,
+    )
+
+
+async def deduplicate_and_sort_sql_object_classes(
+    all_object_classes: List[ExtendedObjectClass],
+    job_id: UUID,
+    class_to_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ranking_descriptions: Mapping[str, str] | None = None,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
+) -> ObjectClassesResponse:
+    """Apply the same final ranking semantics with compact SQL-only LLM contracts."""
+    return await _deduplicate_and_sort_object_classes(
+        all_object_classes,
+        job_id,
+        class_to_chunks,
+        sql_compact=True,
+        ranking_descriptions=ranking_descriptions,
+        intent=intent,
+    )
+
+
+async def _deduplicate_and_sort_object_classes(
+    all_object_classes: List[ExtendedObjectClass],
+    job_id: UUID,
+    class_to_chunks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    *,
+    sql_compact: bool,
+    ranking_descriptions: Mapping[str, str] | None = None,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
 ) -> ObjectClassesResponse:
     """Deduplicate classes, assign LLM confidence, and apply final shared ordering.
 
     Final ordering:
     1. Confidence buckets: high -> medium -> low
-    2. High-confidence classes: LLM ranking by IGA/IDM importance
+    2. High-confidence classes: LLM ranking by importance for ``intent``
     3. Medium/low-confidence classes: alphabetical
     4. If LLM sorting fails: alphabetical fallback within the high bucket
     """
@@ -199,29 +286,41 @@ async def deduplicate_and_sort_object_classes(
             message="Assigning confidence levels to object classes",
         )
 
-        items_for_confidence = [_to_confidence_payload(oc) for oc in dedup_list]
+        items_for_confidence = [
+            _to_confidence_payload(oc, ranking_descriptions if sql_compact else None) for oc in dedup_list
+        ]
         llm_filter = get_default_llm()
-        confidence_parser: PydanticOutputParser[ObjectClassesConfidenceResponse] = PydanticOutputParser(
-            pydantic_object=ObjectClassesConfidenceResponse
-        )
+        confidence_model = ObjectClassConfidenceAssignmentsResponse if sql_compact else ObjectClassesConfidenceResponse
+        confidence_parser: PydanticOutputParser[Any] = PydanticOutputParser(pydantic_object=confidence_model)
 
         developer_message = SystemMessage(
-            content=get_object_classes_relevancy_system_prompt() + "\n\n" + confidence_parser.get_format_instructions()
+            content=get_object_classes_relevancy_system_prompt(compact_output=sql_compact, intent=intent)
+            + "\n\n"
+            + confidence_parser.get_format_instructions()
         )
         developer_message.additional_kwargs = {"__openai_role__": "developer"}
 
-        user_message = HumanMessage(content=get_object_classes_relevancy_user_prompt(json.dumps(items_for_confidence)))
+        confidence_json = (
+            json.dumps(items_for_confidence, separators=(",", ":")) if sql_compact else json.dumps(items_for_confidence)
+        )
+        user_message = HumanMessage(
+            content=get_object_classes_relevancy_user_prompt(
+                confidence_json,
+                source_description="a database schema" if sql_compact else "API documentation",
+                intent=intent,
+            )
+        )
         user_message.additional_kwargs = {"__openai_role__": "user"}
 
         chat_prompts = ChatPromptTemplate.from_messages([developer_message, user_message])
         confidence_chain = make_basic_chain(prompt=chat_prompts, llm=llm_filter, parser=confidence_parser)
 
-        confidence_result = cast(
-            ObjectClassesConfidenceResponse,
-            await invoke_llm(
-                confidence_chain,
-                {},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:ObjectClassConfidence"),
+        confidence_result = await invoke_llm(
+            confidence_chain,
+            {},
+            config=RunnableConfig(
+                callbacks=[langfuse_handler],
+                run_name=("Digester:SqlObjectClassConfidence" if sql_compact else "Digester:ObjectClassConfidence"),
             ),
         )
         logger.info("[Digester:ObjectClasses] Confidence LLM raw: %r", (confidence_result or ""))
@@ -242,7 +341,7 @@ async def deduplicate_and_sort_object_classes(
         confidence_assignment_failed = True
         error_message = f"[Digester:ObjectClasses] Confidence assignment failed: {exc}"
         logger.exception(error_message)
-        append_job_error(job_id, error_message)
+        await append_job_error(job_id, error_message)
         await update_job_progress(
             job_id,
             stage=JobStage.relevancy_filtering_finished,
@@ -265,7 +364,7 @@ async def deduplicate_and_sort_object_classes(
         await update_job_progress(
             job_id,
             stage=JobStage.sorting,
-            message="Sorting object classes by confidence and IGA/IDM importance",
+            message="Sorting object classes by confidence and importance",
         )
 
         sorted_ranked: List[RankedObjectClass] = []
@@ -274,7 +373,13 @@ async def deduplicate_and_sort_object_classes(
             if not bucket:
                 continue
             if level == ConfidenceLevel.HIGH:
-                sorted_bucket = await _sort_bucket_by_importance(bucket, level)
+                sorted_bucket = await _sort_bucket_by_importance(
+                    bucket,
+                    level,
+                    sql_compact=sql_compact,
+                    ranking_descriptions=ranking_descriptions,
+                    intent=intent,
+                )
             else:
                 sorted_bucket = sorted(bucket, key=lambda item: item.name.strip().lower())
             sorted_ranked.extend(sorted_bucket)
@@ -304,7 +409,7 @@ async def deduplicate_and_sort_object_classes(
     except Exception as exc:
         error_message = f"[Digester:ObjectClasses] Sorting failed, using deterministic fallback: {exc}"
         logger.exception(error_message)
-        append_job_error(job_id, error_message)
+        await append_job_error(job_id, error_message)
 
     fallback_ranked = sorted(
         ranked_list,

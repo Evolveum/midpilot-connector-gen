@@ -10,13 +10,11 @@ from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.enums import JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain
 from src.config import config
+from src.core.llm import build_structured_chain
+from src.core.observability.langfuse import langfuse_handler
+from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
-from src.modules.digester.enums import auth_match_key
 from src.modules.digester.extraction.chunk_extraction import (
     extract_single_chunk,
     run_all_items_build_parallel,
@@ -45,6 +43,8 @@ from src.modules.digester.schemas import (
     DocSequenceItem,
 )
 from src.modules.digester.selection import build_chunk_id_to_doc_id, collect_relevant_chunks
+from src.shared.auth import auth_match_key
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +173,7 @@ async def build_auth_items(auth_info: List[AuthProcessingInfo], job_id: UUID) ->
         return built_auth_items
     except Exception as e:
         await update_job_progress(job_id, stage=JobStage.building_failed, message=f"Auth item building failed: {e}")
-        append_job_error(job_id, f"[Digester:Auth] Building failed: {e}")
+        await append_job_error(job_id, f"[Digester:Auth] Building failed: {e}")
         return []
 
 
@@ -389,7 +389,7 @@ async def deduplicate_auth(
     except Exception as e:
         logger.error("[Digester:Auth] Deduplication LLM call failed. Error: %s", e)
         await update_job_progress(job_id, stage=JobStage.deduplication_failed, message=f"Deduplication failed: {e}")
-        append_job_error(job_id, f"[Digester:Auth] Deduplication LLM call failed: {e}")
+        await append_job_error(job_id, f"[Digester:Auth] Deduplication LLM call failed: {e}")
         return auth_list
 
 
@@ -458,7 +458,7 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
     except Exception as e:
         logger.error("[Digester:Auth] Sorting pass failed. Error: %s", e)
         await update_job_progress(job_id, stage=JobStage.sorting_failed, message=f"Sorting failed: {e}")
-        append_job_error(job_id, f"[Digester:Auth] Sorting failed: {e}")
+        await append_job_error(job_id, f"[Digester:Auth] Sorting failed: {e}")
 
         return AuthResponse[AuthInfo](auth=dedup_list)
 
@@ -543,13 +543,11 @@ async def extract_auth(doc_items: List[dict], job_id: UUID):
 
     logger.info(
         "[Digester:Auth] Sorting complete. Total: %s sorted auth items. Type counts: %s",
-        len(sorted_auth_items.auth) if hasattr(sorted_auth_items, "auth") and sorted_auth_items.auth else 0,
+        len(sorted_auth_items.auth or []),
         _auth_type_counts(sorted_auth_items),
     )
 
     return {
-        "result": sorted_auth_items.model_dump(by_alias=True)
-        if hasattr(sorted_auth_items, "model_dump")
-        else sorted_auth_items,
+        "result": sorted_auth_items.model_dump(by_alias=True),
         "relevantDocumentations": all_relevant_chunks,
     }

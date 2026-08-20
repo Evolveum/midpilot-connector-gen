@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester.enums import AuthType
 from src.modules.digester.extractors.auth import build_auth_items, deduplicate_auth, extract_auth
 from src.modules.digester.schemas import (
     AuthDedupResponse,
@@ -18,6 +17,7 @@ from src.modules.digester.schemas import (
     DocProcessingSequenceItem,
     DocSequenceItem,
 )
+from src.shared.auth import AuthType
 
 
 # ==================== EXTRACT AUTH ====================

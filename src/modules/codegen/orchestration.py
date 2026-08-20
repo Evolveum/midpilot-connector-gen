@@ -23,18 +23,9 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.database.repositories.session_repository import SessionRepository
-from src.common.enums import ApiType
-from src.common.errors import (
-    AttributesNotFoundError,
-    InvalidRelationsOutputError,
-    OperationSurfaceNotFoundError,
-    RelationNotFoundError,
-    RelationsNotFoundError,
-)
-from src.common.jobs import persist_job_pointer, schedule_coroutine_job
-from src.common.utils.relevance import hydrate_auth_sequences_from_relevance
-from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.database.repositories.session_repository import SessionRepository
+from src.documents.relevance import hydrate_auth_sequences_from_relevance
+from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
 from src.modules.codegen import generation
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
@@ -42,23 +33,23 @@ from src.modules.codegen.schema import (
     CodegenRepairContext,
 )
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
+from src.modules.digester.errors import (
+    AttributesNotFoundError,
+    InvalidRelationsOutputError,
+    OperationSurfaceNotFoundError,
+    RelationNotFoundError,
+    RelationsNotFoundError,
+)
 from src.modules.digester.schemas import RelationsResponse
+from src.session.info_metadata import resolve_effective_api_type
+from src.shared.enums import ApiType
 
 # Shared preparing-stage metadata for the search/create/update/delete jobs.
 _INITIAL_STAGE = "preparing"
 _INITIAL_MESSAGE = "Preparing code generation from relevant chunks"
 
 
-def missing_operation_surface_detail(protocol: ApiType, object_class: str, session_id: UUID) -> str:
-    if protocol == ApiType.SQL:
-        return (
-            f"No SQL table metadata found for {object_class} in session {session_id}. "
-            "Please run the table/schema extraction step for this object class first."
-        )
-    return (
-        f"No endpoints found for {object_class} in session {session_id}. "
-        f"Please run /classes/{object_class}/endpoints endpoint first."
-    )
+_PROTOCOLS_REQUIRING_ENDPOINTS = frozenset({ApiType.REST})
 
 
 # This part is for codegen Create/Update/Delete/Search
@@ -101,8 +92,8 @@ async def schedule_operation_job(
     context_payload = codegen_input.context_payload() if codegen_input is not None else {}
 
     eps = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
-    if eps is None and protocol != ApiType.SCIM:
-        raise OperationSurfaceNotFoundError(missing_operation_surface_detail(protocol, object_class, session_id))
+    if eps is None and protocol in _PROTOCOLS_REQUIRING_ENDPOINTS:
+        raise OperationSurfaceNotFoundError(object_class, session_id)
 
     job_input: dict[str, Any] = {
         "sessionId": session_id,
@@ -117,10 +108,10 @@ async def schedule_operation_job(
         job_input["preferredEndpoints"] = preferred_endpoints
 
     worker_kwargs: dict[str, Any] = {
-        "attributes": attrs,
+        "attributes": job_input_reference("attributes"),
         "session_id": session_id,
         "object_class": object_class,
-        "preferred_endpoints": preferred_endpoints,
+        "preferred_endpoints": (job_input_reference("preferredEndpoints") if preferred_endpoints is not None else None),
         "protocol": protocol,
     }
     worker_kwargs.update(extra_worker_kwargs or {})
@@ -128,9 +119,10 @@ async def schedule_operation_job(
         worker_kwargs["repair_context"] = repair_context
     if eps is not None:
         job_input["endpoints"] = eps
-        worker_kwargs["endpoints"] = eps
+        worker_kwargs["endpoints"] = job_input_reference("endpoints")
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type=job_type,
         input_payload=job_input,
         worker=worker,
@@ -173,9 +165,7 @@ async def schedule_authorization_job(
     """
     protocol = await resolve_effective_api_type(session_id, api_type)
 
-    input_preferred_authorizations = (
-        codegen_input.preferred_authorizations_payload() if codegen_input is not None else None
-    )
+    input_preferred_authorizations = codegen_input.preferred_authorizations_payload()
 
     auth_output_raw = await repo.get_session_data(session_id, "authOutput")
     if not isinstance(auth_output_raw, Mapping) or not auth_output_raw:
@@ -191,8 +181,8 @@ async def schedule_authorization_job(
             pass
 
     preferred_authorizations = enrich_preferred_authorizations(auth_output, input_preferred_authorizations)
-    repair_context = codegen_input.repair_context() if codegen_input else None
-    context_payload = codegen_input.context_payload() if codegen_input else {}
+    repair_context = codegen_input.repair_context()
+    context_payload = codegen_input.context_payload()
 
     job_input: dict[str, Any] = {
         "sessionId": session_id,
@@ -205,8 +195,10 @@ async def schedule_authorization_job(
         job_input["preferredAuthorizations"] = preferred_authorizations
 
     worker_kwargs: dict[str, Any] = {
-        "auth_payload": auth_output,
-        "preferred_authorizations": preferred_authorizations,
+        "auth_payload": job_input_reference("auth"),
+        "preferred_authorizations": (
+            job_input_reference("preferredAuthorizations") if preferred_authorizations is not None else None
+        ),
         "session_id": session_id,
         "protocol": protocol,
     }
@@ -214,6 +206,7 @@ async def schedule_authorization_job(
         worker_kwargs["repair_context"] = repair_context
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="codegen.getAuthorization",
         input_payload=job_input,
         worker=generation.generate_authorization_code,
@@ -268,10 +261,11 @@ async def schedule_native_schema_job(
         worker_kwargs["repair_context"] = repair_context
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="codegen.getNativeSchema",
         input_payload=job_input,
         worker=generation.generate_native_schema_code,
-        worker_args=(attrs, object_class),
+        worker_args=(job_input_reference("attributes"), object_class),
         worker_kwargs=worker_kwargs,
         initial_stage="queue",
         initial_message="Queued code generation",
@@ -321,10 +315,11 @@ async def schedule_connid_job(
         worker_kwargs["repair_context"] = repair_context
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="codegen.getConnID",
         input_payload=job_input,
         worker=generation.generate_conn_id_code,
-        worker_args=(attrs, object_class),
+        worker_args=(job_input_reference("attributes"), object_class),
         worker_kwargs=worker_kwargs,
         initial_stage="queue",
         initial_message="Queued code generation",
@@ -376,6 +371,7 @@ async def schedule_relation_job(
     relations_payload = selected_relations_model.model_dump(by_alias=True, mode="json")
 
     job_id = await schedule_coroutine_job(
+        db=repo.db,
         job_type="codegen.getRelation",
         input_payload={
             "relations": relations_payload,
@@ -385,7 +381,7 @@ async def schedule_relation_job(
         },
         worker=generation.generate_relation_code,
         worker_kwargs={
-            "relations": selected_relations_model,
+            "relations": job_input_reference("relations"),
             "relation_name": relation_name,
             "session_id": session_id,
         },

@@ -7,11 +7,11 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.extractors.endpoints import extract_endpoints
 from src.modules.digester.schemas import EndpointInfo
 from src.modules.digester.selection import DEFAULT_CRITERIA
+from src.shared.enums import ApiType
 
 
 # ==================== EXTRACT ENDPOINTS ====================

@@ -8,25 +8,16 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
-from src.common.enums import ApiType
-from src.common.errors import (
+from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.documents.filtering.filter import filter_documentation_items
+from src.documents.normalize import normalize_object_class_name
+from src.modules.digester.entities.object_classes import find_object_class
+from src.modules.digester.errors import (
     InvalidObjectClassesOutputError,
     ObjectClassesNotFoundError,
     ObjectClassNotFoundError,
     RelevantChunksNotFoundError,
 )
-from src.common.session.session import get_session_documentation
-from src.common.utils.coerce import is_true
-from src.common.utils.normalize import normalize_object_class_name
-from src.common.utils.session_info_metadata import (
-    get_session_api_types,
-    get_session_base_api_url,
-    is_scim_api,
-    is_sql_api,
-)
-from src.modules.digester.entities.object_classes import find_object_class
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, tables_for_object_class
 from src.modules.digester.schemas.common import ChunkReference
 from src.modules.digester.selection.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
@@ -34,6 +25,15 @@ from src.modules.digester.selection.doc_chunk import (
     build_chunk_references_from_doc_items,
     build_chunk_references_from_mappings,
 )
+from src.session.access import get_session_documentation
+from src.session.info_metadata import (
+    get_session_api_types,
+    get_session_base_api_url,
+    is_scim_api,
+    is_sql_api,
+)
+from src.shared.coerce import is_true
+from src.shared.enums import ApiType
 
 
 @dataclass(frozen=True)
@@ -127,28 +127,17 @@ class DocumentationSelector:
         object_class: str,
         api_type_override: ApiType | None = None,
     ) -> DocumentationSelection:
+        """
+        Select documentation for REST/SCIM endpoint extraction.
+
+        SQL never reaches this plan: a database connector has no endpoints, so the request is
+        rejected in orchestration before a job exists.
+        """
         target_object_class = await self._get_target_object_class(repo, session_id, object_class)
         base_api_url = await self._get_base_url(session_id, api_type_override)
         api_types = await self._resolve_api_types(session_id, api_type_override)
         is_scim = is_scim_api(api_types)
-        is_sql = is_sql_api(api_types)
         object_class_flags = _endpoint_object_class_flags(target_object_class) if is_scim else {}
-
-        if is_sql:
-            doc_items = await self._get_documentation(session_id, db=self._db)
-            chunk_refs = await self._load_sql_object_class_chunk_refs(
-                session_id=session_id,
-                object_class=object_class,
-                doc_items=doc_items,
-            )
-            if not chunk_refs:
-                raise RelevantChunksNotFoundError(object_class, "endpoints")
-            return DocumentationSelection(
-                doc_items=doc_items,
-                chunk_references=chunk_refs,
-                base_api_url=base_api_url,
-                object_class_flags=object_class_flags,
-            )
 
         criteria = ENDPOINT_CRITERIA.model_copy()
         criteria.allowed_tags = [[normalize_object_class_name(object_class)], ["endpoint", "endpoints"]]

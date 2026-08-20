@@ -1,11 +1,40 @@
 = SQL create operation
 
-SQL create generation should insert into the table or tables mapped to the object class.
+The database connector builds the insert itself from the native schema mapping. The `create` block
+only declares that the built-in create is used for this object class.
 
-== Create rules
+== Built-in create
 
-* Do not insert generated, identity, serial, or read-only columns unless explicitly required.
-* Include mandatory non-generated columns.
-* Use foreign key columns only when the referenced object identity is available in the input attributes.
-* If several tables are selected, make transaction boundaries and ordering explicit.
+[source,groovy]
+----
+objectClass("m_user") {
+    create {
+        sql {
+            builtIn {
+                enabled true
+            }
+        }
+    }
+}
+----
 
+`enabled` is the only key `builtIn` needs for create. Do not write column lists, statements or value
+bindings into the operation block - the framework derives them from the schema mapping.
+
+== Which columns are written
+
+The framework writes the attributes marked `creatable` in the extracted schema. That flag already
+accounts for the two cases below, so they do not have to be restated in Groovy:
+
+* Generated, identity and serial columns are not written on create.
+* A conndev export marks a column non-creatable explicitly; a raw schema derives it from the
+  `generated` flag.
+
+== Rules
+
+* Never render a table name as `endpoint(...)`, a path, or a hand-written `INSERT` statement.
+* Never generate REST or SCIM constructs.
+* When a mandatory column is neither creatable nor defaulted, leave a TODO naming that column
+  instead of inventing a value.
+* When the attributes of the object class span several tables and the insert order or transaction
+  boundary is not documented, leave a TODO instead of guessing it.

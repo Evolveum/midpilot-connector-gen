@@ -7,7 +7,6 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.common.enums import ApiType, DetectionSource, ProtocolAvailability
 from src.modules.digester.aggregation.merges import merge_api_type, merge_info_metadata
 from src.modules.digester.enums import EndpointType
 from src.modules.digester.extractors.apitype.scim_cloud import ScimCloudMatch
@@ -22,6 +21,7 @@ from src.modules.digester.schemas import (
     RestSignalResult,
     ScimAvailabilityInfo,
 )
+from src.shared.enums import ApiType, DetectionSource, ProtocolAvailability
 
 
 @pytest.fixture(autouse=True)

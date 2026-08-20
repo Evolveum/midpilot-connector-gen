@@ -9,14 +9,15 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType, JobStatus
-from src.common.errors import AttributesNotFoundError
+from src.jobs import job_input_reference
 from src.modules.codegen.routes.native_schema import (
     generate_native_schema,
     get_native_schema_status,
     override_native_schema,
 )
 from src.modules.codegen.schema import CodegenRepairContext, GroovyCodePayload
+from src.modules.digester.errors import AttributesNotFoundError
+from src.shared.enums import ApiType, JobStatus
 
 
 # NATIVE SCHEMA
@@ -52,6 +53,7 @@ async def test_generate_native_schema_success():
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "userAttributesOutput")
         mock_schedule.assert_awaited_once_with(
+            db=mock_repo.db,
             job_type="codegen.getNativeSchema",
             input_payload={
                 "attributes": {"username": {"type": "string"}},
@@ -60,7 +62,7 @@ async def test_generate_native_schema_success():
                 "apiType": "rest",
             },
             worker=ANY,
-            worker_args=({"username": {"type": "string"}}, "user"),
+            worker_args=(job_input_reference("attributes"), "user"),
             worker_kwargs={"session_id": session_id, "protocol": ApiType.REST},
             initial_stage="queue",
             initial_message="Queued code generation",
@@ -122,6 +124,8 @@ async def test_get_native_schema_status_found():
     """Test getting native schema generation status when job exists."""
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
+    mock_job_repo = MagicMock()
+    mock_job_repo.get_job_for_session = AsyncMock(return_value=MagicMock())
 
     fake_status = MagicMock(
         jobId=ANY,
@@ -133,6 +137,7 @@ async def test_get_native_schema_status_found():
 
     with (
         patch("src.modules.codegen.routes.native_schema.SessionRepository", return_value=mock_repo),
+        patch("src.session.access.JobRepository", return_value=mock_job_repo),
         patch(
             "src.modules.codegen.routes.native_schema.build_stage_status_response",
             new_callable=AsyncMock,
@@ -147,6 +152,7 @@ async def test_get_native_schema_status_found():
         assert response.status == JobStatus.finished
         assert response.result == {"code": "mocked groovy code"}
         mock_repo.session_exists.assert_awaited_once_with(session_id)
+        mock_job_repo.get_job_for_session.assert_awaited_once_with(job_id, session_id)
         mock_builder.assert_awaited_once_with(job_id)
 
 

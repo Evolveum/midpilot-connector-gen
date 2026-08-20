@@ -6,11 +6,6 @@ import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from src.common.enums import ApiType
-from src.common.utils.session_info_metadata import (
-    get_session_base_api_url,
-    get_session_connection_target,
-)
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.core.operations import (
     AuthorizationGenerator,
@@ -33,7 +28,6 @@ from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.codegen.selection.relevant_chunks import (
     _collect_authorization_relevant_chunks,
-    _collect_pairs,
     _collect_relation_object_class_pairs,
     _collect_relevant_chunks,
 )
@@ -41,10 +35,22 @@ from src.modules.codegen.utils.prompt_records import (
     build_attribute_mapping_records,
     build_connid_attribute_mapping_records,
     build_scim_contract_prompt_vars,
+    build_sql_attribute_mapping_records,
 )
 from src.modules.digester.schemas import RelationsResponse
+from src.session.info_metadata import (
+    get_session_base_api_url,
+    get_session_connection_target,
+)
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
+
+_DETERMINISTIC_CONTEXT_PROTOCOLS = frozenset({ApiType.SCIM, ApiType.SQL})
+
+
+def _uses_deterministic_context(protocol: ApiType) -> bool:
+    return protocol in _DETERMINISTIC_CONTEXT_PROTOCOLS
 
 
 async def generate_native_schema_code(
@@ -63,7 +69,11 @@ async def generate_native_schema_code(
     assets = get_operation_assets("native_schema", protocol)
     docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
 
-    records = build_attribute_mapping_records(attributes_payload)
+    records = (
+        build_sql_attribute_mapping_records(attributes_payload)
+        if protocol == ApiType.SQL
+        else build_attribute_mapping_records(attributes_payload)
+    )
     extra_prompt_vars = {"user_schema_docs": docs_text}
     if protocol == ApiType.SCIM:
         extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))
@@ -120,7 +130,7 @@ async def generate_authorization_code(
         base_api_url=base_api_url,
     )
 
-    relevant_indices, relevant_pairs = await _collect_authorization_relevant_chunks(
+    relevant_pairs = await _collect_authorization_relevant_chunks(
         session_id,
         auth_payload,
         preferred_authorizations,
@@ -128,7 +138,6 @@ async def generate_authorization_code(
 
     code = await generator.generate(
         session_id=session_id,
-        relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
         repair_context=repair_context,
@@ -197,15 +206,15 @@ async def generate_search_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
-    relevant_indices, relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Search")
+    relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Search")
 
     # Generate code
     code = await generator.generate(
         session_id=session_id,
-        relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
         repair_context=repair_context,
@@ -244,15 +253,15 @@ async def generate_create_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
-    relevant_indices, relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Create")
+    relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Create")
 
     # Generate code
     code = await generator.generate(
         session_id=session_id,
-        relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
         repair_context=repair_context,
@@ -291,15 +300,15 @@ async def generate_update_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
-    relevant_indices, relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Update")
+    relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Update")
 
     # Generate code
     code = await generator.generate(
         session_id=session_id,
-        relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
         repair_context=repair_context,
@@ -338,15 +347,15 @@ async def generate_delete_code(
         base_api_url=base_api_url,
         database_name=database_name,
         include_scim_context=protocol == ApiType.SCIM,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
 
     # Collect relevant chunks
-    relevant_indices, relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Delete")
+    relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Delete")
 
     # Generate code
     code = await generator.generate(
         session_id=session_id,
-        relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
         repair_context=repair_context,
@@ -368,14 +377,8 @@ async def generate_relation_code(
     """
     relation_docs_text = load_required_adoc_text(__package__ + ".documentations" + ".rest", "50-relationship.adoc")
 
-    relevant_indices: Optional[List[int]] = None
-    relevant_pairs: Optional[List[Dict[str, Any]]] = None
-
-    object_class_chunks = await _collect_relation_object_class_pairs(relations, session_id)
-    relevant_pairs = object_class_chunks
-    pairs = _collect_pairs(object_class_chunks)
-    if pairs:
-        relevant_indices = [i for i, _ in pairs]
+    relevant_pairs = await _collect_relation_object_class_pairs(relations, session_id)
+    if relevant_pairs:
         selected_relation = relations.relations[0]
         logger.info(
             "[Codegen:Relation] Relevant chunks from DB for %s: subject=%s, object=%s, chunks=%d",
@@ -390,7 +393,6 @@ async def generate_relation_code(
     generator = RelationGenerator(docs_text=relation_docs_text)
     code = await generator.generate(
         session_id=session_id,
-        relevant_chunk_indices=relevant_indices,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
         relations=relations,

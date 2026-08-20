@@ -18,6 +18,13 @@ repos:
         types: [python]
   - repo: local
     hooks:
+      - id: midpilot-connector-gen-importcheck
+        name: midpilot-connector-gen-importcheck
+        entry: bash -c "uv --directory=src run poe importcheck"
+        language: system
+        types: [python]
+  - repo: local
+    hooks:
       - id: midpilot-connector-gen-stylecheck
         name: midpilot-connector-gen-stylecheck
         entry: bash -c "uv --directory=src run poe stylecheck"

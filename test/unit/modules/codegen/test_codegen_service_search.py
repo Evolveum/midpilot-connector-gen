@@ -9,9 +9,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.codegen import generation
 from src.modules.codegen.enums import SearchIntent
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio
@@ -37,9 +37,7 @@ async def test_generate_search():
             new_callable=AsyncMock,
             return_value=("", ""),
         ) as mock_get_connection_target,
-        patch(
-            "src.modules.codegen.generation._collect_relevant_chunks", new_callable=AsyncMock, return_value=(None, None)
-        ),
+        patch("src.modules.codegen.generation._collect_relevant_chunks", new_callable=AsyncMock, return_value=None),
         patch("src.modules.codegen.generation.SearchGenerator") as mock_search_generator_class,
     ):
         # Mock the generator instance and its generate method (must be async)

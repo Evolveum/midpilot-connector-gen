@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.digester.aggregation.merges import merge_attribute_candidates
 from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.schemas import (
@@ -16,6 +15,7 @@ from src.modules.digester.schemas import (
     DocProcessingSequenceItem,
     DocSequenceMarker,
 )
+from src.shared.enums import ApiType
 
 
 # ==================== EXTRACT ATTRIBUTES ====================

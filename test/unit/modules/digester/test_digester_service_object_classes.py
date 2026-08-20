@@ -7,9 +7,9 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.digester.extractors.object_class import extract_object_classes
 from src.modules.digester.schemas import ExtendedObjectClass
+from src.shared.enums import ApiType
 
 
 # ==================== EXTRACT OBJECT CLASSES ====================

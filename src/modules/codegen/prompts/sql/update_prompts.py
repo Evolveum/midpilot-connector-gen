@@ -4,49 +4,74 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.sql.shared_context_prompts import (
+    SQL_NATIVE_OPERATION_DSL_SYSTEM_RULES,
+    SQL_SCHEMA_CONTEXT_SYSTEM_RULES,
+    SQL_SCHEMA_CONTEXT_USER_SECTION,
+)
+
 get_sql_update_system_prompt = (
-    textwrap.dedent("""
-You are an expert in creating midPoint ConnId database connectors. Generate a Groovy update script for a SQL/database connector.
+    textwrap.dedent("""\
+You are an expert in creating midPoint ConnId database connectors.
+Your goal is to prepare an `update` schema in Groovy for a SQL/database connector.
 
-The target object class is "{object_class}".
-Database name: "{database_name}".
+The input data you will receive:
+1. The columns extracted for {object_class} in the previous step, each carrying its table and column.
+2. A chunk of the original schema or provider documentation.
+3. Groovy output from previous chunks that you may minimally complete or edit.
 
-Use only the uploaded SQL schema, selected tables, and extracted attributes. Use primary keys for row identity when available.
-Do not update generated columns or primary keys unless the schema/documentation explicitly says they are mutable.
+Prepare valid Groovy update code based on the following generic SQL `.adoc` documentation:
 
 <update_docs>
 {update_docs}
 </update_docs>
+""")
+    + SQL_SCHEMA_CONTEXT_SYSTEM_RULES
+    + SQL_NATIVE_OPERATION_DSL_SYSTEM_RULES
+    + "{repair_system_suffix}"
+    + textwrap.dedent("""\
 
 OUTPUT RULES:
-- Return ONLY Groovy code fenced as one ```groovy code block```.
-- Keep objectClass("{object_class}") exactly.
-- endpoints_json contains SQL table records for SQL connectors.
-- Do not generate REST or SCIM endpoint calls.
+- <update_docs> is the authoritative source for Groovy DSL structure. The schema context and the
+  documentation chunk supply target-specific facts only; they must not replace that structure.
+- The output is native SQL DSL, never REST or SCIM DSL. Place the native update operation directly below
+  the object class:
+  `objectClass("{object_class}") {{ update {{ sql {{ builtIn {{ enabled true }} }} }} }}`.
+- The target object class is "{object_class}". Keep `objectClass("{object_class}")` exactly.
+- The framework identifies the row by the primary key and writes only the changed attributes, so declare
+  `enabled true` and do not write statements, predicates or value bindings into the operation block.
+- Columns whose extracted `updatable` flag is false, primary key columns, and generated columns are not
+  written on update. If the built-in behavior cannot honor that, add one TODO comment.
+- If no attribute is marked `primaryKey`, keep the block and add one TODO comment stating that the
+  identity column has to be confirmed - never guess it from a column name.
+- Return ONLY valid Groovy code, fenced as a single ```groovy code block```, with no text outside it.
+- No extra commentary.
 """)
-    + "{repair_system_suffix}"
 )
 
 get_sql_update_user_prompt = (
-    textwrap.dedent("""
-Current extracted SQL attributes for {object_class}:
-<attributes_json>
+    textwrap.dedent("""\
+Chunk {idx}/{total} of the database schema documentation.
+Target object class: {object_class}
+
+Here are the extracted columns of {object_class}:
+
+<extracted_attributes>
 {attributes_json}
-</attributes_json>
+</extracted_attributes>
+""")
+    + SQL_SCHEMA_CONTEXT_USER_SECTION
+    + "{repair_user_suffix}"
+    + textwrap.dedent("""\
 
-Selected SQL tables for {object_class}:
-<tables_json>
-{endpoints_json}
-</tables_json>
-
-<database_name>
-{database_name}
-</database_name>
-
-Original schema/documentation chunk:
+Target-specific schema or provider documentation for this iteration:
 <chunk>
 {chunk}
 </chunk>
+
+Result from previous chunks:
+<result>
+{result}
+</result>
 """)
-    + "{repair_user_suffix}"
 )

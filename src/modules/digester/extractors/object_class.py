@@ -15,9 +15,7 @@ import logging
 from typing import Any, Dict, List
 from uuid import UUID
 
-from src.common.enums import ApiType
-from src.common.utils.normalize import canonical_object_class_key
-from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.documents.normalize import canonical_object_class_key
 from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_object_classes
 from src.modules.digester.extraction.chunk_extraction import run_doc_extractors_concurrently
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
@@ -28,6 +26,8 @@ from src.modules.digester.extractors.rest.object_class import (
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
 from src.modules.digester.extractors.sql.object_class import extract_sql_object_classes
 from src.modules.digester.selection import build_chunk_id_to_doc_id
+from src.session.info_metadata import resolve_effective_api_type
+from src.shared.enums import ApiType, GenerationIntent
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ async def extract_object_classes(
     job_id: UUID,
     session_id: UUID,
     api_type_override: ApiType | None = None,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
 ):
     """
     Extract object classes from multiple documentation items and return merged result with metadata.
@@ -49,23 +50,26 @@ async def extract_object_classes(
         job_id: Job ID for progress tracking
         session_id: Session ID to retrieve api_type from infoMetadata
         api_type_override: Explicit protocol override; falls back to detected apiType when None
+        intent: Business-domain lens for object-class prioritization
+            (management/itsm/management_itsm)
 
     Returns:
         Dictionary with result and relevantDocumentations
     """
     protocol = await resolve_effective_api_type(session_id, api_type_override)
     if protocol == ApiType.SQL:
-        return await extract_sql_object_classes(doc_items, job_id)
+        return await extract_sql_object_classes(doc_items, job_id, intent=intent)
 
     if protocol == ApiType.SCIM:
-        return await extract_scim_object_classes(doc_items, job_id, session_id)
+        return await extract_scim_object_classes(doc_items, job_id, session_id, intent=intent)
 
-    return await _extract_rest_object_classes(doc_items, job_id)
+    return await _extract_rest_object_classes(doc_items, job_id, intent=intent)
 
 
 async def _extract_rest_object_classes(
     doc_items: List[dict],
     job_id: UUID,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
 ):
     """
     REST-specific object class extraction.
@@ -80,7 +84,7 @@ async def _extract_rest_object_classes(
     chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
 
     chunk_metadata_map = build_doc_metadata_map(doc_items)
-    extraction_chain = build_object_class_extraction_chain() if doc_items else None
+    extraction_chain = build_object_class_extraction_chain(intent) if doc_items else None
 
     async def extractor_with_metadata(content: str, job_id: UUID, chunk_id: UUID):
         chunk_metadata = chunk_metadata_map.get(str(chunk_id))
@@ -90,6 +94,7 @@ async def _extract_rest_object_classes(
             chunk_id,
             chunk_metadata,
             extraction_chain=extraction_chain,
+            intent=intent,
         )
 
     # Process all chunks in parallel using the generic function
@@ -144,9 +149,10 @@ async def _extract_rest_object_classes(
         all_object_classes,
         job_id,
         class_to_chunks,
+        intent=intent,
     )
 
     return {
-        "result": final_result.model_dump(by_alias=True) if hasattr(final_result, "model_dump") else final_result,
+        "result": final_result.model_dump(by_alias=True),
         "relevantDocumentations": all_relevant_chunks,
     }

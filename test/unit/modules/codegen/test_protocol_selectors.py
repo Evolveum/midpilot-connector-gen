@@ -4,7 +4,6 @@
 
 import pytest
 
-from src.common.enums import ApiType
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.native_schema_prompts import get_native_schema_system_prompt
 from src.modules.codegen.prompts.scim.delete_prompts import get_scim_delete_system_prompt
@@ -12,6 +11,7 @@ from src.modules.codegen.prompts.scim.native_schema_prompts import get_scim_nati
 from src.modules.codegen.prompts.sql.create_prompts import get_sql_create_system_prompt
 from src.modules.codegen.prompts.sql.search_prompts import get_sql_search_filter_system_prompt
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
+from src.shared.enums import ApiType
 
 
 def test_get_operation_assets_selects_sql_create_assets():

@@ -5,8 +5,10 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.config.app import AppSettings
+from src.config.auth import AuthSettings
 from src.config.database import DatabaseSettings
 from src.config.digester import DigesterSettings
+from src.config.jobs import JobsSettings
 from src.config.langfuse import LangfuseSettings
 from src.config.llm import LLMSettings, ReasoningEffort
 from src.config.logging import LoggingSettings, LogLevel
@@ -33,12 +35,14 @@ class Settings(BaseSettings):
     )
 
     app: AppSettings = AppSettings()
+    auth: AuthSettings = AuthSettings()
     logging: LoggingSettings = LoggingSettings()
     llm: LLMSettings = LLMSettings()
     langfuse: LangfuseSettings = LangfuseSettings()
     search: SearchSettings = SearchSettings()
     scrape_and_process: ScrapeAndProcessSettings = ScrapeAndProcessSettings()
     digester: DigesterSettings = DigesterSettings()
+    jobs: JobsSettings = JobsSettings()
     brave: BraveSettings = BraveSettings()
     database: DatabaseSettings = DatabaseSettings()
 
@@ -47,9 +51,11 @@ config = Settings()
 
 __all__ = [
     "AppSettings",
+    "AuthSettings",
     "BraveSettings",
     "DatabaseSettings",
     "DigesterSettings",
+    "JobsSettings",
     "LLMSettings",
     "LangfuseSettings",
     "LogLevel",

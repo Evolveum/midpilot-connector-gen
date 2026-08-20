@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
+import sys
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Mapping, Optional, cast
 from uuid import UUID
@@ -11,24 +12,23 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.chunking import normalize_to_text
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.documentation_repository import DocumentationRepository
-from src.common.documentation.content_types import is_conndev_documentation_item
-from src.common.enums import JobStage
-from src.common.jobs import (
-    append_job_error,
-    increment_processed_documents,
-    update_job_progress,
-)
-from src.common.langfuse import langfuse_handler
-from src.common.llm import (
+from src.config import config
+from src.core.db import async_session_maker
+from src.core.llm import (
     get_default_llm,
     make_basic_chain,
     raise_if_llm_unavailable,
     retry_on_transient_llm_error,
 )
-from src.config import config
+from src.core.observability.langfuse import langfuse_handler
+from src.database.repositories.documentation_repository import DocumentationRepository
+from src.documents.chunking import normalize_to_text
+from src.jobs import (
+    append_job_error,
+    increment_processed_documents,
+    update_job_progress,
+)
+from src.jobs.errors import JobClaimLostError
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
     get_groovy_cleanup_user_prompt,
@@ -39,6 +39,8 @@ from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import coerce_llm_text, strip_markdown_fences
 from src.modules.codegen.utils.prompt_records import strip_relevant_documentation_refs
 from src.modules.digester.schemas import EndpointResponse
+from src.shared.content_types import is_conndev_documentation_item
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 
@@ -64,18 +66,13 @@ class ChunkProcessor:
         """
         chunks: List[str] = []
         provenance_chunk_ids: List[Optional[str]] = []
-        per_chunk_selected_counts: Dict[str, int] = {}
-        chunk_ids_included: List[str] = []
 
         # Build chunk map by UUID - documentation_items are already chunked
         chunks_by_uuid: Dict[str, Dict[str, Any]] = {}
         for item in documentation_items:
-            try:
-                uid = item.get("chunkId")
-                if isinstance(uid, str):
-                    chunks_by_uuid[uid] = item
-            except Exception:
-                continue
+            uid = item.get("chunkId")
+            if isinstance(uid, str):
+                chunks_by_uuid[uid] = item
 
         # Process pairs in order - each pair references a specific chunk by its ID
         chunk_counts: Dict[str, int] = {}
@@ -105,17 +102,14 @@ class ChunkProcessor:
                 seen_chunk_ids.append(chunk_id)
             chunk_counts[chunk_id] += 1
 
-        per_chunk_selected_counts = chunk_counts
-        chunk_ids_included = seen_chunk_ids
-
         logger.info(
             "%s Using %d pre-chunked documentation items from %d unique chunk IDs",
             logger_prefix,
             len(chunks),
-            len(chunk_ids_included),
+            len(seen_chunk_ids),
         )
 
-        return chunks, provenance_chunk_ids, per_chunk_selected_counts, chunk_ids_included
+        return chunks, provenance_chunk_ids, chunk_counts, seen_chunk_ids
 
 
 class BaseGroovyGenerator(ABC):
@@ -189,7 +183,7 @@ class BaseGroovyGenerator(ABC):
             per_chunk_counts = {}
             chunk_ids_included = []
             logger.info(
-                "%s No LLM text chunks remain after conndev filtering; running one SCIM context-only generation pass",
+                "%s No LLM text chunks remain after conndev filtering; running one context-only generation pass",
                 self.config.logger_prefix,
             )
 
@@ -215,7 +209,6 @@ class BaseGroovyGenerator(ABC):
         # Step 4: Process chunks iteratively
         fallback_result = self.get_initial_result(**operation_specific_kwargs)
         initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result=fallback_result)
-        result = initial_result
         result = await self._process_chunks(
             chunks=chunks,
             provenance_chunk_ids=provenance_chunk_ids,
@@ -224,7 +217,7 @@ class BaseGroovyGenerator(ABC):
             input_data=input_data,
             chain=chain,
             job_id=job_id,
-            initial_result=result,
+            initial_result=initial_result,
         )
 
         if not result:
@@ -237,7 +230,7 @@ class BaseGroovyGenerator(ABC):
         if validation_error is not None:
             error_message = f"{self.config.logger_prefix} Final generated Groovy is invalid: {validation_error}"
             logger.warning(error_message)
-            append_job_error(job_id, error_message)
+            await append_job_error(job_id, error_message)
             return fallback_result
 
         return strip_markdown_fences(result)
@@ -276,7 +269,7 @@ class BaseGroovyGenerator(ABC):
             if validation_error is not None:
                 error_message = f"{self.config.logger_prefix} Cleanup pass produced invalid Groovy: {validation_error}"
                 logger.warning(error_message)
-                append_job_error(job_id, error_message)
+                await append_job_error(job_id, error_message)
                 return code
 
             return candidate
@@ -284,7 +277,7 @@ class BaseGroovyGenerator(ABC):
         except Exception as exc:
             error_message = f"{self.config.logger_prefix} Cleanup pass failed: {exc}"
             logger.exception(error_message)
-            append_job_error(job_id, error_message)
+            await append_job_error(job_id, error_message)
             return code
 
     async def _load_documentation_items(self, session_id: UUID) -> List[Dict[str, Any]]:
@@ -473,24 +466,34 @@ class BaseGroovyGenerator(ABC):
                             f"{validation_error}"
                         )
                         logger.warning(error_message)
-                        append_job_error(job_id, error_message)
+                        await append_job_error(job_id, error_message)
 
             except Exception as exc:
                 raise_if_llm_unavailable(exc, context="generating connector code")
                 error_message = f"[{self.config.logger_prefix}] Failed to process chunk {idx}/{total_chunks}: {exc}"
                 logger.exception(error_message)
-                append_job_error(job_id, error_message)
+                await append_job_error(job_id, error_message)
                 continue
 
             finally:
-                # Handle progress tracking based on mode
-                if per_chunk_counts and chunk_ids_included and isinstance(chunk_id, str):
-                    # Selected-chunk mode: increment when this group is complete
-                    current_group_chunks_remaining = max(0, current_group_chunks_remaining - 1)
-                    if current_group_chunks_remaining == 0:
+                active_exception = sys.exception()
+                try:
+                    # Handle progress tracking based on mode
+                    if per_chunk_counts and chunk_ids_included and isinstance(chunk_id, str):
+                        # Selected-chunk mode: increment when this group is complete
+                        current_group_chunks_remaining = max(0, current_group_chunks_remaining - 1)
+                        if current_group_chunks_remaining == 0:
+                            await increment_processed_documents(job_id, delta=1)
+                    else:
                         await increment_processed_documents(job_id, delta=1)
-                else:
-                    await increment_processed_documents(job_id, delta=1)
+                except JobClaimLostError:
+                    if active_exception is None:
+                        raise
+                    logger.warning(
+                        "%s Job claim was lost while recording progress; preserving the active error: %s",
+                        self.config.logger_prefix,
+                        active_exception,
+                    )
 
         return result
 

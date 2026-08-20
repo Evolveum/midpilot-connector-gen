@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from src.common.schema import CamelCaseModel
-from src.common.web import SearchResult
+from src.core.schema import CamelCaseModel
+from src.integrations.web import SearchResult
 
 DiscoveryIntegrationType = Literal["scim", "rest", "dummy"]
 

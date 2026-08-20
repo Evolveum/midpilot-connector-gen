@@ -47,6 +47,8 @@ def test_app_settings_reject_non_positive_workers(workers):
 def test_hypercorn_worker_mapping(workers, live_reload, expected_hypercorn_workers):
     app_settings = AppSettings(workers=workers, live_reload=live_reload)
 
+    # PyCharm does not resolve pydantic model fields inside a patch() target string (mypy does).
+    # noinspection PyUnresolvedReferences
     with patch("server.config.app", app_settings):
         hypercorn_config = build_hypercorn_config()
 

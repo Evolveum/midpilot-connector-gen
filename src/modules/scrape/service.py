@@ -10,21 +10,22 @@ from uuid import UUID
 
 from crawl4ai.utils import get_base_domain  # type: ignore
 
-from src.common.chunk_processor.processor import process_all_documentations
-from src.common.chunk_processor.schema import ChunkProcessingError
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.documentation_repository import DocumentationRepository
-from src.common.database.repositories.job_repository import JobRepository
-from src.common.documentation import SavedDocumentation
-from src.common.enums import JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.llm import raise_if_llm_unavailable
-from src.common.session.schema import DocumentationItem
-from src.common.utils.normalize import normalize_url
-from src.common.utils.status_response import build_group_documentation_response
 from src.config import config
+from src.core.concurrency import TaskScope
+from src.core.db import async_session_maker
+from src.core.llm import raise_if_llm_unavailable
+from src.database.repositories.documentation_repository import DocumentationRepository, DocumentationWriteBatch
+from src.database.repositories.job_repository import JobRepository
+from src.documents import SavedDocumentation
+from src.documents.processing.processor import process_all_documentations
+from src.documents.processing.schema import ChunkProcessingError
+from src.jobs import append_job_error, update_job_progress
 from src.modules.scrape.core.scraper import scraper_loop
 from src.modules.scrape.schema import ScrapeRequest, ScrapeResult
+from src.session.schema import DocumentationItem
+from src.session.service import build_group_documentation_response
+from src.shared.enums import JobStage
+from src.shared.normalize import normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ async def _run_scrape_async(
 ) -> ScrapeResult:
     if not scrape_request.skip_cache and session_id:
         logger.info(
-            "[Scrape] Job %s (session %s): skipCache is false, checking for existing documentation items in all sessions for the same input",
+            "[Scrape] Job %s (session %s): skipCache is false, checking for existing documentation items in tenant sessions for the same input",
             str(job_id),
             str(session_id),
         )
@@ -43,7 +44,10 @@ async def _run_scrape_async(
             created_at_limits = datetime.now() - config.scrape_and_process.scrape_input_check_interval
             normalized_input = scrape_request.model_dump(by_alias=True, exclude={"skip_cache"})
             latest_job = await job_repo.get_job_by_input(
-                "scrape.getRelevantDocumentation", normalized_input, created_at_limits
+                "scrape.getRelevantDocumentation",
+                normalized_input,
+                created_at_limits,
+                requesting_session_id=session_id,
             )
             if latest_job:
                 logger.info(
@@ -70,6 +74,7 @@ async def _run_scrape_async(
                     }
                     new_docs = [item for item in doc_items if normalize_url(item.get("url")) not in existing_docs_urls]
                     inserted_chunks_count = 0
+                    write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
                     for chunk in new_docs:
                         chunk_id = await doc_repo.create_documentation_item(
                             session_id=session_id,
@@ -83,6 +88,7 @@ async def _run_scrape_async(
                         )
                         if chunk_id:
                             inserted_chunks_count += 1
+                        await write_batch.record_write()
                     for chunk in existing_docs_loaded:
                         raw_chunk_id = chunk.get("chunkId")
                         if not raw_chunk_id:
@@ -104,6 +110,8 @@ async def _run_scrape_async(
                                     chunk_id,
                                     job_id,
                                 )
+                            else:
+                                await write_batch.record_write()
                         else:
                             logger.warning(
                                 "[Scrape] Job %s: Existing documentation item in session is missing ID, cannot link to job %s",
@@ -111,7 +119,7 @@ async def _run_scrape_async(
                                 job_id,
                             )
 
-                    await db.commit()
+                    await write_batch.commit_pending()
                     logger.info(
                         "[Scrape] Job %s: Saved %s chunks to session",
                         job_id,
@@ -176,7 +184,6 @@ async def _run_scrape_async(
 
     existing_documentation_chunks: List[Dict[str, Any]] = []
     existing_documentation_chunks_urls: set[str] = set()
-    updated_existing_chunks_count = 0
     doc_rows_for_export: List[Dict[str, Any]] = []
     if session_id:
         async with async_session_maker() as db:
@@ -192,57 +199,57 @@ async def _run_scrape_async(
             len(existing_documentation_chunks_urls),
         )
 
-    processing_tasks: List[
-        tuple[SavedDocumentation, asyncio.Task[tuple[List[DocumentationItem], List[ChunkProcessingError]]]]
-    ] = []
-    processing_semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
-    scheduled_documentations: List[SavedDocumentation] = []
-    scheduled_documentation_urls: set[str] = set()
+    async with TaskScope(f"scrape-chunk-processing:{job_id}") as processing_scope:
+        processing_tasks: List[
+            tuple[SavedDocumentation, asyncio.Task[tuple[List[DocumentationItem], List[ChunkProcessingError]]]]
+        ] = []
+        processing_semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
+        scheduled_documentations: List[SavedDocumentation] = []
+        scheduled_documentation_urls: set[str] = set()
 
-    async def on_documentation_scraped(documentation: SavedDocumentation) -> None:
-        normalized_documentation_url = normalize_url(documentation.url)
-        if normalized_documentation_url in existing_documentation_chunks_urls:
-            return
-        if normalized_documentation_url in scheduled_documentation_urls:
-            return
-        scheduled_documentation_urls.add(normalized_documentation_url)
-        scheduled_documentations.append(documentation)
-        processing_tasks.append(
-            (
-                documentation,
-                asyncio.create_task(
-                    process_all_documentations(
-                        [documentation],
-                        app=scrape_request.application_name,
-                        app_version=scrape_request.application_version,
-                        source="scraper",
-                        semaphore=processing_semaphore,
-                        chunk_length=config.scrape_and_process.chunk_length,
-                    )
-                ),
+        async def on_documentation_scraped(documentation: SavedDocumentation) -> None:
+            normalized_documentation_url = normalize_url(documentation.url)
+            if normalized_documentation_url in existing_documentation_chunks_urls:
+                return
+            if normalized_documentation_url in scheduled_documentation_urls:
+                return
+            scheduled_documentation_urls.add(normalized_documentation_url)
+            scheduled_documentations.append(documentation)
+            processing_tasks.append(
+                (
+                    documentation,
+                    processing_scope.start(
+                        process_all_documentations(
+                            [documentation],
+                            app=scrape_request.application_name,
+                            app_version=scrape_request.application_version,
+                            source="scraper",
+                            semaphore=processing_semaphore,
+                            chunk_length=config.scrape_and_process.chunk_length,
+                        )
+                    ),
+                )
             )
-        )
 
-    max_iters = max(0, config.scrape_and_process.max_scraper_iterations)
-    if max_iters <= 0:
-        logger.error(
-            "[Scrape] Invalid scraper iterations value %s for job %s",
-            config.scrape_and_process.max_scraper_iterations,
-            job_id,
-        )
-        await update_job_progress(job_id, stage=JobStage.failed, message="wrong-scraper-iterations-value")
-        return ScrapeResult(
-            finish_reason="wrong-scraper-iterations-value",
-            saved_documentations_count=0,
-            saved_chunks_count=0,
-            saved_documentations=[],
-        )
+        max_iters = max(0, config.scrape_and_process.max_scraper_iterations)
+        if max_iters <= 0:
+            logger.error(
+                "[Scrape] Invalid scraper iterations value %s for job %s",
+                config.scrape_and_process.max_scraper_iterations,
+                job_id,
+            )
+            await update_job_progress(job_id, stage=JobStage.failed, message="wrong-scraper-iterations-value")
+            return ScrapeResult(
+                finish_reason="wrong-scraper-iterations-value",
+                saved_documentations_count=0,
+                saved_chunks_count=0,
+                saved_documentations=[],
+            )
 
-    logger.info("[Scrape] Starting scraper loop for job %s with max %s iterations", job_id, max_iters)
+        logger.info("[Scrape] Starting scraper loop for job %s with max %s iterations", job_id, max_iters)
 
-    finish_reason = "max-iterations-reached"
+        finish_reason = "max-iterations-reached"
 
-    try:
         for curr_iter in range(1, max_iters + 1):
             logger.info(
                 "[Scrape] Job %s: Starting iteration %s/%s with %s links to scrape",
@@ -311,60 +318,54 @@ async def _run_scrape_async(
                 finish_reason = "no-more-links"
                 break
             links = new_links
-    except Exception:
-        for _, task in processing_tasks:
-            if not task.done():
-                task.cancel()
+
+        # Finalize chunk processing tasks that have been running in parallel with scraping.
+        documentation_chunks: List[DocumentationItem] = []
         if processing_tasks:
-            await asyncio.gather(*(task for _, task in processing_tasks), return_exceptions=True)
-        raise
+            logger.info(
+                "[Scrape] Job %s: Awaiting %s chunk-processing tasks for %s scheduled documentations",
+                job_id,
+                len(processing_tasks),
+                len(scheduled_documentations),
+            )
+            await update_job_progress(job_id, stage=JobStage.processing_chunks, message="finalizing chunk processing")
+            processed_batches = await asyncio.gather(*(task for _, task in processing_tasks), return_exceptions=True)
+            for (documentation, _), batch in zip(processing_tasks, processed_batches):
+                if isinstance(batch, BaseException):
+                    raise_if_llm_unavailable(batch, context="processing scraped documentation")
+                    logger.exception(
+                        "[Scrape] Job %s: Documentation processing failed for %s",
+                        job_id,
+                        documentation.url,
+                        exc_info=batch,
+                    )
+                    await append_job_error(job_id, f"Documentation processing failed for {documentation.url}: {batch}")
+                    continue
 
-    # Finalize chunk processing tasks that have been running in parallel with scraping.
-    documentation_chunks: List[DocumentationItem] = []
-    if processing_tasks:
-        logger.info(
-            "[Scrape] Job %s: Awaiting %s chunk-processing tasks for %s scheduled documentations",
-            job_id,
-            len(processing_tasks),
-            len(scheduled_documentations),
-        )
-        await update_job_progress(job_id, stage=JobStage.processing_chunks, message="finalizing chunk processing")
-        processed_batches = await asyncio.gather(*(task for _, task in processing_tasks), return_exceptions=True)
-        for (documentation, _), batch in zip(processing_tasks, processed_batches):
-            if isinstance(batch, BaseException):
-                raise_if_llm_unavailable(batch, context="processing scraped documentation")
-                logger.exception(
-                    "[Scrape] Job %s: Documentation processing failed for %s",
-                    job_id,
-                    documentation.url,
-                    exc_info=batch,
-                )
-                append_job_error(job_id, f"Documentation processing failed for {documentation.url}: {batch}")
-                continue
-
-            chunks, chunk_errors = batch
-            documentation_chunks.extend(chunks)
-            for chunk_error in chunk_errors:
-                logger.warning(
-                    "[Scrape] Job %s: Chunk %s of %s failed: %s",
-                    job_id,
-                    chunk_error.chunk_index,
-                    chunk_error.url,
-                    chunk_error.error,
-                )
-                append_job_error(
-                    job_id,
-                    f"Chunk {chunk_error.chunk_index} of {chunk_error.url} skipped after failure: {chunk_error.error}",
-                )
-    else:
-        logger.info(
-            "[Scrape] Job %s: No new documentations queued for chunk processing (scraped URLs were already present or no docs were scraped)",
-            job_id,
-        )
+                chunks, chunk_errors = batch
+                documentation_chunks.extend(chunks)
+                for chunk_error in chunk_errors:
+                    logger.warning(
+                        "[Scrape] Job %s: Chunk %s of %s failed: %s",
+                        job_id,
+                        chunk_error.chunk_index,
+                        chunk_error.url,
+                        chunk_error.error,
+                    )
+                    await append_job_error(
+                        job_id,
+                        f"Chunk {chunk_error.chunk_index} of {chunk_error.url} skipped after failure: {chunk_error.error}",
+                    )
+        else:
+            logger.info(
+                "[Scrape] Job %s: No new documentations queued for chunk processing (scraped URLs were already present or no docs were scraped)",
+                job_id,
+            )
 
     if session_id:
         async with async_session_maker() as db:
             doc_repo = DocumentationRepository(db)
+            write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
 
             for chunk in existing_documentation_chunks:
                 raw_chunk_id = chunk.get("chunkId")
@@ -379,7 +380,7 @@ async def _run_scrape_async(
                 chunk_id = UUID(str(raw_chunk_id))
                 update_res = await doc_repo.update_documentation_item(chunk_id=chunk_id, original_job_id=job_id)
                 if update_res:
-                    updated_existing_chunks_count += 1
+                    await write_batch.record_write()
                 else:
                     logger.warning(
                         "[Scrape] Job %s: Failed to update existing documentation item with ID %s to link to job %s",
@@ -410,31 +411,28 @@ async def _run_scrape_async(
                     )
                     if chunk_id:
                         saved_chunks_count += 1
-                await db.commit()
+                    await write_batch.record_write()
+                await write_batch.commit_pending()
 
                 logger.info(
                     "[Scrape] Job %s: Saved %s chunks to session",
                     job_id,
                     saved_chunks_count,
                 )
-            elif updated_existing_chunks_count > 0:
-                await db.commit()
-
-            doc_rows_for_export = await doc_repo.get_documentation_items_for_export(session_id)
-            if scheduled_documentation_urls:
-                doc_rows_for_export = [
-                    item
-                    for item in doc_rows_for_export
-                    if normalize_url(item.get("url")) in scheduled_documentation_urls
-                ]
             else:
-                doc_rows_for_export = []
+                await write_batch.commit_pending()
 
+            doc_rows_for_export = await doc_repo.get_scraped_documentation_items_for_export_by_job(
+                session_id,
+                job_id,
+            )
+
+    grouped_documentations = build_group_documentation_response(doc_rows_for_export)
     result = ScrapeResult(
         finish_reason=finish_reason,
-        saved_documentations_count=len(scheduled_documentations),
-        saved_chunks_count=len(documentation_chunks),
-        saved_documentations=build_group_documentation_response(doc_rows_for_export),
+        saved_documentations_count=len(grouped_documentations) if session_id else len(scheduled_documentations),
+        saved_chunks_count=len(doc_rows_for_export) if session_id else len(documentation_chunks),
+        saved_documentations=grouped_documentations,
     )
 
     logger.info(

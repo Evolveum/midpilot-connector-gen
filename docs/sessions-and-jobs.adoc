@@ -24,7 +24,8 @@ exist before any pipeline endpoint is called.
 | Session summary. `HEAD` variant checks existence.
 
 | `GET /api/session/{sessionId}/jobs`
-| List all jobs belonging to the session.
+| List all jobs belonging to the session. Running rows include worker,
+  heartbeat, claim expiry, and attempt metadata for operational visibility.
 
 | `DELETE /api/session/{sessionId}`
 | Delete the session and all associated data.
@@ -40,7 +41,8 @@ link:pipeline/scrape.adoc[scrape stage], or by direct upload:
 | Endpoint | Purpose
 
 | `POST /api/session/{sessionId}/documentation`
-| Upload a file; it is chunked and LLM-processed in a background job.
+| Upload a file; it is chunked and processed in a background job (LLM-based
+  for normal documents, deterministic for conndev exports).
 
 | `PUT /api/session/{sessionId}/documentation`
 | Replace *all* documentation in the session with one uploaded file.
@@ -58,11 +60,19 @@ link:pipeline/scrape.adoc[scrape stage], or by direct upload:
 | Remove documentation.
 |===
 
-NOTE: Uploaded documentation goes through the same chunking and LLM
-chunk-processing as scraped documentation, so the digester treats both sources
-identically. The application name/version for processing is taken from the
-session's `discoveryInput` or `scrapeInput` — run (or at least record) those
-inputs first for best results.
+SQL inputs can be uploaded directly as `.sql`/SQL media types, as a JSON table
+list (prefer `application/sql+json` so schema-preserving chunking is selected),
+or as a midPoint conndev export (`.conndev`,
+`application/conndev+json`, or
+`application/com.evolveum.conndev+json`). See
+link:pipeline/digester.adoc#sql-schema-sources[SQL sources of schema].
+
+NOTE: Normal uploads go through the same chunking and LLM chunk-processing as
+scraped documentation, so the digester treats both sources identically.
+Conndev exports are preserved and classified from their binding
+deterministically; they do not call the chunk-processing LLM. The application
+name/version for normal processing is taken from the session's `discoveryInput`
+or `scrapeInput` — run (or at least record) those inputs first for best results.
 
 == The asynchronous job pattern
 
@@ -81,13 +91,92 @@ Every expensive operation follows the same contract:
    (e.g. correcting an extracted object class before running codegen).
 
 Job statuses and progress stages are defined centrally in
-`src/common/enums.py` (`JobStatus`, `JobStage`).
+`src/shared/enums.py` (`JobStatus`, `JobStage`).
+
+== Durable multi-worker execution
+
+The job row contains a versioned execution payload, ownership token, attempt
+counter, heartbeat, and claim expiry. Every enabled FastAPI process runs a
+consumer which claims work with PostgreSQL `FOR UPDATE SKIP LOCKED`; two
+workers therefore cannot receive the same execution token.
+
+While a job runs, its worker refreshes the claim. A hard-stopped process leaves
+the job in `running`; after the claim expires another process can reclaim it.
+All final state and session-result writes are fenced by the execution token,
+so the old process cannot overwrite the new worker even if it resumes late.
+Graceful shutdown returns interrupted work directly to `queued`.
+
+=== Deployment shapes
+
+The consumer runs in one of two shapes, both of which claim from the same
+queue and need no coordination beyond PostgreSQL.
+
+*Embedded* (default). Every FastAPI process started with `+JOBS__ENABLED=true+`
+runs a consumer, so a single `python server.py` both serves requests and drains
+the queue. Throughput is raised with `+APP__WORKERS+` and
+`+JOBS__MAX_CONCURRENT_JOBS+`.
+
+*Standalone.* For scaling the API and the queue independently, run API
+processes with `+JOBS__ENABLED=false+` and consumers from the worker entry
+point:
+
+[source,shell]
+----
+python -m src.jobs.runtime
+----
+
+It applies the same per-process concurrency, claim timeout, heartbeat, CPU-pool
+and shutdown settings as the embedded consumer, but starts no HTTP server. It
+does not read `+JOBS__ENABLED+` - a process started this way is always a
+consumer. Because it builds no FastAPI application it opens no listening port
+and stays roughly 65 MB smaller than an API process, which also keeps the API
+from being reachable on hosts that are only meant to do background work.
+
+WARNING: Every process opens its own database pool, so scaling out multiplies
+the connection count. Eleven processes on the default pool settings can exceed
+PostgreSQL's own default `max_connections` of 100 and fail with
+`sorry, too many clients already`. Size `+DATABASE__POOL_SIZE+` and
+`+DATABASE__MAX_OVERFLOW+` together with the server limit - see
+link:configuration.adoc[Configuration].
+
+Execution is *at least once*: if a process dies after an external LLM provider
+accepted a request but before the result was persisted, the reclaimed attempt
+may repeat that LLM call. Database side effects are fenced/idempotent, but an
+exactly-once guarantee cannot be imposed on an external API across an
+ambiguous network/process failure.
+
+Documentation dependencies are part of the PostgreSQL claim predicate. A
+digester job stays queued without occupying a concurrency slot while scrape or
+upload processing is active in the same session. The dependency timeout is an
+enqueue-time budget measured from durable job creation, rather than from the
+later worker claim. If it expires while a producer is still unfinished, the
+worker logs a warning and records the degraded continuation in the job's
+non-fatal errors before claiming it. Uploaded source bytes are
+stored in the shared `job_artifacts` table (`BYTEA`) and the small versioned
+execution payload contains only a named reference. Artifacts and the execution
+payload are cleared on finish/failure. Deployments with very large upload
+retention or throughput can replace this table with shared object storage
+without changing the worker-call contract.
+
+The job and its `{key}JobId` session pointer are inserted in the same request
+transaction. A consumer sees neither until both commit. Result persistence
+checks that the pointer still references the completing job, preventing an
+older parallel job from overwriting a newer result. The older computation
+remains a finished historical job, but its `errors` list explicitly records
+that the result was not published to the session.
+
+Run `uv run alembic upgrade head` before starting the updated application.
+Migration `007` marks pre-migration queued/running jobs as failed because they
+do not contain a resumable execution payload. The same migration adds
+idempotency keys for documentation chunks.
 
 == Result caching and `skipCache`
 
 Discovery, scrape, and digester jobs cache results by *normalized input*: if
-the same input was already processed (in any session) within a configured time
-window, the stored result is reused instead of re-running the LLM work.
+the same input was already processed in the same session or API-key tenant
+within a configured time window, the stored result is reused instead of
+re-running the LLM work. With authentication disabled, ownerless sessions form
+one cache tenant; production deployments should enable API-key authentication.
 
 * The windows are configured per module:
   `+SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL+`,

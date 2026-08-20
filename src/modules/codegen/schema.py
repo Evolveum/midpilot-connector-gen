@@ -8,10 +8,10 @@ from typing import Any, Dict, List, Mapping, Optional, TypeAlias, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from src.common.schema import CamelCaseModel
+from src.core.schema import CamelCaseModel
 from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
-from src.modules.digester.enums import normalize_auth_type_value
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
+from src.shared.auth import normalize_auth_type_value
 
 AttributesPayload: TypeAlias = Union[AttributeResponse, Mapping[str, Any]]
 EndpointsPayload: TypeAlias = Union[EndpointResponse, Mapping[str, Any]]
@@ -21,6 +21,15 @@ PreferredAuthorizations: TypeAlias = Optional[List[Dict[str, Any]]]
 
 @dataclass
 class OperationConfig:
+    """
+    Static configuration of one Groovy generation operation.
+
+    ``context_only_for_conndev`` marks a protocol whose operation context is deterministic
+    (SCIM contracts, SQL tables): conndev exports are never fed to the LLM as text chunks, so
+    a session built only from them would otherwise have nothing to generate from. Such a
+    protocol instead runs a single pass on the extracted context alone.
+    """
+
     operation_name: str
     system_prompt: str
     user_prompt: str
@@ -179,10 +188,10 @@ class CodegenRepairContext(CamelCaseModel):
         )
 
     def context_payload(self) -> dict[str, Any]:
-        if not self.is_repair:
-            return {}
         repair_context = self.repair_context()
-        return repair_context.to_payload() if repair_context is not None else {}
+        if repair_context is None:
+            return {}
+        return repair_context.to_payload()
 
 
 class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
@@ -193,9 +202,7 @@ class CodegenOperationInput(PreferredEndpointsInput, CodegenRepairContext):
 
 
 class AuthorizationCodegenInput(PreferredAuthorizationsInput, CodegenRepairContext):
-    def preferred_authorizations_payload(self) -> list[dict[str, Any]] | None:
-        if not self.preferred_authorizations:
-            return None
+    def preferred_authorizations_payload(self) -> list[dict[str, Any]]:
         return [authorization.model_dump(exclude_none=True) for authorization in self.preferred_authorizations]
 
     def context_payload(self) -> dict[str, Any]:

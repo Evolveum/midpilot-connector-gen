@@ -11,13 +11,12 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from src.common.enums import JobStage
-from src.common.jobs import (
+from src.config import config
+from src.core.llm import build_structured_chain, raise_if_llm_unavailable
+from src.core.observability.langfuse import langfuse_handler
+from src.jobs import (
     update_job_progress,
 )
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain, raise_if_llm_unavailable
-from src.config import config
 from src.modules.digester.aggregation.merges import merge_attribute_candidates
 from src.modules.digester.entities.attribute_filters import (
     filter_ignored_attributes,
@@ -54,6 +53,7 @@ from src.modules.digester.schemas import (
     DiscoveryAttribute,
     DocSequenceItem,
 )
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 

@@ -9,13 +9,11 @@ from uuid import UUID
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.enums import JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain
-from src.common.utils.coerce import as_list
-from src.common.utils.normalize import normalize_endpoint_key
+from src.core.llm import build_structured_chain
+from src.core.observability.langfuse import langfuse_handler
+from src.documents.filtering.filter import filter_documentation_items
+from src.documents.normalize import normalize_endpoint_key
+from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.entities.object_classes import build_endpoint_result
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_doc_extractors_concurrently
@@ -40,6 +38,8 @@ from src.modules.digester.selection import (
     exclude_doc_items_by_chunk_id,
     resolve_relevant_chunk_ref,
 )
+from src.shared.coerce import as_list
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +202,7 @@ async def rank_connectivity_candidates(
     except Exception as exc:
         error_msg = f"[Digester:ConnectivityEndpoint] Ranking LLM call failed: {exc}"
         logger.exception(error_msg)
-        append_job_error(job_id, error_msg)
+        await append_job_error(job_id, error_msg)
         return candidates
 
 

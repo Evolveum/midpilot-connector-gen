@@ -6,8 +6,8 @@ from typing import Any, Generic, List, Optional, Tuple, TypeVar
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_serializer
 
-from src.modules.digester.enums import AuthType, normalize_auth_type
 from src.modules.digester.schemas.common import DocProcessingSequenceItem, DocSequenceItem
+from src.shared.auth import AuthType, normalize_auth_type
 
 # --- Auth ---
 

@@ -24,10 +24,10 @@ from typing import Dict, List, Optional, cast
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain
-from src.common.web import SearchResult, fetch_markdown_pages, search_web
 from src.config import config
+from src.core.llm import build_structured_chain
+from src.core.observability.langfuse import langfuse_handler
+from src.integrations.web import SearchResult, fetch_markdown_pages, search_web
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.prompts.apitype.web_search_prompts import (
     get_api_type_web_search_system_prompt,
@@ -39,8 +39,8 @@ from src.modules.digester.schemas import ApiTypeSignalResult, RestSignalResult
 
 logger = logging.getLogger(__name__)
 
-_LOG_PREFIX = "[ApiType:WebSearch] "
-_REST_LOG_PREFIX = "[ApiType:RestWebSearch] "
+_LOG_PREFIX = "[Digester:ApiType:WebSearch] "
+_REST_LOG_PREFIX = "[Digester:ApiType:RestWebSearch] "
 
 # Cap each snippet so a few verbose results cannot blow up the prompt token budget.
 _MAX_SNIPPET_CHARS = 500

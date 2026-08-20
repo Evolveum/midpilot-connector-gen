@@ -2,40 +2,49 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
-from src import pool
-from src.common.exception_handlers import register_exception_handlers
-from src.common.jobs import recover_stale_running_jobs
-from src.common.llm import aclose_llm_http_client
+from src.api.correlation import bind_session_correlation
+from src.api.exception_handlers import register_exception_handlers
+from src.auth.dependencies import authenticate_request
 from src.config import config
+from src.core import pool
+from src.core.db import close_db
+from src.core.llm import aclose_llm_http_client
+from src.jobs import JobWorker
 from src.router import root_router
+from src.session.ownership import enforce_session_ownership
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        pool.process_pool = pool.create_pool()
-    except Exception:
-        logger.exception("Failed to create process pool during startup")
-        raise
-
-    try:
-        await recover_stale_running_jobs()
-    except Exception:
-        logger.exception("Failed to recover stale running jobs during startup")
+    job_worker: JobWorker | None = None
+    if config.jobs.enabled:
+        try:
+            pool.process_pool = pool.create_pool(config.jobs.cpu_processes)
+        except Exception:
+            logger.exception("Failed to create process pool during startup")
+            raise
+        job_worker = JobWorker()
+        job_worker.start()
+        app.state.job_worker = job_worker
 
     try:
         yield
     finally:
+        if job_worker is not None:
+            await job_worker.stop()
         await aclose_llm_http_client()
         if pool.process_pool:
-            pool.process_pool.shutdown(wait=True)
+            await asyncio.to_thread(pool.process_pool.shutdown, wait=True, cancel_futures=True)
+            pool.process_pool = None
+        await close_db()
 
 
 def create_api() -> FastAPI:
@@ -44,11 +53,19 @@ def create_api() -> FastAPI:
 
     :return: Configured FastAPI instance.
     """
-    app = FastAPI(title=config.app.title, version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title=config.app.title, version=config.app.version, lifespan=lifespan)
 
     register_exception_handlers(app)
 
-    app.include_router(root_router, prefix=f"{config.app.api_base_url}/v1")
+    app.include_router(
+        root_router,
+        prefix=f"{config.app.api_base_url}/v1",
+        dependencies=[
+            Depends(bind_session_correlation),
+            Depends(authenticate_request),
+            Depends(enforce_session_ownership),
+        ],
+    )
 
     @app.get("/health")
     async def health() -> dict:

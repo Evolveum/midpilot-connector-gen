@@ -10,12 +10,12 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from src.modules.discovery import service
-from src.modules.discovery.schema import CandidateLinksInput, PyScrapeFetchReferences, PySearchPrompts
+from src.modules.discovery.schema import CandidateLinksInput, PySearchPrompts
 
 
 @pytest.mark.asyncio
-async def test_fetch_candidate_links(mock_llm, mock_llm_eval, mock_search_web, mock_discovery_update_job_progress):
-    """Test the main fetch_candidate_links function."""
+async def test_discover_candidate_links(mock_llm, mock_llm_eval, mock_search_web, mock_discovery_update_job_progress):
+    """Test the main discover_candidate_links function."""
 
     # Main LLM returns JSON content used later in pipeline
     mock_llm.return_value.invoke.return_value = AIMessage(
@@ -30,20 +30,12 @@ async def test_fetch_candidate_links(mock_llm, mock_llm_eval, mock_search_web, m
         # Mock the LLMs that get called inside _run_discovery_blocking
         mock_llm_default.return_value = mock_llm.return_value
 
-        # First parser: for _generate_query_via_llm -> returns PySearchPrompt
+        # Parser for the generated search queries.
         meta_prompt = MagicMock()
         meta_prompt.parse.return_value = PySearchPrompts(
             search_prompts=["test search query 1", "test search query 2", "test search query 3"]
         )
-
-        # Second parser: for fetch_parser_response -> returns PyScrapeFetchReferences
-        meta_refs = MagicMock()
-        meta_refs.parse.return_value = PyScrapeFetchReferences(
-            name="test", urls_to_crawl=["https://example.com/1"], text_output="ok"
-        )
-
-        # Ensure two distinct returns for two OutputFixingParser.from_llm(...) calls
-        mock_ofp.from_llm.side_effect = [meta_prompt, meta_refs]
+        mock_ofp.from_llm.return_value = meta_prompt
 
         input_data = CandidateLinksInput(
             application_name="test-app",
@@ -52,7 +44,7 @@ async def test_fetch_candidate_links(mock_llm, mock_llm_eval, mock_search_web, m
             enable_link_filtering=False,
         )
 
-        result = await service.fetch_candidate_links(input_data, uuid4())
+        result = await service.discover_candidate_links(input_data, job_id=uuid4())
 
         assert len(result.candidate_links) > 0
         assert "https://example.com/1" in result.candidate_links

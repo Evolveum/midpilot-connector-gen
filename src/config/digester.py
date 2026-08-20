@@ -156,6 +156,28 @@ class DigesterSettings(BaseModel):
         ge=1,
         description="Number of sequences to process concurrently in the build_from_sequences function.",
     )
+    min_start_sequence_length: int = Field(
+        10,
+        description="Default minimum length in chars for start sequences, for extractors that set no explicit bound.",
+    )
+    max_start_sequence_length: int = Field(
+        2000,
+        description=(
+            "Default maximum length in chars for start sequences, for extractors that set no explicit bound. "
+            "Markers are persisted in the relevant_chunks unique key, so this also bounds that index entry."
+        ),
+    )
+    min_end_sequence_length: int = Field(
+        10,
+        description="Default minimum length in chars for end sequences, for extractors that set no explicit bound.",
+    )
+    max_end_sequence_length: int = Field(
+        2000,
+        description=(
+            "Default maximum length in chars for end sequences, for extractors that set no explicit bound. "
+            "Markers are persisted in the relevant_chunks unique key, so this also bounds that index entry."
+        ),
+    )
     min_start_sequence_len_attributes: int = Field(
         5,
         description="Minimum length in chars for start sequences when extracting attributes.",

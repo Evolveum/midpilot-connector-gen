@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.common.enums import ApiType, ProtocolAvailability
 from src.modules.digester.extractors.apitype.knowledge import lookup_api_type_knowledge
-from src.modules.digester.schemas import ApiTypeSignalResult
+from src.modules.digester.schemas import ApiTypeSignalResult, RestSignalResult
+from src.shared.enums import ApiType, ProtocolAvailability
 
 
 @pytest.mark.asyncio
@@ -59,6 +59,24 @@ def test_knowledge_response_defaults_availability_unknown():
 def test_knowledge_response_unrecognized_availability_falls_back_to_unknown():
     response = ApiTypeSignalResult.model_validate({"scimAvailability": "something-weird"})
     assert response.scim_availability is ProtocolAvailability.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("raw_availability", "expected"),
+    [
+        ("public", ProtocolAvailability.AVAILABLE),
+        ("partner", ProtocolAvailability.PAID),
+    ],
+)
+def test_protocol_signal_responses_share_availability_aliases(
+    raw_availability: str,
+    expected: ProtocolAvailability,
+):
+    scim_response = ApiTypeSignalResult.model_validate({"scimAvailability": raw_availability})
+    rest_response = RestSignalResult.model_validate({"availability": raw_availability})
+
+    assert scim_response.scim_availability is expected
+    assert rest_response.availability is expected
 
 
 @pytest.mark.asyncio

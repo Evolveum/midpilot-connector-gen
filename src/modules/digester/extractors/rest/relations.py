@@ -7,10 +7,10 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, cast
 from uuid import UUID
 
-from src.common.chunking import normalize_to_text
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.llm import build_structured_chain, raise_if_llm_unavailable
-from src.common.utils.normalize import normalize_object_class_name
+from src.core.llm import build_structured_chain, raise_if_llm_unavailable
+from src.documents.chunking import normalize_to_text
+from src.documents.normalize import normalize_object_class_name
+from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.merges import merge_relations_results
 from src.modules.digester.entities.relations import deduplicate_semantic_relations
 from src.modules.digester.enums import ConfidenceLevel
@@ -163,7 +163,7 @@ def sort_relation_dicts_by_iga_priority(
     return [relation.model_dump(by_alias=True) for relation in sorted_relations]
 
 
-def _parse_relations_result(
+async def _parse_relations_result(
     result: Any,
     job_id: UUID,
     idx: Optional[int] = None,
@@ -205,16 +205,13 @@ def _parse_relations_result(
 
     except Exception as exc:
         if job_id is not None and idx is not None:
-            try:
-                total = total_chunks or 0
-                prefix = "[Digester:Relations] "
-                error_message = f"{prefix}Failed to parse chunk {idx + 1}/{total if total else '?'}: {exc}"
-                if chunk_id:
-                    error_message = f"{error_message} (chunk_id: {chunk_id})"
-                logger.exception(error_message)
-                append_job_error(job_id, error_message)
-            except Exception:
-                pass
+            total = total_chunks or 0
+            prefix = "[Digester:Relations] "
+            error_message = f"{prefix}Failed to parse chunk {idx + 1}/{total if total else '?'}: {exc}"
+            if chunk_id:
+                error_message = f"{error_message} (chunk_id: {chunk_id})"
+            logger.exception(error_message)
+            await append_job_error(job_id, error_message)
         else:
             logger.exception("[Digester:Relations] Failed to parse relations result")
         return []
@@ -231,7 +228,7 @@ async def _extract_from_chunk(
 ) -> List[RelationRecord]:
     try:
         result = await invoke_chunk_chain(chain, chunk, chunk_metadata)
-        return _parse_relations_result(
+        return await _parse_relations_result(
             result,
             job_id=job_id,
             idx=idx,
@@ -245,7 +242,7 @@ async def _extract_from_chunk(
         if chunk_id:
             error_message = f"{error_message} (chunk_id: {chunk_id})"
         logger.exception(error_message)
-        append_job_error(job_id, error_message)
+        await append_job_error(job_id, error_message)
         return []
 
 

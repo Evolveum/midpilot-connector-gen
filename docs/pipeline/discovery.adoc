@@ -29,7 +29,7 @@ Module: `src/modules/discovery/`
    templates or LLM-generated (`llmGeneratedSearchQuery`).
 2. Run the queries against the configured search backend (Brave when
    `+BRAVE__API_KEY+` is set, ddgs otherwise; shared backend in
-   `src/common/web/search.py`).
+   `src/integrations/web/search.py`).
 3. Optionally filter out irrelevant links with an LLM
    (`enableLinkFiltering`).
 4. Optionally rank the remaining links by relevance with an LLM
@@ -66,6 +66,10 @@ concepts. `integrationType` only steers *what is searched for*; the actual
 protocol used for extraction and code generation is detected later by the
 digester metadata step (and can be overridden there). Setting
 `integrationType=scim` does not make the pipeline generate a SCIM connector.
+
+NOTE: There is no `sql` integration type — a database integration is not
+discoverable by web search. For a SQL connector skip this stage entirely and
+upload the database schema or the midPoint conndev export to the session.
 
 NOTE: Discovery quality depends on the search backend. Without a Brave API key
 the ddgs fallback is used, which may return noticeably weaker results.

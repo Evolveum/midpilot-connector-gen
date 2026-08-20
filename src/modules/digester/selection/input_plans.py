@@ -8,11 +8,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.enums import ApiType
-from src.common.session.session import get_session_documentation
-from src.common.utils.session_info_metadata import get_discovery_application_name, get_session_api_types, is_sql_api
 from src.config import config
+from src.documents.filtering.filter import filter_documentation_items
 from src.modules.digester.selection.criteria import (
     CONNECTIVITY_ENDPOINT_CRITERIA,
     CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA,
@@ -21,6 +18,9 @@ from src.modules.digester.selection.criteria import (
     EXTENDED_AUTH_CRITERIA,
     METADATA_CRITERIA,
 )
+from src.session.access import get_session_documentation
+from src.session.info_metadata import get_discovery_application_name, get_session_api_types, is_sql_api
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 

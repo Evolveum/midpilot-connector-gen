@@ -6,10 +6,15 @@
 Endpoint extraction workflow.
 
 Owns the entity-level flow: resolve the effective protocol and dispatch to the
-REST/SCIM/SQL leaf extractors, retry with broader documentation criteria when the
+REST/SCIM leaf extractors, retry with broader documentation criteria when the
 endpoint-focused chunks yield no endpoints, and persist the extracted endpoints back
-onto the object class. Protocol-specific leaves live under ``extractors/rest``,
-``extractors/scim`` and ``extractors/sql``.
+onto the object class. Protocol-specific leaves live under ``extractors/rest`` and
+``extractors/scim``.
+
+SQL has no endpoints at all - a database connector reaches its data through the table
+and column mapping declared by the native schema, and code generation reads that from
+the extracted attributes. Endpoint extraction is therefore rejected for a SQL session
+rather than silently producing an empty or REST-shaped result.
 """
 
 import logging
@@ -17,16 +22,13 @@ from collections.abc import Mapping
 from typing import Any, Dict, List
 from uuid import UUID
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.documentation.content_types import is_conndev_documentation_item
-from src.common.enums import ApiType
-from src.common.jobs import update_job_progress
-from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.documents.filtering.filter import filter_documentation_items
+from src.jobs import update_job_progress
 from src.modules.digester.entities.object_classes import build_endpoint_result, extract_endpoints_from_result
+from src.modules.digester.errors import EndpointExtractionNotSupportedError
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest.endpoints import extract_endpoints as _extract_rest_endpoints
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
-from src.modules.digester.extractors.sql.tables import extract_sql_tables
 from src.modules.digester.persistence import persist_object_class_field
 from src.modules.digester.selection import (
     DEFAULT_CRITERIA,
@@ -36,6 +38,9 @@ from src.modules.digester.selection import (
     exclude_doc_items_by_chunk_id,
     select_doc_chunks,
 )
+from src.session.info_metadata import resolve_effective_api_type
+from src.shared.content_types import is_conndev_documentation_item
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 
@@ -191,11 +196,7 @@ async def extract_endpoints(
 
     protocol = await resolve_effective_api_type(session_id, api_type_override)
     if protocol == ApiType.SQL:
-        result = await extract_sql_tables(doc_items, object_class, job_id)
-        tables_list = extract_endpoints_from_result(result)
-        logger.info("[Digester:Endpoints] Selected %d SQL tables for %s", len(tables_list), object_class)
-        await persist_object_class_field(session_id, object_class, "endpoints", tables_list, "Digester:Endpoints")
-        return result
+        raise EndpointExtractionNotSupportedError(object_class, protocol.value)
 
     is_scim = protocol == ApiType.SCIM
 
@@ -239,7 +240,7 @@ async def extract_endpoints(
         )
         if rest_result is None:
             if not relevant_chunks:
-                logger.warning(f"[Digester:Endpoints] No relevant chunks found for {object_class}")
+                logger.warning("[Digester:Endpoints] No relevant chunks found for %s", object_class)
                 return build_endpoint_result()
             rest_result = build_endpoint_result()
 

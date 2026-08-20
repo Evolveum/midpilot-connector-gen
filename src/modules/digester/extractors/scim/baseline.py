@@ -15,7 +15,11 @@ never chunked). The contract shapes are fixed by the midPoint/connector-scimrest
   which schemas are standalone resources, their real endpoints, and which extension schemas
   (e.g. EnterpriseUser) attach to which resource.
 - **ConnId object class** — ``{"namespace": <URN>, "attributes", "locator", "name", "uid"}``.
-  The final object class as exposed by connector-scimrest.
+  The final object class as exposed by connector-scimrest. Newer exports deliver the same
+  contract wrapped in midPoint shadows: ``{"name", "uid", "scim": <shadow>, "attributes":
+  [<shadow>, ...]}`` where the ``scim`` shadow (objectClass ``ri:conndev_scim``) carries the
+  schema URN and each attribute shadow (objectClass ``ri:conndev_Attribute``) carries the
+  ConnId flags under ``connId`` and the SCIM wire path under ``scim.path``.
 - **SCIM service-provider configuration** — ``{"name": "ServiceProviderConfig",
   "content": "<raw ServiceProviderConfig JSON>", "id": "ServiceProviderConfig"}``.
   Session-wide protocol capabilities such as PATCH, filtering, sorting, ETags and bulk limits.
@@ -34,14 +38,23 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.documentation_repository import DocumentationRepository
-from src.common.documentation.content_types import is_conndev_documentation_item
-from src.common.utils.coerce import as_dict_list
+from src.core.db import async_session_maker
+from src.database.repositories.documentation_repository import DocumentationRepository
+from src.modules.digester.extractors.conndev import (
+    conndev_attribute_entries,
+    flatten_shadow_connid_attribute,
+    shadow_object_attributes,
+)
 from src.modules.digester.schemas.common import ChunkReference
 from src.modules.digester.schemas.scim import (
     SCIM_SERVICE_PROVIDER_CONFIG_URN,
     ScimServiceProviderConfig,
+)
+from src.shared.coerce import as_dict_list
+from src.shared.content_types import (
+    CONNDEV_SCIM_BINDING,
+    CONNDEV_SQL_BINDING,
+    is_conndev_documentation_item,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,7 +164,7 @@ def _register_schema(
     name = _schema_name(raw_schema)
     if not name:
         logger.warning(
-            "[SCIM:Baseline] Skipping %s schema from document %s for session %s: no resolvable name",
+            "[Digester:Baseline] Skipping %s schema from document %s for session %s: no resolvable name",
             source,
             doc_id,
             session_id,
@@ -164,7 +177,7 @@ def _register_schema(
         if not replace_existing:
             if existing.get("id") != raw_schema.get("id"):
                 logger.warning(
-                    "[SCIM:Baseline] Schema name conflict for '%s' in session %s: keeping URN %s, ignoring %s from %s",
+                    "[Digester:Baseline] Schema name conflict for '%s' in session %s: keeping URN %s, ignoring %s from %s",
                     name,
                     session_id,
                     existing.get("id"),
@@ -175,7 +188,7 @@ def _register_schema(
 
         if existing.get("id") != raw_schema.get("id"):
             logger.warning(
-                "[SCIM:Baseline] Replacing older schema '%s' in session %s: URN %s -> %s from %s",
+                "[Digester:Baseline] Replacing older schema '%s' in session %s: URN %s -> %s from %s",
                 name,
                 session_id,
                 existing.get("id"),
@@ -184,7 +197,7 @@ def _register_schema(
             )
         else:
             logger.info(
-                "[SCIM:Baseline] Replacing older schema '%s' in session %s with document %s",
+                "[Digester:Baseline] Replacing older schema '%s' in session %s with document %s",
                 name,
                 session_id,
                 doc_id,
@@ -236,7 +249,7 @@ def _parse_scim_resource(
     primary_schema = _parse_embedded_json(doc.get("primarySchema"))
     if not isinstance(primary_schema, dict):
         logger.warning(
-            "[SCIM:Baseline] Skipping resource document %s for session %s: invalid primarySchema",
+            "[Digester:Baseline] Skipping resource document %s for session %s: invalid primarySchema",
             doc_id,
             session_id,
         )
@@ -251,7 +264,7 @@ def _parse_scim_resource(
     name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else _schema_name(primary_schema)
     if not name:
         logger.warning(
-            "[SCIM:Baseline] Skipping resource document %s for session %s: no resolvable name",
+            "[Digester:Baseline] Skipping resource document %s for session %s: no resolvable name",
             doc_id,
             session_id,
         )
@@ -283,7 +296,7 @@ def _parse_connid_object_class(
     name = doc.get("name")
     if not isinstance(name, str) or not name.strip():
         logger.warning(
-            "[SCIM:Baseline] Skipping ConnId object class document %s for session %s: no name",
+            "[Digester:Baseline] Skipping ConnId object class document %s for session %s: no name",
             doc_id,
             session_id,
         )
@@ -294,7 +307,52 @@ def _parse_connid_object_class(
         namespace=str(doc.get("namespace") or ""),
         locator=str(doc.get("locator") or ""),
         uid=str(doc.get("uid") or ""),
-        attributes=as_dict_list(doc.get("attributes")),
+        attributes=conndev_attribute_entries(doc.get("attributes")),
+        source_reference=source_reference,
+    )
+
+
+def _parse_shadow_connid_object_class(
+    doc: Dict[str, Any],
+    *,
+    session_id: UUID,
+    doc_id: Any,
+    source_reference: Optional[ChunkReference] = None,
+) -> Optional[ConnIdObjectClassDefinition]:
+    """Parse the shadow-wrapped ConnId object class contract into the common definition."""
+    scim_binding = shadow_object_attributes(doc.get(CONNDEV_SCIM_BINDING)) or {}
+
+    name = doc.get("name")
+    if not isinstance(name, str) or not name.strip():
+        name = scim_binding.get("name")
+    if not isinstance(name, str) or not name.strip():
+        logger.warning(
+            "[Digester:Baseline] Skipping ConnId object class document %s for session %s: no name",
+            doc_id,
+            session_id,
+        )
+        return None
+
+    attributes: List[Dict[str, Any]] = []
+    for entry in conndev_attribute_entries(doc.get("attributes")):
+        flattened = flatten_shadow_connid_attribute(entry, binding_key=CONNDEV_SCIM_BINDING)
+        if flattened is None:
+            logger.warning(
+                "[Digester:Baseline] Ignoring malformed attribute shadow in ConnId object class document %s "
+                "for session %s (class %s)",
+                doc_id,
+                session_id,
+                name.strip(),
+            )
+            continue
+        attributes.append(flattened)
+
+    return ConnIdObjectClassDefinition(
+        name=name.strip(),
+        namespace=str(scim_binding.get("schemaUri") or ""),
+        locator="",
+        uid=str(doc.get("uid") or ""),
+        attributes=attributes,
         source_reference=source_reference,
     )
 
@@ -324,7 +382,7 @@ def _parse_service_provider_config(
         config = ScimServiceProviderConfig.model_validate(raw_config)
     except ValidationError as exc:
         logger.warning(
-            "[SCIM:Baseline] Skipping ServiceProviderConfig document %s for session %s: invalid contract (%s)",
+            "[Digester:Baseline] Skipping ServiceProviderConfig document %s for session %s: invalid contract (%s)",
             doc_id,
             session_id,
             exc,
@@ -391,8 +449,8 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
 
     Only persisted documents marked with a conndev metadata content type are considered. Those
     documents are then classified by contract shape (``schemaContent`` / ``endpoint`` +
-    ``primarySchema`` / ``locator`` + ``uid`` / ServiceProviderConfig ``content``); unrecognized
-    conndev documents are logged and skipped. Raw SCIM schemas come from the dedicated schema
+    ``primarySchema`` / ``locator`` + ``uid`` / shadow-wrapped ``scim`` + ``uid`` /
+    ServiceProviderConfig ``content``); unrecognized conndev documents are logged and skipped. Raw SCIM schemas come from the dedicated schema
     documents; resource-embedded copies only fill in classes that have no dedicated document.
     """
     async with async_session_maker() as db:
@@ -419,7 +477,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             doc = json.loads(content)
         except json.JSONDecodeError as exc:
             logger.warning(
-                "[SCIM:Baseline] Skipping conndev document %s for session %s: invalid JSON (%s)",
+                "[Digester:Baseline] Skipping conndev document %s for session %s: invalid JSON (%s)",
                 doc_id,
                 session_id,
                 exc,
@@ -440,7 +498,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             if parsed_service_provider_config is not None:
                 if service_provider_config is not None:
                     logger.info(
-                        "[SCIM:Baseline] Replacing older ServiceProviderConfig in session %s with document %s",
+                        "[Digester:Baseline] Replacing older ServiceProviderConfig in session %s with document %s",
                         session_id,
                         doc_id,
                     )
@@ -462,7 +520,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
                 )
             else:
                 logger.warning(
-                    "[SCIM:Baseline] Skipping schema document %s for session %s: invalid schemaContent",
+                    "[Digester:Baseline] Skipping schema document %s for session %s: invalid schemaContent",
                     doc_id,
                     session_id,
                 )
@@ -487,9 +545,27 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             )
             if connid_class is not None:
                 _set_case_insensitive(connid_classes, connid_class.name, connid_class)
+        elif CONNDEV_SCIM_BINDING in doc and "uid" in doc:
+            connid_class = _parse_shadow_connid_object_class(
+                doc,
+                session_id=session_id,
+                doc_id=doc_id,
+                source_reference=source_reference,
+            )
+            if connid_class is not None:
+                _set_case_insensitive(connid_classes, connid_class.name, connid_class)
+        elif CONNDEV_SQL_BINDING in doc and "uid" in doc:
+            # A SQL-bound object class in a SCIM baseline means the session apiType does not match
+            # the uploaded conndev export; extractors/sql reads these documents.
+            logger.info(
+                "[Digester:Baseline] Skipping SQL-bound conndev document %s for session %s: "
+                "the SCIM baseline only reads SCIM-bound contracts",
+                doc_id,
+                session_id,
+            )
         else:
             logger.warning(
-                "[SCIM:Baseline] Skipping conndev document %s for session %s: unrecognized contract (keys: %s)",
+                "[Digester:Baseline] Skipping conndev document %s for session %s: unrecognized contract (keys: %s)",
                 doc_id,
                 session_id,
                 sorted(doc.keys()),
@@ -516,7 +592,7 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
     # Every SCIM extractor job loads the baseline, so this per-load summary stays at DEBUG;
     # the extractors log what they derived from it at INFO.
     logger.debug(
-        "[SCIM:Baseline] Session %s: loaded %d SCIM schema(s), %d resource(s), %d ConnId object class(es), "
+        "[Digester:Baseline] Session %s: loaded %d SCIM schema(s), %d resource(s), %d ConnId object class(es), "
         "%d extension mapping(s), ServiceProviderConfig=%s",
         session_id,
         len(bundle.schemas),
@@ -601,12 +677,6 @@ def get_scim_resource_endpoint_definition(
         )
 
     return None
-
-
-def get_scim_resource_endpoint(bundle: ScimBaselineBundle, class_name: str) -> Optional[str]:
-    """Return the explicit exported endpoint path for ``class_name``, or None."""
-    definition = get_scim_resource_endpoint_definition(bundle, class_name)
-    return definition.endpoint if definition is not None else None
 
 
 def _append_reference(
@@ -698,57 +768,6 @@ def get_base_scim_object_classes(bundle: ScimBaselineBundle) -> List[Dict[str, A
     return object_classes
 
 
-def get_base_scim_attributes(schemas: Dict[str, Any], class_name: str) -> Dict[str, Dict[str, Any]]:
-    """Return the baseline attributes for ``class_name`` in digester AttributeInfo format."""
-    schema = get_scim_schema(schemas, class_name)
-    if not schema:
-        logger.warning("[SCIM:Baseline] Schema not found for class: %s", class_name)
-        return {}
-
-    attributes: Dict[str, Dict[str, Any]] = {}
-    for attr in as_dict_list(schema.get("attributes")):
-        attr_name = attr.get("name")
-        if not attr_name:
-            continue
-
-        mutability = attr.get("mutability", "readWrite")
-        is_updatable = mutability not in ("readOnly", "immutable")
-        is_creatable = mutability != "readOnly"
-        is_readable = mutability != "writeOnly"
-
-        returned = attr.get("returned", "default")
-        returned_by_default = returned in ("always", "default")
-
-        attribute_info: Dict[str, Any] = {
-            "type": map_scim_type_to_digester(attr.get("type")),
-            "format": _infer_format_from_scim_attr(attr),
-            "description": attr.get("description", ""),
-            "mandatory": attr.get("required", False),
-            "updatable": is_updatable,
-            "creatable": is_creatable,
-            "readable": is_readable,
-            "multivalue": attr.get("multiValued", False),
-            "returnedByDefault": returned_by_default,
-        }
-
-        if attr.get("type") == "complex" and isinstance(attr.get("subAttributes"), list):
-            attribute_info["subAttributes"] = {}
-            for sub_attr in as_dict_list(attr.get("subAttributes")):
-                sub_name = sub_attr.get("name")
-                if sub_name:
-                    attribute_info["subAttributes"][sub_name] = {
-                        "type": map_scim_type_to_digester(sub_attr.get("type")),
-                        "description": sub_attr.get("description", ""),
-                    }
-
-        attributes[attr_name] = attribute_info
-
-    # Called per class from several flows (attribute extraction, codegen-context projection);
-    # the callers report the resulting counts at INFO.
-    logger.debug("[SCIM:Baseline] Loaded %d attributes for %s", len(attributes), class_name)
-    return attributes
-
-
 _SCIM_ATTRIBUTE_CONTEXT_KEYS = (
     "name",
     "type",
@@ -790,9 +809,10 @@ def _build_connector_attribute_projection(
         if not isinstance(name, str) or not name.strip():
             continue
 
+        scim_path = raw_attribute.get("scimPath")
         item: Dict[str, Any] = {}
         item["name"] = name.strip()
-        item["scimAttribute"] = name.strip()
+        item["scimAttribute"] = scim_path.strip() if isinstance(scim_path, str) and scim_path.strip() else name.strip()
         item["connectorExposed"] = True
 
         connector_type = raw_attribute.get("type")
@@ -1057,28 +1077,6 @@ def map_scim_type_to_digester(scim_type: Any) -> str:
     normalized_type = str(scim_type).strip().lower()
     mapped_type = type_map.get(normalized_type)
     if mapped_type is None:
-        logger.debug("[SCIM:Baseline] Unknown attribute type %r; defaulting to string", scim_type)
+        logger.debug("[Digester:Baseline] Unknown attribute type %r; defaulting to string", scim_type)
         return "string"
     return mapped_type
-
-
-def _infer_format_from_scim_attr(attr: Dict[str, Any]) -> Optional[str]:
-    """Infer a digester format hint from a SCIM attribute definition."""
-    scim_type = str(attr.get("type") or "").strip().lower()
-
-    if scim_type == "datetime":
-        return "date-time"
-    if scim_type == "binary":
-        return "binary"
-    if scim_type == "reference":
-        return "reference"
-    if scim_type == "complex":
-        return "embedded"
-
-    name = str(attr.get("name", "")).lower()
-    if "email" in name:
-        return "email"
-    if "url" in name or "uri" in name:
-        return "uri"
-
-    return None

@@ -8,9 +8,18 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
-from src.common.errors import LLMUnavailableError
 from src.config import config
+from src.core.errors import LLMUnavailableError
 from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
+
+
+# PyCharm's monkeypatch inspection does not resolve pydantic model fields as attribute names
+# (mypy resolves them correctly), so the field-name string arguments are suppressed here once.
+# noinspection PyUnresolvedReferences
+def _set_chunk_llm_retry(monkeypatch, *, attempts: int, base_delay_seconds: float | None = None) -> None:
+    monkeypatch.setattr(config.digester, "chunk_llm_retry_attempts", attempts)
+    if base_delay_seconds is not None:
+        monkeypatch.setattr(config.digester, "chunk_llm_retry_base_delay_seconds", base_delay_seconds)
 
 
 class _RetryResponse(BaseModel):
@@ -32,8 +41,7 @@ class _SequenceResponse(BaseModel):
 
 @pytest.mark.asyncio
 async def test_extract_single_chunk_retries_transient_gateway_error(monkeypatch):
-    monkeypatch.setattr(config.digester, "chunk_llm_retry_attempts", 2)
-    monkeypatch.setattr(config.digester, "chunk_llm_retry_base_delay_seconds", 0)
+    _set_chunk_llm_retry(monkeypatch, attempts=2, base_delay_seconds=0)
 
     chain = AsyncMock()
     chain.ainvoke.side_effect = [
@@ -64,13 +72,16 @@ async def test_extract_single_chunk_retries_transient_gateway_error(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_extract_single_chunk_does_not_retry_non_transient_error(monkeypatch):
-    monkeypatch.setattr(config.digester, "chunk_llm_retry_attempts", 3)
+    _set_chunk_llm_retry(monkeypatch, attempts=3)
     chain = AsyncMock()
     chain.ainvoke.side_effect = ValueError("invalid prompt variable")
 
     with (
         patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.extraction.chunk_extraction.append_job_error", Mock()) as append_job_error,
+        patch(
+            "src.modules.digester.extraction.chunk_extraction.append_job_error",
+            new_callable=AsyncMock,
+        ) as append_job_error,
     ):
         items, has_relevant_data = await extract_single_chunk(
             schema="User resource documentation",
@@ -92,15 +103,17 @@ async def test_extract_single_chunk_does_not_retry_non_transient_error(monkeypat
 @pytest.mark.asyncio
 async def test_extract_single_chunk_raises_when_llm_unreachable(monkeypatch):
     """A connection error surviving retries must fail the job, not be swallowed per-chunk."""
-    monkeypatch.setattr(config.digester, "chunk_llm_retry_attempts", 2)
-    monkeypatch.setattr(config.digester, "chunk_llm_retry_base_delay_seconds", 0)
+    _set_chunk_llm_retry(monkeypatch, attempts=2, base_delay_seconds=0)
 
     chain = AsyncMock()
     chain.ainvoke.side_effect = Exception("Connection error.")
 
     with (
         patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.digester.extraction.chunk_extraction.append_job_error", Mock()) as append_job_error,
+        patch(
+            "src.modules.digester.extraction.chunk_extraction.append_job_error",
+            new_callable=AsyncMock,
+        ) as append_job_error,
     ):
         with pytest.raises(LLMUnavailableError):
             await extract_single_chunk(
@@ -141,6 +154,7 @@ async def test_extract_single_chunk_validated_sequences_keep_matched_text():
     with (
         patch("src.modules.digester.extraction.chunk_extraction.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extraction.chunk_extraction.append_job_error") as append_job_error,
+        patch("src.modules.digester.extraction.chunk_extraction.pool.require_process_pool", return_value=None),
     ):
         items, has_relevant_data = await extract_single_chunk(
             schema="Prefix. User object includes id string and email string. Suffix.",

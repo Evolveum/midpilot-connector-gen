@@ -10,12 +10,11 @@ from typing import Any, List, Tuple
 from langchain_classic.output_parsers import OutputFixingParser
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 
-from src.common.langfuse import langfuse_handler
-from src.modules.discovery.schema import DiscoveryIntegrationType, PyScrapeFetchReferences, PySearchPrompts
+from src.core.observability.langfuse import langfuse_handler
+from src.modules.discovery.schema import DiscoveryIntegrationType, PySearchPrompts
 
 logger = logging.getLogger(__name__)
 
@@ -65,31 +64,6 @@ def get_prioritized_fallback_templates(integration_type: DiscoveryIntegrationTyp
             deduped_templates.append(template)
 
     return deduped_templates or DEFAULT_FALLBACK_TEMPLATES.copy()
-
-
-def make_eval_prompt(system_prompt: str) -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            ("user", "Here is the result of a search from a search engine: {tool_output_raw}"),
-            ("user", "{input}"),
-        ]
-    )
-
-
-def fetch_parser_response(
-    parser_model: ChatOpenAI,
-    unstructured_output: str,
-    pydantic_class_template: type[PyScrapeFetchReferences],
-) -> PyScrapeFetchReferences:
-    """Parse the evaluator output into the pydantic_class_template."""
-    base_parser: PydanticOutputParser[PyScrapeFetchReferences] = PydanticOutputParser(
-        pydantic_object=pydantic_class_template
-    )
-    meta_parser = OutputFixingParser.from_llm(parser=base_parser, llm=parser_model)
-    parsed_output = meta_parser.parse(unstructured_output)
-    assert isinstance(parsed_output, pydantic_class_template)  # helps type-checkers
-    return parsed_output
 
 
 def _parse_search_prompts(parser_model: ChatOpenAI, raw_text: str) -> PySearchPrompts:

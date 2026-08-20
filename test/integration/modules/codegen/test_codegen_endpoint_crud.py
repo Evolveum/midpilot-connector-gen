@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import ApiType
-from src.common.errors import OperationSurfaceNotFoundError
+from src.jobs import job_input_reference
 from src.modules.codegen.routes.operations import generate_create, generate_delete, generate_update
 from src.modules.codegen.schema import CodegenOperationInput
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio
@@ -97,7 +97,7 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
     assert mock_repo.get_session_data.await_args_list[0].args[1] == "userAttributesOutput"
     assert mock_repo.get_session_data.await_args_list[1].args[1] == "userEndpointsOutput"
     assert schedule_kwargs["input_payload"]["preferredEndpoints"] == preferred_endpoints
-    assert schedule_kwargs["worker_kwargs"]["preferred_endpoints"] == preferred_endpoints
+    assert schedule_kwargs["worker_kwargs"]["preferred_endpoints"] == job_input_reference("preferredEndpoints")
 
     update_args = mock_repo.update_session.call_args[0]
     inputs = update_args[1]
@@ -162,19 +162,22 @@ async def test_generate_update_includes_repair_context_in_job_and_session_input(
 
 
 @pytest.mark.asyncio
-async def test_generate_create_sql_missing_table_metadata_uses_sql_error_detail():
+async def test_generate_create_sql_runs_without_an_endpoint_surface():
+    """
+    A SQL session never runs endpoint extraction, so no ``{oc}EndpointsOutput`` exists.
+    Generation must proceed from attributes alone instead of demanding an operation surface.
+    """
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
     mock_repo.update_session = AsyncMock()
 
     async def fake_get_session_data(session_id, key):
         if key.endswith("AttributesOutput"):
-            return {"username": {"type": "varchar"}}
-        if key.endswith("EndpointsOutput"):
-            return None
+            return {"attributes": {"username": {"type": "string", "table": "m_user", "column": "nameorig"}}}
         return None
 
     mock_repo.get_session_data = AsyncMock(side_effect=fake_get_session_data)
+    job_id = uuid4()
 
     with (
         patch("src.modules.codegen.routes.operations.SessionRepository", return_value=mock_repo),
@@ -183,11 +186,14 @@ async def test_generate_create_sql_missing_table_metadata_uses_sql_error_detail(
             new_callable=AsyncMock,
             return_value=ApiType.SQL,
         ),
+        patch(
+            "src.modules.codegen.orchestration.schedule_coroutine_job",
+            new_callable=AsyncMock,
+            return_value=job_id,
+        ) as mock_schedule,
     ):
-        session_id = uuid4()
-        with pytest.raises(OperationSurfaceNotFoundError) as exc_info:
-            await generate_create(session_id, "User", db=MagicMock())
+        response = await generate_create(uuid4(), "m_user", db=MagicMock())
 
-    assert exc_info.value.status_code == 404
-    assert "No SQL table metadata found" in exc_info.value.message
-    assert "endpoint first" not in exc_info.value.message
+    assert response.jobId == job_id
+    assert "endpoints" not in mock_schedule.call_args.kwargs["input_payload"]
+    assert "endpoints" not in mock_schedule.call_args.kwargs["worker_kwargs"]

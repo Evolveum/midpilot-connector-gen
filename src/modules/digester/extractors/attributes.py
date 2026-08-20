@@ -17,9 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List
 from uuid import UUID
 
-from src.common.chunk_filter.filter import filter_documentation_items
-from src.common.enums import ApiType
-from src.common.utils.session_info_metadata import resolve_effective_api_type
+from src.documents.filtering.filter import filter_documentation_items
 from src.modules.digester.entities.object_classes import build_attribute_result, extract_attributes_from_result
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest.attributes import extract_attributes as _extract_rest_attributes
@@ -34,6 +32,8 @@ from src.modules.digester.selection import (
     exclude_doc_items_by_chunk_id,
     select_doc_chunks,
 )
+from src.session.info_metadata import resolve_effective_api_type
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +88,8 @@ async def extract_attributes(
 
     if len(attributes_dict) == 0:
         logger.warning(
-            f"[Digester:Attributes] No attributes extracted for {object_class} from relevant chunks, "
-            "retrying with default criteria"
+            "[Digester:Attributes] No attributes extracted for %s from relevant chunks, retrying with default criteria",
+            object_class,
         )
         try:
             retry_result = await _retry_attributes_with_default_criteria(
@@ -142,7 +142,7 @@ def _prepare_attribute_chunks(
                 object_class,
             )
             return _AttributeChunks([], [], {}, {})
-        logger.warning(f"[Digester:Attributes] No documentation provided for {object_class}")
+        logger.warning("[Digester:Attributes] No documentation provided for %s", object_class)
         return None
 
     if not relevant_chunks:
@@ -152,7 +152,7 @@ def _prepare_attribute_chunks(
                 object_class,
             )
             return _AttributeChunks([], [], build_doc_metadata_map(doc_items), build_chunk_id_to_doc_id(doc_items))
-        logger.warning(f"[Digester:Attributes] No relevant chunks provided for {object_class}")
+        logger.warning("[Digester:Attributes] No relevant chunks provided for %s", object_class)
         return None
 
     selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Attributes")
@@ -165,7 +165,7 @@ def _prepare_attribute_chunks(
             selected_content = []
             chunk_ids = []
         else:
-            logger.warning(f"[Digester:Attributes] No relevant chunks found for {object_class}")
+            logger.warning("[Digester:Attributes] No relevant chunks found for %s", object_class)
             return None
 
     return _AttributeChunks(

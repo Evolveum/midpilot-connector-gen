@@ -28,6 +28,11 @@ most likely to touch.
 | Server: host/port (default `8090`), workers, API base path (`/api`),
   timeouts, optional TLS (`ssl_certfile`/`ssl_keyfile`).
 
+| `+JOBS__+` | `src/config/jobs.py`
+| Durable PostgreSQL worker: enable/disable consumption, concurrent jobs per
+  process, queue polling, claim/heartbeat timing, crash attempts, graceful
+  shutdown, and the per-process CPU helper-pool size.
+
 | `+LOGGING__+` | `src/config/logging.py`
 | Log level and formatting.
 
@@ -61,6 +66,11 @@ most likely to touch.
   sequence-matching tolerances, auth criteria threshold, debug logging.
 |===
 
+NOTE: The external apiType signal settings cover REST and SCIM. SQL is selected
+from uploaded documentation by the per-chunk documentation signal, or declared
+manually in session metadata; there is no SQL registry/knowledge/web-search
+toggle.
+
 == Settings you will most likely change
 
 [cols="2,1,2", options="header"]
@@ -72,6 +82,32 @@ most likely to touch.
   OpenAI-compatible provider.
 | `+LLM__MODEL_NAME+` | `openai/gpt-oss-120b` | Model selection (cost/quality).
 | `+DATABASE__URL+` | — | Required; asyncpg connection string.
+| `+APP__WORKERS+` | `1` | HTTP and job-consumer processes in this container.
+  Every process claims independently from the same PostgreSQL queue.
+| `+JOBS__ENABLED+` | `true` | Run an embedded queue consumer in this FastAPI
+  process. Disable it for API-only pods; the queue is then drained by processes
+  started with `python -m src.jobs.runtime`, which ignore this setting. Note
+  that a process with it disabled still accepts requests that create jobs -
+  they simply stay `queued` until some consumer exists.
+| `+JOBS__MAX_CONCURRENT_JOBS+` | `2` | Maximum running jobs in each process.
+  This is separate from the LLM semaphore because one job can fan out into
+  several LLM calls.
+| `+JOBS__POLL_INTERVAL_SECONDS+` | `0.5` | Delay between empty queue polls in
+  each process.
+| `+JOBS__REAPER_INTERVAL_SECONDS+` | `30` | Interval for expired/invalid job
+  repair sweeps. Reaping is not performed on every claim.
+| `+JOBS__CLAIM_TIMEOUT_SECONDS+` | `300` | Time after the last successful
+  heartbeat before another worker may reclaim an interrupted job.
+| `+JOBS__HEARTBEAT_INTERVAL_SECONDS+` | `30` | Interval between claim
+  refreshes. It must be lower than the claim timeout.
+| `+JOBS__MAX_ATTEMPTS+` | `3` | Maximum crash/reclaim executions before an
+  expired job is failed.
+| `+JOBS__SHUTDOWN_GRACE_SECONDS+` | `10` | Time allowed for running jobs to
+  finish before shutdown cancels and returns their claims to the queue.
+| `+JOBS__DOCUMENTATION_WRITE_BATCH_SIZE+` | `20` | Maximum documentation
+  writes in one transaction during scrape/cache persistence.
+| `+JOBS__CPU_PROCESSES+` | `1` | CPU helper processes created by each enabled
+  job worker. Keep this small when `APP__WORKERS` or pod replicas are increased.
 | `+BRAVE__API_KEY+` | empty | Better discovery/web-search results than the
   ddgs fallback.
 | `+LANGFUSE__TRACING_ENABLED+` | `false` | Turn on request/LLM tracing during
@@ -88,3 +124,13 @@ most likely to touch.
 NOTE: Defaults aim to be production-appropriate. Prefer adding a new explicit
 setting over hardcoding environment-specific values — every tunable above is
 defined once in `src/config/` and injected where needed.
+
+IMPORTANT: `+DIGESTER__MAX_CONCURRENT_LLM_CALLS+` remains process-local. For
+example, four application workers with the default value `10` can issue up to
+40 concurrent digester LLM calls. A cluster-wide LLM budget is intentionally
+not part of the durable-job change.
+
+Database pools are also created per process. The deployment's possible
+connection count is approximately
+`processes × (DATABASE__POOL_SIZE + DATABASE__MAX_OVERFLOW)`; size PostgreSQL
+and these settings together.

@@ -12,7 +12,7 @@ from job orchestration: these only persist, they neither schedule nor run work.
 
 from uuid import UUID
 
-from src.common.database.repositories.session_repository import SessionRepository
+from src.database.repositories.session_repository import SessionRepository
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.schema import GroovyCodePayload
 

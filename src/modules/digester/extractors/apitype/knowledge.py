@@ -20,9 +20,9 @@ from typing import cast
 
 from langchain_core.runnables.config import RunnableConfig
 
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain
 from src.config import config
+from src.core.llm import build_structured_chain
+from src.core.observability.langfuse import langfuse_handler
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.prompts.apitype.knowledge_prompts import (
     get_api_type_knowledge_system_prompt,
@@ -34,8 +34,8 @@ from src.modules.digester.schemas import ApiTypeSignalResult, RestSignalResult
 
 logger = logging.getLogger(__name__)
 
-_LOG_PREFIX = "[ApiType:Knowledge] "
-_REST_LOG_PREFIX = "[ApiType:RestKnowledge] "
+_LOG_PREFIX = "[Digester:ApiType:Knowledge] "
+_REST_LOG_PREFIX = "[Digester:ApiType:RestKnowledge] "
 
 
 async def lookup_api_type_knowledge(application_name: str) -> ApiTypeSignalResult:

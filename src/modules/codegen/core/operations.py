@@ -6,7 +6,6 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from src.common.enums import ApiType
 from src.modules.codegen.core.base import (
     BaseGroovyGenerator,
     endpoints_to_records,
@@ -20,6 +19,7 @@ from src.modules.codegen.utils.prompt_records import (
     build_scim_contract_prompt_vars,
 )
 from src.modules.digester.schemas import RelationsResponse
+from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ class SearchGenerator(BaseGroovyGenerator):
         base_api_url: str = "",
         database_name: str = "",
         include_scim_context: bool = False,
+        context_only_for_conndev: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -63,7 +64,7 @@ class SearchGenerator(BaseGroovyGenerator):
             default_scaffold="search {\n}\n",
             logger_prefix=f"[Codegen:Search:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
-            context_only_for_conndev=include_scim_context,
+            context_only_for_conndev=context_only_for_conndev,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["intent"] = intent
@@ -101,6 +102,7 @@ class CreateGenerator(BaseGroovyGenerator):
         base_api_url: str = "",
         database_name: str = "",
         include_scim_context: bool = False,
+        context_only_for_conndev: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -110,7 +112,7 @@ class CreateGenerator(BaseGroovyGenerator):
             default_scaffold="create {\n}\n",
             logger_prefix=f"[Codegen:Create:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
-            context_only_for_conndev=include_scim_context,
+            context_only_for_conndev=context_only_for_conndev,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["create_docs"] = docs_text
@@ -147,6 +149,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         base_api_url: str = "",
         database_name: str = "",
         include_scim_context: bool = False,
+        context_only_for_conndev: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -156,7 +159,7 @@ class UpdateGenerator(BaseGroovyGenerator):
             default_scaffold="update {\n}\n",
             logger_prefix=f"[Codegen:Update:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
-            context_only_for_conndev=include_scim_context,
+            context_only_for_conndev=context_only_for_conndev,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["update_docs"] = docs_text
@@ -193,6 +196,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         base_api_url: str = "",
         database_name: str = "",
         include_scim_context: bool = False,
+        context_only_for_conndev: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -202,7 +206,7 @@ class DeleteGenerator(BaseGroovyGenerator):
             default_scaffold="delete {\n}\n",
             logger_prefix=f"[Codegen:Delete:{protocol_label}]",
             extra_prompt_vars=extra_prompt_vars or {},
-            context_only_for_conndev=include_scim_context,
+            context_only_for_conndev=context_only_for_conndev,
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["delete_docs"] = docs_text

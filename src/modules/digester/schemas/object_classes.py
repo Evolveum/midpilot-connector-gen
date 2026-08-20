@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
-from src.common.schema import CamelCaseModel
+from src.core.schema import CamelCaseModel
 from src.modules.digester.enums import ConfidenceLevel, RelevantLevel
 from src.modules.digester.schemas.common import RelevantDocumentationsMixin
 
@@ -87,9 +87,18 @@ class ObjectClassWithConfidence(BaseObjectClass):
     confidence: ConfidenceLevel = Field(
         ...,
         description=(
-            "Reliability/confidence for IGA/IDM relevance assigned in dedicated enrichment. "
-            "Allowed values: low, medium, high."
+            "Reliability/confidence for the requested intent's prioritization, assigned in dedicated "
+            "enrichment. Allowed values: low, medium, high."
         ),
+    )
+
+
+class ObjectClassConfidenceAssignment(CamelCaseModel):
+    """Compact LLM-only confidence assignment used for large SQL schemas."""
+
+    name: str = Field(..., description="Exact input object-class name.")
+    confidence: ConfidenceLevel = Field(
+        ..., description="Assigned confidence for the requested intent: low, medium, or high."
     )
 
 
@@ -101,11 +110,11 @@ class RankedObjectClass(ExtendedObjectClass):
 
     relevant: RelevantLevel = Field(
         default=RelevantLevel.TRUE,
-        description="IGA/IDM relevance marker for the final payload.",
+        description="Relevance marker for the final payload.",
     )
     confidence: ConfidenceLevel = Field(
         ...,
-        description="Reliability/confidence level for IGA/IDM relevance (low/medium/high).",
+        description="Reliability/confidence level for the requested intent's prioritization (low/medium/high).",
     )
 
 
@@ -174,6 +183,32 @@ class ObjectClassesConfidenceResponse(CamelCaseModel):
 
     @property
     def objectClasses(self) -> List[ObjectClassWithConfidence]:
+        return self.object_classes
+
+
+class ObjectClassConfidenceAssignmentsResponse(CamelCaseModel):
+    """Compact SQL confidence response that does not echo descriptions."""
+
+    object_classes: List[ObjectClassConfidenceAssignment] = Field(
+        default_factory=list,
+        description="One confidence assignment for every input object class.",
+    )
+
+    @property
+    def objectClasses(self) -> List[ObjectClassConfidenceAssignment]:
+        return self.object_classes
+
+
+class ObjectClassNameOrderResponse(CamelCaseModel):
+    """Compact SQL sorting response containing only object-class names in final order."""
+
+    object_classes: List[str] = Field(
+        default_factory=list,
+        description="Every input object-class name exactly once, ordered by importance for the requested intent.",
+    )
+
+    @property
+    def objectClasses(self) -> List[str]:
         return self.object_classes
 
 

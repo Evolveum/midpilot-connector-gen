@@ -14,18 +14,18 @@ from uuid import UUID
 from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, ValidationError
 
-from src import pool
-from src.common.chunking import normalize_to_text
-from src.common.enums import JobStage
-from src.common.jobs import append_job_error, update_job_progress
-from src.common.langfuse import langfuse_handler
-from src.common.llm import build_structured_chain, is_transient_llm_error, raise_if_llm_unavailable
 from src.config import config
+from src.core import pool
+from src.core.llm import build_structured_chain, is_transient_llm_error, raise_if_llm_unavailable
+from src.core.observability.langfuse import langfuse_handler
+from src.documents.chunking import normalize_to_text
+from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.extraction.fuzzysearch_worker import fuzzy_search_worker
 from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 from src.modules.digester.schemas import DocMarkerMatch, DocProcessingSequenceItem
 from src.modules.digester.selection import build_chunk_id_to_doc_id, collect_relevant_chunks
+from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
@@ -172,7 +172,12 @@ async def _find_best_fuzzy_literal(
     )
 
     matches = await asyncio.get_event_loop().run_in_executor(
-        pool.process_pool, fuzzy_search_worker, collapsed_text, collapsed_marker, start_pos, max_errors
+        pool.require_process_pool(),
+        fuzzy_search_worker,
+        collapsed_text,
+        collapsed_marker,
+        start_pos,
+        max_errors,
     )
     duration = time.time() - started
     if duration > 2:
@@ -248,7 +253,7 @@ async def _find_closest_best_fuzzy_literal(
     )
 
     matches = await asyncio.get_event_loop().run_in_executor(
-        pool.process_pool,
+        pool.require_process_pool(),
         fuzzy_search_worker,
         collapsed_text,
         collapsed_marker,
@@ -589,6 +594,22 @@ async def extract_single_chunk(
         if marker_word_cutoff_length is not None
         else digester_config.marker_word_cutoff_length
     )
+    min_start_sequence_length = (
+        min_start_sequence_length
+        if min_start_sequence_length is not None
+        else digester_config.min_start_sequence_length
+    )
+    max_start_sequence_length = (
+        max_start_sequence_length
+        if max_start_sequence_length is not None
+        else digester_config.max_start_sequence_length
+    )
+    min_end_sequence_length = (
+        min_end_sequence_length if min_end_sequence_length is not None else digester_config.min_end_sequence_length
+    )
+    max_end_sequence_length = (
+        max_end_sequence_length if max_end_sequence_length is not None else digester_config.max_end_sequence_length
+    )
 
     # Progress: start processing
     await update_job_progress(
@@ -626,7 +647,7 @@ async def extract_single_chunk(
             if chunk_id:
                 error_message = f"{error_message} (chunk_id: {chunk_id})"
             logger.warning(error_message)
-            append_job_error(job_id, error_message)
+            await append_job_error(job_id, error_message)
             return [], False
 
         # Parse structured output
@@ -638,7 +659,7 @@ async def extract_single_chunk(
             if chunk_id:
                 error_message = f"{error_message} (chunk_id: {chunk_id})"
             logger.exception(error_message)
-            append_job_error(job_id, error_message)
+            await append_job_error(job_id, error_message)
             return [], False
 
         if enabled_sequence_checking:
@@ -655,10 +676,10 @@ async def extract_single_chunk(
                         fuzzy_start_marker_error_ratio,
                         fuzzy_end_marker_error_ratio,
                         sequence_max_length,
-                        min_start_sequence_length if min_start_sequence_length is not None else 10,
-                        max_start_sequence_length if max_start_sequence_length is not None else 2000,
-                        min_end_sequence_length if min_end_sequence_length is not None else 10,
-                        max_end_sequence_length if max_end_sequence_length is not None else 2000,
+                        min_start_sequence_length,
+                        max_start_sequence_length,
+                        min_end_sequence_length,
+                        max_end_sequence_length,
                         marker_word_cutoff_length,
                     )
                     for item in items
@@ -682,7 +703,7 @@ async def extract_single_chunk(
         if chunk_id:
             error_message = f"{error_message} (chunk_id: {chunk_id})"
         logger.exception(error_message)
-        append_job_error(job_id, error_message)
+        await append_job_error(job_id, error_message)
         return [], False
 
 
@@ -724,7 +745,7 @@ async def run_item_build_parallel(
         if not result:
             logger.warning("%sEmpty LLM response.", logger_prefix)
             error_msg = f"{logger_prefix}Empty LLM response."
-            append_job_error(job_id, error_msg)
+            await append_job_error(job_id, error_msg)
             return None
 
         # Parse structured output
@@ -734,7 +755,7 @@ async def run_item_build_parallel(
             logger.info("%sJSON parse failed. Error: %s", logger_prefix, e)
             snippet = _result_snippet(result)
             error_msg = f"{logger_prefix}Parse failed: {e}. LLM output: {snippet}"
-            append_job_error(job_id, error_msg)
+            await append_job_error(job_id, error_msg)
             return None
 
         return new_item
@@ -742,7 +763,7 @@ async def run_item_build_parallel(
         raise_if_llm_unavailable(e, context="building extracted items")
         logger.error("%sItem building failed. Error: %s", logger_prefix, e)
         error_msg = f"{logger_prefix}Item building call failed: {e}"
-        append_job_error(job_id, error_msg)
+        await append_job_error(job_id, error_msg)
         return None
 
 

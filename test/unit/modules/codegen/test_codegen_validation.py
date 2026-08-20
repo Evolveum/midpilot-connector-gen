@@ -8,11 +8,19 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.errors import LLMUnavailableError
 from src.config import config
+from src.core.errors import LLMUnavailableError
 from src.modules.codegen.core.base import BaseGroovyGenerator, OperationConfig
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.schema import CodegenRepairContext
+
+
+# PyCharm's monkeypatch inspection does not resolve pydantic model fields as attribute names
+# (mypy resolves them correctly), so the field-name string arguments are suppressed here once.
+# noinspection PyUnresolvedReferences
+def _set_transient_retry(monkeypatch, *, attempts: int, base_delay_seconds: float) -> None:
+    monkeypatch.setattr(config.llm, "transient_retry_attempts", attempts)
+    monkeypatch.setattr(config.llm, "transient_retry_base_delay_seconds", base_delay_seconds)
 
 
 class _UnreachableChain:
@@ -121,8 +129,7 @@ async def test_base_generator_keeps_previous_result_when_chunk_validation_fails(
 @pytest.mark.asyncio
 async def test_base_generator_fails_fast_when_llm_unreachable(monkeypatch) -> None:
     """An unreachable model backend must raise LLMUnavailableError, not be swallowed per-chunk."""
-    monkeypatch.setattr(config.llm, "transient_retry_attempts", 2)
-    monkeypatch.setattr(config.llm, "transient_retry_base_delay_seconds", 0)
+    _set_transient_retry(monkeypatch, attempts=2, base_delay_seconds=0)
 
     generator = _DummyGenerator()
     chain = _UnreachableChain()
@@ -151,8 +158,7 @@ async def test_base_generator_fails_fast_when_llm_unreachable(monkeypatch) -> No
 @pytest.mark.asyncio
 async def test_generate_groovy_raises_when_llm_unreachable(monkeypatch) -> None:
     """generate_groovy must surface an outage as LLMUnavailableError instead of a scaffold."""
-    monkeypatch.setattr(config.llm, "transient_retry_attempts", 2)
-    monkeypatch.setattr(config.llm, "transient_retry_base_delay_seconds", 0)
+    _set_transient_retry(monkeypatch, attempts=2, base_delay_seconds=0)
 
     chain = _UnreachableChain()
 
@@ -188,7 +194,9 @@ async def test_base_generator_runs_repair_pass_without_documentation_chunks() ->
         patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.codegen.core.base.validate_groovy_code", return_value=None),
-        patch.object(generator, "_cleanup_generated_code", new_callable=AsyncMock, return_value=repaired_code),
+        patch.object(
+            BaseGroovyGenerator, "_cleanup_generated_code", new_callable=AsyncMock, return_value=repaired_code
+        ),
     ):
         result = await generator.generate(
             job_id=uuid4(),

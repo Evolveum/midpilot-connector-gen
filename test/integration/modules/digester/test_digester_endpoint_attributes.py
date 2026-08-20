@@ -9,13 +9,14 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
+from src.jobs import job_input_reference
 from src.modules.digester.routes.attributes import (
     extract_class_attributes,
     get_class_attributes_status,
     override_class_attributes,
 )
 from src.modules.digester.schemas import AttributeInfoScim, AttributeResponse
+from src.shared.enums import JobStatus
 
 
 # CLASS ATTRIBUTES
@@ -86,7 +87,9 @@ async def test_extract_class_attributes_success():
         mock_schedule.assert_awaited_once()
         schedule_kwargs = mock_schedule.call_args.kwargs
         assert schedule_kwargs["input_payload"]["objectClass"] == "user"
+        assert schedule_kwargs["worker_args"][0] == job_input_reference("documentationItems")
         assert schedule_kwargs["worker_args"][1] == "user"
+        assert schedule_kwargs["worker_args"][3] == job_input_reference("relevantDocumentations")
         assert schedule_kwargs["session_result_key"] == "userAttributesOutput"
         mock_repo.update_session.assert_awaited_once()
 
@@ -154,7 +157,7 @@ async def test_extract_class_attributes_scim_allows_missing_relevant_chunks():
     mock_schedule.assert_awaited_once()
     schedule_kwargs = mock_schedule.call_args.kwargs
     assert schedule_kwargs["worker_args"][1] == "userphonenumbers"
-    assert schedule_kwargs["worker_args"][3] == [{"doc_id": doc_id, "chunk_id": chunk_id}]
+    assert schedule_kwargs["worker_args"][3] == job_input_reference("relevantDocumentations")
     mock_relevance_repo.get_relevant_chunks_grouped_by_entity.assert_awaited_once_with(
         session_id=session_id,
         result_key="objectClassesOutput",
@@ -225,15 +228,10 @@ async def test_override_class_attributes_success():
     mock_relevant_repo = MagicMock()
     mock_relevant_repo.replace_relevant_chunks_for_result = AsyncMock()
     chunk_id = str(uuid4())
-    doc_id = str(uuid4())
 
     with (
         patch("src.modules.digester.routes.attributes.SessionRepository", return_value=mock_repo),
         patch("src.modules.digester.results.RelevantChunkRepository", return_value=mock_relevant_repo),
-        patch(
-            "src.modules.digester.results.get_session_documentation",
-            AsyncMock(return_value=[{"chunkId": chunk_id, "docId": doc_id}]),
-        ),
     ):
         session_id = uuid4()
         response = await override_class_attributes(
@@ -263,7 +261,7 @@ async def test_override_class_attributes_success():
             {
                 "result_key": "userAttributesOutput",
                 "entity_key": "id",
-                "doc_id": doc_id,
+                "doc_id": None,
                 "chunk_id": chunk_id,
                 "relevant_sequence": {
                     "startSequence": "auth starts here",

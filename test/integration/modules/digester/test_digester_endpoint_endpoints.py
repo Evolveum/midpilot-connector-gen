@@ -9,14 +9,16 @@ from uuid import uuid4
 
 import pytest
 
-from src.common.enums import JobStatus
+from src.jobs import job_input_reference
 from src.modules.digester.enums import EndpointMethod
+from src.modules.digester.errors import EndpointExtractionNotSupportedError
 from src.modules.digester.routes.endpoints import (
     extract_class_endpoints,
     get_class_endpoints_status,
     override_class_endpoints,
 )
 from src.modules.digester.schemas import EndpointInfo, EndpointResponse
+from src.shared.enums import ApiType, JobStatus
 
 
 # CLASS ENDPOINTS
@@ -94,12 +96,40 @@ async def test_extract_class_endpoints_success():
             "abstract": False,
         }
         assert schedule_kwargs["worker_args"][1] == "user"
-        assert schedule_kwargs["worker_kwargs"]["object_class_flags"] == {
-            "embedded": False,
-            "abstract": False,
-        }
+        assert schedule_kwargs["worker_args"][0] == job_input_reference("documentationItems")
+        assert schedule_kwargs["worker_args"][3] == job_input_reference("relevantDocumentations")
+        assert schedule_kwargs["worker_kwargs"]["object_class_flags"] == job_input_reference("objectClassFlags")
         assert schedule_kwargs["session_result_key"] == "userEndpointsOutput"
         mock_repo.update_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_extract_class_endpoints_rejects_sql_without_scheduling_a_job():
+    """SQL has no endpoint surface; the protocol-specific request is intentionally rejected."""
+    mock_repo = MagicMock()
+    mock_repo.session_exists = AsyncMock(return_value=True)
+
+    with (
+        patch("src.modules.digester.routes.endpoints.SessionRepository", return_value=mock_repo),
+        patch(
+            "src.modules.digester.orchestration.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SQL,
+        ),
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+    ):
+        with pytest.raises(EndpointExtractionNotSupportedError) as excinfo:
+            await extract_class_endpoints(
+                session_id=uuid4(),
+                object_class="User",
+                skip_cache=False,
+                api_type=ApiType.SQL,
+                db=MagicMock(),
+            )
+
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.code == "endpoint_extraction_not_supported"
+    mock_schedule.assert_not_awaited()
 
 
 @pytest.mark.asyncio

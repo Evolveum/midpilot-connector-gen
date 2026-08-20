@@ -5,8 +5,8 @@
 from hypercorn import Config
 from hypercorn.run import run as run_hypercorn
 
-from src.common.logger import get_configured_log_level_name, setup_logging
 from src.config import config
+from src.core.observability.logging import get_configured_log_level_name, setup_logging
 
 hypercorn_error_logger = setup_logging()
 

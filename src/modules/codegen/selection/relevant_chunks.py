@@ -6,17 +6,17 @@
 Relevant-chunk selection for codegen.
 
 Loads and normalizes the relevant documentation chunk references stored per
-result key (attributes/endpoints/auth/object classes) into the (index, pairs)
-shape the Groovy generators consume. Pure selection logic — no generation.
+result key (attributes/endpoints/auth/object classes) into the ordered reference
+lists consumed by the Groovy generators. Pure selection logic — no generation.
 """
 
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
-from src.common.database.config import async_session_maker
-from src.common.database.repositories.relevant_chunk_repository import RelevantChunkRepository
-from src.common.utils.normalize import normalize_object_class_name
+from src.core.db import async_session_maker
+from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
+from src.documents.normalize import normalize_object_class_name
 from src.modules.codegen.schema import AuthPayload
 from src.modules.codegen.selection.authorization import (
     has_matching_preferred_authorization,
@@ -129,9 +129,9 @@ async def _collect_relation_object_class_pairs(
 
 async def _collect_relevant_chunks(
     session_id: UUID, object_class: str, operation_name: str
-) -> Tuple[Optional[List[int]], Optional[List[Dict[str, Any]]]]:
+) -> Optional[List[Dict[str, Any]]]:
     """
-    Collect relevant chunk indices and pairs from session for a given object class.
+    Collect relevant chunk references from the session for a given object class.
 
     Args:
         session_id: Session UUID
@@ -139,7 +139,7 @@ async def _collect_relevant_chunks(
         operation_name: Operation name for logging (e.g., "Search", "Create")
 
     Returns:
-        Tuple of (relevant_indices, relevant_pairs)
+        Ordered relevant chunk references, or ``None`` when no selection exists.
     """
     key_endpoints = f"{object_class}EndpointsOutput"
     key_attributes = f"{object_class}AttributesOutput"
@@ -155,7 +155,7 @@ async def _collect_relevant_chunks(
     merged_pairs = _merge_unique_pairs(pairs_endpoints, pairs_attributes)
 
     if not merged_pairs:
-        return None, None
+        return None
 
     chunk_to_doc: Dict[str, str] = {}
     for chunk in [*endpoint_refs, *attribute_refs]:
@@ -166,7 +166,6 @@ async def _collect_relevant_chunks(
         if isinstance(chunk_id, str) and isinstance(doc_id, str) and chunk_id not in chunk_to_doc:
             chunk_to_doc[chunk_id] = doc_id
 
-    relevant_indices = [i for i, _ in merged_pairs]
     relevant_pairs = [
         {"chunk_id": chunk_id, "doc_id": chunk_to_doc[chunk_id]} if chunk_id in chunk_to_doc else {"chunk_id": chunk_id}
         for _, chunk_id in merged_pairs
@@ -182,14 +181,14 @@ async def _collect_relevant_chunks(
         object_class,
     )
 
-    return relevant_indices, relevant_pairs
+    return relevant_pairs
 
 
 async def _collect_authorization_relevant_chunks(
     session_id: UUID,
     auth_payload: AuthPayload,
     preferred_authorizations: Optional[List[Dict[str, Any]]],
-) -> Tuple[Optional[List[int]], Optional[List[Dict[str, Any]]]]:
+) -> Optional[List[Dict[str, Any]]]:
     async with async_session_maker() as db:
         repo = RelevantChunkRepository(db)
         relevant_map = await repo.get_relevant_chunks_map(session_id, result_keys=["authOutput"])
@@ -200,14 +199,12 @@ async def _collect_authorization_relevant_chunks(
             auth_payload, preferred_authorizations
         ):
             logger.info("[Codegen:Authorization] No selected authorization was identified in analyzed auth output")
-            return [], []
-        return None, None
-
-    relevant_indices = list(range(len(auth_pairs)))
+            return []
+        return None
 
     logger.info(
         "[Codegen:Authorization] Relevant auth chunks selected=%d preferred=%s",
         len(auth_pairs),
         bool(preferred_authorizations),
     )
-    return relevant_indices, auth_pairs
+    return auth_pairs
