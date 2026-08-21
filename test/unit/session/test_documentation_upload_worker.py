@@ -135,6 +135,24 @@ async def test_process_documentation_worker_updates_progress_per_chunk_and_persi
     [
         ("conndev_ScimSchema_Device.json", {"schemaContent": "{}", "name": "Device"}, "SCIM"),
         ("conndev_ObjectClass_Account.json", {"uid": "Account", "name": "Account", "sql": {}}, "SQL"),
+        # Embedded sub-class export: the protocol lives on the attribute shadows, not on the class.
+        (
+            "conndev_ObjectClass_User__name.json",
+            {
+                "uid": "User__name",
+                "name": "User__name",
+                "attributes": [
+                    {
+                        "type": "c:ShadowType",
+                        "object": {
+                            "objectClass": "ri:conndev_Attribute",
+                            "attributes": {"scim": {"path": "givenName"}, "name": "givenName"},
+                        },
+                    }
+                ],
+            },
+            "SCIM",
+        ),
     ],
 )
 async def test_process_documentation_worker_skips_llm_and_labels_conndev_protocol(
@@ -193,3 +211,111 @@ async def test_process_documentation_worker_skips_llm_and_labels_conndev_protoco
     assert persisted.summary == f"midPoint connector-development {expected_protocol} export: {filename}"
     assert persisted.metadata["category"] == "spec_json"
     assert persisted.metadata["tags"] == [expected_protocol.lower(), "schema", "conndev"]
+
+
+@pytest.mark.asyncio
+async def test_process_documentation_worker_labels_unbound_conndev_class_with_session_protocol():
+    """An embedded sub-class with no attributes declares no binding: use the session protocol."""
+    filename = "conndev_ObjectClass_Entitlement__typeInfo.json"
+    raw_upload = RawUploadedDocumentation(
+        data=b"raw",
+        filename=filename,
+        content_type="application/com.evolveum.conndev+json",
+        content_hash="hash",
+    )
+    uploaded = UploadedDocumentation(
+        text=json.dumps({"uid": "Entitlement__typeInfo", "name": "Entitlement__typeInfo"}),
+        filename=filename,
+        content_type=raw_upload.content_type,
+        metadata={"filename": filename, "content_type": raw_upload.content_type, "parser": "json"},
+        preserve_as_single_item=True,
+    )
+
+    with (
+        patch(
+            "src.session.documentation_processing.parse_uploaded_documentation",
+            new_callable=AsyncMock,
+            return_value=uploaded,
+        ),
+        patch(
+            "src.session.documentation_processing.chunk_uploaded_documentation",
+            return_value=[(uploaded.text, 10)],
+        ),
+        patch(
+            "src.session.documentation_processing.get_session_api_types",
+            new_callable=AsyncMock,
+            return_value=["scim"],
+        ) as session_api_types,
+        patch(
+            "src.session.documentation_processing.get_llm_processed_chunk", new_callable=AsyncMock
+        ) as process_with_llm,
+        patch("src.session.documentation_processing.update_job_progress", new_callable=AsyncMock),
+        patch("src.session.documentation_processing.increment_processed_documents", new_callable=AsyncMock),
+        patch(
+            "src.session.documentation_processing._persist_processed_documentation_chunk",
+            new_callable=AsyncMock,
+        ) as persist_chunk,
+    ):
+        await process_documentation_worker(
+            session_id=uuid4(),
+            raw_upload=raw_upload,
+            doc_id=uuid4(),
+            app="Example",
+            app_version="1.0",
+            job_id=uuid4(),
+        )
+
+    process_with_llm.assert_not_awaited()
+    session_api_types.assert_awaited_once()
+    persisted = persist_chunk.await_args.kwargs["chunk"]
+    assert persisted.summary == f"midPoint connector-development SCIM export: {filename}"
+    assert persisted.metadata["tags"] == ["scim", "schema", "conndev"]
+
+
+@pytest.mark.asyncio
+async def test_process_documentation_worker_does_not_look_up_session_protocol_for_bound_conndev_export():
+    """A document that declares its own binding must never trigger a session metadata read."""
+    uploaded = UploadedDocumentation(
+        text=json.dumps({"uid": "User", "name": "User", "scim": {}}),
+        filename="conndev_ObjectClass_User.json",
+        content_type="application/com.evolveum.conndev+json",
+        metadata={"parser": "json"},
+        preserve_as_single_item=True,
+    )
+    raw_upload = RawUploadedDocumentation(
+        data=b"raw",
+        filename=uploaded.filename,
+        content_type=uploaded.content_type,
+        content_hash="hash",
+    )
+
+    with (
+        patch(
+            "src.session.documentation_processing.parse_uploaded_documentation",
+            new_callable=AsyncMock,
+            return_value=uploaded,
+        ),
+        patch(
+            "src.session.documentation_processing.chunk_uploaded_documentation",
+            return_value=[(uploaded.text, 10)],
+        ),
+        patch(
+            "src.session.documentation_processing.get_session_api_types", new_callable=AsyncMock
+        ) as session_api_types,
+        patch("src.session.documentation_processing.update_job_progress", new_callable=AsyncMock),
+        patch("src.session.documentation_processing.increment_processed_documents", new_callable=AsyncMock),
+        patch(
+            "src.session.documentation_processing._persist_processed_documentation_chunk",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await process_documentation_worker(
+            session_id=uuid4(),
+            raw_upload=raw_upload,
+            doc_id=uuid4(),
+            app="Example",
+            app_version="1.0",
+            job_id=uuid4(),
+        )
+
+    session_api_types.assert_not_awaited()

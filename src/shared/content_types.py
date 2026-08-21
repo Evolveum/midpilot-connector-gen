@@ -36,6 +36,13 @@ CONNDEV_JSON_FILENAME_PREFIX = "conndev_"
 CONNDEV_SCIM_BINDING = "scim"
 CONNDEV_SQL_BINDING = "sql"
 
+# The protocol discriminator of every conndev export: the binding key present on an object-class
+# document or on one of its attribute shadows. Single source of truth for both lookups.
+CONNDEV_PROTOCOL_BINDINGS: dict[str, ApiType] = {
+    CONNDEV_SCIM_BINDING: ApiType.SCIM,
+    CONNDEV_SQL_BINDING: ApiType.SQL,
+}
+
 
 def normalize_content_type(content_type: str | None) -> str:
     """Canonicalize a media type for comparison: drop parameters, trim, lower-case."""
@@ -73,14 +80,72 @@ def is_conndev_export_filename(filename_or_url: str | None) -> bool:
     )
 
 
+def shadow_object_attributes(value: Any) -> Mapping[str, Any] | None:
+    """Unwrap a midPoint shadow wrapper (``{"object": {"attributes": {...}}}``) to its attributes."""
+    if not isinstance(value, Mapping):
+        return None
+    shadow_object = value.get("object")
+    if not isinstance(shadow_object, Mapping):
+        return None
+    attributes = shadow_object.get("attributes")
+    return attributes if isinstance(attributes, Mapping) else None
+
+
+def conndev_attribute_shadows(attributes: Any) -> list[Any]:
+    """
+    Normalize a conndev ``attributes`` field to a list of attribute shadows.
+
+    An object class with exactly one attribute is exported as a bare object rather than a
+    one-element list, so a plain list guard would drop its only attribute.
+    """
+    if isinstance(attributes, Mapping):
+        return [attributes]
+    return list(attributes) if isinstance(attributes, list) else []
+
+
+def _binding_protocol(container: Mapping[str, Any]) -> ApiType | None:
+    """Return the protocol of the first conndev binding key present in ``container``."""
+    for binding, api_type in CONNDEV_PROTOCOL_BINDINGS.items():
+        if binding in container:
+            return api_type
+    return None
+
+
+def is_conndev_object_class_document(document: Any) -> bool:
+    """
+    True when a conndev document is an object-class export.
+
+    Both the protocol-bound classes (``User``) and the embedded sub-classes midPoint exports for
+    complex attributes (``User__name``) carry an identifying ``uid`` together with a ``name``.
+    """
+    if not isinstance(document, Mapping):
+        return False
+    return bool(str(document.get("uid") or "").strip()) and bool(str(document.get("name") or "").strip())
+
+
 def detect_conndev_object_class_api_type(document: Any) -> ApiType | None:
-    """Return the protocol declared by a shadow-wrapped Conndev object-class export."""
+    """
+    Return the protocol declared by a shadow-wrapped Conndev object-class export.
+
+    The binding normally sits on the class itself. Embedded sub-classes exported for complex
+    attributes (``User__name``, ``User__emails``) have no schema binding of their own, so their
+    protocol is read from the ``ri:conndev_Attribute`` shadows instead. An embedded sub-class
+    without attributes declares no protocol at all and yields ``None``.
+    """
     if not isinstance(document, Mapping) or "uid" not in document:
         return None
-    if CONNDEV_SCIM_BINDING in document:
-        return ApiType.SCIM
-    if CONNDEV_SQL_BINDING in document:
-        return ApiType.SQL
+
+    class_binding = _binding_protocol(document)
+    if class_binding is not None:
+        return class_binding
+
+    for shadow in conndev_attribute_shadows(document.get("attributes")):
+        attributes = shadow_object_attributes(shadow)
+        if attributes is None:
+            continue
+        attribute_binding = _binding_protocol(attributes)
+        if attribute_binding is not None:
+            return attribute_binding
     return None
 
 
