@@ -546,6 +546,35 @@ async def test_loader_skips_unrecognized_and_non_conndev_documents():
 
 
 @pytest.mark.asyncio
+async def test_loader_skips_embedded_sub_class_exports_without_warning(caplog):
+    """midPoint exports one sub-class per complex attribute; the SCIM schemas already cover them."""
+    items = [
+        _conndev_item(_schema_document(USER_SCHEMA), "upload://conndev_ScimSchema_User.json"),
+        _conndev_item(
+            {
+                "uid": "User__name",
+                "name": "User__name",
+                "attributes": [
+                    {"object": {"objectClass": "ri:conndev_Attribute", "attributes": {"scim": {"path": "givenName"}}}}
+                ],
+            },
+            "upload://conndev_ObjectClass_User__name.json",
+        ),
+        _conndev_item(
+            {"uid": "Entitlement__typeInfo", "name": "Entitlement__typeInfo"},
+            "upload://conndev_ObjectClass_Entitlement__typeInfo.json",
+        ),
+    ]
+
+    with caplog.at_level("WARNING", logger=_MODULE):
+        bundle = await _load_bundle(items)
+
+    assert set(bundle.schemas) == {"User"}
+    assert bundle.connid_classes == {}
+    assert "unrecognized contract" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_loader_does_not_use_conndev_filename_as_content_type_fallback():
     item = _conndev_item(_schema_document(USER_SCHEMA), "upload://conndev_ScimSchema_User.json")
     item["metadata"]["content_type"] = "application/json"
