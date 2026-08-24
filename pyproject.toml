@@ -73,7 +73,7 @@ export-openapi.envfile = ".env"
 typecheck = "mypy . --exclude=.venv --exclude=clearml"
 stylecheck = "ruff format --diff"
 lint = "ruff check"
-importcheck = "lint-imports"
+importcheck = "lint-imports --no-cache"
 fix = [
   { cmd = "ruff check  --fix" },
   { cmd = "ruff format" },

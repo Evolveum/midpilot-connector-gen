@@ -1,0 +1,366 @@
+== 0.1.0-M6
+
+=== 🚀 Features
+
+
+* API key authentication with session ownership
+* Add durable PostgreSQL job execution and add app_workers
+* Add correlated logging and centralized LLM usage metrics
+* Init SQL Connector and processing uploaded conndev documentations
+* Add intent-aware object-class ranking
+* Add combined object-class intent
+
+
+=== 🐛 Bug Fixes
+
+
+* Enforce tenant-safe job access and cache reuse
+* Parse shadow-wrapped conndev ConnId object class contract
+* Resolve PyCharm inspection false positives in unit tests
+* Restore cache reuse across ownerless sessions
+* Alembic version 007
+* Durable PostgreSQL job worker correctness and efficiency
+* Durable job worker shutdown, cache lookup and migration cost
+* Durable job worker shutdown, cache lookup and migration cost
+* Durable job worker task ownership, shutdown budget and logging
+* Mark progress as failed and stop logging expected job failures as crashes
+* Fix document reassignment ordering and job error logging
+* Preserve attribute bindings and merge schema metadata
+* Detect protocol for conndev document metadata
+* Preserve SQL attribute bindings in API and codegen prompts
+* F-string parsing in prompt
+* Update libraries because of security and vulnerabilities
+* Change str to SecretStr for API keys and passwords
+* Classify conndev embedded sub-class exports
+
+
+=== 💼 Other
+
+
+* Minor fix
+* Optimize SQL ranking and document workflow
+* Preserve SQL primary key metadata
+* Minor fix
+* Harden SQL schema metadata handling
+
+
+=== 🚜 Refactor
+
+
+* Dissolve src/common into a layered package structure
+* Deduplicate DB repositories and unmask job status errors + delete dead code
+* Normalize DB schema - split documents from chunks, consolidate indexes and keys, enforce reference integrity
+* Delete unused code and add information to readme and docs
+* SQL codegen runs from attributes, drop the SQL endpoints step
+* Clean up the code and remove unnecessary parts and unused code
+* Clean up for auth method
+
+
+=== 📚 Documentation
+
+
+* Add docs for SQL connector and edit older parts which were not updated
+
+== 0.1.0-M5
+
+=== 🚀 Features
+
+
+* Feature/refactor-discovery (#4)
+* Feature/cleanup logging (#28)
+* Feature/object classes confidence (#29)
+* Add prefferedEndpoint in Codegen. Edit unit and integration tests. Minor fix in prompts (#32)
+* Support integrationType-prioritized search and enforce numQueries bounds (#33)
+* Feature/relations sorting (#34)
+* Improve endpoint extraction fallback and clean digester service helpers (#36)
+* Scope relation generation to selected relation (#39)
+* Auth chunk fallback criteria (#38)
+* Fixing Groovy code based on an error in midPoint (#40)
+* Separate Docker base image from application image
+* Feature/connectivity test endpoint (#43)
+* Support for processing a wide variety of content types for document-upload (PDF, DOCX, Markdown, YAML, JSON, etc.)
+* Extract and propagate database_name for SQL connectors
+* Add new authentication.adoc for generating groovy script and edit merge logic for type and name in authetication
+* Improve prompt to better extraction for apiType
+* Separate apiType detection into a dedicated parallel LLM call
+* Add scim.cloud registry as apiType detection source of truth
+* Add documentation-free LLM knowledge approach for SCIM detection
+* Broaden infoMetadata documentation filter with protocol tag override
+* Add web-search & availability SCIM signals, harden apiType detection
+* Expose SCIM availability on the API response with typed sources
+* Expose REST availability advisory with dedicated REST signals
+* Rank object classes simillar to REST and detect conndev by content type
+* Refine SCIM endpoint and attribute extraction
+* Add separated SCIM context to schema and CRUD generation
+* Process SCIM service provider capabilities
+* Migrate ASGI server from Uvicorn to Hypercorn for HTTP/2 (h2c)
+
+
+=== 🐛 Bug Fixes
+
+
+* Fix endpoint prompt
+* Fix case-sensitivity bugs and add normalization for classes, attributes and endpoints
+* Fix copyright
+* Fix irrelevant link logging, styling changes
+* Fixed content type checking, irrelevant links parallel requests
+* Fix minor bugs
+* Fixed documentation for connId mappings
+* Fix a bug with not complete input in object class jobs
+* Fix a bug in jobs.py that cause uploadDocumentation to fail
+* Fix a small bug with repeating caching
+* Fixed inconsistent API path examples
+* Fixed typo in search documentation
+* Fix a small bug in caching
+* Fix a bug with @metadata naming
+* Fix a bug with doc ids
+* Fix minor bugs in scraper
+* Fix scraper, add load functionality to scraper
+* Fix bug: load applicationVersion from DB in scrape if exists
+* Fix parallel processing endpoints for SCIM
+* Fix bug infoMetadata response format. Add new features to SCIM-digester. Clean code
+* ScimAttributes are excluded from JSON schema if api_type=REST but are not excluded if api_type=SCIM
+* Add tags and summary from DB to prompt
+* Fix some part for Docker deployment
+* Fix DATABASE_URL in alembic
+* Fix pytest and warning message
+* Fix typos
+* Fix Codegen - prevent unsupported 'sortingSupport' in generated search scripts
+* Preserve unknown endpoint type and align enum-based settings/tests
+* Edit tests and incorporate enums instead of str
+* Add new rule into prompt to not add $ to groovy code
+* Change  so that the input can include multiple endpoints, which the user can select
+* Split REST and SCIM search prompts by SearchIntent (all/filter/id) to get better result in groovy code
+* Prevent lock/unlock lifecycle regressions across chunks
+* Edit prompt for search-filter
+* Duplicate semantic relation extraction (#37)
+* Minor fix of pydantic schema and prompts
+* Max concurrent chunk llm calls
+* Fix auth dedup fallback and auth marker schema
+* Fix attribute relevance persistence for sequence-only overrides
+* Fix format embedded instead of reference
+* Do not set superclass for embedded object classes
+* Normalize object-class keys across digester and codegen. Reuse structured LLM chain. Handle failed auth.
+* Preserve SQL apiType in metadata flow
+* Addition of SQL to the ApiType for attributes and endpoints
+* Persist all completed LLM chunks even when a previous chunks DB write fails
+* Uniform processing of metadata for documentation for both the scraper and the upload of documentation via the endpoint
+* Isolate per-chunk failures so a transient LLM error can't fail the whole scrape
+* Add missing {} to search prompt
+* Add applicationName in metadata_input
+* Fix SCIM availability aggregation
+* Ignore client-only scim.cloud entries
+* Keep signal-derived SCIM when no documentation chunks are selected
+* Avoid reloading metadata application name in digester worker
+* Minor fix of merge logic and some changes in pydantic schema
+* Derive SCIM endpoints dynamically instead of a hardcoded resource map
+* Capital case in SCIM endpoints
+* Pass protocol to session connection target
+* Log documentation imports that store zero chunks. Remove embeddings.py
+* Silent data loss in scrape link/citation processing
+* Digester object-class merge, endpoint stage and result-shape bugs
+* Fail jobs when llm is down
+* Validate documentation imports
+* SCIM endpoint flags, context handling, and ConnDev filtering
+* Exclude ConnDev chunks and refine SCIM filter handling
+* Conndev-only SCIM operation generation
+* Processing only conndev documentation without relevant chunks
+* Preserve SCIM provider names in ConnID mappings and recover malformed JSON
+* Hypercorn logging and worker validation
+* Allow Hypercorn workers to spawn process pool children
+* Prevent endpoint generation in SCIM prompts
+* Insert rewritten reference URLs literally in citation markdown
+* BASE_IMAGE in docker-compose path
+
+
+=== 💼 Other
+
+
+* Initial Commit
+* Rename project to Connector Generator AI Service
+* Initial commit for session-db-itegration
+* Initial commit for session-db-itegration
+* Unification of messages
+* Align codegen progress tracking with digester docs and pass metadata into endpoint extraction prompts
+* Minor fix in filtering from DB. Add unit tests for digester part of session-db-integration
+* Removed unnecessary part related to session. Clean code. Edited unit tests
+* Add unit test for codegen
+* Add integration tests for session-db-itegration
+* Initial commit
+* Update .pre-commit-config.yaml
+* Add integration test for digester and fix bug in extract relation
+* Added new endpoints to put object classes and edited unit tests
+* Add SCIM prompt set and SCIM documentation, and implement protocol-aware generator selection so SCIM vs REST flows choose the appropriate generator automatically
+* Add SCIM prompt set and SCIM documentation, and implement protocol-aware generator selection so SCIM vs REST flows choose the appropriate generator automatically
+* Deleting unnecessary files
+* Added docstring
+* Delete unnecessary part of comments
+* Added endpoints to config file
+* Add metadata processing in chunk processor, multiple other snmall changes
+* Bug fixes, config changes
+* Add null-aware attribute extraction with fill-missing repair pass
+* Modification and unification of prompts based on comments for codegen. Adding examples to .adoc for connId
+* Prompts modified based on comments
+* Minor bug fix
+* Add summary and tags to info.py. Rename some part of function
+* Change browser to Chromium. Edited DB config
+* ApiType to literal[REST, SCIM]. Edited prompt.
+* Add literal to getAuth-type and create validations
+* Minor changes in digester schema
+* Add new scraper architecture, minor fixes
+* Remove llm_tags and llm_category fields
+* Init digester SCIM. Add new prompts, check API TYPE, add SCIM json files
+* Minor fix and test docker-composer for Gartner
+* Update docker compose
+* Update docker compose
+* Postprocessing attributes
+* Minor fix - attributes beginning with _ are deleted
+* Add an option to reuse scraper data from previous session if the input is the same
+* Add an option to reuse discovery data from previous session if the input is the same
+* Add integration test
+* Add caching to the digester, fix minor bug in scraper
+* Add caching to some documentation upload endpoints, resolve potencial conflicts with removing documents from session, fix minor bug
+* Add providers to config
+* Add chacing to codegen, run database migrations in docker entrypoint
+* Backup main (Gartner)
+* Merge feature/digester-scim to temp/backup_main
+* Merge dev to feature/digester-scim
+* Mapping scim schema to application schema
+* Minor fixes for merging
+* Optimization scrape process and chunk processor. Parallel processing documentation using LLM after each iteration of scraping
+* Processing documentation using LLM after each scraping of a new URL
+* Stabilize infoMetadata pipeline and improve API type/endpoint extraction
+* Parallelize getInfo extraction with heuristic merge and simplify processor metadata
+* Normalize infoMetadata null values and move merge threshold to DigesterSettings
+* Change columns name in DB and refactor of some part of code based on DB's changes
+* Renamed relevantChunks to relevantDocumentations across whole project
+* Replace docUuid with doc_id/chunk_id in relevantDocumentations and align tests
+* Add per-item relevantDocumentations
+* Add new documentation for Codegen:SCIM. Code modified based on SCIM requirements.
+* Allow native_schema flow to accept multiple REST/SCIM documentation formats
+* Edited docker compose
+* Prevent QueuePool timeout during bulk documentation restore
+* Resolve merge conflict
+* Incorporated 'intent' parameter in codegen search
+* Reuse shared protocol detection and standardize session output keys
+* Edited absolute path to relative path for all imports
+* Standardize absolute imports and centralize normalization/status helpers
+* Add documentation processing performance improvements
+* Minor fix when AUTH_CRITERIA are empty
+* Add groovy parser library for groovy input/outpu validation
+* Added certificate for langfuse
+* HEAD return 202 Accepted if docs is processing and return 204 if docs is saved
+* Add per-session documentation export/import for restore session + tests
+* Updated gitignore
+* Incorporated changes based on comment. Edited POST/PUT/GET endpoints for session and processing documentations
+* Unify documentation response for scrape and GET ../{session_id}/documentation
+* Dev to main (#30)
+* Add OpenAPI JSON
+* Create new endpoint for PUT infometadata
+* Resolve merge conflicts
+* Delete smart_integration_ms
+* First small changes
+* Merge new auth arch
+* Update auth tests, fix styling
+* Add new architecture to object class schema part of digester
+* Update readme
+* Clean prompt
+* Optimize object-class chunk extraction chain reuse
+* Change model to GPT-OSS-120b and edit prompt for search-intent-filter
+* Fallback when attributes are empty
+* Add literal validation for endpoint suggested use values
+* Optimize new attribute extraction method
+* Custom LLM endpoint certificate support
+* Finalize attrs new arch
+* Prepare default values for MCM
+* Use base image from Evolveum registry
+* Migrating data from the 'session_data' table to the 'relevant_chunks' (#44)
+* Unify digester LLM concurrency and configure reasoning effort
+* Better naming for invoke_llm function
+* Clean up REST attribute schemas and prompt payloads
+* Minor fix
+* Add specific auth types and other authorization scaffold
+* Add personal access token to auth type aliases
+* Handle unsupported MidPoint authorization selections
+* SCIM heuristic approach for extract object class from schema (json file for testing purpose) and embedded object classes
+* SCIM heuristic for attributes
+* Cleanup for schemas and some minor changes for logging
+* Init database connector in codegen process
+* Minor fix + add libraries
+* Stop persisting duplicate LLM metadata fields in DB
+* Init database connector in digester process
+* Minor fix for DB heuristic. Edit pytest.
+* Preserve the schema uploads (for SCIM and DB connector) as a single documentation item because of heuristic
+* Normalize documentation chunk metadata naming and fix minor bugs
+* Minor clean code and delete unnecessary part and comments
+* Update prompts for SQL database name parameter
+* Resolve merge conflict
+* Chunking strategy for SQL/JSON schemas because of LLM context limit
+* Pytest minor fix
+* Add apiType override parameter to codegen and digester endpoints + some other minor changes related to enums apiType
+* Remove line with logger.info
+* Minor fix of content_type
+* Unify the code and improve the names
+* Add operation names to Langfuse LLM traces via run_name
+* Major refactor of router, services, generation sctipts and extraction scripts
+* Init version 1 of processing imported scim schemas, resource schemas and conndev schemas
+
+
+=== 🛡️ Security
+
+
+* Sec/vuln fix (#31)
+* Update dependencies and security fixes
+
+
+=== 🚜 Refactor
+
+
+* Refactor codegen directory to separate utils and core parts
+* Refactor codegen part. Pass protocol prompts/docs from service to generators. Service now selects REST/SCIM prompts and docs and injects them into generators.
+* Refactor digester part: simplify chunk handling to docUuid-only
+* Refactor digester: remove chunkIndex and chunk splitting, use doc-level relevance flags
+* Refactor digester and codegen (#5)
+* Refactor certain parts of the code related to retrieving session metadata from the database
+* Refactor digester chunk extraction concurrency utilities
+* Replace usePreviousSessionData with skipCache
+* Refactor REST attribute extraction into staged LLM calls
+* Centralize documentation selection and errors
+* Process documentation uploads in background job
+* Centralize session and codegen data types into schema files
+* Reoganize modules into logical part and more specific directories
+* Restructure scrape module into sub-modules and scripts
+* Centralize HTTP error handling via domain exceptions
+* Consolidate apiType detection under extractors/apitype/ and organize it in one place
+* Divide jobs.py into multiple smaller scripts
+* Shared infrastructure module boundaries
+* Make info metadata protocol-aware. Add restAvailability and sqlAvailability similar to scimAvailability
+*   Refactor: add shared coercion helpers and remove scattered duplication
+* Delete .json files from file system and replace it as documentation in DB
+* Decouple discovery link filtering from the scrape module
+* Codegen prompt record normalization
+* Extract per-object-class codegen job orchestration into orchestration module
+* Move codegen request orchestration out of the router
+* Codegen request normalization and overrides
+* Dissolve digester service module into per-entity extractors
+* Scrape and discovery job orchestration
+* Decompose extract_attributes and unify digester result builders
+* Decompose deduplicate_auth into named helpers
+* Reuse extracted sequence text and harden sequence validation
+* Dedupe relevant-chunk mapping into shared helpers
+* Split config.py into a config package
+* Digester relevance and LLM helpers
+* Unify pydantic schemas on shared CamelCaseModel and slim endpoint models. Minor fix for SCIM process.
+
+
+=== 📚 Documentation
+
+
+* Add AsciiDoc documentation structure and OpenAPI export task
+
+
+=== ◀️ Revert
+
+
+* Revert dockerfile update
+
