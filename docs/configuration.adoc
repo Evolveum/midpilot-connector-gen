@@ -116,6 +116,10 @@ toggle.
   `+DIGESTER__APITYPE_REST_WEB_SEARCH_ENABLED+` | `true` | Each metadata
   extraction performs external web searches (and fetches result pages);
   disable to cut latency/cost when documentation alone is sufficient.
+| `+DIGESTER__RELATION_*+` | see
+  link:pipeline/relations.adoc#_limits_and_settings[Relation analysis] | Stage
+  limits and prompt budgets of the relation pipeline — the most expensive
+  digester step.
 | `+*__*_INPUT_CHECK_INTERVAL+` | 4 weeks | Result-cache windows for
   discovery/scrape/digester (see
   link:sessions-and-jobs.adoc[Result caching]).

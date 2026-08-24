@@ -8,6 +8,10 @@ structured model of the target API: metadata, authentication, object classes,
 endpoints, attributes and relations. Everything the
 link:codegen.adoc[codegen] stage generates is built on these outputs.
 
+NOTE: Relation extraction is a multi-stage pipeline with its own internal
+diagnostic output; it has a separate page —
+link:relations.adoc[Relation analysis].
+
 Module: `src/modules/digester/`
 
 == Endpoints
@@ -41,7 +45,8 @@ link:../sessions-and-jobs.adoc[job pattern]: `POST` enqueues extraction,
 
 | `/{sessionId}/relations`
 | Relations between object classes (e.g. user–group membership). Accepts an
-  `apiType` query override.
+  `apiType` query override. The staged pipeline behind it and its two outputs
+  are described in link:relations.adoc[Relation analysis].
 
 | `/{sessionId}/connectivity-endpoint`
 | A cheap endpoint suitable for a connection test.
