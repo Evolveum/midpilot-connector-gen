@@ -12,9 +12,15 @@ shadow-wrapped shape across protocols::
 
 Only the ``<binding>`` key differs and it is the protocol discriminator: ``scim`` carries the
 SCIM schema URN, ``sql`` carries the database ``table``/``schema``. Everything else - the
-``ri:conndev_Attribute`` shadows with their ConnId flags - is identical, so the shadow
-unwrapping and attribute flattening live here and are shared by the SCIM baseline
-(``extractors/scim/baseline.py``) and the SQL extractors (``extractors/sql/``).
+``ri:conndev_Attribute`` shadows with their ConnId flags - is identical, so the attribute
+flattening lives here and is shared by the SCIM baseline (``extractors/scim/baseline.py``) and
+the SQL extractors (``extractors/sql/``). The document-shape primitives it builds on (shadow
+unwrapping, binding detection) live in ``src.shared.content_types`` because upload-time ingest
+needs them too.
+
+midPoint also exports an embedded sub-class per complex attribute (``User__name``). Those
+documents carry no class-level ``<binding>``; their protocol is declared only by their
+attribute shadows, or not at all when the sub-class has no attributes.
 
 The uploaded media type only says "this is a conndev export"; it does not say which protocol
 it describes. Never infer the protocol from the content type - read the binding key.
@@ -25,11 +31,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from src.modules.digester.schemas.common import ChunkReference
-from src.shared.coerce import as_dict_list
 from src.shared.content_types import (
     CONNDEV_SCIM_BINDING,
     CONNDEV_SQL_BINDING,
+    conndev_attribute_shadows,
     detect_conndev_object_class_api_type,
+    shadow_object_attributes,
 )
 from src.shared.enums import ApiType
 
@@ -49,26 +56,8 @@ class SqlObjectClassDocument:
 
 
 def conndev_attribute_entries(value: Any) -> List[Dict[str, Any]]:
-    """
-    Normalize a conndev ``attributes`` field to a list of attribute shadows.
-
-    An object class with exactly one attribute is exported as a bare object rather than a
-    one-element list, so a plain list guard would drop its only column.
-    """
-    if isinstance(value, dict):
-        return [value]
-    return as_dict_list(value)
-
-
-def shadow_object_attributes(value: Any) -> Optional[Dict[str, Any]]:
-    """Unwrap a midPoint shadow wrapper (``{"object": {"attributes": {...}}}``) to its attributes."""
-    if not isinstance(value, dict):
-        return None
-    shadow_object = value.get("object")
-    if not isinstance(shadow_object, dict):
-        return None
-    attributes = shadow_object.get("attributes")
-    return attributes if isinstance(attributes, dict) else None
+    """Return the dict-shaped attribute shadows of a conndev ``attributes`` field."""
+    return [entry for entry in conndev_attribute_shadows(value) if isinstance(entry, dict)]
 
 
 def flatten_shadow_connid_attribute(

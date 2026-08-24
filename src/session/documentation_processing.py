@@ -24,9 +24,14 @@ from src.session.documentation_upload import (
     chunk_uploaded_documentation,
     parse_uploaded_documentation,
 )
+from src.session.info_metadata import get_session_api_types, resolve_session_api_type
 from src.session.schema import ProcessedDocumentationChunk, RawUploadedDocumentation
-from src.shared.content_types import detect_conndev_api_type, is_conndev_content_type
-from src.shared.enums import JobStage
+from src.shared.content_types import (
+    detect_conndev_api_type,
+    is_conndev_content_type,
+    is_conndev_object_class_document,
+)
+from src.shared.enums import ApiType, JobStage
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +39,38 @@ _UPLOAD_WORKER_LIMIT = max(1, min(config.database.pool_size, 8))
 _UPLOAD_WORKER_SEMAPHORE = asyncio.Semaphore(_UPLOAD_WORKER_LIMIT)
 
 
-def _build_conndev_chunk_output(chunk_text: str, filename: str) -> LlmChunkOutput:
+async def _resolve_conndev_api_type(document: Any, filename: str, session_id: UUID) -> ApiType | None:
+    """
+    Resolve the protocol of one Conndev document, preferring its own binding.
+
+    An embedded sub-class export with no attributes (``Entitlement__typeInfo``) declares no
+    binding anywhere, so there is nothing in the document to contradict: it falls back to the
+    protocol the session already detected. Any other unbound document stays unclassified.
+    """
+    api_type = detect_conndev_api_type(document)
+    if api_type is not None:
+        return api_type
+
+    if not is_conndev_object_class_document(document):
+        return None
+
+    api_type = resolve_session_api_type(await get_session_api_types(session_id))
+    logger.info(
+        "[Session:Upload] Conndev export %s declares no protocol binding; using the session protocol %s",
+        filename,
+        api_type.value,
+    )
+    return api_type
+
+
+async def _build_conndev_chunk_output(chunk_text: str, filename: str, session_id: UUID) -> LlmChunkOutput:
     """Build deterministic processing metadata from a Conndev document's protocol binding."""
     try:
         document = json.loads(chunk_text)
     except json.JSONDecodeError:
         document = None
 
-    api_type = detect_conndev_api_type(document)
+    api_type = await _resolve_conndev_api_type(document, filename, session_id)
     if api_type is None:
         logger.warning("[Session:Upload] Could not determine protocol for Conndev export %s", filename)
         summary = f"midPoint connector-development export: {filename}"
@@ -144,7 +173,7 @@ async def process_documentation_worker(
             chunk_text, chunk_length = chunk_data
 
             if is_conndev_content_type(uploaded.content_type):
-                data = _build_conndev_chunk_output(chunk_text, uploaded.filename)
+                data = await _build_conndev_chunk_output(chunk_text, uploaded.filename, session_id)
             else:
                 async with semaphore:
                     prompts = get_llm_chunk_process_prompt(chunk_text, uploaded.filename, app, app_version)
