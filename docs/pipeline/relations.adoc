@@ -1,6 +1,5 @@
 = Relation analysis
 :toc: left
-:toclevels: 3
 
 link:digester.adoc[← Digester] | link:index.adoc[Pipeline overview] |
 link:../index.adoc[Documentation index]
@@ -27,7 +26,7 @@ A complete sample run of both files is committed beside this page:
 * link:../examples/relations/relationsAnalysisOutput.json[`relationsAnalysisOutput.json`]
   — the analysis behind them, 178 pairs (896 KB)
 
-== Why a pipeline instead of one call
+== Why a pipeline
 
 A relation is a *cross-chunk* object. Chunking splits the subject schema, the
 object schema and the sub-resource endpoint into different fragments, so no
@@ -114,7 +113,7 @@ skipped entirely (no chunks selected, sweep disabled, no weak pairs,
 verification turned off), and a gap in the sequence is more honest than
 renumbering the rest mid-run.
 
-=== Units of work — why the numbers do not shrink
+=== Units of work
 
 The stages count five *different* things, and the vocabulary matters when
 reading a log or the `stats` block:
@@ -142,7 +141,7 @@ run:
 178 pairs producing 207 associations is not an inconsistency: 33 pairs carried
 more than one association, and 23 pairs carried none.
 
-== `relationsOutput` — the midPoint contract
+== `relationsOutput` (midPoint contract)
 
 The final, stable output. Seven fields, unchanged by this pipeline, sorted by
 the IGA ranking already established in `objectClassesOutput` (subject class
@@ -201,7 +200,7 @@ pipeline learned beyond these seven fields — relation kind, per-side
 cardinality, the carrying class, confidence, rationale, rejections — is *not*
 added here; it goes to `relationsAnalysisOutput`.
 
-== `relationsAnalysisOutput` — internal diagnostics
+== `relationsAnalysisOutput` (internal)
 
 Purpose: explain why the pipeline accepted or rejected a specific relation.
 It is a companion of one exact `relationsOutput`, written in the same
@@ -230,7 +229,7 @@ transaction as it.
 }
 ----
 
-=== Where it lives and how to read it
+=== Where it lives
 
 Stored as a session key, never exposed over HTTP
 (`src/modules/digester/results.py`, `RELATIONS_ANALYSIS_RESULT_KEY`):
@@ -512,7 +511,7 @@ several entries when the documentation describes several distinct associations.
   the LLM, is the problem.
 |===
 
-==== `decisions[].verdict`
+=== `decisions[].verdict`
 
 [cols="1,3", options="header"]
 |===
@@ -589,7 +588,7 @@ Only the first four can reach `relationsOutput`, and only with
 than silently dropped, so a reviewer confirms them once instead of seeing them
 re-proposed on every run.
 
-==== `decisions[].refutation`
+=== `decisions[].refutation`
 
 The result of the adversarial second opinion on an accepted candidate. `null`
 when verification was disabled, never ran, or returned nothing usable.
@@ -624,7 +623,7 @@ later deduplication would silently collapse two real associations
 
 All three are in the attached sample files.
 
-=== A link carried by a third class
+=== Link carried by a third class
 
 Pair `attachment|principal`. Neither class references the other; `Activity`
 references both. The link-object expansion synthesized the pair, and
@@ -887,7 +886,7 @@ margin — its cost is roughly `chunks + swept classes + weak pairs + pairs +
 accepted associations` LLM calls. Results are cached by input like every other
 digester step; use `skipCache=true` after prompt or documentation changes.
 
-== The attached sample run
+== The sample run
 
 [cols="1,3", options="header"]
 |===
