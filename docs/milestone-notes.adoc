@@ -1,0 +1,185 @@
+= Milestone to Milestone upgrade instructions and notes
+:toc:
+:page-nav-title: Milestone upgrade instructions
+
+WARNING: This page is written for internal purposes, and we don't give any
+guarantee that these instructions and notes are complete, nor that it will work
+at all... but we do our best.
+
+This page contains the upgrade instructions and incompatibility changes that
+could cause problems during upgrades from a milestone to a milestone, before
+the "in development" version is released. Useful for continuous testing of the
+developed features etc.
+
+The upgrade instructions between releases are in the
+https://docs.evolveum.com/midpoint/release/[release notes] (for midPilot we will
+prepare this page).
+
+== 0.1.0
+
+=== 2026-08-20 Security upgrade of pypdf, aiohttp, h2 and cryptography
+
+*Author:* Alexander Brecko
+
+*Description:* `pip-audit` reported seven advisories against packages pinned in
+`uv.lock`. All are fixed by upgrading:
+
+* `pypdf` 6.14.2 -> 6.16.1 - a crafted PDF
+  exhausts memory during text extraction. Reachable through every upload to
+  `POST /session/{session_id}/documentation`.
+* `aiohttp` 3.14.1 -> 3.14.3 - out-of-bounds read on a malformed server response, plus
+  request smuggling. Reachable through the scraper, which fetches
+  caller-supplied URLs.
+* `h2` 4.3.0 -> 4.4.1 - duplicate `Host` headers are a
+  smuggling primitive; relevant because Hypercorn serves h2c unless
+  `APP__SSL_CERTFILE` and `APP__SSL_KEYFILE` are set.
+* `cryptography` 49.0.0 -> 50.0.0 - precautionary, no PKCS#7
+  code path here. Drags `pyopenssl` 26.3.0 -> 26.4.0 with it.
+
+`pyproject.toml` also raises the `pypdf` floor to `>=6.15.0` and adds
+`aiohttp>=3.14.3`, which `src/integrations/web/fetch.py` imports but previously
+received only through `crawl4ai`.
+
+No application code, API contract, or database schema changed.
+
+.Required Upgrade Steps
+. Deploy `pyproject.toml` and `uv.lock` together, then run `uv sync --locked` in
+every environment. Five packages change.
+. Rebuild the application image. Its own `uv sync --locked --no-dev` picks up the
+new versions, so no base-image release is needed; rebuild `Dockerfile.base` when
+convenient to refresh its stale cache layer.
+. No database migration, development-database recreation, or configuration
+change is required - nothing persisted or configurable changed.
+. Validate with `uv run poe qa` and a `pip-audit` run over
+`uv export --no-dev`, then upload one PDF and confirm the
+`documentation.processUpload` job finishes.
+
+.Rollback Procedure (If Upgrade Fails)
+. Revert the `pyproject.toml` and `uv.lock` commit, run `uv sync --locked`, and
+rebuild the image.
+. No database restore or job drain is needed; queued jobs stay claimable by
+either snapshot.
+. Rolling back restores the reachable `pypdf` and `aiohttp` advisories - prefer
+pinning the single failing package forward instead.
+
+.Notes & References
+* *Related PR:* Not assigned.
+* *Affected files:* `pyproject.toml`, `uv.lock`.
+* *Affected configs:* None.
+
+=== 2026-08-19 Object-class detection gains management and ITSM intents
+
+*Author:* Alexander Brecko
+
+*Description:* `POST /digester/{session_id}/classes` accepts a new optional
+`intent` query parameter (`GenerationIntent`: `management` by default, `itsm`,
+or `management_itsm`). The intent changes which object classes REST/SCIM
+extraction treats as primary and how the shared confidence and ranking step
+(`aggregation/object_class_ranking.py`) prioritizes them. The `itsm` intent
+still allows identity and management classes to be extracted, but ranks them
+lower. The `management_itsm` intent treats core classes from both domains as
+high confidence and orders management classes first within the high bucket.
+
+Per-intent domain vocabulary (extraction buckets, confidence-bucket criteria,
+and ranking signals) is centralized in a new
+`GenerationIntent -> ObjectClassIntentProfile` registry
+(`src/modules/digester/prompts/object_class_intents.py`). REST, SCIM, and SQL
+prompts select only the relevant intent section instead of duplicating wording
+or leaking unrelated vocabulary into the LLM call. The combined profile is
+explicit so the opposing low-confidence rules from the two single-domain
+profiles cannot override the union of their high-confidence classes. Schema
+field descriptions injected by
+`PydanticOutputParser.get_format_instructions()` were also changed from
+hardcoded "IGA/IDM" language to intent-neutral wording so they do not contradict
+the `itsm` system prompt.
+
+The `digester.getObjectClass` job's `worker_kwargs` now always includes `intent`,
+and the resolved value is always recorded in `objectClassesInput`. Because the
+durable job queue serializes `worker_kwargs` when scheduling and binds them to
+the executing process's function signature when claiming the job, a job
+scheduled by an upgraded API process fails with `InvalidJobPayloadError` if a
+worker from the previous snapshot claims it. The reverse direction is safe:
+jobs queued by the previous snapshot run on an upgraded worker because `intent`
+defaults to `management` in the new function signature. An intermediate worker
+that already accepts `intent` but predates `management_itsm` also cannot claim a
+combined-intent job: durable payload validation rejects the unknown enum value.
+
+There is no database schema change. The public `ObjectClassesResponse` result
+contract (`objectClassesOutput`) is unchanged; only the request-tracking
+`objectClassesInput` gains the new `intent` field.
+
+.Required Upgrade Steps
+. Stop accepting new `POST /digester/{session_id}/classes` requests before
+deploying.
+. Using the deployment's PostgreSQL client, run the following query:
++
+[source,sql]
+----
+SELECT job_id, status
+FROM jobs
+WHERE job_type = 'digester.getObjectClass'
+  AND status IN ('queued', 'running')
+ORDER BY created_at;
+----
++
+Continue only when the query returns no rows.
+. Deploy and restart the API and every worker process together so all processes
+use the same `digester.getObjectClass` worker contract.
+. No database migration or development-database recreation is required because
+no table or persisted-session schema changed.
+. Submit one classes request and run the following query:
++
+[source,sql]
+----
+SELECT input ->> 'intent' AS intent
+FROM jobs
+WHERE job_type = 'digester.getObjectClass'
+ORDER BY created_at DESC
+LIMIT 1;
+----
++
+Confirm that it returns `management` (or the requested value) and that the job
+finishes successfully.
+. For a session whose `objectClassesInput` predates this change and has no
+`intent` key, run the following query:
++
+[source,sql]
+----
+SELECT value ->> 'intent' AS intent
+FROM session_data
+WHERE session_id = '<session_id>'
+  AND key = 'objectClassesInput';
+----
++
+A `NULL` result is expected; treat it as `management`. To re-prioritize a
+session under `itsm`, send the following request (use
+`intent=management_itsm` instead for the combined mode):
++
+[source,http]
+----
+POST /digester/{session_id}/classes?intent=itsm&skipCache=true
+----
++
+This is necessary because a previous result is cached under the input that
+produced it.
+
+.Rollback Procedure (If Upgrade Fails)
+. Stop accepting new `POST /digester/{session_id}/classes` requests and drain
+`digester.getObjectClass` with the SQL query above before rolling back. A job
+scheduled by this snapshot (whose `worker_kwargs` include `intent`) fails with
+`InvalidJobPayloadError` if the previous snapshot's worker claims it because
+that worker has no `intent` parameter. A worker that accepts `intent` but
+predates `management_itsm` similarly rejects a queued combined-intent job.
+. Stop the updated API and workers, deploy the previous snapshot, and restart
+all processes together.
+. No database restore or downgrade is required. Re-submit any
+`digester.getObjectClass` request that was still queued or running when rollback
+started. The previous snapshot ignores the now-unused `intent` query parameter
+if a caller still sends it, and always behaves as `management`.
+
+.Notes & References
+* *Related PR:* Not assigned.
+* *Docs:* `docs/pipeline/digester.adoc` ("Object-class intent (`management` /
+`itsm` / `management_itsm`)").
+* *Affected configs:* None. `intent` uses the new `GenerationIntent` vocabulary
+(`src/shared/enums.py`) and has no environment/configuration dependency.

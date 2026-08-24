@@ -13,8 +13,9 @@ judge.
 
 That judgement is the shared
 :func:`~src.modules.digester.aggregation.object_class_ranking.deduplicate_and_sort_sql_object_classes`
-step, which assigns the IGA/IDM confidence level and the final ordering. SQL therefore behaves
-like SCIM: a deterministic contract in, the same ranking out.
+step, which assigns the confidence level and final ordering for the requested
+``GenerationIntent`` (management/itsm/management_itsm). SQL therefore behaves like SCIM: a deterministic contract
+in, the same ranking out.
 """
 
 import logging
@@ -32,7 +33,7 @@ from src.modules.digester.extractors.sql.schema import (
 from src.modules.digester.schemas import ExtendedObjectClass
 from src.modules.digester.selection import build_relevant_chunks_from_doc_items
 from src.shared.coerce import as_list
-from src.shared.enums import JobStage
+from src.shared.enums import GenerationIntent, JobStage
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,11 @@ def _chunk_refs_from_table(table: dict[str, Any]) -> List[Dict[str, str]]:
     return refs
 
 
-async def extract_sql_object_classes(doc_items: list[dict], job_id: UUID) -> dict[str, Any]:
+async def extract_sql_object_classes(
+    doc_items: list[dict],
+    job_id: UUID,
+    intent: GenerationIntent = GenerationIntent.MANAGEMENT,
+) -> dict[str, Any]:
     """
     Extract database connector object classes.
 
@@ -123,6 +128,7 @@ async def extract_sql_object_classes(doc_items: list[dict], job_id: UUID) -> dic
         job_id,
         class_to_chunks=class_to_chunks,
         ranking_descriptions=ranking_descriptions,
+        intent=intent,
     )
 
     relevant_chunks = build_relevant_chunks_from_doc_items(doc_items)

@@ -35,7 +35,8 @@ link:../sessions-and-jobs.adoc[job pattern]: `POST` enqueues extraction,
 
 | `/{sessionId}/classes`
 | Object classes (User, Group, …) with confidence ranking
-  (high/medium/low). Accepts an `apiType` query override.
+  (high/medium/low). Accepts `apiType` and <<object-class-intent,`intent`>> query
+  overrides.
 
 | `/{sessionId}/classes/{objectClass}/endpoints`
 | CRUD/search endpoints for one object class.
@@ -128,11 +129,91 @@ Progress of the multi-phase jobs is reported through `JobStage` values
 |===
 
 Object classes always end up ordered the same way regardless of protocol: an
-LLM assigns a confidence level (`high`/`medium`/`low`) for IGA/IDM relevance,
-the high bucket is then ordered by importance and the rest alphabetically
-(`aggregation/object_class_ranking.py`). The most useful classes are therefore
-first in the response — for a 200-table database schema this ranking, not a
-name heuristic, is what separates `m_user` from `qrtz_fired_triggers`.
+LLM assigns a confidence level (`high`/`medium`/`low`) for the requested
+<<object-class-intent,intent>>, the high bucket is then ordered by importance
+and the rest alphabetically (`aggregation/object_class_ranking.py`). The most
+useful classes are therefore first in the response — for a 200-table database
+schema this ranking, not a name heuristic, is what separates `m_user` from
+`qrtz_fired_triggers`.
+
+[[object-class-intent]]
+=== Object-class intent (`management` / `itsm` / `management_itsm`)
+
+`classes` accepts an optional `intent` query override
+(`GenerationIntent` in `src/shared/enums.py`) that changes what counts as a
+*primary* object class, without changing which documentation is read:
+
+[cols="1,3", options="header"]
+|===
+| Value | Prioritizes
+
+| `management` (default)
+| IGA/IDM entities — users, groups/teams, organizations/tenants,
+  roles/entitlements, memberships/assignments.
+
+| `itsm`
+| Service-management work items — tickets/issues/cases, incidents, problems,
+  changes, work packages, the queues/projects that contain them, and their
+  workflow/status.
+
+| `management_itsm`
+| Both sets are primary. Identity/access classes and service-management work
+  items receive high confidence; management classes are ordered first within
+  the shared high-confidence bucket.
+|===
+
+[cols="1,1,1", options="header"]
+|===
+| Intent | `User` confidence | `WorkPackage` confidence
+
+| `management`
+| `high`
+| `low`
+
+| `itsm`
+| `low`
+| `high`
+
+| `management_itsm`
+| `high`
+| `high`
+
+| Omitted
+| `high` (defaults to `management`)
+| `low` (defaults to `management`)
+|===
+
+Intent affects two stages only, both per-protocol REST/SCIM/SQL:
+
+* *Extraction* (REST/SCIM) — the "what to extract" bucket list is
+  intent-specific, but `itsm` extraction still finds identity/management
+  classes when they are needed to understand relationships or the API; it
+  just does not treat them as the primary target. SQL extraction is
+  unaffected — every table is already a candidate regardless of intent.
+* *Confidence + ranking* (all protocols, `aggregation/object_class_ranking.py`)
+  — this is where prioritization actually happens. A class central to the
+  other intent is not dropped, it is ranked `low`: an identity class like
+  `User` or `Organization` is `high` under `management` and `low` under
+  `itsm`, and a work-item class like `Ticket` or `WorkPackage` is the reverse.
+  Under `management_itsm`, a class that is core to either domain is `high`;
+  management classes are sorted before ITSM classes within that bucket.
+
+Each intent's wording is centralized in one place
+(`prompts/object_class_intents.py`) as a `GenerationIntent -> profile`
+registry, so extraction and ranking prompts pick only the relevant intent's
+section rather than sending both intents' vocabulary on every call, and a
+future intent adds one profile entry instead of a parallel prompt set. The
+combined profile is explicit rather than a concatenation of the single-domain
+profiles, because their low-confidence rules intentionally contradict each
+other.
+
+There is no session-level "remembered" intent: omitting `intent` on a given
+`classes` call always resolves to `management`, including for jobs and
+sessions that existed before this parameter was added. If a session should be
+re-extracted under `itsm` or the combined mode, pass `intent=itsm` or
+`intent=management_itsm` (and `skipCache=true`, since a previous result is
+cached under the input it was produced with) on that call. Do not send
+`management+itsm`; a literal plus sign is ambiguous in URL query strings.
 
 SQL keeps those final semantics but uses a compact LLM contract
 (`prompts/sql/object_class_ranking_prompts.py`):

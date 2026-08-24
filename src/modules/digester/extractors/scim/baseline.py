@@ -43,7 +43,6 @@ from src.database.repositories.documentation_repository import DocumentationRepo
 from src.modules.digester.extractors.conndev import (
     conndev_attribute_entries,
     flatten_shadow_connid_attribute,
-    shadow_object_attributes,
 )
 from src.modules.digester.schemas.common import ChunkReference
 from src.modules.digester.schemas.scim import (
@@ -55,6 +54,8 @@ from src.shared.content_types import (
     CONNDEV_SCIM_BINDING,
     CONNDEV_SQL_BINDING,
     is_conndev_documentation_item,
+    is_conndev_object_class_document,
+    shadow_object_attributes,
 )
 
 logger = logging.getLogger(__name__)
@@ -450,8 +451,11 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
     Only persisted documents marked with a conndev metadata content type are considered. Those
     documents are then classified by contract shape (``schemaContent`` / ``endpoint`` +
     ``primarySchema`` / ``locator`` + ``uid`` / shadow-wrapped ``scim`` + ``uid`` /
-    ServiceProviderConfig ``content``); unrecognized conndev documents are logged and skipped. Raw SCIM schemas come from the dedicated schema
-    documents; resource-embedded copies only fill in classes that have no dedicated document.
+    ServiceProviderConfig ``content``); unrecognized conndev documents are logged and skipped.
+    Embedded sub-class exports (``uid`` + ``name`` with no class-level binding) are skipped
+    quietly - the same classes are derived from the SCIM schema documents. Raw SCIM schemas come
+    from the dedicated schema documents; resource-embedded copies only fill in classes that have
+    no dedicated document.
     """
     async with async_session_maker() as db:
         items = await DocumentationRepository(db).get_conndev_documentation_items_by_session(session_id)
@@ -560,6 +564,17 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             logger.info(
                 "[Digester:Baseline] Skipping SQL-bound conndev document %s for session %s: "
                 "the SCIM baseline only reads SCIM-bound contracts",
+                doc_id,
+                session_id,
+            )
+        elif is_conndev_object_class_document(doc):
+            # An embedded sub-class export (``User__name``) for a complex attribute. It is a valid
+            # contract, not a malformed one: the same classes are derived deterministically from the
+            # dedicated SCIM schema documents, which also carry the sub-attribute definitions.
+            logger.debug(
+                "[Digester:Baseline] Skipping embedded conndev sub-class '%s' (document %s) for session %s: "
+                "embedded classes are derived from the SCIM schema documents",
+                doc.get("name"),
                 doc_id,
                 session_id,
             )

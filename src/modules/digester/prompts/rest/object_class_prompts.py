@@ -4,14 +4,19 @@
 
 import textwrap
 
+from src.modules.digester.prompts.object_class_intents import get_intent_profile
+from src.shared.enums import GenerationIntent
+
+
 # system prompt for <object class> extraction
-get_object_class_system_prompt = textwrap.dedent(
-    """
-You are a senior Identity Governance & Administration (IGA) / Identity
-Management (IDM) consultant with deep expertise in enterprise schemas.
-You will receive fragments of an OpenAPI/Swagger document or similar
-technical specification. Your task is to extract the *domain object classes*
-that represent core IGA entities — even when their names vary across systems.
+def get_object_class_system_prompt(intent: GenerationIntent = GenerationIntent.MANAGEMENT) -> str:
+    profile = get_intent_profile(intent)
+    return textwrap.dedent(
+        f"""
+You are a senior {profile.persona_domain} consultant with deep expertise in enterprise
+schemas. You will receive fragments of an OpenAPI/Swagger document or similar technical
+specification. Your task is to extract the *domain object classes* that represent core
+{profile.persona_domain} entities — even when their names vary across systems.
 
 ### Return only MAIN/ROOT classes (canonical, singular)
 We want only the primary, first-class domain types — not variants or wrappers.
@@ -26,41 +31,7 @@ Return concrete object/type names from the spec that fall into these buckets,
 accounting for synonyms, prefixes/suffixes, and view variants. Include the
 original names as they appear in the spec.
 
-1) **Identity / User**
- Aliases: user, identity, account holder, principal, member, person, profile,
- userProfile, userIdentity, subject, actor, directoryUser, iamUser, team member,...
-
-2) **Group / Team**
- Aliases: group, team, cohort, circle, distributionList, mailingList,
- workspaceGroup,...
-
-3) **Organization / Org Unit / Tenant / Workspace / Project**
- Aliases: organization, org, orgUnit, tenant, company, businessUnit,
- workspace, space, project, department,...
-
-4) **Membership / Assignment (links between identities and containers)**
- Aliases: membership, memberOf, groupUser, groupMembership, teamMembership,
- orgMembership, assignment, affiliation, enrollment,...
-
-5) **Role / Entitlement / Access Profile / Permission Set**
- Aliases: role, entitlement, accessProfile, permissionSet, package, bundle,...
-
-6) **Permission / Policy / Rule / Scope / Grant**
- Aliases: permission, privilege, capability, right, grant, scope, policy,
- rule, constraint, guardrail,...
-
-7) **Credential / Auth Factor / Secret**
- Aliases: credential, password, passkey, token, apiToken, key, certificate,
- mfaFactor, otpDevice, recoveryCode,...
-
-8) **Attachment / File / Document / Media**  ← include thumbnails & base variants
- Aliases: attachment, file, document, content, media, binary, asset, blob,
- image, preview, thumbnail,...
-
-9) **Attribute / Field Definitions (custom or per-entity)**
- Aliases: attribute, field, customField, extendedAttribute, property,
- trait, schemaField (application-level), profileField, organizationField,
- userField,...
+{profile.rest_extraction_buckets}
 
 INCLUSION HEURISTICS:
 - Include only if it is a PRIMARY domain concept with its own endpoints and/or
@@ -92,7 +63,8 @@ closest canonical main form present in the spec and omit the rest.
 Output must use the structured schema; do not add comments or prose.
 
 """
-)
+    )
+
 
 # user prompt for <object class> extraction
 get_object_class_user_prompt = textwrap.dedent(

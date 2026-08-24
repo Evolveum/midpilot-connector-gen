@@ -4,7 +4,7 @@
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 ReasoningEffort = Literal["low", "medium", "high"]
 
@@ -22,7 +22,7 @@ class LLMSettings(BaseModel):
     :param max_keepalive_connections: Max idle keep-alive connections retained in the pool.
     """
 
-    openai_api_key: str = ""
+    openai_api_key: SecretStr = SecretStr("")
     openai_api_base: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-oss-120b"
     request_timeout: int = 600

@@ -15,7 +15,7 @@ import uuid
 from typing import Any, Dict
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +27,11 @@ from src.database.repositories.session_repository import SessionRepository
 from src.session import service
 from src.session.access import ensure_session_exists
 from src.session.documentation_upload import prepare_documentation_upload, queue_documentation_upload_job
-from src.session.errors import DocumentationItemNotFoundError, DocumentationNotFoundError
+from src.session.errors import (
+    DocumentationImportConflictError,
+    DocumentationItemNotFoundError,
+    DocumentationNotFoundError,
+)
 from src.session.schema import Documentation
 from src.session.service import build_group_documentation_response
 from src.shared.enums import JobStatus
@@ -285,15 +289,10 @@ async def import_documentation_by_id(
     try:
         imported_chunks = await service.import_documentation_document(doc_repo, session_id, documentation_id, document)
     except IntegrityError as exc:
-        db_message = str(getattr(exc, "orig", exc))
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Import failed due to DB data conflict. "
-                "Most likely duplicate chunkId (chunk_id is globally unique across all sessions). "
-                f"DB says: {db_message}"
-            ),
-        ) from exc
+        # The driver message names constraints, columns and sometimes row values;
+        # it belongs in the log, not in the response.
+        logger.exception("[Session:Documentation] Documentation import conflicted with existing data")
+        raise DocumentationImportConflictError(documentation_id) from exc
 
     return {
         "message": "Documentation imported successfully",

@@ -185,7 +185,7 @@ def get_default_llm(
         else cast(ReasoningEffort | None, reasoning_effort)
     )
     llm_kwargs: dict[str, Any] = {
-        "api_key": config.llm.openai_api_key,
+        "api_key": config.llm.openai_api_key.get_secret_value(),
         "base_url": config.llm.openai_api_base,
         "model": config.llm.model_name,
         "timeout": config.llm.request_timeout,

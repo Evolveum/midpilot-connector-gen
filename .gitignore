@@ -45,3 +45,4 @@ debug_irrelevant_*
 smart_integration_ms.egg-info
 midpilot_connector_gen.egg-info
 
+/cliff.toml
