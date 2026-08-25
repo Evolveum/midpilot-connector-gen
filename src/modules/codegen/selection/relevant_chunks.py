@@ -11,7 +11,7 @@ lists consumed by the Groovy generators. Pure selection logic — no generation.
 """
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from src.core.db import async_session_maker
@@ -208,3 +208,75 @@ async def _collect_authorization_relevant_chunks(
         bool(preferred_authorizations),
     )
     return auth_pairs
+
+
+async def collect_connector_relevant_chunks(
+    session_id: UUID,
+    object_classes: Sequence[str],
+) -> List[Dict[str, Any]]:
+    """
+    Collect every relevant chunk reference for the requested object classes.
+
+    Each class contributes its ``EndpointsOutput`` and ``AttributesOutput``
+    references plus only its own entity from ``objectClassesOutput``. The fix
+    does not rank or limit these references; it only removes duplicate chunk IDs.
+    """
+    normalized_object_classes = list(
+        dict.fromkeys(
+            normalized for object_class in object_classes if (normalized := normalize_object_class_name(object_class))
+        )
+    )
+    if not normalized_object_classes:
+        return []
+
+    result_keys: List[str] = []
+    for object_class in normalized_object_classes:
+        result_keys.append(f"{object_class}EndpointsOutput")
+        result_keys.append(f"{object_class}AttributesOutput")
+
+    async with async_session_maker() as db:
+        repo = RelevantChunkRepository(db)
+        relevant_map = await repo.get_relevant_chunks_map(session_id, result_keys=result_keys)
+        object_class_refs: List[Dict[str, Any]] = []
+        for object_class in normalized_object_classes:
+            refs = await repo.get_relevant_chunks(
+                session_id=session_id,
+                result_key="objectClassesOutput",
+                entity_key=object_class,
+            )
+            object_class_refs.extend(ref for ref in refs if isinstance(ref, dict))
+
+    operation_refs: List[Dict[str, Any]] = []
+    for key in result_keys:
+        refs = relevant_map.get(key, [])
+        if isinstance(refs, list):
+            operation_refs.extend(ref for ref in refs if isinstance(ref, dict))
+
+    all_refs = [*operation_refs, *object_class_refs]
+    merged_pairs = _merge_unique_pairs(_collect_pairs(all_refs))
+
+    chunk_to_doc: Dict[str, str] = {}
+    for ref in all_refs:
+        chunk_id = ref.get("chunk_id") or ref.get("chunkId")
+        doc_id = ref.get("doc_id") or ref.get("docId")
+        if isinstance(chunk_id, str) and isinstance(doc_id, str) and chunk_id not in chunk_to_doc:
+            chunk_to_doc[chunk_id] = doc_id
+
+    selected: List[Dict[str, Any]] = []
+    for _, chunk_id in merged_pairs:
+        if not chunk_id:
+            continue
+        pair: Dict[str, Any] = {"chunk_id": chunk_id}
+        if chunk_id in chunk_to_doc:
+            pair["doc_id"] = chunk_to_doc[chunk_id]
+        selected.append(pair)
+
+    logger.info(
+        "[Codegen:Fix] Selected %d unique relevant chunk(s) for %d object class(es) "
+        "from %d endpoint/attribute and %d object-class reference(s)",
+        len(selected),
+        len(normalized_object_classes),
+        len(operation_refs),
+        len(object_class_refs),
+    )
+    return selected

@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import Select, case, delete, func, or_, select, text, update
@@ -333,6 +333,28 @@ class DocumentationRepository:
         result = await self.db.execute(query)
         chunks = result.scalars().unique().all()
 
+        return [self._to_item_dict(chunk) for chunk in chunks]
+
+    async def get_documentation_items_by_chunk_ids(
+        self,
+        session_id: UUID,
+        chunk_ids: Sequence[UUID],
+    ) -> List[Dict[str, Any]]:
+        """Load selected documentation chunks without materializing the session corpus."""
+        unique_chunk_ids = list(dict.fromkeys(chunk_ids))
+        if not unique_chunk_ids:
+            return []
+
+        query = (
+            self._chunks_with_document()
+            .where(
+                DocumentationChunk.session_id == session_id,
+                DocumentationChunk.chunk_id.in_(unique_chunk_ids),
+            )
+            .order_by(DocumentationChunk.created_at)
+        )
+        result = await self.db.execute(query)
+        chunks = result.scalars().unique().all()
         return [self._to_item_dict(chunk) for chunk in chunks]
 
     async def get_conndev_documentation_items_by_session(self, session_id: UUID) -> List[Dict[str, Any]]:

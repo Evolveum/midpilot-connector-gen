@@ -17,22 +17,34 @@ raises domain errors (``AppError`` subclasses) rather than HTTP exceptions so
 the HTTP layer stays in the router / exception handlers.
 """
 
+import asyncio
 from typing import Any, Awaitable, Callable, Mapping, Optional, cast
 from uuid import UUID
 
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import config
 from src.database.repositories.session_repository import SessionRepository
+from src.documents.chunking import count_tokens
 from src.documents.relevance import hydrate_auth_sequences_from_relevance
 from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
-from src.modules.codegen import generation
+from src.modules.codegen import connector_fix, generation
+from src.modules.codegen.errors import (
+    ConnectorFixContextTooLargeError,
+    ConnectorScriptsNotFoundError,
+    InvalidConnectorScriptOverrideError,
+    UnknownConnectorOperationError,
+)
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
     CodegenOperationInput,
     CodegenRepairContext,
+    ConnectorFixInput,
 )
+from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, load_connector_artifacts
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
+from src.modules.codegen.utils.groovy_validation import GroovyValidationError, ensure_valid_groovy_code
 from src.modules.digester.errors import (
     AttributesNotFoundError,
     InvalidRelationsOutputError,
@@ -394,3 +406,150 @@ async def schedule_relation_job(
     await persist_job_pointer(repo, session_id, f"{relation_name}Code", {"relations": relations_payload}, job_id)
 
     return job_id
+
+
+async def schedule_connector_fix_job(
+    *,
+    repo: SessionRepository,
+    session_id: UUID,
+    object_class: str,
+    api_type: Optional[ApiType],
+    codegen_input: ConnectorFixInput,
+) -> UUID:
+    """
+    Schedule a connector fix for all generated scripts of one object class.
+
+    Loads the selected object's generated scripts, applies caller overrides for this
+    run only, enforces the input budget, schedules the job and persists the class-scoped
+    ``{objectClass}ConnectorFixJobId`` / ``{objectClass}ConnectorFixInput`` pointer.
+
+    Unlike the per-operation jobs this one passes no ``session_result_key``: it
+    publishes many ``{key}Output`` rows itself, and ``schedule_coroutine_job``
+    accepts only one.
+    """
+    await _enforce_raw_override_budget(codegen_input)
+    protocol = await resolve_effective_api_type(session_id, api_type)
+
+    stored_artifacts = await load_connector_artifacts(repo, session_id, object_class)
+    if not stored_artifacts:
+        raise ConnectorScriptsNotFoundError(session_id, object_class)
+
+    raw_overrides = {override.operation_key: override.code for override in codegen_input.scripts}
+    candidate_artifacts = _apply_script_overrides(stored_artifacts, raw_overrides, session_id)
+    await _enforce_fix_input_budget(candidate_artifacts)
+    validated_overrides = await _validate_script_overrides(codegen_input)
+    artifacts = _apply_script_overrides(stored_artifacts, validated_overrides, session_id)
+
+    job_input: dict[str, Any] = {
+        "sessionId": session_id,
+        "objectClass": object_class,
+        "scripts": [artifact.to_payload() for artifact in artifacts],
+        "midpointErrors": codegen_input.midpoint_errors,
+        "apiType": protocol.value,
+        "skipCache": True,
+    }
+
+    job_id = await schedule_coroutine_job(
+        db=repo.db,
+        job_type="codegen.fixConnector",
+        input_payload=job_input,
+        worker=connector_fix.fix_connector_code,
+        worker_args=(),
+        worker_kwargs={
+            "scripts": job_input_reference("scripts"),
+            "midpoint_errors": job_input_reference("midpointErrors"),
+            "session_id": session_id,
+            "protocol": protocol,
+        },
+        initial_stage=_INITIAL_STAGE,
+        initial_message=f"Preparing {object_class} connector fix from stored operation scripts",
+        session_id=session_id,
+    )
+
+    await persist_job_pointer(
+        repo,
+        session_id,
+        f"{object_class}ConnectorFix",
+        {
+            "objectClass": object_class,
+            "midpointErrors": codegen_input.midpoint_errors,
+            # Preserve exactly the script overrides uploaded by the caller. Scripts
+            # loaded from session storage remain only in the job input.
+            "scripts": [script.model_dump(by_alias=True, mode="json") for script in codegen_input.scripts],
+            "operationKeys": [artifact.operation_key for artifact in artifacts],
+            "overriddenOperationKeys": [override.operation_key for override in codegen_input.scripts],
+            "apiType": protocol.value,
+        },
+        job_id,
+    )
+
+    return job_id
+
+
+def _apply_script_overrides(
+    artifacts: list[ConnectorArtifact],
+    overrides: Mapping[str, str],
+    session_id: UUID,
+) -> list[ConnectorArtifact]:
+    """Replace stored code with caller-supplied code for this run only."""
+    if not overrides:
+        return artifacts
+
+    known_keys = {artifact.operation_key for artifact in artifacts}
+    for operation_key in overrides:
+        if operation_key not in known_keys:
+            raise UnknownConnectorOperationError(operation_key, session_id)
+
+    return [
+        artifact.with_code(overrides[artifact.operation_key]) if artifact.operation_key in overrides else artifact
+        for artifact in artifacts
+    ]
+
+
+async def _enforce_raw_override_budget(codegen_input: ConnectorFixInput) -> None:
+    """Reject an oversized request before running the Groovy parser or loading connector state."""
+    if not codegen_input.scripts:
+        return
+    input_tokens = await asyncio.to_thread(
+        count_tokens,
+        "\n\n".join(override.code for override in codegen_input.scripts),
+    )
+    _raise_if_fix_token_budget_exceeded(input_tokens)
+
+
+async def _validate_script_overrides(codegen_input: ConnectorFixInput) -> dict[str, str]:
+    """Normalize and parse caller scripts in a worker thread after size checks pass."""
+    if not codegen_input.scripts:
+        return {}
+
+    def validate_all() -> dict[str, str]:
+        validated: dict[str, str] = {}
+        for override in codegen_input.scripts:
+            try:
+                validated[override.operation_key] = ensure_valid_groovy_code(override.code)
+            except GroovyValidationError as exc:
+                raise InvalidConnectorScriptOverrideError(override.operation_key, str(exc)) from exc
+        return validated
+
+    return await asyncio.to_thread(validate_all)
+
+
+async def _enforce_fix_input_budget(artifacts: list[ConnectorArtifact]) -> None:
+    """
+    Reject a connector too large to fix in one call.
+
+    Never truncate: a partially seen connector produces confidently wrong
+    cross-operation fixes. Tokenization is CPU-bound, so it stays off the request
+    event loop just like Groovy parsing.
+    """
+    input_tokens = await asyncio.to_thread(
+        count_tokens,
+        "\n\n".join(artifact.code for artifact in artifacts),
+    )
+    _raise_if_fix_token_budget_exceeded(input_tokens)
+
+
+def _raise_if_fix_token_budget_exceeded(input_tokens: int) -> None:
+    limit = config.codegen.fix_max_input_tokens
+    if input_tokens > limit:
+        raise ConnectorFixContextTooLargeError(input_tokens=input_tokens, limit=limit)

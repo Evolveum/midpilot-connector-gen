@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.config.app import AppSettings
 from src.config.auth import AuthSettings
+from src.config.codegen import CodegenSettings
 from src.config.database import DatabaseSettings
 from src.config.digester import DigesterSettings
 from src.config.jobs import JobsSettings
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
     search: SearchSettings = SearchSettings()
     scrape_and_process: ScrapeAndProcessSettings = ScrapeAndProcessSettings()
     digester: DigesterSettings = DigesterSettings()
+    codegen: CodegenSettings = CodegenSettings()
     jobs: JobsSettings = JobsSettings()
     brave: BraveSettings = BraveSettings()
     database: DatabaseSettings = DatabaseSettings()
@@ -53,6 +55,7 @@ __all__ = [
     "AppSettings",
     "AuthSettings",
     "BraveSettings",
+    "CodegenSettings",
     "DatabaseSettings",
     "DigesterSettings",
     "JobsSettings",

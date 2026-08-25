@@ -4,16 +4,27 @@
 
 import textwrap
 
-REPAIR_SYSTEM_SUFFIX = textwrap.dedent("""\
+# The policy that governs any repair of already-generated Groovy. Shared with the
+# object-class fix, which applies the same rules to many scripts at once and
+# therefore cannot reuse REPAIR_SYSTEM_SUFFIX itself: that suffix ends by demanding
+# one complete script for one requested operation.
+REPAIR_POLICY_RULES = textwrap.dedent("""\
+- Preserve correct user edits, endpoint choices, objectClass, and operation blocks unless the errors or documentation prove they are wrong.
+- Make the smallest necessary changes that directly address the reported errors. Do not regenerate unrelated working code.
+- If an error identifies unsupported DSL, request mutation, endpoint path, filter, attribute, or parameter usage, replace it with syntax supported by the provided DSL docs and same-endpoint evidence.
+- If a script conflicts with extracted data or documentation, repair the conflict and keep a short TODO comment only when the required evidence is still missing.
+""")
+
+REPAIR_SYSTEM_SUFFIX = (
+    textwrap.dedent("""\
 
 REPAIR MODE:
 - <current_script> is the user's edited Groovy script and <midpoint_errors> are midPoint runtime or validation errors.
-- Use <current_script> as the primary script to fix. Preserve correct user edits, endpoint choices, objectClass, and operation blocks unless the errors or documentation prove they are wrong.
-- Make the smallest necessary changes that directly address <midpoint_errors>. Do not regenerate unrelated working code.
-- If an error identifies unsupported DSL, request mutation, endpoint path, filter, attribute, or parameter usage, replace it with syntax supported by the provided DSL docs and same-endpoint evidence.
-- If the current script conflicts with extracted data or documentation, repair the conflict and keep a short TODO comment only when the required evidence is still missing.
-- Always return one complete, syntactically valid Groovy script for the requested object class and operation.
+- Use <current_script> as the primary script to fix.
 """)
+    + REPAIR_POLICY_RULES
+    + "- Always return one complete, syntactically valid Groovy script for the requested object class and operation.\n"
+)
 
 REPAIR_USER_SUFFIX = textwrap.dedent("""\
 
