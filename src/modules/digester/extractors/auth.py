@@ -260,7 +260,7 @@ async def _to_processing_info(auth: DiscoveryAuth | AuthProcessingInfo) -> AuthP
                     seq.chunk_id,
                     seq.start_sequence,
                     seq.end_sequence,
-                    logger_prefix="[Digester:Auth] [Deduplication] ",
+                    logger_prefix="[Digester:Auth:Deduplication] ",
                 )
             relevant_seq.append(
                 DocProcessingSequenceItem(

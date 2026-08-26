@@ -145,7 +145,7 @@ async def run_connector_fix_pass(
         partial_variables=partial_variables,
     )
 
-    run_name = "codegen.fix.documentation" if is_escalation else "codegen.fix"
+    run_name = "Codegen:Fix:Documentation" if is_escalation else "Codegen:Fix"
     try:
         response = await retry_on_transient_llm_error(
             lambda: chain.ainvoke(

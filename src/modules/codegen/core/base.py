@@ -295,7 +295,7 @@ class BaseGroovyGenerator(ABC):
                 {"groovy_code": code},
                 config=RunnableConfig(
                     callbacks=[langfuse_handler],
-                    run_name=f"{self.config.logger_prefix.strip('[]')}:cleanup",
+                    run_name=f"{self.config.logger_prefix.strip('[]')}:Cleanup",
                 ),
             )
             candidate = strip_markdown_fences(coerce_llm_text(response).strip())
