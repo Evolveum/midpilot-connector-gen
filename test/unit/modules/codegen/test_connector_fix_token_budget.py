@@ -36,6 +36,8 @@ async def test_complete_prompt_is_rejected_before_the_llm_chain_is_built():
             protocol=ApiType.REST,
             connection_target="https://api.example.test",
             dsl_documentation="DSL reference",
+            extracted_attributes='[{"name": "Username", "scimAttribute": "userName"}]',
+            extracted_endpoints="",
             documentation_query="How is update encoded?",
             documentation_chunks="relevant vendor documentation",
             job_id=uuid4(),

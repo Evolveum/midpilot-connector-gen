@@ -419,9 +419,9 @@ async def schedule_connector_fix_job(
     """
     Schedule a connector fix for all generated scripts of one object class.
 
-    Loads the selected object's generated scripts, applies caller overrides for this
-    run only, enforces the input budget, schedules the job and persists the class-scoped
-    ``{objectClass}ConnectorFixJobId`` / ``{objectClass}ConnectorFixInput`` pointer.
+    Loads the selected object's generated scripts and its extracted schema, applies caller
+    overrides for this run only, enforces the input budget, schedules the job and persists the
+    class-scoped ``{objectClass}ConnectorFixJobId`` / ``{objectClass}ConnectorFixInput`` pointer.
 
     Unlike the per-operation jobs this one passes no ``session_result_key``: it
     publishes many ``{key}Output`` rows itself, and ``schedule_coroutine_job``
@@ -440,14 +440,37 @@ async def schedule_connector_fix_job(
     validated_overrides = await _validate_script_overrides(codegen_input)
     artifacts = _apply_script_overrides(stored_artifacts, validated_overrides, session_id)
 
+    # The fix must not decide attribute naming from the generated scripts alone: they are
+    # exactly what is under suspicion. The extracted schema is the authority, so it travels
+    # with the job the same way it does for every generation job.
+    attributes = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
+    if not attributes:
+        raise AttributesNotFoundError(object_class, session_id)
+    endpoints = await repo.get_session_data(session_id, f"{object_class}EndpointsOutput")
+
     job_input: dict[str, Any] = {
         "sessionId": session_id,
         "objectClass": object_class,
         "scripts": [artifact.to_payload() for artifact in artifacts],
         "midpointErrors": codegen_input.midpoint_errors,
+        "attributes": attributes,
         "apiType": protocol.value,
         "skipCache": True,
     }
+
+    worker_kwargs: dict[str, Any] = {
+        "scripts": job_input_reference("scripts"),
+        "midpoint_errors": job_input_reference("midpointErrors"),
+        "attributes": job_input_reference("attributes"),
+        "session_id": session_id,
+        "protocol": protocol,
+    }
+
+    # Endpoints are optional on purpose: a SQL session has no endpoint surface, and the fix
+    # must not fail for a protocol that never had one.
+    if endpoints is not None:
+        job_input["endpoints"] = endpoints
+        worker_kwargs["endpoints"] = job_input_reference("endpoints")
 
     job_id = await schedule_coroutine_job(
         db=repo.db,
@@ -455,12 +478,7 @@ async def schedule_connector_fix_job(
         input_payload=job_input,
         worker=connector_fix.fix_connector_code,
         worker_args=(),
-        worker_kwargs={
-            "scripts": job_input_reference("scripts"),
-            "midpoint_errors": job_input_reference("midpointErrors"),
-            "session_id": session_id,
-            "protocol": protocol,
-        },
+        worker_kwargs=worker_kwargs,
         initial_stage=_INITIAL_STAGE,
         initial_message=f"Preparing {object_class} connector fix from stored operation scripts",
         session_id=session_id,

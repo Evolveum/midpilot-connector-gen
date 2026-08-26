@@ -28,8 +28,23 @@ Protocol: {protocol}. Connection target: {connection_target}.
 HOW TO WORK:
 - Read the errors first. Identify which operation each error implicates. An error naming a
   method, path, filter or attribute usually points at exactly one script.
+- Some errors describe an inconsistency *between* scripts rather than a fault in one of them.
+  Resolve those from the authoritative source below, never by picking one of the two spellings
+  because it appears more often or looks more familiar.
 - Only change scripts that are actually at fault. Every script you return replaces the stored
   one, so returning an unchanged script is a needless risk.
+
+ATTRIBUTE NAMING (<extracted_info> is the <extracted_attributes> block below):
+- The second argument of `connIdAttribute` and the first argument of `attribute(...)` MUST exactly match the
+  native connector attribute name from `name` in <extracted_info>. When `name` and `scimAttribute` differ, use
+  `name`; `scimAttribute` is the SCIM wire path only and belongs inside `scim {{ path ... }}`.
+- <extracted_attributes> comes from the application's own documentation. It outranks every example in
+  <dsl_documentation>: a generic example that uses the wire name as the native name is an illustration, not a
+  naming decision for this connector.
+- The scripts in <connector_scripts> are the material under suspicion. They are never the authority for a
+  naming question, however consistent they look.
+- Every script of one object class must use the identical native name for the same attribute; the ConnID
+  connector merges them into one and rejects a mismatch.
 """)
     + REPAIR_POLICY_RULES
     + textwrap.dedent("""\
@@ -58,12 +73,30 @@ These are the Groovy scripts selected for this fix:
 {operation_scripts}
 </connector_scripts>
 
+Native attributes extracted from the application documentation for this object class:
+<extracted_attributes>
+{extracted_attributes}
+</extracted_attributes>
+
+{extracted_endpoints}
+
 midPoint connector DSL reference for the operations above:
 <dsl_documentation>
 {dsl_documentation}
 </dsl_documentation>
+
 {documentation_context}{previous_attempt}
 Return only the scripts you changed.
+""")
+
+# Rendered only when the session has an endpoint surface for this object class. A SQL session
+# has none, and an empty tag block reads to the model as "there are no endpoints".
+CONNECTOR_FIX_ENDPOINTS_SECTION = textwrap.dedent("""\
+Endpoints extracted from the application documentation for this object class:
+<extracted_endpoints>
+{extracted_endpoints}
+</extracted_endpoints>
+
 """)
 
 # Appended to the system prompt on the escalation pass only.

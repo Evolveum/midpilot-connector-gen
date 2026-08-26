@@ -19,21 +19,40 @@ from src.modules.codegen.errors import (
 )
 from src.modules.codegen.routes.fix import fix_connector
 from src.modules.codegen.schema import ConnectorFixInput
-from src.modules.digester.errors import ObjectClassesNotFoundError, ObjectClassNotFoundError
+from src.modules.digester.errors import (
+    AttributesNotFoundError,
+    ObjectClassesNotFoundError,
+    ObjectClassNotFoundError,
+)
 from src.shared.enums import ApiType
 
 CREATE_CODE = 'objectClass("user") {\n    create {\n    }\n}'
 UPDATE_CODE = 'objectClass("user") {\n    update {\n    }\n}'
+ATTRIBUTES = {"attributes": {"Username": {"type": "string", "scimAttribute": "userName"}}}
+ENDPOINTS = {"endpoints": [{"path": "/Users", "method": "GET", "description": "List users"}]}
 
 
 def test_fix_input_token_limit_defaults_to_120000():
     assert CodegenSettings().fix_max_input_tokens == 120_000
 
 
-def _repo(stored: dict | None = None, object_classes: object = None) -> MagicMock:
+def _repo(
+    stored: dict | None = None,
+    object_classes: object = None,
+    session_data: dict | None = None,
+) -> MagicMock:
     repo = MagicMock()
     repo.session_exists = AsyncMock(return_value=True)
     repo.update_session = AsyncMock()
+
+    data = (
+        {"userAttributesOutput": ATTRIBUTES, "userEndpointsOutput": ENDPOINTS} if session_data is None else session_data
+    )
+
+    async def get_session_data(_session_id, key):
+        return data.get(key)
+
+    repo.get_session_data = AsyncMock(side_effect=get_session_data)
 
     async def get_session_value(_session_id, key):
         if key == "objectClassesOutput":
@@ -91,6 +110,39 @@ async def test_fix_schedules_an_uncached_job_carrying_the_object_class_scripts()
     assert kwargs["input_payload"]["skipCache"] is True
     # Many {key}Output rows are published by the worker; the job contract carries only one.
     assert "session_result_key" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_fix_carries_the_extracted_attributes_and_optional_endpoints():
+    repo = _repo()
+
+    _, schedule = await _post(repo, ConnectorFixInput.model_validate({"midpointErrors": ["boom"]}))
+
+    _, kwargs = schedule.call_args
+    assert kwargs["input_payload"]["attributes"] == ATTRIBUTES
+    assert kwargs["input_payload"]["endpoints"] == ENDPOINTS
+    assert kwargs["worker_kwargs"]["attributes"] == job_input_reference("attributes")
+    assert kwargs["worker_kwargs"]["endpoints"] == job_input_reference("endpoints")
+
+
+@pytest.mark.asyncio
+async def test_fix_runs_without_an_endpoint_surface():
+    """A SQL session has no {objectClass}EndpointsOutput; the fix must not fail for it."""
+    repo = _repo(session_data={"userAttributesOutput": ATTRIBUTES})
+
+    _, schedule = await _post(repo, ConnectorFixInput.model_validate({"midpointErrors": ["boom"]}))
+
+    _, kwargs = schedule.call_args
+    assert "endpoints" not in kwargs["input_payload"]
+    assert "endpoints" not in kwargs["worker_kwargs"]
+
+
+@pytest.mark.asyncio
+async def test_fix_without_extracted_attributes_fails_instead_of_guessing():
+    repo = _repo(session_data={})
+
+    with pytest.raises(AttributesNotFoundError):
+        await _post(repo, ConnectorFixInput.model_validate({"midpointErrors": ["boom"]}))
 
 
 @pytest.mark.asyncio

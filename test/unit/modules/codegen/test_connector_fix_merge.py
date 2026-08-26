@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen.connector_fix import fix_connector_code
-from src.modules.codegen.errors import ConnectorFixProducedNoValidScriptError
+from src.modules.codegen.errors import ConnectorFixPassFailedError, ConnectorFixProducedNoValidScriptError
 from src.modules.codegen.schema import ConnectorFixLLMResponse
 from src.shared.enums import ApiType
 
@@ -48,6 +48,7 @@ async def _run(response, scripts=None):
         result = await fix_connector_code(
             scripts=scripts if scripts is not None else _scripts(),
             midpoint_errors=["No such method: request.pathParameter()"],
+            attributes={"attributes": {"Username": {"type": "string", "scimAttribute": "userName"}}},
             session_id=uuid4(),
             job_id=uuid4(),
             protocol=ApiType.REST,
@@ -143,9 +144,8 @@ async def test_operation_key_is_matched_case_insensitively():
 
 
 @pytest.mark.asyncio
-async def test_a_failed_llm_pass_leaves_the_session_untouched():
-    result, store, _ = await _run(None)
+async def test_a_failed_llm_pass_fails_instead_of_returning_unchanged_scripts():
+    with pytest.raises(ConnectorFixPassFailedError) as exc_info:
+        await _run(None)
 
-    assert result.changed_operations == []
-    assert {s.operation_key: s.code for s in result.scripts}["userUpdate"] == UPDATE_CODE
-    store.assert_not_awaited()
+    assert exc_info.value.status_code == 502

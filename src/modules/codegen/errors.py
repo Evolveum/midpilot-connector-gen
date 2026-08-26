@@ -66,6 +66,19 @@ class ConnectorFixContextTooLargeError(AppError):
         )
 
 
+class ConnectorFixPassFailedError(AppError):
+    """Raised when an LLM fix pass produces no valid structured response."""
+
+    status_code = 502
+    code = "connector_fix_pass_failed"
+
+    def __init__(self):
+        super().__init__(
+            "The connector fix could not be completed because the language model did not return "
+            "a valid structured response. See the job errors for details and try again."
+        )
+
+
 class ConnectorFixEscalationFailedError(AppError):
     """Raised when the documentation pass fails and the first pass has no usable repair."""
 

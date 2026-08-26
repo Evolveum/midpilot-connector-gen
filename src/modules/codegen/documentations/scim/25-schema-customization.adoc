@@ -11,6 +11,10 @@ While the framework provides automatic schema discovery, you often need to custo
 
 Schema customization is defined in Groovy scripts using the `objectClass()` and `attribute()` builders with SCIM-specific blocks.
 
+The first argument of `attribute()` is the *native connector attribute name* - the name the application's own
+documentation uses. The `scim { path ... }` block carries the SCIM wire path. The two are often identical, but when
+the application documents a different name, the native name wins and the wire path stays inside the `scim` block.
+
 [source,groovy]
 ----
 objectClass("User") {
@@ -21,6 +25,14 @@ objectClass("User") {
     attribute("givenName") {
         scim {
             path attribute("name").child("givenName")
+        }
+    }
+
+    // Native name and SCIM wire attribute differ: the application documents the field as "Username",
+    // while the SCIM API exposes it as "userName".
+    attribute("Username") {
+        scim {
+            path attribute("userName")
         }
     }
 }
@@ -87,17 +99,23 @@ This maps the `value` field from the email object where `primary` is `true`.
 
 == ConnId attribute mapping
 
-Map SCIM attributes to ConnId built-in attributes:
+Map native connector attributes to ConnId built-in attributes:
 
 [source,groovy]
 ----
 objectClass("User") {
     connIdAttribute("UID", "id")
-    connIdAttribute("NAME", "userName")
+    connIdAttribute("NAME", "Username")
 }
 ----
 
-The ConnId framework requires `UID` and `NAME` attributes. Map them to the appropriate SCIM attributes.
+The ConnId framework requires `UID` and `NAME` attributes. The second argument is the *native connector attribute
+name*, never the SCIM wire attribute. In the example above the application documents the login field as `Username`
+and the SCIM API exposes it as `userName`, so the ConnId mapping uses `Username` and the wire name appears only in
+that attribute's `scim { path ... }` block.
+
+The same mapping may also appear in the ConnId mapping script for this object class. Both scripts are merged into
+one connector, so the native name must be identical in both; a mismatch is rejected.
 
 == SCIM-specific schema blocks
 
@@ -113,7 +131,7 @@ The `scim` block supports:
 
 == Complete example
 
-[source,groovy,highlight=14,17,20,23,26]
+[source,groovy,highlight=9,20,23,26,29,32]
 ----
 objectClass("User") {
     scim {
@@ -121,7 +139,13 @@ objectClass("User") {
     }
 
     connIdAttribute("UID", "id")
-    connIdAttribute("NAME", "userName")
+    connIdAttribute("NAME", "Username")
+
+    attribute("Username") {
+        scim {
+            path attribute("userName")
+        }
+    }
 
     attribute("givenName") {
         scim {

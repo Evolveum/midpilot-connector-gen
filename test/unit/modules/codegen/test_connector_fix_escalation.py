@@ -12,7 +12,11 @@ import pytest
 from src.core.errors import LLMUnavailableError
 from src.modules.codegen.connector_fix import _load_escalation_documentation, fix_connector_code
 from src.modules.codegen.enums import ArtifactKind
-from src.modules.codegen.errors import ConnectorFixContextTooLargeError, ConnectorFixEscalationFailedError
+from src.modules.codegen.errors import (
+    ConnectorFixContextTooLargeError,
+    ConnectorFixEscalationFailedError,
+    ConnectorFixPassFailedError,
+)
 from src.modules.codegen.schema import ConnectorFixLLMResponse
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact
 from src.shared.enums import ApiType
@@ -54,6 +58,7 @@ async def _run(pass_results, *, documentation="chunk text"):
         result = await fix_connector_code(
             scripts=SCRIPTS,
             midpoint_errors=["unsupported filter"],
+            attributes={"attributes": {"Username": {"type": "string", "scimAttribute": "userName"}}},
             session_id=uuid4(),
             job_id=uuid4(),
             protocol=ApiType.REST,
@@ -126,12 +131,27 @@ async def test_a_second_documentation_request_is_capped():
 
 
 @pytest.mark.asyncio
-async def test_a_documentation_request_without_a_query_does_not_escalate():
+async def test_a_documentation_request_without_a_query_or_repair_fails_the_job():
     only = _llm(fixedScripts=[], needsDocumentation=True, documentationQuery="   ")
 
-    _, pass_mock, _, _ = await _run([only])
+    with pytest.raises(ConnectorFixEscalationFailedError):
+        await _run([only])
+
+
+@pytest.mark.asyncio
+async def test_a_documentation_request_without_a_query_keeps_a_valid_first_pass_repair():
+    first = _llm(
+        fixedScripts=[{"operationKey": "userUpdate", "code": FIXED_UPDATE, "reason": "best effort"}],
+        needsDocumentation=True,
+        documentationQuery="   ",
+    )
+
+    result, pass_mock, store, errors = await _run([first])
 
     assert pass_mock.await_count == 1
+    assert [change.operation_key for change in result.changed_operations] == ["userUpdate"]
+    store.assert_awaited_once()
+    assert "without providing a query" in errors.await_args.args[1]
 
 
 @pytest.mark.asyncio
@@ -142,11 +162,20 @@ async def test_no_available_documentation_keeps_the_first_pass_result():
         documentationQuery="How are filters encoded?",
     )
 
-    result, pass_mock, _, _ = await _run([first], documentation="")
+    result, pass_mock, _, errors = await _run([first], documentation="")
 
     assert pass_mock.await_count == 1
     assert result.documentation_escalated is False
     assert [change.operation_key for change in result.changed_operations] == ["userUpdate"]
+    assert "no relevant session documentation" in errors.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_no_available_documentation_without_a_first_pass_repair_fails_the_job():
+    first = _llm(fixedScripts=[], needsDocumentation=True, documentationQuery="How are filters encoded?")
+
+    with pytest.raises(ConnectorFixEscalationFailedError):
+        await _run([first], documentation="")
 
 
 @pytest.mark.asyncio
@@ -160,14 +189,27 @@ async def test_the_first_pass_carries_no_documentation_context():
 
 
 @pytest.mark.asyncio
+async def test_the_first_pass_carries_the_extracted_native_attribute_names():
+    """Without them the model would settle a naming conflict from the suspect scripts alone."""
+    _, pass_mock, _, _ = await _run([_llm(fixedScripts=[])])
+
+    first_kwargs = pass_mock.await_args_list[0].kwargs
+    assert '"name": "Username"' in first_kwargs["extracted_attributes"]
+    assert '"scimAttribute": "userName"' in first_kwargs["extracted_attributes"]
+    # A session with no endpoint surface (SQL) simply sends no endpoint section.
+    assert first_kwargs["extracted_endpoints"] == ""
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "second_failure",
     [
         None,
         ConnectorFixContextTooLargeError(input_tokens=120_001, limit=120_000),
+        ConnectorFixPassFailedError(),
         LLMUnavailableError("running the documentation pass"),
     ],
-    ids=["invalid-response", "token-budget", "llm-unavailable"],
+    ids=["missing-response", "token-budget", "invalid-structured-response", "llm-unavailable"],
 )
 async def test_a_failed_documentation_pass_keeps_valid_first_pass_repairs(second_failure):
     first = _llm(
@@ -183,7 +225,7 @@ async def test_a_failed_documentation_pass_keeps_valid_first_pass_repairs(second
     assert [change.operation_key for change in result.changed_operations] == ["userCreate"]
     store.assert_awaited_once()
     fallback_error = errors.await_args_list[-1].args[1]
-    assert "Documentation pass failed; using 1 valid first-pass repair(s)" in fallback_error
+    assert "Documentation escalation failed; using 1 valid first-pass repair(s)" in fallback_error
 
 
 @pytest.mark.asyncio

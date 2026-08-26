@@ -24,10 +24,11 @@ from src.core.llm import build_structured_chain, raise_if_llm_unavailable, retry
 from src.core.observability.langfuse import langfuse_handler
 from src.documents.chunking import count_tokens
 from src.jobs import append_job_error
-from src.modules.codegen.errors import ConnectorFixContextTooLargeError
+from src.modules.codegen.errors import ConnectorFixContextTooLargeError, ConnectorFixPassFailedError
 from src.modules.codegen.prompts.fix_prompts import (
     CONNECTOR_FIX_DOCUMENTATION_INSTRUCTION,
     CONNECTOR_FIX_DOCUMENTATION_SECTION,
+    CONNECTOR_FIX_ENDPOINTS_SECTION,
     CONNECTOR_FIX_PREVIOUS_ATTEMPT_SECTION,
     get_connector_fix_system_prompt,
     get_connector_fix_user_prompt,
@@ -89,18 +90,21 @@ async def run_connector_fix_pass(
     protocol: ApiType,
     connection_target: str,
     dsl_documentation: str,
+    extracted_attributes: str,
+    extracted_endpoints: str,
     job_id: UUID,
     documentation_query: str | None = None,
     documentation_chunks: str = "",
     previous_attempt: Optional[ConnectorFixLLMResponse] = None,
-) -> ConnectorFixLLMResponse | None:
+) -> ConnectorFixLLMResponse:
     """
-    Run one fix pass and return the parsed structured output, or ``None`` on failure.
+    Run one fix pass and return its validated structured output.
 
     Passing ``documentation_chunks`` and ``previous_attempt`` turns this into the
     escalation pass; nothing else differs between the two.
 
     :raises LLMUnavailableError: when the model backend is unreachable
+    :raises ConnectorFixPassFailedError: when the pass produces no valid structured response
     """
     is_escalation = bool(documentation_chunks)
 
@@ -110,6 +114,9 @@ async def run_connector_fix_pass(
         )
         if is_escalation
         else ""
+    )
+    endpoints_section = (
+        CONNECTOR_FIX_ENDPOINTS_SECTION.format(extracted_endpoints=extracted_endpoints) if extracted_endpoints else ""
     )
     previous_attempt_section = (
         CONNECTOR_FIX_PREVIOUS_ATTEMPT_SECTION.format(previous_attempt=render_previous_attempt(previous_attempt))
@@ -125,6 +132,8 @@ async def run_connector_fix_pass(
     prompt_vars = {
         "midpoint_errors": json.dumps(list(midpoint_errors), ensure_ascii=False, indent=2),
         "operation_scripts": render_script_bundle(artifact_payloads),
+        "extracted_attributes": extracted_attributes,
+        "extracted_endpoints": endpoints_section,
         "dsl_documentation": dsl_documentation or "No bundled DSL reference is available for these operations.",
         "documentation_context": documentation_context,
         "previous_attempt": previous_attempt_section,
@@ -155,13 +164,13 @@ async def run_connector_fix_pass(
         error_message = f"[Codegen:Fix] Fix pass failed: {exc}"
         logger.exception("[Codegen:Fix] Fix pass failed: %s", exc)
         await append_job_error(job_id, error_message)
-        return None
+        raise ConnectorFixPassFailedError() from exc
 
     if not isinstance(response, ConnectorFixLLMResponse):
         error_message = f"[Codegen:Fix] Unexpected fix response type: {type(response).__name__}"
         logger.warning("[Codegen:Fix] Unexpected fix response type: %s", type(response).__name__)
         await append_job_error(job_id, error_message)
-        return None
+        raise ConnectorFixPassFailedError()
 
     logger.info(
         "[Codegen:Fix] Fix pass returned %d proposed script(s), needsDocumentation=%s",

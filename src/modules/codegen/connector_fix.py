@@ -15,6 +15,7 @@ its own prompt suffix, this fixes all generated operations of one object class.
 """
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Sequence
@@ -25,26 +26,34 @@ from src.core.errors import LLMUnavailableError
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.documents.chunking import normalize_to_text
 from src.jobs import append_job_error, update_job_progress
+from src.modules.codegen.core.base import endpoints_to_records
 from src.modules.codegen.core.fix_connector import run_connector_fix_pass
 from src.modules.codegen.enums import ArtifactKind, SearchIntent
 from src.modules.codegen.errors import (
     ConnectorFixContextTooLargeError,
     ConnectorFixEscalationFailedError,
+    ConnectorFixPassFailedError,
     ConnectorFixProducedNoValidScriptError,
 )
 from src.modules.codegen.persistence import store_fixed_connector_scripts
 from src.modules.codegen.schema import (
+    AttributesPayload,
     ConnectorFixChange,
     ConnectorFixLLMResponse,
     ConnectorFixRejection,
     ConnectorFixResult,
     ConnectorScript,
+    EndpointsPayload,
     GroovyCodePayload,
 )
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, resolve_artifact_docs_paths
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.relevant_chunks import collect_connector_relevant_chunks
 from src.modules.codegen.utils.groovy_validation import normalize_groovy_code, validate_groovy_code
+from src.modules.codegen.utils.prompt_records import (
+    build_attribute_mapping_records,
+    build_connid_attribute_mapping_records,
+)
 from src.session.info_metadata import get_session_connection_target
 from src.shared.content_types import is_conndev_documentation_item
 from src.shared.enums import ApiType, JobStage
@@ -67,17 +76,23 @@ async def fix_connector_code(
     *,
     scripts: Sequence[Mapping[str, Any]],
     midpoint_errors: Sequence[str],
+    attributes: AttributesPayload,
     session_id: UUID,
     job_id: UUID,
     protocol: ApiType,
+    endpoints: EndpointsPayload | None = None,
 ) -> ConnectorFixResult:
     """
     Fix the selected connector scripts from the errors midPoint reported for them.
 
     ``scripts`` are the artifact payloads assembled by orchestration (stored code,
-    with any caller-supplied overrides already applied).
+    with any caller-supplied overrides already applied). ``attributes`` is the same
+    extracted schema the generators worked from: without it the model would have to
+    settle a naming conflict from the very scripts that are under suspicion.
+    ``endpoints`` is absent for protocols that have no endpoint surface (SQL).
 
     :raises ConnectorFixEscalationFailedError: when the documentation pass fails and no first-pass repair is usable
+    :raises ConnectorFixPassFailedError: when an LLM pass produces no valid structured response
     :raises ConnectorFixProducedNoValidScriptError: when every proposed script was rejected
     """
     artifacts = [ConnectorArtifact(**_payload_to_kwargs(payload)) for payload in scripts]
@@ -93,19 +108,23 @@ async def fix_connector_code(
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
     connection_target = base_api_url or database_name
     dsl_documentation = _load_dsl_documentation(artifacts, protocol)
+    extracted_attributes = _render_records(_build_fix_attribute_records(attributes))
+    extracted_endpoints = _render_records(endpoints_to_records(endpoints)) if endpoints is not None else ""
 
     async def run_pass(
         *,
         documentation_query: str | None = None,
         documentation_chunks: str = "",
         previous_attempt: ConnectorFixLLMResponse | None = None,
-    ) -> ConnectorFixLLMResponse | None:
+    ) -> ConnectorFixLLMResponse:
         return await run_connector_fix_pass(
             artifact_payloads=artifact_payloads,
             midpoint_errors=midpoint_errors,
             protocol=protocol,
             connection_target=connection_target,
             dsl_documentation=dsl_documentation,
+            extracted_attributes=extracted_attributes,
+            extracted_endpoints=extracted_endpoints,
             job_id=job_id,
             documentation_query=documentation_query,
             documentation_chunks=documentation_chunks,
@@ -122,19 +141,29 @@ async def fix_connector_code(
     response = await run_pass()
     escalated = False
     escalation_failed = False
-    escalation_error: ConnectorFixContextTooLargeError | LLMUnavailableError | None = None
+    escalation_error: ConnectorFixContextTooLargeError | ConnectorFixPassFailedError | LLMUnavailableError | None = None
+    escalation_failure_detail: str | None = None
     documentation_query: str | None = None
 
     # One escalation round, expressed as a straight line rather than a loop: the cap
     # is structural, so it cannot drift into repeated documentation requests.
-    if response is not None and response.needs_documentation:
+    if response is None:
+        # Defensive guard for an incorrectly implemented or mocked pass. The real
+        # pass raises ConnectorFixPassFailedError instead of returning no result.
+        logger.error("[Codegen:Fix] First fix pass returned no structured response")
+        await append_job_error(job_id, "[Codegen:Fix] First fix pass returned no structured response.")
+        raise ConnectorFixPassFailedError()
+
+    if response.needs_documentation:
         documentation_query = (response.documentation_query or "").strip()
         if not documentation_query:
-            logger.warning("[Codegen:Fix] Documentation requested without a query; keeping the first-pass result")
+            escalation_failed = True
+            escalation_failure_detail = "the model requested documentation without providing a query"
         else:
             documentation = await _load_escalation_documentation(session_id, artifacts, job_id)
             if not documentation:
-                logger.warning("[Codegen:Fix] No documentation available for the requested context")
+                escalation_failed = True
+                escalation_failure_detail = "no relevant session documentation was available for the requested context"
             else:
                 await update_job_progress(
                     job_id,
@@ -149,23 +178,32 @@ async def fix_connector_code(
                         documentation_chunks=documentation,
                         previous_attempt=response,
                     )
-                except (ConnectorFixContextTooLargeError, LLMUnavailableError) as exc:
+                except (ConnectorFixContextTooLargeError, ConnectorFixPassFailedError, LLMUnavailableError) as exc:
                     escalation_failed = True
                     escalation_error = exc
+                    escalation_failure_detail = str(exc)
                 else:
-                    escalation_failed = second is None
+                    if second is None:
+                        escalation_failed = True
+                        escalation_failure_detail = "the documentation pass returned no structured response"
                 if not escalation_failed and second is not None:
                     response = _merge_fix_responses(response, second)
                     escalated = True
                     if second.needs_documentation:
                         logger.warning("[Codegen:Fix] Second pass requested more documentation; escalation cap reached")
 
-    if response is None:
-        return _unchanged_result(artifacts, analysis="The fix could not be completed; see the job errors.")
-
     accepted, rejections, unusable_count = await _validate_proposed_scripts(response, by_operation_key, job_id)
 
     if escalation_failed and not accepted:
+        failure_detail = escalation_failure_detail or "the documentation escalation did not produce a usable result"
+        logger.error(
+            "[Codegen:Fix] Documentation escalation failed with no valid first-pass repair: %s",
+            failure_detail,
+        )
+        await append_job_error(
+            job_id,
+            f"[Codegen:Fix] Documentation escalation failed with no valid first-pass repair. Reason: {failure_detail}",
+        )
         if escalation_error is not None:
             raise escalation_error
         raise ConnectorFixEscalationFailedError()
@@ -177,15 +215,15 @@ async def fix_connector_code(
         raise ConnectorFixProducedNoValidScriptError(unusable_count)
 
     if escalation_failed:
-        failure_detail = str(escalation_error) if escalation_error is not None else "no usable structured response"
+        failure_detail = escalation_failure_detail or "the documentation escalation did not produce a usable result"
         logger.warning(
-            "[Codegen:Fix] Documentation pass failed; using %d valid first-pass repair(s): %s",
+            "[Codegen:Fix] Documentation escalation failed; using %d valid first-pass repair(s): %s",
             len(accepted),
             failure_detail,
         )
         await append_job_error(
             job_id,
-            f"[Codegen:Fix] Documentation pass failed; using {len(accepted)} valid first-pass repair(s). "
+            f"[Codegen:Fix] Documentation escalation failed; using {len(accepted)} valid first-pass repair(s). "
             f"Reason: {failure_detail}",
         )
 
@@ -318,6 +356,32 @@ def _resolve_operation_key(proposed: str, by_operation_key: Mapping[str, Connect
     return None
 
 
+def _build_fix_attribute_records(attributes: AttributesPayload) -> List[Dict[str, Any]]:
+    """
+    Every extracted attribute, plus the identifiers only the ConnID projection knows.
+
+    The fix reasons about the whole native schema, so the projection-filtered ConnID record
+    set is not enough on its own: it drops every attribute the connector does not already
+    expose, and that is exactly where a wrong native name hides. The projection is still
+    merged in because `UID` maps to `id`, which the extracted attributes do not carry.
+    Neither builder ever disagrees about a native name, so the merge order is not a policy.
+    """
+    records = build_attribute_mapping_records(attributes)
+    known = {record["name"] for record in records}
+    records.extend(
+        record for record in build_connid_attribute_mapping_records(attributes) if record["name"] not in known
+    )
+    records.sort(key=lambda record: str(record.get("name", "")).lower())
+    return records
+
+
+def _render_records(records: Sequence[Mapping[str, Any]]) -> str:
+    """Serialize extracted records for the prompt; an empty set says so rather than showing `[]`."""
+    if not records:
+        return "No extracted records are available for this object class."
+    return json.dumps(list(records), ensure_ascii=False, indent=2)
+
+
 def _load_dsl_documentation(artifacts: Sequence[ConnectorArtifact], protocol: ApiType) -> str:
     sections: List[str] = []
     for docs_path in resolve_artifact_docs_paths(artifacts, protocol):
@@ -368,16 +432,6 @@ async def _load_escalation_documentation(
     if not sections:
         await append_job_error(job_id, "[Codegen:Fix] Requested documentation had no usable content")
     return "\n\n---\n\n".join(sections)
-
-
-def _unchanged_result(artifacts: Sequence[ConnectorArtifact], *, analysis: str) -> ConnectorFixResult:
-    return ConnectorFixResult(
-        scripts=[
-            ConnectorScript(operationKey=artifact.operation_key, sessionKey=artifact.session_key, code=artifact.code)
-            for artifact in artifacts
-        ],
-        analysis=analysis,
-    )
 
 
 def _payload_to_kwargs(payload: Mapping[str, Any]) -> Dict[str, Any]:

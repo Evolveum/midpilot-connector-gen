@@ -4838,7 +4838,7 @@
           "Codegen: Fix"
         ],
         "summary": "Fix one object class from midPoint errors",
-        "description": "Fix faulty Groovy scripts for one object class from the errors midPoint reported.\n\nLoads generated CRUD, search, native-schema, and ConnID code only for the selected\nobject class. The model receives those scripts and the reported errors, and only\nchanged scripts are written back. Optional scripts in the body must also belong\nto this object class. The session is updated only if the fix succeeds.\n\nThe write-back does not yet use a latest-fix or per-operation job pointer fence.\nDo not overlap fixes or mutate the same operation while a fix is running.",
+        "description": "Fix faulty Groovy scripts for one object class from the errors midPoint reported.\n\nLoads generated search, create, update, delete, native-schema, and ConnID code only for the selected\nobject class. The model receives those scripts and the reported errors, and only\nchanged scripts are written back. Optional scripts in the body must also belong\nto this object class. The session is updated only if the fix succeeds.",
         "operationId": "fix_connector_api_v1_codegen__session_id__classes__objectClass__fix_post",
         "security": [
           {
