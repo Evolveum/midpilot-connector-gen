@@ -14,6 +14,12 @@ from src.modules.codegen.errors import ConnectorFixPassFailedError
 from src.shared.enums import ApiType
 
 
+def _reported(errors: AsyncMock) -> str:
+    """Render the reported job error the way the job record stores it."""
+    message, *args = errors.await_args_list[-1].args[2:]
+    return message % tuple(args) if args else message
+
+
 async def _run_with_chain_response(response: object, errors: AsyncMock) -> None:
     chain = MagicMock()
     chain.ainvoke = AsyncMock(side_effect=response if isinstance(response, Exception) else None)
@@ -23,7 +29,7 @@ async def _run_with_chain_response(response: object, errors: AsyncMock) -> None:
     with (
         patch("src.modules.codegen.core.fix_connector.count_tokens", return_value=1),
         patch("src.modules.codegen.core.fix_connector.build_structured_chain", return_value=chain),
-        patch("src.modules.codegen.core.fix_connector.append_job_error", new=errors),
+        patch("src.modules.codegen.core.fix_connector.report_job_error", new=errors),
     ):
         await run_connector_fix_pass(
             artifact_payloads=[
@@ -52,7 +58,7 @@ async def test_non_transient_chain_failure_is_recorded_and_raised():
         await _run_with_chain_response(ValueError("malformed structured output"), errors)
 
     errors.assert_awaited_once()
-    assert "malformed structured output" in errors.await_args.args[1]
+    assert "malformed structured output" in _reported(errors)
 
 
 @pytest.mark.asyncio
@@ -63,4 +69,4 @@ async def test_unexpected_chain_response_type_is_recorded_and_raised():
         await _run_with_chain_response({"fixedScripts": []}, errors)
 
     errors.assert_awaited_once()
-    assert "Unexpected fix response type: dict" in errors.await_args.args[1]
+    assert "Unexpected fix response type: dict" in _reported(errors)

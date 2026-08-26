@@ -23,7 +23,7 @@ from src.config import config
 from src.core.llm import build_structured_chain, raise_if_llm_unavailable, retry_on_transient_llm_error
 from src.core.observability.langfuse import langfuse_handler
 from src.documents.chunking import count_tokens
-from src.jobs import append_job_error
+from src.jobs import report_job_error
 from src.modules.codegen.errors import ConnectorFixContextTooLargeError, ConnectorFixPassFailedError
 from src.modules.codegen.prompts.fix_prompts import (
     CONNECTOR_FIX_DOCUMENTATION_INSTRUCTION,
@@ -52,8 +52,6 @@ def render_script_bundle(artifact_payloads: Sequence[Dict[str, Any]]) -> str:
         attributes = [f'operationKey="{payload["operationKey"]}"', f'kind="{payload["kind"]}"']
         if payload.get("objectClass"):
             attributes.append(f'objectClass="{payload["objectClass"]}"')
-        if payload.get("relationName"):
-            attributes.append(f'relationName="{payload["relationName"]}"')
         if payload.get("intent"):
             attributes.append(f'intent="{payload["intent"]}"')
         blocks.append(f"<script {' '.join(attributes)}>\n{payload['code']}\n</script>")
@@ -161,15 +159,17 @@ async def run_connector_fix_pass(
         )
     except Exception as exc:
         raise_if_llm_unavailable(exc, context="fixing connector code")
-        error_message = f"[Codegen:Fix] Fix pass failed: {exc}"
-        logger.exception("[Codegen:Fix] Fix pass failed: %s", exc)
-        await append_job_error(job_id, error_message)
+        # The job record carries no traceback, so the reason has to travel in the message.
+        await report_job_error(logger, job_id, "[Codegen:Fix] Fix pass failed: %s", exc, exception=True)
         raise ConnectorFixPassFailedError() from exc
 
     if not isinstance(response, ConnectorFixLLMResponse):
-        error_message = f"[Codegen:Fix] Unexpected fix response type: {type(response).__name__}"
-        logger.warning("[Codegen:Fix] Unexpected fix response type: %s", type(response).__name__)
-        await append_job_error(job_id, error_message)
+        await report_job_error(
+            logger,
+            job_id,
+            "[Codegen:Fix] Unexpected fix response type: %s",
+            type(response).__name__,
+        )
         raise ConnectorFixPassFailedError()
 
     logger.info(

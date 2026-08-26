@@ -11,7 +11,7 @@ lists consumed by the Groovy generators. Pure selection logic — no generation.
 """
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from uuid import UUID
 
 from src.core.db import async_session_maker
@@ -23,6 +23,7 @@ from src.modules.codegen.selection.authorization import (
     select_authorization_chunk_refs,
 )
 from src.modules.digester.schemas import RelationsResponse
+from src.shared.normalize import normalize_chunk_pair
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +87,39 @@ def _merge_unique_pairs(*seqs: Iterable[Tuple[int, Optional[str]]]) -> List[Tupl
     return merged
 
 
+def _select_chunk_refs(*ref_groups: Sequence[Any]) -> List[Dict[str, Any]]:
+    """
+    Order, deduplicate and re-attach the document id of relevant chunk references.
+
+    Every collector below reads a different set of result keys and then needs the
+    same thing from them: the referenced chunks in relevance order, once each,
+    carrying the ``doc_id`` the reference was stored with.
+    """
+    groups = [[ref for ref in group if isinstance(ref, Mapping)] for group in ref_groups]
+    merged_pairs = _merge_unique_pairs(*(_collect_pairs(group) for group in groups))
+
+    chunk_to_doc: Dict[str, str] = {}
+    for group in groups:
+        for ref in group:
+            pair = normalize_chunk_pair(ref)
+            if pair is not None:
+                chunk_to_doc.setdefault(pair[1], pair[0])
+
+    selected: List[Dict[str, Any]] = []
+    for _, chunk_id in merged_pairs:
+        if not chunk_id:
+            continue
+        selected_ref: Dict[str, Any] = {"chunk_id": chunk_id}
+        if chunk_id in chunk_to_doc:
+            selected_ref["doc_id"] = chunk_to_doc[chunk_id]
+        selected.append(selected_ref)
+    return selected
+
+
 async def _collect_relation_object_class_pairs(
     relations: RelationsResponse,
     session_id: UUID,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """
     Select object-class documentation chunks for the relation subject and object.
     """
@@ -104,27 +134,15 @@ async def _collect_relation_object_class_pairs(
         )
 
     selected_relation = relations.relations[0]
-    selected_chunks: List[Dict[str, str]] = []
-    seen_chunk_ids: set[str] = set()
-
+    ref_groups: List[Sequence[Any]] = []
     for class_name in (selected_relation.subject, selected_relation.object):
-        class_key = normalize_object_class_name(class_name)
-        relevant_refs = chunk_map.get(class_key, [])
+        relevant_refs = chunk_map.get(normalize_object_class_name(class_name), [])
         if not relevant_refs:
             logger.warning("[Codegen:Relation] No relevant chunks found for object class %s", class_name)
             continue
+        ref_groups.append(relevant_refs)
 
-        for chunk in relevant_refs:
-            chunk_id = str(chunk.get("chunkId") or chunk.get("chunk_id") or "")
-            doc_id = str(chunk.get("docId") or chunk.get("doc_id") or "")
-            if not chunk_id or not doc_id:
-                continue
-            if chunk_id in seen_chunk_ids:
-                continue
-            seen_chunk_ids.add(chunk_id)
-            selected_chunks.append({"doc_id": doc_id, "chunk_id": chunk_id})
-
-    return selected_chunks
+    return _select_chunk_refs(*ref_groups)
 
 
 async def _collect_relevant_chunks(
@@ -149,35 +167,17 @@ async def _collect_relevant_chunks(
 
     endpoint_refs = relevant_map.get(key_endpoints, [])
     attribute_refs = relevant_map.get(key_attributes, [])
+    relevant_pairs = _select_chunk_refs(endpoint_refs, attribute_refs)
 
-    pairs_endpoints = _collect_pairs(endpoint_refs)
-    pairs_attributes = _collect_pairs(attribute_refs)
-    merged_pairs = _merge_unique_pairs(pairs_endpoints, pairs_attributes)
-
-    if not merged_pairs:
+    if not relevant_pairs:
         return None
-
-    chunk_to_doc: Dict[str, str] = {}
-    for chunk in [*endpoint_refs, *attribute_refs]:
-        if not isinstance(chunk, dict):
-            continue
-        chunk_id = chunk.get("chunk_id") or chunk.get("chunkId")
-        doc_id = chunk.get("doc_id") or chunk.get("docId")
-        if isinstance(chunk_id, str) and isinstance(doc_id, str) and chunk_id not in chunk_to_doc:
-            chunk_to_doc[chunk_id] = doc_id
-
-    relevant_pairs = [
-        {"chunk_id": chunk_id, "doc_id": chunk_to_doc[chunk_id]} if chunk_id in chunk_to_doc else {"chunk_id": chunk_id}
-        for _, chunk_id in merged_pairs
-        if chunk_id
-    ]
 
     logger.info(
         "[Codegen:%s] Relevant chunks for endpoints=%d, for attributes=%d, merged=%d for %s",
         operation_name,
-        len(pairs_endpoints),
-        len(pairs_attributes),
-        len(merged_pairs),
+        len(endpoint_refs),
+        len(attribute_refs),
+        len(relevant_pairs),
         object_class,
     )
 
@@ -252,24 +252,7 @@ async def collect_connector_relevant_chunks(
         if isinstance(refs, list):
             operation_refs.extend(ref for ref in refs if isinstance(ref, dict))
 
-    all_refs = [*operation_refs, *object_class_refs]
-    merged_pairs = _merge_unique_pairs(_collect_pairs(all_refs))
-
-    chunk_to_doc: Dict[str, str] = {}
-    for ref in all_refs:
-        chunk_id = ref.get("chunk_id") or ref.get("chunkId")
-        doc_id = ref.get("doc_id") or ref.get("docId")
-        if isinstance(chunk_id, str) and isinstance(doc_id, str) and chunk_id not in chunk_to_doc:
-            chunk_to_doc[chunk_id] = doc_id
-
-    selected: List[Dict[str, Any]] = []
-    for _, chunk_id in merged_pairs:
-        if not chunk_id:
-            continue
-        pair: Dict[str, Any] = {"chunk_id": chunk_id}
-        if chunk_id in chunk_to_doc:
-            pair["doc_id"] = chunk_to_doc[chunk_id]
-        selected.append(pair)
+    selected = _select_chunk_refs(operation_refs, object_class_refs)
 
     logger.info(
         "[Codegen:Fix] Selected %d unique relevant chunk(s) for %d object class(es) "

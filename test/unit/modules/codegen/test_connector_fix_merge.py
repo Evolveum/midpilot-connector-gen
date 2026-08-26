@@ -36,7 +36,7 @@ async def _run(response, scripts=None):
         patch("src.modules.codegen.connector_fix.run_connector_fix_pass", new_callable=AsyncMock) as pass_mock,
         patch("src.modules.codegen.connector_fix.store_fixed_connector_scripts", new_callable=AsyncMock) as store,
         patch("src.modules.codegen.connector_fix.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.codegen.connector_fix.append_job_error", new_callable=AsyncMock) as errors,
+        patch("src.modules.codegen.connector_fix.report_job_error", new_callable=AsyncMock) as errors,
         patch(
             "src.modules.codegen.connector_fix.get_session_connection_target",
             new_callable=AsyncMock,
@@ -44,7 +44,10 @@ async def _run(response, scripts=None):
         ),
         patch("src.modules.codegen.connector_fix._load_dsl_documentation", return_value="docs"),
     ):
-        pass_mock.return_value = response
+        if isinstance(response, Exception):
+            pass_mock.side_effect = response
+        else:
+            pass_mock.return_value = response
         result = await fix_connector_code(
             scripts=scripts if scripts is not None else _scripts(),
             midpoint_errors=["No such method: request.pathParameter()"],
@@ -146,6 +149,6 @@ async def test_operation_key_is_matched_case_insensitively():
 @pytest.mark.asyncio
 async def test_a_failed_llm_pass_fails_instead_of_returning_unchanged_scripts():
     with pytest.raises(ConnectorFixPassFailedError) as exc_info:
-        await _run(None)
+        await _run(ConnectorFixPassFailedError())
 
     assert exc_info.value.status_code == 502

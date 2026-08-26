@@ -4,7 +4,7 @@
 
 import json
 from collections.abc import Iterator
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Sequence
 
 from src.documents.normalize import normalize_scim_path_for_lookup
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload
@@ -208,6 +208,44 @@ def build_connid_attribute_mapping_records(payload: AttributesPayload) -> List[D
         projected_attributes[native_name] = effective_attribute
 
     return build_attribute_mapping_records({"attributes": projected_attributes})
+
+
+def build_fix_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
+    """
+    Every extracted attribute, plus the identifiers only the ConnID projection knows.
+
+    A fix reasons about the whole native schema, so the projection-filtered ConnID
+    record set is not enough on its own: it drops every attribute the connector does
+    not already expose, and that is exactly where a wrong native name hides. The
+    projection is merged in only where it can contribute something new - ``UID`` maps
+    to ``id``, which the extracted attributes do not carry - which is the SCIM path,
+    since :func:`build_connid_attribute_mapping_records` otherwise just rebuilds the
+    records already collected here. Neither builder ever disagrees about a native
+    name, so the merge order is not a policy.
+    """
+    records = build_attribute_mapping_records(payload)
+    if not as_mapping(extract_scim_context(payload).get("connectorObjectClass")):
+        return records
+
+    known = {record["name"] for record in records}
+    records.extend(record for record in build_connid_attribute_mapping_records(payload) if record["name"] not in known)
+    records.sort(key=lambda record: str(record.get("name", "")).lower())
+    return records
+
+
+def render_prompt_records(records: Sequence[Mapping[str, Any]]) -> str:
+    """
+    Serialize extracted records as an indented JSON block for a prompt.
+
+    Deliberately indented, unlike the compact ``attributes_json`` / ``endpoints_json``
+    the generators send: the fix prompt tells the model these records outrank the
+    scripts under repair and the bundled DSL examples, so they are meant to be read
+    rather than merely referenced. An empty set says so in words, because ``[]`` reads
+    to a model as "this attribute has no properties" rather than "nothing was extracted".
+    """
+    if not records:
+        return "No extracted records are available for this object class."
+    return json.dumps(list(records), ensure_ascii=False, indent=2)
 
 
 def strip_relevant_documentation_refs(record: Mapping[str, Any]) -> Dict[str, Any]:

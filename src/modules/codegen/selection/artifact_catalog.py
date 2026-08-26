@@ -65,6 +65,23 @@ class ConnectorArtifact(ConnectorArtifactSlot):
 
     code: str
 
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ConnectorArtifact":
+        """
+        Rebuild an artifact from a job input payload.
+
+        The exact inverse of :meth:`to_payload`, and kept beside it so the round trip
+        the fix job depends on is one contract in one place.
+        """
+        intent = payload.get("intent")
+        return cls(
+            operation_key=payload["operationKey"],
+            kind=ArtifactKind(payload["kind"]),
+            object_class=payload.get("objectClass"),
+            intent=SearchIntent(intent) if intent else None,
+            code=payload["code"],
+        )
+
     def with_code(self, code: str) -> "ConnectorArtifact":
         return replace(self, code=code)
 

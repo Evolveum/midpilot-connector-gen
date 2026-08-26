@@ -11,6 +11,7 @@ import pytest
 
 from src.modules.codegen.enums import ArtifactKind, SearchIntent
 from src.modules.codegen.selection.artifact_catalog import (
+    ConnectorArtifact,
     ConnectorArtifactSlot,
     build_connector_artifact_slots,
     load_connector_artifacts,
@@ -137,6 +138,26 @@ def test_docs_paths_are_deduplicated_across_object_classes():
     assert len(paths) == len(set(paths))
     assert "rest/50-create.adoc" in paths
     assert "rest/30-attribute-to-connid-attributes.adoc" in paths
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        ConnectorArtifact(operation_key="userConnid", kind=ArtifactKind.CONNID, object_class="user", code="code"),
+        ConnectorArtifact(
+            operation_key="userSearchFilter",
+            kind=ArtifactKind.SEARCH,
+            object_class="user",
+            intent=SearchIntent.FILTER,
+            code="code",
+        ),
+        ConnectorArtifact(operation_key="authorization", kind=ArtifactKind.AUTHORIZATION, code="code"),
+    ],
+    ids=["object-class", "search-intent", "no-object-class"],
+)
+def test_an_artifact_survives_the_job_input_round_trip(artifact):
+    """The fix job serializes artifacts into its input and rebuilds them in the worker."""
+    assert ConnectorArtifact.from_payload(artifact.to_payload()) == artifact
 
 
 def test_connid_reference_is_protocol_independent():

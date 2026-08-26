@@ -324,6 +324,27 @@ async def test_override_parsing_is_offloaded_after_the_size_check():
 
 
 @pytest.mark.asyncio
+async def test_the_input_budget_measures_the_normalized_code_the_job_will_carry():
+    """The fenced override is what the caller sent; the stripped one is what the job carries."""
+    repo = _repo()
+    fenced_update = f"```groovy\n{UPDATE_CODE}\n```"
+
+    with patch("src.modules.codegen.orchestration.count_tokens", return_value=1) as count_tokens:
+        _, schedule = await _post(
+            repo,
+            ConnectorFixInput.model_validate(
+                {"midpointErrors": ["boom"], "scripts": [{"operationKey": "userUpdate", "code": fenced_update}]}
+            ),
+        )
+
+    request_text, connector_text = (call.args[0] for call in count_tokens.call_args_list)
+    assert "```groovy" in request_text
+    assert "```" not in connector_text
+    scheduled = schedule.call_args.kwargs["input_payload"]["scripts"]
+    assert connector_text == "\n\n".join(script["code"] for script in scheduled)
+
+
+@pytest.mark.asyncio
 async def test_oversized_override_is_rejected_before_parser_or_database_reads():
     repo = _repo()
     codegen_input = ConnectorFixInput.model_validate(

@@ -18,7 +18,7 @@ the HTTP layer stays in the router / exception handlers.
 """
 
 import asyncio
-from typing import Any, Awaitable, Callable, Mapping, Optional, cast
+from typing import Any, Awaitable, Callable, Iterable, Mapping, Optional, cast
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -419,26 +419,30 @@ async def schedule_connector_fix_job(
     """
     Schedule a connector fix for all generated scripts of one object class.
 
-    Loads the selected object's generated scripts and its extracted schema, applies caller
-    overrides for this run only, enforces the input budget, schedules the job and persists the
-    class-scoped ``{objectClass}ConnectorFixJobId`` / ``{objectClass}ConnectorFixInput`` pointer.
+    Loads the selected object's generated scripts and its extracted schema, validates and
+    applies caller overrides for this run only, enforces the input budget, schedules the job and
+    persists the class-scoped ``{objectClass}ConnectorFixJobId`` / ``{objectClass}ConnectorFixInput``
+    pointer.
+
+    The budget is checked twice for a request that carries overrides, and the two checks
+    answer different questions: the first rejects an oversized request body before the Groovy
+    parser or the session is touched at all, the second measures the exact text the job will
+    carry once the overrides are normalized and merged with the stored scripts.
 
     Unlike the per-operation jobs this one passes no ``session_result_key``: it
     publishes many ``{key}Output`` rows itself, and ``schedule_coroutine_job``
     accepts only one.
     """
-    await _enforce_raw_override_budget(codegen_input)
+    await _enforce_fix_token_budget(override.code for override in codegen_input.scripts)
     protocol = await resolve_effective_api_type(session_id, api_type)
 
     stored_artifacts = await load_connector_artifacts(repo, session_id, object_class)
     if not stored_artifacts:
         raise ConnectorScriptsNotFoundError(session_id, object_class)
 
-    raw_overrides = {override.operation_key: override.code for override in codegen_input.scripts}
-    candidate_artifacts = _apply_script_overrides(stored_artifacts, raw_overrides, session_id)
-    await _enforce_fix_input_budget(candidate_artifacts)
     validated_overrides = await _validate_script_overrides(codegen_input)
     artifacts = _apply_script_overrides(stored_artifacts, validated_overrides, session_id)
+    await _enforce_fix_token_budget(artifact.code for artifact in artifacts)
 
     # The fix must not decide attribute naming from the generated scripts alone: they are
     # exactly what is under suspicion. The extracted schema is the authority, so it travels
@@ -524,17 +528,6 @@ def _apply_script_overrides(
     ]
 
 
-async def _enforce_raw_override_budget(codegen_input: ConnectorFixInput) -> None:
-    """Reject an oversized request before running the Groovy parser or loading connector state."""
-    if not codegen_input.scripts:
-        return
-    input_tokens = await asyncio.to_thread(
-        count_tokens,
-        "\n\n".join(override.code for override in codegen_input.scripts),
-    )
-    _raise_if_fix_token_budget_exceeded(input_tokens)
-
-
 async def _validate_script_overrides(codegen_input: ConnectorFixInput) -> dict[str, str]:
     """Normalize and parse caller scripts in a worker thread after size checks pass."""
     if not codegen_input.scripts:
@@ -552,22 +545,20 @@ async def _validate_script_overrides(codegen_input: ConnectorFixInput) -> dict[s
     return await asyncio.to_thread(validate_all)
 
 
-async def _enforce_fix_input_budget(artifacts: list[ConnectorArtifact]) -> None:
+async def _enforce_fix_token_budget(codes: Iterable[str]) -> None:
     """
-    Reject a connector too large to fix in one call.
+    Reject Groovy too large to fix in one call.
 
     Never truncate: a partially seen connector produces confidently wrong
     cross-operation fixes. Tokenization is CPU-bound, so it stays off the request
-    event loop just like Groovy parsing.
+    event loop just like Groovy parsing. An empty set of scripts is not measured,
+    so a request without overrides does not pay for a pre-check of nothing.
     """
-    input_tokens = await asyncio.to_thread(
-        count_tokens,
-        "\n\n".join(artifact.code for artifact in artifacts),
-    )
-    _raise_if_fix_token_budget_exceeded(input_tokens)
+    scripts = list(codes)
+    if not scripts:
+        return
 
-
-def _raise_if_fix_token_budget_exceeded(input_tokens: int) -> None:
+    input_tokens = await asyncio.to_thread(count_tokens, "\n\n".join(scripts))
     limit = config.codegen.fix_max_input_tokens
     if input_tokens > limit:
         raise ConnectorFixContextTooLargeError(input_tokens=input_tokens, limit=limit)
