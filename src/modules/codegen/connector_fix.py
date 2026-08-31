@@ -216,19 +216,19 @@ async def fix_connector_code(
     return ConnectorFixResult(
         scripts=[
             ConnectorScript(
-                operationKey=artifact.operation_key,
-                sessionKey=artifact.session_key,
+                operation_key=artifact.operation_key,
+                session_key=artifact.session_key,
                 code=(accepted[artifact.operation_key].code if artifact.operation_key in accepted else artifact.code),
             )
             for artifact in artifacts
         ],
-        changedOperations=[
-            ConnectorFixChange(operationKey=operation_key, reason=accepted_script.reason)
+        changed_operations=[
+            ConnectorFixChange(operation_key=operation_key, reason=accepted_script.reason)
             for operation_key, accepted_script in accepted.items()
         ],
-        rejectedScripts=rejections,
-        documentationEscalated=escalated,
-        documentationQuery=documentation_query,
+        rejected_scripts=rejections,
+        documentation_escalated=escalated,
+        documentation_query=documentation_query,
         analysis=response.analysis,
     )
 
@@ -274,7 +274,7 @@ async def _validate_proposed_scripts(
         if operation_key is None:
             rejections.append(
                 ConnectorFixRejection(
-                    operationKey=script.operation_key,
+                    operation_key=script.operation_key,
                     reason="No such operation in this connector.",
                 )
             )
@@ -291,7 +291,7 @@ async def _validate_proposed_scripts(
     for (operation_key, code, reason), validation_error in zip(candidates, validation_errors):
         if validation_error is not None:
             rejections.append(
-                ConnectorFixRejection(operationKey=operation_key, reason=f"Invalid Groovy: {validation_error}")
+                ConnectorFixRejection(operation_key=operation_key, reason=f"Invalid Groovy: {validation_error}")
             )
             unusable_count += 1
             continue
@@ -299,7 +299,7 @@ async def _validate_proposed_scripts(
         if normalized == normalize_groovy_code(by_operation_key[operation_key].code):
             rejections.append(
                 ConnectorFixRejection(
-                    operationKey=operation_key, reason="Proposed script is identical to the stored one."
+                    operation_key=operation_key, reason="Proposed script is identical to the stored one."
                 )
             )
             continue
@@ -367,9 +367,7 @@ async def _load_escalation_documentation(
 
     # Same pair -> ordered text materialization the generators use, so the fix cannot
     # drift from them on chunk ordering or on keeping conndev contracts out of the LLM.
-    llm_documentation_items, llm_pairs = ChunkProcessor.exclude_conndev_contracts(
-        documentation_items, pairs, _LOGGER_PREFIX
-    )
+    llm_documentation_items, llm_pairs = ChunkProcessor.exclude_conndev_contracts(documentation_items, pairs)
     sections, _, _, _ = ChunkProcessor.build_chunks_from_pairs(llm_pairs or [], llm_documentation_items, _LOGGER_PREFIX)
 
     if not sections:

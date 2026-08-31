@@ -52,7 +52,6 @@ class ChunkProcessor:
     def exclude_conndev_contracts(
         documentation_items: List[Dict[str, Any]],
         relevant_chunk_pairs: Optional[List[Dict[str, Any]]],
-        logger_prefix: str,
     ) -> tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
         """
         Drop the deterministic conndev contracts, and the pairs that select them.
@@ -74,8 +73,7 @@ class ChunkProcessor:
 
         if len(llm_documentation_items) < len(documentation_items):
             logger.info(
-                "%s Excluded %d conndev contract document(s) from codegen LLM chunks",
-                logger_prefix,
+                "[Codegen:Chunks] Excluded %d conndev contract document(s) from codegen LLM chunks",
                 len(documentation_items) - len(llm_documentation_items),
             )
 
@@ -369,7 +367,6 @@ class BaseGroovyGenerator(ABC):
         llm_documentation_items, llm_relevant_chunk_pairs = ChunkProcessor.exclude_conndev_contracts(
             documentation_items,
             relevant_chunk_pairs,
-            self.config.logger_prefix,
         )
 
         if llm_relevant_chunk_pairs is not None:

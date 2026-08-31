@@ -70,6 +70,11 @@ async def test_untouched_scripts_are_returned_byte_identical_and_not_persisted()
     assert by_key["userUpdate"] == FIXED_UPDATE
     assert [change.operation_key for change in result.changed_operations] == ["userUpdate"]
 
+    serialized = result.model_dump(by_alias=True, mode="json")
+    assert serialized["changedOperations"] == [{"operationKey": "userUpdate", "reason": "wrong method"}]
+    assert serialized["scripts"][0]["operationKey"] == "userCreate"
+    assert serialized["scripts"][0]["sessionKey"] == "userCreateOutput"
+
     store.assert_awaited_once()
     assert set(store.await_args.args[1]) == {"userUpdateOutput"}
 
