@@ -4832,6 +4832,176 @@
         }
       }
     },
+    "/api/v1/codegen/{session_id}/classes/{objectClass}/fix": {
+      "post": {
+        "tags": [
+          "Codegen: Fix"
+        ],
+        "summary": "Fix one object class from midPoint errors",
+        "description": "Fix faulty Groovy scripts for one object class from the errors midPoint reported.\n\nLoads generated search, create, update, delete, native-schema, and ConnID code only for the selected\nobject class. The model receives those scripts and the reported errors, and only\nchanged scripts are written back. Optional scripts in the body must also belong\nto this object class. The session is updated only if the fix succeeds.",
+        "operationId": "fix_connector_api_v1_codegen__session_id__classes__objectClass__fix_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Session ID",
+              "title": "Session Id"
+            },
+            "description": "Session ID"
+          },
+          {
+            "name": "objectClass",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Object class whose generated connector scripts should be fixed.",
+              "title": "Objectclass"
+            },
+            "description": "Object class whose generated connector scripts should be fixed."
+          },
+          {
+            "name": "apiType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ApiType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+              "title": "Apitype"
+            },
+            "description": "Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectorFixInput",
+                "description": "midPoint errors and optional script overrides"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Codegen: Fix"
+        ],
+        "summary": "Get object-class connector fix status",
+        "description": "Get the fix job status and complete selected script set for one object class.",
+        "operationId": "get_connector_fix_status_api_v1_codegen__session_id__classes__objectClass__fix_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Session ID",
+              "title": "Session Id"
+            },
+            "description": "Session ID"
+          },
+          {
+            "name": "objectClass",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Object class whose connector fix status should be returned.",
+              "title": "Objectclass"
+            },
+            "description": "Object class whose connector fix status should be returned."
+          },
+          {
+            "name": "jobId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Job ID (optional)",
+              "title": "Jobid"
+            },
+            "description": "Job ID (optional)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusMultiDocResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -5036,6 +5206,14 @@
       },
       "AuthorizationCodegenInput": {
         "properties": {
+          "midpointErrors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Midpointerrors",
+            "description": "midPoint runtime or validation errors returned for the current script."
+          },
           "currentScript": {
             "anyOf": [
               {
@@ -5047,14 +5225,6 @@
             ],
             "title": "Currentscript",
             "description": "Current user-edited Groovy script to repair."
-          },
-          "midpointErrors": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Midpointerrors",
-            "description": "midPoint runtime or validation errors returned for the current script."
           },
           "preferredAuthorizations": {
             "items": {
@@ -5261,6 +5431,14 @@
       },
       "CodegenOperationInput": {
         "properties": {
+          "midpointErrors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Midpointerrors",
+            "description": "midPoint runtime or validation errors returned for the current script."
+          },
           "currentScript": {
             "anyOf": [
               {
@@ -5272,14 +5450,6 @@
             ],
             "title": "Currentscript",
             "description": "Current user-edited Groovy script to repair."
-          },
-          "midpointErrors": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Midpointerrors",
-            "description": "midPoint runtime or validation errors returned for the current script."
           },
           "preferredEndpoints": {
             "items": {
@@ -5295,6 +5465,14 @@
       },
       "CodegenRepairContext": {
         "properties": {
+          "midpointErrors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Midpointerrors",
+            "description": "midPoint runtime or validation errors returned for the current script."
+          },
           "currentScript": {
             "anyOf": [
               {
@@ -5306,14 +5484,6 @@
             ],
             "title": "Currentscript",
             "description": "Current user-edited Groovy script to repair."
-          },
-          "midpointErrors": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Midpointerrors",
-            "description": "midPoint runtime or validation errors returned for the current script."
           }
         },
         "type": "object",
@@ -5406,6 +5576,54 @@
         "type": "object",
         "title": "ConnectivityEndpointResponse",
         "description": "Ranked list of endpoints for testing connectivity between midPoint connector generator and the target application.\nEmpty list when no suitable endpoint is documented. First endpoint is the most suitable."
+      },
+      "ConnectorFixInput": {
+        "properties": {
+          "midpointErrors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Midpointerrors",
+            "description": "midPoint runtime or validation errors reported for the selected object class."
+          },
+          "scripts": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorScriptOverride"
+            },
+            "type": "array",
+            "title": "Scripts",
+            "description": "Optional user-edited scripts of the selected object class that replace the stored ones as input to the fix. The session is only updated if the fix succeeds."
+          }
+        },
+        "type": "object",
+        "required": [
+          "midpointErrors"
+        ],
+        "title": "ConnectorFixInput",
+        "description": "Request body for fixing generated scripts of one object class."
+      },
+      "ConnectorScriptOverride": {
+        "properties": {
+          "operationKey": {
+            "type": "string",
+            "title": "Operationkey",
+            "description": "Operation key of the script being replaced, e.g. 'userUpdate'."
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Groovy code to use instead of the stored script."
+          }
+        },
+        "type": "object",
+        "required": [
+          "operationKey",
+          "code"
+        ],
+        "title": "ConnectorScriptOverride",
+        "description": "A user-edited Groovy script supplied in place of the one stored in the session."
       },
       "DetectionSource": {
         "type": "string",

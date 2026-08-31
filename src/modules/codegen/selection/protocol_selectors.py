@@ -8,7 +8,7 @@ Helpers that select prompts and docs based on API protocol.
 
 from typing import Mapping
 
-from src.modules.codegen.enums import SearchIntent
+from src.modules.codegen.enums import ArtifactKind, SearchIntent
 from src.modules.codegen.prompts.authorization_prompts import (
     get_authorization_system_prompt,
     get_authorization_user_prompt,
@@ -50,6 +50,11 @@ from src.modules.codegen.prompts.sql.search_prompts import (
 from src.modules.codegen.prompts.sql.update_prompts import get_sql_update_system_prompt, get_sql_update_user_prompt
 from src.modules.codegen.schema import OperationAssets
 from src.shared.enums import ApiType
+
+# ConnID generation is protocol-independent and therefore has no PROMPT_MAP
+# entry. The fix catalog still needs its bundled reference path.
+CONNID_DOCS_PATH = "rest/30-attribute-to-connid-attributes.adoc"
+
 
 PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
     "create": {
@@ -168,3 +173,39 @@ def get_search_operation_assets(protocol: ApiType, intent: SearchIntent | str) -
     if protocol not in SEARCH_PROMPT_MAP or normalized_intent not in SEARCH_PROMPT_MAP[protocol]:
         raise ValueError(f"Unsupported search intent/protocol: {normalized_intent}/{protocol}")
     return SEARCH_PROMPT_MAP[protocol][normalized_intent]
+
+
+def resolve_operation_docs_path(
+    kind: ArtifactKind,
+    protocol: ApiType,
+    *,
+    intent: SearchIntent | None = None,
+) -> str | None:
+    """
+    Resolve the bundled DSL reference document for one generated artifact.
+
+    Returns ``None`` when the combination has no bundled reference rather than
+    raising, so an object-class caller can carry on with the documents it has.
+    """
+    if kind is ArtifactKind.CONNID:
+        return CONNID_DOCS_PATH
+
+    try:
+        if kind is ArtifactKind.SEARCH:
+            if intent is None:
+                raise ValueError("Search artifacts require an intent to resolve their documentation")
+            return get_search_operation_assets(protocol, intent).docs_path
+        operation_name = _ARTIFACT_OPERATION_NAMES.get(kind)
+        if operation_name is None:
+            return None
+        return get_operation_assets(operation_name, protocol).docs_path
+    except ValueError:
+        return None
+
+
+_ARTIFACT_OPERATION_NAMES: Mapping[ArtifactKind, str] = {
+    ArtifactKind.NATIVE_SCHEMA: "native_schema",
+    ArtifactKind.CREATE: "create",
+    ArtifactKind.UPDATE: "update",
+    ArtifactKind.DELETE: "delete",
+}

@@ -6,8 +6,8 @@
 Codegen endpoints for V2 API (session-centric).
 
 Thin aggregator: the actual endpoints live in ``routes/`` split per resource
-(authorization, native-schema, connid, search, create/update/delete, relations).
-Paths and responses are unchanged; only the file organization differs.
+(authorization, native-schema, connid, search, create/update/delete, relations,
+and object-class fixes).
 """
 
 from fastapi import APIRouter
@@ -15,6 +15,7 @@ from fastapi import APIRouter
 from src.modules.codegen.routes import (
     authorization,
     connid,
+    fix,
     native_schema,
     operations,
     relations,
@@ -29,3 +30,4 @@ router.include_router(connid.router)
 router.include_router(search.router)
 router.include_router(operations.router)
 router.include_router(relations.router)
+router.include_router(fix.router)

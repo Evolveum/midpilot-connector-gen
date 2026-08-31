@@ -40,6 +40,10 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 
 | `/{sessionId}/relations/{relationName}`
 | Code for one extracted relation (e.g. group membership handling).
+
+| `/{sessionId}/classes/{objectClass}/fix`
+| Fixes all generated CRUD, search, native-schema, and ConnID scripts of one
+  object class from midPoint runtime errors. `POST` enqueues and `GET` polls.
 |===
 
 == How generation works
@@ -84,6 +88,46 @@ the only preferred authorization is the custom `other` method, which returns a
 static scaffold without calling the LLM. Write the database authentication
 block by hand for now.
 
+== Fixing a deployed connector
+
+`POST /{sessionId}/classes/{objectClass}/fix` acts on one object class, for the
+case the per-operation repair cannot serve: midPoint rejected that object class
+and you do not know which of its operations is at fault. `objectClass` is a
+required path parameter and must identify a class in `objectClassesOutput`.
+
+1. *Collect* - generated Create, Search All/Filter/ID, Update, Delete,
+   NativeSchema, and ConnID scripts are loaded only for the selected object
+   class. Authorization, relation scripts, and scripts of all other object
+   classes are intentionally outside the fix scope. A class removed from
+   `objectClassesOutput` cannot be fixed through this endpoint.
+2. *Fix* - all scripts plus the midPoint errors go to the LLM in one call,
+   together with the bundled midPoint DSL reference for the operations present.
+   The model returns *only* the scripts it changed. Everything it does not
+   return is kept byte-identical.
+3. *Escalate, at most once* - if the model cannot fix the errors without
+   application documentation, it says so and asks a specific question; a second
+   pass then adds every session chunk referenced by the selected class's
+   `{objectClass}EndpointsOutput` and `{objectClass}AttributesOutput`, plus the
+   selected class's own `objectClassesOutput` entity. References are deduplicated
+   by chunk ID, but are not ranked or capped separately. Documentation selected
+   only for other object classes is never included. The complete prompt remains
+   subject to `CODEGEN__FIX_MAX_INPUT_TOKENS`. The typical fix stops after the
+   first call. Fixes returned by the first pass are retained unless the second
+   pass replaces the same operation.
+4. *Validate and persist* - each returned script is parsed before use. An
+   invalid script, one naming an operation the connector does not have, or one
+   identical to the stored version is dropped and reported in
+   `rejectedScripts`; the rest are still applied. If every proposal is unusable
+   the job fails rather than reporting a fix that changed nothing.
+
+The request body carries `midpointErrors` and may carry `scripts` - user-edited
+Groovy that replaces the stored version as input for this run only. The session
+is written only if the fix succeeds, in a single transaction.
+
+The fix never reuses a cached job result. Its only side effect is the
+write-back, which lives in the worker, and a cache hit would return a stored
+result instead of running the worker at all.
+
 == Pitfalls
 
 IMPORTANT: Codegen inherits everything from the digester. Generating code for
@@ -99,10 +143,15 @@ relation generation are protocol-independent and do not accept the override.
 
 NOTE: Generated code is stored per operation and can be regenerated or
 manually replaced (`PUT`) independently — you do not need to redo the whole
-class after fixing one operation.
+class after fixing one operation. When you know which operation is broken,
+prefer the per-operation repair (`currentScript` + `midpointErrors` on that
+operation's `POST`) over the object-class fix.
 
 == Related settings
 
-Codegen has no dedicated settings group; it is driven by the shared `+LLM__*+`
-settings (model, retries, timeouts) — see
-link:../configuration.adoc[Configuration].
+Per-operation generation is driven by the shared `+LLM__*+` settings (model,
+retries, timeouts). The object-class fix additionally uses the safe
+`CodegenSettings.fix_max_input_tokens` source default of 120,000 estimated
+tokens. The check covers the complete rendered input of each LLM pass, including
+scripts, errors, DSL references, and escalated documentation. Inputs above it
+are rejected, not truncated. See link:../configuration.adoc[Configuration].

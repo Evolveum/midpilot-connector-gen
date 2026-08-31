@@ -186,7 +186,7 @@ async def merge_attribute_candidates(
                     seq.start_sequence,
                     seq.end_sequence,
                     enable_marker_blending=True,
-                    logger_prefix="[Digester:Attributes] [Merge] ",
+                    logger_prefix="[Digester:Attributes:Merge] ",
                 )
 
             relevant_sequences.append(
