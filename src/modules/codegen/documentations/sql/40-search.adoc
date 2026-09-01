@@ -77,5 +77,6 @@ behavior is insufficient.
 * Never render a table name as `endpoint(...)`, a path, or a hand-written SQL statement.
 * Never generate REST or SCIM constructs (`httpOperation`, `request {}`, response extractors,
   query parameters).
-* A conndev SQL export carries no primary keys. When no attribute is marked `primaryKey`, leave a
-  TODO instead of guessing the identity column from a column name.
+* A conndev SQL object-class export alone carries no primary keys; its paired SQL-table export can
+  provide them. When no attribute is marked `primaryKey`, leave a TODO instead of guessing the
+  identity column from a column name.

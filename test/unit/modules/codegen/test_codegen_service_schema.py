@@ -82,6 +82,11 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
             "table": "m_user",
             "column": "nameorig",
             "primaryKey": True,
+            "foreignKey": {
+                "constraintName": "m_user_nameorig_fkey",
+                "referencedTable": "m_name",
+                "referencedColumn": "nameorig",
+            },
         },
     }
 
@@ -107,6 +112,11 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
     assert kwargs["records"][0]["table"] == "m_user"
     assert kwargs["records"][0]["column"] == "nameorig"
     assert kwargs["records"][0]["primaryKey"] is True
+    assert kwargs["records"][0]["foreignKey"] == {
+        "constraintName": "m_user_nameorig_fkey",
+        "referencedTable": "m_name",
+        "referencedColumn": "nameorig",
+    }
 
 
 @pytest.mark.asyncio

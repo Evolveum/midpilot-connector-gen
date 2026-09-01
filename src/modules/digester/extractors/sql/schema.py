@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 from src.documents.chunking import normalize_to_text
 from src.modules.digester.extractors.sql.conndev_schema import extract_conndev_sql_tables, is_conndev_table
+from src.modules.digester.extractors.sql.identifiers import clean_sql_identifier
 from src.modules.digester.schemas.common import ChunkReference, build_chunk_references_from_doc_items
 
 _CREATE_TABLE_RE = re.compile(
@@ -31,13 +32,6 @@ _TABLE_KEYS = ("tables", "schema", "databaseSchema", "nativeSchema")
 _DATABASE_COLUMN_FIELDS = frozenset({"type", "nullable", "primaryKey", "foreignKey", "default", "generated"})
 _DATABASE_TABLE_FIELDS = frozenset({"primaryKey", "foreignKeys", "description"})
 _CONNDEV_TABLE_FIELDS = frozenset({"objectClass", "databaseSchema", "source"})
-
-
-def _clean_identifier(value: Any) -> str:
-    text = str(value or "").strip()
-    if "." in text:
-        text = text.rsplit(".", 1)[-1]
-    return text.strip('"`[] ')
 
 
 def _split_sql_columns(body: str) -> list[str]:
@@ -69,7 +63,7 @@ def _primary_key_columns_from_constraint(definition: str) -> list[str]:
         identifier_match = _IDENTIFIER_PREFIX_RE.match(value)
         if not identifier_match:
             continue
-        name = _clean_identifier(identifier_match.group("identifier"))
+        name = clean_sql_identifier(identifier_match.group("identifier"))
         if name:
             columns.append(name)
     return columns
@@ -77,13 +71,13 @@ def _primary_key_columns_from_constraint(definition: str) -> list[str]:
 
 def _normalize_column(column: Any) -> dict[str, Any] | None:
     if isinstance(column, str):
-        name = _clean_identifier(column)
+        name = clean_sql_identifier(column)
         return {"name": name} if name else None
     if not isinstance(column, dict):
         return None
 
     raw_name = column.get("name") or column.get("column") or column.get("columnName")
-    name = _clean_identifier(raw_name)
+    name = clean_sql_identifier(raw_name)
     if not name:
         return None
 
@@ -105,13 +99,13 @@ def _normalize_column(column: Any) -> dict[str, Any] | None:
 
 def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> dict[str, Any] | None:
     if isinstance(table, str):
-        name = _clean_identifier(table)
+        name = clean_sql_identifier(table)
         if not name:
             return None
         normalized: dict[str, Any] = {"table": name, "columns": []}
     elif isinstance(table, dict):
         raw_name = table.get("table") or table.get("name") or table.get("tableName")
-        name = _clean_identifier(raw_name)
+        name = clean_sql_identifier(raw_name)
         if not name:
             return None
         raw_columns = table.get("columns") or table.get("attributes") or table.get("fields") or []
@@ -124,10 +118,10 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
         table_primary_key = normalized.get("primaryKey")
         if isinstance(table_primary_key, list):
             primary_key_columns = {
-                cleaned.casefold() for value in table_primary_key if (cleaned := _clean_identifier(value))
+                cleaned.casefold() for value in table_primary_key if (cleaned := clean_sql_identifier(value))
             }
             for column in columns:
-                column_name = _clean_identifier(column.get("column") or column.get("name"))
+                column_name = clean_sql_identifier(column.get("column") or column.get("name"))
                 if column_name:
                     column["primaryKey"] = column_name.casefold() in primary_key_columns
     else:
@@ -139,7 +133,7 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
 
 
 def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str] | None) -> dict[str, Any] | None:
-    table_name = _clean_identifier(match.group("name"))
+    table_name = clean_sql_identifier(match.group("name"))
     columns: list[dict[str, Any]] = []
     primary_key: list[str] = []
     foreign_keys: list[dict[str, Any]] = []
@@ -156,7 +150,7 @@ def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str
         column_match = _COLUMN_LINE_RE.match(definition)
         if not column_match:
             continue
-        column_name = _clean_identifier(column_match.group("name"))
+        column_name = clean_sql_identifier(column_match.group("name"))
         column = {
             "name": column_name,
             "type": " ".join(_COLUMN_CONSTRAINT_RE.sub("", column_match.group("type")).split()),
@@ -235,7 +229,7 @@ def _merge_relevant_documentations(existing: dict[str, Any], incoming: list[Any]
 
 def _column_identity(column: dict[str, Any]) -> str:
     """Return the physical database-column identity used to join Conndev and DDL records."""
-    return _clean_identifier(column.get("column") or column.get("name")).lower()
+    return clean_sql_identifier(column.get("column") or column.get("name")).lower()
 
 
 def _merge_cross_source_column(conndev_column: dict[str, Any], database_column: dict[str, Any]) -> dict[str, Any]:
@@ -329,9 +323,10 @@ def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
         chunk_id = str(item.get("chunkId") or "").strip()
         source_ref = refs_by_chunk.get(chunk_id)
         for table in _extract_tables_from_item(item, source_ref):
-            name = str(table.get("table") or "").strip()
+            name = clean_sql_identifier(table.get("table"))
             if not name:
                 continue
+            table["table"] = name
             existing = tables_by_name.get(name.lower())
             if existing is None:
                 tables_by_name[name.lower()] = table

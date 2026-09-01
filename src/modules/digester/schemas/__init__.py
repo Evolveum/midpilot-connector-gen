@@ -20,6 +20,7 @@ from src.modules.digester.schemas.attributes import (
     DiscoveryAttribute,
     ExtractedAttributeInfoSCIM,
     ExtractedAttributeResponseSCIM,
+    SqlForeignKey,
 )
 from src.modules.digester.schemas.auth import (
     AuthBuildResponse,
@@ -172,4 +173,5 @@ __all__ = [
     "ScimServiceProviderConfig",
     "ScimServiceProviderMeta",
     "ScimSupportedFeature",
+    "SqlForeignKey",
 ]

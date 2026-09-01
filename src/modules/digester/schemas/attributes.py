@@ -234,6 +234,20 @@ class AttributeInfoScim(AttributeInfoBase):
     )
 
 
+class SqlForeignKey(BaseModel):
+    """Physical target of a SQL foreign-key column."""
+
+    constraintName: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Database constraint name when the source provides it.",
+    )
+    referencedTable: str = Field(..., min_length=1, description="Referenced physical database table.")
+    referencedColumn: str = Field(..., min_length=1, description="Referenced physical database column.")
+
+    model_config = {"extra": "forbid"}
+
+
 class AttributeInfoSql(AttributeInfoBase):
     """Attribute metadata with its physical database binding."""
 
@@ -250,6 +264,10 @@ class AttributeInfoSql(AttributeInfoBase):
     primaryKey: Optional[bool] = Field(
         default=None,
         description="Whether the column belongs to the table primary key.",
+    )
+    foreignKey: Optional[SqlForeignKey] = Field(
+        default=None,
+        description="Physical foreign-key target declared for the column.",
     )
 
 

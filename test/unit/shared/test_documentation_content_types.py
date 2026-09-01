@@ -10,6 +10,7 @@ from src.shared.content_types import (
     get_documentation_item_content_type,
     is_conndev_documentation_item,
     is_conndev_object_class_document,
+    is_conndev_sql_table_document,
 )
 from src.shared.enums import ApiType
 
@@ -38,6 +39,14 @@ def test_documentation_item_content_type_ignores_invalid_metadata_shapes():
     ("document", "expected"),
     [
         ({"uid": "Account", "sql": {}}, ApiType.SQL),
+        (
+            {
+                "name": "m_user",
+                "tableType": "TABLE",
+                "tableContent": '{"name":"m_user","columns":[]}',
+            },
+            ApiType.SQL,
+        ),
         ({"uid": "User", "scim": {}}, ApiType.SCIM),
         ({"uid": "User", "locator": "/Users"}, ApiType.SCIM),
         ({"schemaContent": "{}", "name": "User"}, ApiType.SCIM),
@@ -82,3 +91,15 @@ def test_conndev_object_class_document_covers_bound_and_embedded_exports():
     assert not is_conndev_object_class_document({"schemaContent": "{}", "name": "User"})
     assert not is_conndev_object_class_document({"uid": " ", "name": "User"})
     assert not is_conndev_object_class_document(None)
+
+
+def test_conndev_sql_table_document_requires_the_table_export_shape():
+    assert is_conndev_sql_table_document(
+        {
+            "name": "m_user",
+            "tableType": "TABLE",
+            "tableContent": '{"name":"m_user","columns":[]}',
+        }
+    )
+    assert not is_conndev_sql_table_document({"name": "m_user", "tableType": "TABLE", "tableContent": " "})
+    assert not is_conndev_sql_table_document({"name": "m_user", "schemaContent": "{}"})

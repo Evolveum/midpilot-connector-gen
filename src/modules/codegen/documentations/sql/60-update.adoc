@@ -36,7 +36,8 @@ schema. That flag already accounts for the cases below:
 
 * Never render a table name as `endpoint(...)`, a path, or a hand-written `UPDATE` statement.
 * Never generate REST or SCIM constructs.
-* A conndev SQL export carries no primary keys. When no attribute is marked `primaryKey`, leave a
-  TODO instead of guessing the identity column from a column name.
+* A conndev SQL object-class export alone carries no primary keys; its paired SQL-table export can
+  provide them. When no attribute is marked `primaryKey`, leave a TODO instead of guessing the
+  identity column from a column name.
 * When the attributes of the object class span several tables and the update order is not
   documented, leave a TODO instead of guessing it.

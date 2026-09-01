@@ -254,6 +254,99 @@ async def test_extract_attributes_scim_preserves_doc_maps_when_relevance_is_empt
 
 
 @pytest.mark.asyncio
+async def test_extract_attributes_scim_retry_rebuilds_context_from_new_fallback_chunks(
+    mock_llm, mock_digester_update_job_progress
+):
+    session_id = uuid4()
+    job_id = uuid4()
+    primary_doc_id = str(uuid4())
+    primary_chunk_id = str(uuid4())
+    fallback_doc_id = str(uuid4())
+    fallback_chunk_id = str(uuid4())
+    primary_doc_item = {
+        "docId": primary_doc_id,
+        "chunkId": primary_chunk_id,
+        "content": "Primary SCIM documentation without attribute mappings.",
+        "summary": "Primary SCIM documentation",
+        "@metadata": {"tags": ["scim", "overview"]},
+    }
+    fallback_doc_item = {
+        "docId": fallback_doc_id,
+        "chunkId": fallback_chunk_id,
+        "content": "Fallback maps work email to emails[0].value.",
+        "summary": "Fallback SCIM attribute mappings",
+        "@metadata": {"tags": ["scim", "attributes"]},
+    }
+    relevant_chunks = [{"doc_id": primary_doc_id, "chunk_id": primary_chunk_id}]
+    retry_result = {
+        "result": {
+            "attributes": {
+                "Work Email": {
+                    "type": "string",
+                    "format": "email",
+                    "description": "Work email mapping.",
+                    "scimAttribute": "emails.value",
+                    "relevantDocumentations": [{"docId": fallback_doc_id, "chunkId": fallback_chunk_id}],
+                }
+            }
+        },
+        "relevantDocumentations": [{"doc_id": fallback_doc_id, "chunk_id": fallback_chunk_id}],
+    }
+
+    with (
+        patch(
+            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SCIM,
+        ),
+        patch(
+            "src.modules.digester.extractors.attributes.filter_documentation_items",
+            new_callable=AsyncMock,
+            return_value=[primary_doc_item, fallback_doc_item],
+        ),
+        patch(
+            "src.modules.digester.extractors.attributes.extract_scim_attributes",
+            new_callable=AsyncMock,
+            side_effect=[
+                {"result": {"attributes": {}}, "relevantDocumentations": []},
+                retry_result,
+            ],
+        ) as mock_extract_scim_attributes,
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        result = await extract_attributes(
+            [primary_doc_item],
+            "User",
+            session_id,
+            relevant_chunks,
+            job_id,
+        )
+
+    assert result == retry_result
+    assert mock_extract_scim_attributes.await_count == 2
+
+    primary_call_args = mock_extract_scim_attributes.await_args_list[0].args
+    assert primary_call_args[0] == [primary_doc_item["content"]]
+    assert primary_call_args[4] == [primary_chunk_id]
+    assert primary_call_args[6] == {primary_chunk_id: primary_doc_id}
+
+    retry_call_args = mock_extract_scim_attributes.await_args_list[1].args
+    assert retry_call_args[0] == [fallback_doc_item["content"]]
+    assert retry_call_args[4] == [fallback_chunk_id]
+    assert retry_call_args[5] == {
+        fallback_chunk_id: {
+            "summary": fallback_doc_item["summary"],
+            "@metadata": fallback_doc_item["@metadata"],
+        }
+    }
+    assert retry_call_args[6] == {fallback_chunk_id: fallback_doc_id}
+
+
+@pytest.mark.asyncio
 async def test_extract_attributes_session_not_found(mock_llm, mock_digester_update_job_progress):
     """Test extract_attributes handles missing session gracefully."""
     session_id = uuid4()

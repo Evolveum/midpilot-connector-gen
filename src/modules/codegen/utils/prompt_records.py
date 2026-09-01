@@ -12,7 +12,7 @@ from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 from src.shared.coerce import as_dict_list, as_mapping
 
 _ATTRIBUTE_MAPPING_OPTIONAL_FIELDS = ("scimAttribute", "connectorExposed")
-_SQL_ATTRIBUTE_BINDING_FIELDS = ("table", "column", "primaryKey")
+_SQL_ATTRIBUTE_BINDING_FIELDS = ("table", "column", "primaryKey", "foreignKey")
 
 
 def _attribute_items(payload: AttributesPayload) -> Iterator[tuple[str, Any]]:

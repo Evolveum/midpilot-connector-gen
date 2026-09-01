@@ -62,6 +62,11 @@ def test_typed_attribute_response_preserves_sql_binding_for_codegen():
                     "table": "m_user",
                     "column": "nameorig",
                     "primaryKey": True,
+                    "foreignKey": {
+                        "constraintName": "m_user_nameorig_fkey",
+                        "referencedTable": "m_name",
+                        "referencedColumn": "nameorig",
+                    },
                     "creatable": False,
                     "updatable": False,
                 }
@@ -77,11 +82,43 @@ def test_typed_attribute_response_preserves_sql_binding_for_codegen():
     assert serialized_attribute["table"] == "m_user"
     assert serialized_attribute["column"] == "nameorig"
     assert serialized_attribute["primaryKey"] is True
+    assert serialized_attribute["foreignKey"] == {
+        "constraintName": "m_user_nameorig_fkey",
+        "referencedTable": "m_name",
+        "referencedColumn": "nameorig",
+    }
 
     context_record = build_attribute_context_records(payload)[0]
     assert context_record["table"] == "m_user"
     assert context_record["column"] == "nameorig"
     assert context_record["primaryKey"] is True
+    assert context_record["foreignKey"] == serialized_attribute["foreignKey"]
+
+
+def test_typed_attribute_response_accepts_foreign_key_target_without_constraint_name():
+    payload = AttributeResponse.model_validate(
+        {
+            "attributes": {
+                "tenant_oid": {
+                    "type": "string",
+                    "table": "m_user",
+                    "column": "tenant_oid",
+                    "foreignKey": {
+                        "referencedTable": "m_tenant",
+                        "referencedColumn": "oid",
+                    },
+                }
+            }
+        }
+    )
+
+    record = build_sql_attribute_mapping_records(payload)[0]
+
+    assert record["foreignKey"] == {
+        "constraintName": None,
+        "referencedTable": "m_tenant",
+        "referencedColumn": "oid",
+    }
 
 
 def test_build_attribute_mapping_records_uses_prompt_shape_and_sorting():
@@ -160,6 +197,11 @@ def test_build_sql_attribute_mapping_records_preserves_physical_binding():
                 "table": "m_user",
                 "column": "nameorig",
                 "primaryKey": True,
+                "foreignKey": {
+                    "constraintName": "m_user_nameorig_fkey",
+                    "referencedTable": "m_name",
+                    "referencedColumn": "nameorig",
+                },
             }
         }
     }
@@ -168,11 +210,17 @@ def test_build_sql_attribute_mapping_records_preserves_physical_binding():
     assert sql_record["table"] == "m_user"
     assert sql_record["column"] == "nameorig"
     assert sql_record["primaryKey"] is True
+    assert sql_record["foreignKey"] == {
+        "constraintName": "m_user_nameorig_fkey",
+        "referencedTable": "m_name",
+        "referencedColumn": "nameorig",
+    }
 
     protocol_neutral_record = build_attribute_mapping_records(payload)[0]
     assert "table" not in protocol_neutral_record
     assert "column" not in protocol_neutral_record
     assert "primaryKey" not in protocol_neutral_record
+    assert "foreignKey" not in protocol_neutral_record
 
 
 def test_connid_mapping_prefers_scim_connector_object_class_projection():

@@ -8,10 +8,13 @@ Every attribute record carries its logical connector `name` together with its ph
 
 * `table` — the database table containing the attribute,
 * `column` — the physical database column; it can differ from the logical attribute name,
-* `primaryKey` — whether the column belongs to the table primary key; `null` means the source did not state it.
+* `primaryKey` — whether the column belongs to the table primary key; `null` means the source did not state it,
+* `foreignKey` — the physical relationship when stated by the source, containing
+  `referencedTable` and `referencedColumn`, plus `constraintName` when the source provides it;
+  `null` means no complete target relationship was stated.
 
 Preserve the logical attribute name and the physical column as separate values. Never infer or rename a table,
-column or primary key that is not present in the extracted input.
+column, primary key, foreign-key constraint, or foreign-key target that is not present in the extracted input.
 
 == Mapping
 
@@ -20,4 +23,6 @@ column or primary key that is not present in the extracted input.
 * SQL boolean types map to boolean attributes.
 * SQL date/time/timestamp types should preserve date/date-time semantics.
 * JSON, XML, and array columns are embedded structured values unless midPoint heuristics map them to standalone object classes.
-* Foreign key columns are references when the referenced table is a managed object class.
+* Foreign key columns are references when the exact `referencedTable` is a managed object class; use the
+  extracted `referencedColumn` as the target identity. Preserve composite grouping by `constraintName`
+  only when the source provides it; never invent a constraint name.
