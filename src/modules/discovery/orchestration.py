@@ -13,7 +13,7 @@ persistence.
 from uuid import UUID
 
 from src.database.repositories.session_repository import SessionRepository
-from src.jobs import job_input_reference, schedule_coroutine_job
+from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
 from src.modules.discovery import service
 from src.modules.discovery.schema import CandidateLinksInput
 
@@ -38,9 +38,6 @@ async def schedule_candidate_link_discovery(
         session_result_key="discoveryOutput",
     )
 
-    await repo.update_session(
-        session_id,
-        {"discoveryJobId": str(job_id), "discoveryInput": input_payload},
-    )
+    await persist_job_pointer(repo, session_id, "discovery", input_payload, job_id)
 
     return job_id

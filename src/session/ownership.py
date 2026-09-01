@@ -25,7 +25,7 @@ from src.session.errors import SessionNotFoundError
 logger = logging.getLogger(__name__)
 
 
-async def enforce_session_ownership(request: Request, db: AsyncSession = Depends(get_db)) -> None:
+async def enforce_session_ownership(request: Request, db: AsyncSession = Depends(get_db, scope="function")) -> None:
     """Reject access to a session owned by a different API key.
 
     A foreign or ownerless session is masked as 404 (anti-enumeration); the

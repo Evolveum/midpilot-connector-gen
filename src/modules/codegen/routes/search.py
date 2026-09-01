@@ -41,7 +41,7 @@ async def generate_search(
         alias="apiType",
         description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     codegen_input: Optional[CodegenOperationInput] = None,
 ):
     """
@@ -81,7 +81,7 @@ async def get_search_status(
     object_class: str = Path(..., description="Object class name"),
     intent: SearchIntent = Path(..., description="Intent"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the status of search code generation job.
@@ -114,7 +114,7 @@ async def override_search(
     object_class: str = Path(..., description="Object class name"),
     intent: SearchIntent = Path(..., description="Intent"),
     search_code: GroovyCodePayload = Body(..., description="Search code as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Manually override the search code for an object class.

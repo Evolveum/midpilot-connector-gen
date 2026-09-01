@@ -159,11 +159,17 @@ retention or throughput can replace this table with shared object storage
 without changing the worker-call contract.
 
 The job and its `{key}JobId` session pointer are inserted in the same request
-transaction. A consumer sees neither until both commit. Result persistence
-checks that the pointer still references the completing job, preventing an
-older parallel job from overwriting a newer result. The older computation
-remains a finished historical job, but its `errors` list explicitly records
-that the result was not published to the session.
+transaction. Database dependencies use FastAPI function scope: response-model
+validation finishes first, the transaction then commits, and only afterwards
+is the enqueue response sent. A consumer or an immediate status request sees
+neither record until both commit, and once the client receives a successful
+enqueue response it can poll without a transient `job_not_found`. An exception
+or commit failure rolls the entire request transaction back. Result persistence
+checks that the pointer still references
+the completing job, preventing an older parallel job from overwriting a newer
+result. The older computation remains a finished historical job, but its
+`errors` list explicitly records that the result was not published to the
+session.
 
 Run `uv run alembic upgrade head` before starting the updated application.
 Migration `007` marks pre-migration queued/running jobs as failed because they

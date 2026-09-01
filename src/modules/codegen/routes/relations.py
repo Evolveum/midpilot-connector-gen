@@ -31,7 +31,7 @@ async def generate_relation_code(
     session_id: UUID = Path(..., description="Session ID"),
     relation_name: str = Path(..., description="Relation name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Generate Groovy relation code.
@@ -59,7 +59,7 @@ async def get_relation_code_status(
     session_id: UUID = Path(..., description="Session ID"),
     relation_name: str = Path(..., description="Relation name"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the status of relation code generation job.
@@ -87,7 +87,7 @@ async def override_relation_code(
     session_id: UUID = Path(..., description="Session ID"),
     relation_name: str = Path(..., description="Relation name"),
     relation_code: GroovyCodePayload = Body(..., description="Relation code as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Manually override the relation code.

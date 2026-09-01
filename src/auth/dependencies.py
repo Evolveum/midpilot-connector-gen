@@ -64,7 +64,7 @@ async def _resolve_context(api_key: Optional[str], db: AsyncSession) -> AuthCont
 async def authenticate_request(
     request: Request,
     api_key: Optional[str] = Security(api_key_header),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AuthContext:
     """Authenticate the request.
 
