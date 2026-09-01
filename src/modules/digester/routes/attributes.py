@@ -37,7 +37,7 @@ async def extract_class_attributes(
         alias="apiType",
         description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Extract attributes schema for a specific object class.
@@ -71,7 +71,7 @@ async def get_class_attributes_status(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the status of attributes extraction job for the specified object class.
@@ -103,7 +103,7 @@ async def override_class_attributes(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     attributes: Dict[str, Any] = Body(..., description="Attributes schema as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Manually override the attributes for an object class.

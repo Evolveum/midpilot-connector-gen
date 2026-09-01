@@ -29,7 +29,7 @@ router = APIRouter()
 async def scrape_documentation(
     req: ScrapeRequest,
     session_id: UUID = Path(..., description="Session ID"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Enqueue a job to scrape documentation from provided URLs.
@@ -56,7 +56,7 @@ async def scrape_documentation(
 async def get_scrape_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the status of documentation scraping job.

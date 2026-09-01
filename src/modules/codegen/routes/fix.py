@@ -40,7 +40,7 @@ async def fix_connector(
         alias="apiType",
         description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     codegen_input: ConnectorFixInput = Body(..., description="midPoint errors and optional script overrides"),
 ):
     """
@@ -79,7 +79,7 @@ async def get_connector_fix_status(
         description="Object class whose connector fix status should be returned.",
     ),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the fix job status and complete selected script set for one object class.
