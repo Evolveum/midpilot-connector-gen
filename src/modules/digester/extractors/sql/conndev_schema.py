@@ -25,7 +25,11 @@ from src.modules.digester.extractors.conndev import (
     detect_object_class_binding,
     parse_sql_object_class_document,
 )
-from src.modules.digester.extractors.sql.identifiers import clean_sql_identifier
+from src.modules.digester.extractors.sql.identifiers import (
+    clean_sql_identifier,
+    clean_sql_identifier_component,
+    split_sql_table_identifier,
+)
 from src.modules.digester.schemas.common import ChunkReference
 from src.shared.coerce import as_nonempty_str
 from src.shared.content_types import (
@@ -111,16 +115,19 @@ def _column_from_connid_attribute(attribute: Dict[str, Any]) -> Optional[Dict[st
 def _table_from_sql_object_class(definition: SqlObjectClassDocument) -> Dict[str, Any]:
     """Convert one parsed conndev SQL object class into a table record."""
     columns = [column for attribute in definition.attributes if (column := _column_from_connid_attribute(attribute))]
+    table_catalog, table_schema, table_name = split_sql_table_identifier(definition.table)
 
     table: Dict[str, Any] = {
-        "table": clean_sql_identifier(definition.table),
+        "table": table_name,
         # The object-class name midPoint exported. It is authoritative and is used verbatim,
         # so a table exported as "m_user" stays "m_user" instead of being reshaped.
         "objectClass": definition.name,
         "columns": columns,
         "source": CONNDEV_TABLE_SOURCE,
     }
-    database_schema = clean_sql_identifier(definition.database_schema)
+    if table_catalog:
+        table["databaseCatalog"] = table_catalog
+    database_schema = clean_sql_identifier_component(definition.database_schema) or table_schema
     if database_schema:
         table["databaseSchema"] = database_schema
     if definition.source_reference is not None:
@@ -224,6 +231,11 @@ def _identity_values_match(identity_field: str, outer_value: str, inner_value: s
     """Compare duplicated wrapper/tableContent identity without treating SQL syntax as identity."""
     if identity_field == "tableType":
         return outer_value.casefold() == inner_value.casefold()
+    if identity_field in {"catalog", "schema"}:
+        return (
+            clean_sql_identifier_component(outer_value).casefold()
+            == clean_sql_identifier_component(inner_value).casefold()
+        )
     return clean_sql_identifier(outer_value).casefold() == clean_sql_identifier(inner_value).casefold()
 
 
@@ -253,7 +265,9 @@ def _table_from_sql_table_document(
             )
             return None
 
-    table_name = clean_sql_identifier(table_content.get("name") or document.get("name"))
+    table_catalog, table_schema, table_name = split_sql_table_identifier(
+        table_content.get("name") or document.get("name")
+    )
     raw_columns = table_content.get("columns")
     if not table_name or not isinstance(raw_columns, list):
         logger.warning("[Digester:Conndev] Ignoring SQL-table export without a valid name and columns list")
@@ -276,7 +290,14 @@ def _table_from_sql_table_document(
     ):
         table["primaryKey"] = [column["name"] for column in columns if column.get("primaryKey") is True]
 
-    database_schema = clean_sql_identifier(table_content.get("schema") or document.get("schema"))
+    database_catalog = (
+        clean_sql_identifier_component(table_content.get("catalog") or document.get("catalog")) or table_catalog
+    )
+    if database_catalog:
+        table["databaseCatalog"] = database_catalog
+    database_schema = (
+        clean_sql_identifier_component(table_content.get("schema") or document.get("schema")) or table_schema
+    )
     if database_schema:
         table["databaseSchema"] = database_schema
     if source_reference is not None:

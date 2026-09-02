@@ -19,7 +19,9 @@ SQL_SCHEMA_CONTEXT_SYSTEM_RULES = textwrap.dedent("""\
 SQL SCHEMA CONTEXT RULES:
 - <extracted_attributes> is the complete schema context. Every attribute carries the `table` and
   `column` it maps to, its type, and the resolved `mandatory`, `creatable` and `updatable` flags.
-  There is no separate endpoint or table listing, and none is needed.
+  `databaseCatalog` and `databaseSchema` qualify the table when the source supplies them. Treat
+  catalog, schema and table as one physical identity and never drop a supplied qualifier. There is
+  no separate endpoint or table listing, and none is needed.
 - Treat those flags as already resolved. They account for generated, identity and primary key
   columns, so do not re-derive writability from a column name or type.
 - A conndev object-class export alone states no primary key, foreign key or nullability. A paired

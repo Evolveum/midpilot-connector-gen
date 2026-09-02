@@ -73,7 +73,7 @@ def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tup
     relevant_documentations = table.get("relevantDocumentations")
     if not isinstance(relevant_documentations, list):
         relevant_documentations = []
-    return name, {
+    payload = {
         "type": attr_type,
         "format": attr_format,
         "description": _column_description(column_name, table),
@@ -89,6 +89,13 @@ def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tup
         "foreignKey": _attribute_foreign_key(column),
         "relevantDocumentations": relevant_documentations,
     }
+    database_catalog = as_nonempty_str(table.get("databaseCatalog"))
+    if database_catalog is not None:
+        payload["databaseCatalog"] = database_catalog
+    database_schema = as_nonempty_str(table.get("databaseSchema"))
+    if database_schema is not None:
+        payload["databaseSchema"] = database_schema
+    return name, payload
 
 
 def _column_description(name: str, table: dict[str, Any]) -> str:

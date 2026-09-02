@@ -95,10 +95,11 @@ Progress of the multi-phase jobs is reported through `JobStage` values
 | Marker-based LLM extraction from the relevant chunks.
 | SCIM schema attributes merged with documented mappings.
 | Columns of the object class's tables — deterministic, no LLM. Each attribute
-  records its `table` and `column`; known primary-key and foreign-key metadata
-  is preserved as `primaryKey` and `foreignKey`. Types come from the ConnId
-  types in a conndev object-class export, or from the native SQL types in a
-  conndev SQL-table export or raw schema.
+  records its `databaseCatalog`, `databaseSchema`, `table` and `column` when
+  supplied; known primary-key and foreign-key metadata is preserved as
+  `primaryKey` and `foreignKey`. Types come from the ConnId types in a conndev
+  object-class export, or from the native SQL types in a conndev SQL-table
+  export or raw schema.
 | `relations`
 | Extracted from the documentation.
 | Extracted from the documentation.
@@ -255,12 +256,24 @@ the object class `m_user`, and the generated code declares
 from the table (`app_users` -> `AppUser`).
 
 When a conndev object-class export and a conndev SQL-table export or raw schema
-declare the same physical table and column, they are merged independently of
-upload order: the object-class export keeps the logical object-class/attribute
-names and ConnID capability flags, while the table schema supplies SQL types
-and physical constraints. Composite foreign keys remain grouped by their
-constraint name at table level when the source supplies one; each attribute
-carries its exact referenced table and column for downstream generation.
+declare the same physical table and column, they are enriched independently of
+upload order. A table is identified by its normalized catalog, schema and table
+name; a missing component may match only when there is one compatible candidate.
+Known different schemas or catalogs never merge. The object-class export keeps
+the logical object-class/attribute names and ConnID capability flags, while the
+table schema supplies only the recognized SQL types and physical constraints.
+Composite foreign keys remain grouped by their constraint name at table level
+when the source supplies one; each attribute carries its exact referenced table
+and column for downstream generation.
+
+If the identity is contradictory or under-specified for more than one candidate,
+the SQL extraction job fails instead of guessing. Distinct conndev object-class
+names remain authoritative. If the same public object-class name refers to
+multiple physical tables, `/classes` qualifies each colliding name with its
+physical catalog/schema/table identity (for example `database1.schema_a.users`).
+The GUI sends that exact value back as the object-class routing key. Attribute
+extraction preserves `databaseCatalog`, `databaseSchema`, `table` and `column`,
+so native-schema and operation codegen keep the same physical identity.
 
 IMPORTANT: A conndev SQL *object-class* export alone does *not* carry primary
 keys, foreign keys or nullability. When a matching conndev SQL-table export is
@@ -288,7 +301,7 @@ classes/attributes.
 For a `sql` session the order is shorter: `classes` → per class `attributes`.
 `endpoints` is skipped entirely — it is rejected for a SQL session, and codegen
 does not require it, because each extracted attribute already carries the table
-and column it maps to. The shared `auth`, `relations`, and
+identity and column it maps to. The shared `auth`, `relations`, and
 `connectivity-endpoint` routes are not SQL-aware and are not part of this
 normal path.
 

@@ -11,7 +11,7 @@ generated columns.
 == Principles
 
 * There are no endpoints to call and no table listing to extract. Each attribute carries the
-  `table` and `column` it maps to.
+  `databaseCatalog`, `databaseSchema`, `table` and `column` identity available from its source.
 * The table and column mapping is declared once by the native schema. Operations only declare
   capabilities inside a native `sql {}` block; they never carry statements or table names.
 * Identity comes from the primary key. Where the primary key is unknown, leave a TODO instead of

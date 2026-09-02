@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester import orchestration
-from src.modules.digester.errors import EndpointExtractionNotSupportedError
+from src.modules.digester.errors import EndpointExtractionNotSupportedError, SqlTableIdentityConflictError
 from src.modules.digester.extractors.conndev import detect_object_class_binding
 from src.modules.digester.extractors.endpoints import extract_endpoints
 from src.modules.digester.extractors.object_class import extract_object_classes
@@ -51,8 +51,15 @@ def _conndev_attribute(name: str, connid_type: str, *, column: str | None = None
     }
 
 
-def _conndev_sql_doc(table: str, database_schema: str, attributes: list[dict]) -> dict:
+def _conndev_sql_doc(
+    table: str,
+    database_schema: str,
+    attributes: list[dict],
+    *,
+    object_class: str | None = None,
+) -> dict:
     """A midPoint ``ri:conndev_sql`` object-class export, as uploaded by the connector-development tool."""
+    object_class = object_class or table
     doc = _sql_doc(
         json.dumps(
             {
@@ -64,8 +71,8 @@ def _conndev_sql_doc(table: str, database_schema: str, attributes: list[dict]) -
                         "attributes": {"table": table, "schema": database_schema},
                     },
                 },
-                "uid": table,
-                "name": table,
+                "uid": object_class,
+                "name": object_class,
                 "attributes": attributes,
             }
         )
@@ -198,6 +205,42 @@ def test_collect_sql_tables_from_create_table_ddl():
         "nullable": False,
         "primaryKey": False,
     }
+
+
+def test_collect_sql_tables_preserves_qualified_multi_schema_ddl_identity():
+    doc = _sql_doc(
+        """
+        CREATE TABLE schema_a.users (id UUID PRIMARY KEY);
+        CREATE TABLE schema_b.users (email VARCHAR(255) NOT NULL);
+        """
+    )
+
+    tables = collect_sql_tables([doc])
+
+    assert [table["objectClass"] for table in tables] == ["schema_a.users", "schema_b.users"]
+    assert [table["databaseSchema"] for table in tables] == ["schema_a", "schema_b"]
+    assert [column["name"] for column in tables[0]["columns"]] == ["id"]
+    assert [column["name"] for column in tables[1]["columns"]] == ["email"]
+
+
+def test_collect_sql_tables_preserves_catalog_and_schema_from_raw_json():
+    doc = _sql_doc(
+        json.dumps(
+            {
+                "tables": [
+                    {"catalog": "database1", "schema": "schema_a", "name": "users", "columns": []},
+                    {"catalog": "database1", "schema": "schema_b", "name": "users", "columns": []},
+                ]
+            }
+        )
+    )
+
+    tables = collect_sql_tables([doc])
+
+    assert [table["objectClass"] for table in tables] == [
+        "database1.schema_a.users",
+        "database1.schema_b.users",
+    ]
 
 
 def test_collect_sql_tables_marks_table_level_primary_key_columns():
@@ -442,6 +485,7 @@ def test_collect_sql_tables_reads_conndev_sql_table_constraints():
     table = collect_sql_tables([doc])[0]
 
     assert table["table"] == "m_user"
+    assert table["databaseCatalog"] == "midpoint_db"
     assert table["databaseSchema"] == "midpoint_user"
     assert table["source"] == "conndev_sql_table"
     assert table["primaryKey"] == ["oid"]
@@ -626,6 +670,158 @@ def test_collect_sql_tables_merges_quoted_qualified_conndev_table_names(reverse_
     assert tables[0]["table"] == "m_user"
     assert tables[0]["objectClass"] == "m_user"
     assert tables[0]["primaryKey"] == ["oid"]
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_collect_sql_tables_rejects_mismatched_cross_source_schema(reverse_order):
+    object_class_doc = _conndev_sql_doc(
+        "users",
+        "schema_a",
+        [_conndev_attribute("Username", "string", column="username")],
+        object_class="SchemaAUser",
+    )
+    sql_table_doc = _conndev_sql_table_doc(
+        "users",
+        "schema_b",
+        [_sql_table_column("email", "VARCHAR")],
+        catalog="database1",
+    )
+    docs = [object_class_doc, sql_table_doc]
+    if reverse_order:
+        docs.reverse()
+
+    with pytest.raises(SqlTableIdentityConflictError) as exc_info:
+        collect_sql_tables(docs)
+
+    assert "schema_a.users" in str(exc_info.value)
+    assert "database1.schema_b.users" in str(exc_info.value)
+
+
+def test_collect_sql_tables_rejects_ambiguous_catalog_for_unqualified_logical_source():
+    docs = [
+        _conndev_sql_doc(
+            "users",
+            "identity",
+            [_conndev_attribute("Username", "string", column="username")],
+            object_class="User",
+        ),
+        _conndev_sql_table_doc(
+            "users",
+            "identity",
+            [_sql_table_column("username", "VARCHAR")],
+            catalog="database1",
+        ),
+        _conndev_sql_table_doc(
+            "users",
+            "identity",
+            [_sql_table_column("username", "VARCHAR")],
+            catalog="database2",
+        ),
+    ]
+
+    with pytest.raises(SqlTableIdentityConflictError) as exc_info:
+        collect_sql_tables(docs)
+
+    assert "database1.identity.users" in str(exc_info.value)
+    assert "database2.identity.users" in str(exc_info.value)
+
+
+def test_collect_sql_tables_qualifies_one_public_class_bound_to_two_schemas():
+    docs = [
+        _conndev_sql_doc("users", "schema_a", [], object_class="User"),
+        _conndev_sql_doc("users", "schema_b", [], object_class="User"),
+    ]
+
+    tables = collect_sql_tables(docs)
+
+    assert [table["objectClass"] for table in tables] == ["schema_a.users", "schema_b.users"]
+
+
+def test_collect_sql_tables_qualifies_colliding_sql_table_only_classes():
+    docs = [
+        _conndev_sql_table_doc("users", "schema_a", [], catalog="database1"),
+        _conndev_sql_table_doc("users", "schema_b", [], catalog="database1"),
+    ]
+
+    tables = collect_sql_tables(docs)
+
+    assert [table["objectClass"] for table in tables] == [
+        "database1.schema_a.users",
+        "database1.schema_b.users",
+    ]
+
+
+def test_collect_sql_tables_preserves_distinct_exported_class_names_across_schemas():
+    docs = [
+        _conndev_sql_doc("users", "schema_a", [], object_class="SchemaAUser"),
+        _conndev_sql_doc("users", "schema_b", [], object_class="SchemaBUser"),
+    ]
+
+    tables = collect_sql_tables(docs)
+
+    assert [table["objectClass"] for table in tables] == ["SchemaAUser", "SchemaBUser"]
+
+
+@pytest.mark.asyncio
+async def test_multi_schema_qualified_class_round_trips_to_attributes(mock_digester_update_job_progress):
+    docs = [
+        _conndev_sql_doc(
+            "users",
+            "schema_a",
+            [_conndev_attribute("SchemaAId", "string", column="id")],
+            object_class="User",
+        ),
+        _conndev_sql_table_doc(
+            "users",
+            "schema_a",
+            [_sql_table_column("id", "UUID", nullable=False, primary_key=True)],
+            catalog="database1",
+        ),
+        _conndev_sql_doc(
+            "users",
+            "schema_b",
+            [_conndev_attribute("SchemaBEmail", "string", column="email")],
+            object_class="User",
+        ),
+        _conndev_sql_table_doc(
+            "users",
+            "schema_b",
+            [_sql_table_column("email", "VARCHAR", nullable=False)],
+            catalog="database1",
+        ),
+    ]
+
+    tables = collect_sql_tables(docs)
+    ranking = _ranking_passthrough()
+    with (
+        patch("src.modules.digester.extractors.sql.object_class.deduplicate_and_sort_sql_object_classes", ranking),
+        patch(
+            "src.modules.digester.extractors.object_class.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SQL,
+        ),
+    ):
+        object_classes_result = await extract_object_classes(docs, uuid4(), uuid4())
+
+    schema_a_result = await extract_sql_attributes(docs, "database1.schema_a.users", uuid4())
+    schema_b_result = await extract_sql_attributes(docs, "database1.schema_b.users", uuid4())
+
+    assert [table["objectClass"] for table in tables] == [
+        "database1.schema_a.users",
+        "database1.schema_b.users",
+    ]
+    assert [item["name"] for item in object_classes_result["result"]["objectClasses"]] == [
+        "database1.schema_a.users",
+        "database1.schema_b.users",
+    ]
+    schema_a_attributes = schema_a_result["result"]["attributes"]
+    schema_b_attributes = schema_b_result["result"]["attributes"]
+    assert set(schema_a_attributes) == {"SchemaAId"}
+    assert schema_a_attributes["SchemaAId"]["databaseCatalog"] == "database1"
+    assert schema_a_attributes["SchemaAId"]["databaseSchema"] == "schema_a"
+    assert set(schema_b_attributes) == {"SchemaBEmail"}
+    assert schema_b_attributes["SchemaBEmail"]["databaseCatalog"] == "database1"
+    assert schema_b_attributes["SchemaBEmail"]["databaseSchema"] == "schema_b"
 
 
 def test_collect_sql_tables_skips_mismatched_conndev_sql_table(caplog):

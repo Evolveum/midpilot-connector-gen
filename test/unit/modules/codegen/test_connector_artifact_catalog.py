@@ -44,6 +44,13 @@ def test_object_class_names_are_normalized_to_the_generated_key_form():
     assert "UserCreateOutput" not in keys
 
 
+def test_qualified_sql_object_class_is_preserved_in_artifact_keys():
+    keys = _slot_keys(object_classes=["Database1.Schema_A.Users"])
+
+    assert "database1.schema_a.usersNativeSchemaOutput" in keys
+    assert "database1.schema_a.usersSearchAllOutput" in keys
+
+
 def test_slots_skip_blank_names():
     keys = _slot_keys(object_classes=["user", "", "   "])
 

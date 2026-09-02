@@ -251,6 +251,16 @@ class SqlForeignKey(BaseModel):
 class AttributeInfoSql(AttributeInfoBase):
     """Attribute metadata with its physical database binding."""
 
+    databaseCatalog: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Database catalog containing the physical table when supplied by the source.",
+    )
+    databaseSchema: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Database schema containing the physical table when supplied by the source.",
+    )
     table: str = Field(
         ...,
         min_length=1,
