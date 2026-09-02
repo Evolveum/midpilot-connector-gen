@@ -97,8 +97,6 @@ async def extract_attributes(
                 session_id,
                 job_id,
                 relevant_chunks,
-                chunks.chunk_metadata_map,
-                chunks.chunk_id_to_doc_id,
                 is_scim=is_scim,
             )
         except Exception:
@@ -223,8 +221,6 @@ async def _retry_attributes_with_default_criteria(
     session_id: UUID,
     job_id: UUID,
     old_relevant_chunks: List[Dict[str, Any]],
-    chunk_metadata_map: Dict[str, Any],
-    chunk_id_to_doc_id: Dict[str, str],
     is_scim: bool = False,
 ) -> Dict[str, Any] | None:
     fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
@@ -261,7 +257,12 @@ async def _retry_attributes_with_default_criteria(
 
     fallback_result = await _extract_attribute_leaf(
         is_scim,
-        _AttributeChunks(fallback_selected_content, fallback_chunk_ids, chunk_metadata_map, chunk_id_to_doc_id),
+        _AttributeChunks(
+            fallback_selected_content,
+            fallback_chunk_ids,
+            build_doc_metadata_map(fallback_doc_items_filtered),
+            build_chunk_id_to_doc_id(fallback_doc_items_filtered),
+        ),
         object_class,
         session_id,
         job_id,

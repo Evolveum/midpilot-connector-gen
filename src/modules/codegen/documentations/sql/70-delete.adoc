@@ -25,8 +25,9 @@ cascade handling into the operation block.
 
 * Never render a table name as `endpoint(...)`, a path, or a hand-written `DELETE` statement.
 * Never generate REST or SCIM constructs.
-* A conndev SQL export carries no primary keys or foreign keys. When no attribute is marked
-  `primaryKey`, leave a TODO instead of guessing the identity column from a column name.
+* A conndev SQL object-class export alone carries no keys; its paired SQL-table export can provide
+  exact primary-key and foreign-key metadata. When no attribute is marked `primaryKey`, leave a
+  TODO instead of guessing the identity column from a column name.
 * Never invent cascade deletes. When the documentation shows a foreign key whose cascade behavior
   is not documented, leave a TODO naming the dependency.
 * When the schema or the documentation shows a soft-delete column, do not silently turn the delete

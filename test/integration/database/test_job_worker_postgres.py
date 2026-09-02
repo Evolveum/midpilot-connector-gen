@@ -27,6 +27,7 @@ from src.database.repositories.session_repository import SessionRepository
 from src.documents.errors import NoDocumentationStoredError
 from src.jobs.payload import build_execution_payload
 from src.jobs.runner import execute_claimed_job
+from src.jobs.session_persistence import persist_job_pointer
 from src.shared.enums import JobStage
 from src.shared.normalize import normalized_input_fingerprint
 
@@ -91,6 +92,39 @@ async def _create_session(session_factory: SessionFactory) -> UUID:
         db.add(Session(session_id=session_id))
         await db.commit()
     return session_id
+
+
+@pytest.mark.asyncio
+async def test_persisted_job_and_pointer_commit_together_for_status_requests(
+    postgres_session_factory: SessionFactory,
+) -> None:
+    session_id = await _create_session(postgres_session_factory)
+    async with postgres_session_factory() as writer:
+        job_id = await JobRepository(writer).create_job(
+            {"value": "hello"},
+            "test.visible",
+            session_id,
+            execution_payload=_execution_payload("hello"),
+        )
+        await persist_job_pointer(
+            SessionRepository(writer),
+            session_id,
+            "visible",
+            {"value": "hello"},
+            job_id,
+        )
+        # persist_job_pointer leaves the job row and pointer in the request transaction; the
+        # HTTP dependency commits them together before the enqueue response is returned.
+        await writer.commit()
+
+    async with postgres_session_factory() as reader:
+        visible_job = await JobRepository(reader).get_job_for_session(job_id, session_id)
+        visible_pointer = await SessionRepository(reader).get_session_data(session_id, "visibleJobId")
+        visible_input = await SessionRepository(reader).get_session_data(session_id, "visibleInput")
+
+    assert visible_job is not None
+    assert visible_pointer == str(job_id)
+    assert visible_input == {"value": "hello"}
 
 
 async def _create_queued_job(

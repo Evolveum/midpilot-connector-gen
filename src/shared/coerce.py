@@ -34,6 +34,14 @@ def as_str(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
+def as_nonempty_str(value: Any) -> str | None:
+    """Return a stripped non-empty string, otherwise ``None``."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 def as_str_list(value: Any) -> list[str]:
     """Return the string items of ``value`` when it is a list, otherwise an empty list."""
     return [item for item in as_list(value) if isinstance(item, str)]

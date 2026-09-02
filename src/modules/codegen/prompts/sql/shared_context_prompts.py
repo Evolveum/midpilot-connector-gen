@@ -19,12 +19,16 @@ SQL_SCHEMA_CONTEXT_SYSTEM_RULES = textwrap.dedent("""\
 SQL SCHEMA CONTEXT RULES:
 - <extracted_attributes> is the complete schema context. Every attribute carries the `table` and
   `column` it maps to, its type, and the resolved `mandatory`, `creatable` and `updatable` flags.
-  There is no separate endpoint or table listing, and none is needed.
+  `databaseCatalog` and `databaseSchema` qualify the table when the source supplies them. Treat
+  catalog, schema and table as one physical identity and never drop a supplied qualifier. There is
+  no separate endpoint or table listing, and none is needed.
 - Treat those flags as already resolved. They account for generated, identity and primary key
   columns, so do not re-derive writability from a column name or type.
-- An attribute extracted from a midPoint conndev export carries no primary key and no nullability,
-  because the export does not state them. Never infer a primary key from a column name - leave a
-  TODO instead.
+- A conndev object-class export alone states no primary key, foreign key or nullability. A paired
+  SQL-table export can enrich each attribute with `primaryKey` and an exact `foreignKey` target
+  (`referencedTable`, `referencedColumn`) plus an optional `constraintName` when the source supplies
+  it. Use those values when present, but never infer a key, relationship or constraint name from a
+  column name - leave a TODO instead.
 - Never invent tables, columns, joins, constraints or identifiers that are absent from
   <extracted_attributes>. When required information is missing, add one concise TODO comment
   inside the Groovy code.

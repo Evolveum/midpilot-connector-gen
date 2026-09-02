@@ -5,10 +5,17 @@
 import json
 import re
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 from src.documents.chunking import normalize_to_text
+from src.modules.digester.errors import SqlTableIdentityConflictError
 from src.modules.digester.extractors.sql.conndev_schema import extract_conndev_sql_tables, is_conndev_table
+from src.modules.digester.extractors.sql.identifiers import (
+    clean_sql_identifier,
+    clean_sql_identifier_component,
+    split_sql_table_identifier,
+)
 from src.modules.digester.schemas.common import ChunkReference, build_chunk_references_from_doc_items
 
 _CREATE_TABLE_RE = re.compile(
@@ -33,11 +40,41 @@ _DATABASE_TABLE_FIELDS = frozenset({"primaryKey", "foreignKeys", "description"})
 _CONNDEV_TABLE_FIELDS = frozenset({"objectClass", "databaseSchema", "source"})
 
 
-def _clean_identifier(value: Any) -> str:
-    text = str(value or "").strip()
-    if "." in text:
-        text = text.rsplit(".", 1)[-1]
-    return text.strip('"`[] ')
+@dataclass(frozen=True)
+class _SqlTableIdentity:
+    """Normalized physical identity used only while reconciling extracted SQL records."""
+
+    catalog: str
+    schema: str
+    table: str
+
+    def is_compatible_with(self, other: "_SqlTableIdentity") -> bool:
+        return (
+            self.table == other.table
+            and (not self.schema or not other.schema or self.schema == other.schema)
+            and (not self.catalog or not other.catalog or self.catalog == other.catalog)
+        )
+
+    def render(self) -> str:
+        return ".".join(component for component in (self.catalog, self.schema, self.table) if component)
+
+
+@dataclass
+class _CollectedTable:
+    table: dict[str, Any]
+    position: int
+
+
+def _normalized_identity_component(value: Any) -> str:
+    return clean_sql_identifier_component(value).casefold()
+
+
+def _table_identity(table: dict[str, Any]) -> _SqlTableIdentity:
+    return _SqlTableIdentity(
+        catalog=_normalized_identity_component(table.get("databaseCatalog")),
+        schema=_normalized_identity_component(table.get("databaseSchema")),
+        table=clean_sql_identifier(table.get("table")).casefold(),
+    )
 
 
 def _split_sql_columns(body: str) -> list[str]:
@@ -69,7 +106,7 @@ def _primary_key_columns_from_constraint(definition: str) -> list[str]:
         identifier_match = _IDENTIFIER_PREFIX_RE.match(value)
         if not identifier_match:
             continue
-        name = _clean_identifier(identifier_match.group("identifier"))
+        name = clean_sql_identifier(identifier_match.group("identifier"))
         if name:
             columns.append(name)
     return columns
@@ -77,13 +114,13 @@ def _primary_key_columns_from_constraint(definition: str) -> list[str]:
 
 def _normalize_column(column: Any) -> dict[str, Any] | None:
     if isinstance(column, str):
-        name = _clean_identifier(column)
+        name = clean_sql_identifier(column)
         return {"name": name} if name else None
     if not isinstance(column, dict):
         return None
 
     raw_name = column.get("name") or column.get("column") or column.get("columnName")
-    name = _clean_identifier(raw_name)
+    name = clean_sql_identifier(raw_name)
     if not name:
         return None
 
@@ -105,18 +142,28 @@ def _normalize_column(column: Any) -> dict[str, Any] | None:
 
 def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> dict[str, Any] | None:
     if isinstance(table, str):
-        name = _clean_identifier(table)
+        qualified_catalog, qualified_schema, name = split_sql_table_identifier(table)
         if not name:
             return None
         normalized: dict[str, Any] = {"table": name, "columns": []}
+        if qualified_catalog:
+            normalized["databaseCatalog"] = qualified_catalog
+        if qualified_schema:
+            normalized["databaseSchema"] = qualified_schema
     elif isinstance(table, dict):
         raw_name = table.get("table") or table.get("name") or table.get("tableName")
-        name = _clean_identifier(raw_name)
+        qualified_catalog, qualified_schema, name = split_sql_table_identifier(raw_name)
         if not name:
             return None
         raw_columns = table.get("columns") or table.get("attributes") or table.get("fields") or []
         columns = [col for raw in raw_columns if (col := _normalize_column(raw))]
         normalized = {"table": name, "columns": columns}
+        database_catalog = clean_sql_identifier_component(table.get("databaseCatalog") or table.get("catalog"))
+        if database_catalog or qualified_catalog:
+            normalized["databaseCatalog"] = database_catalog or qualified_catalog
+        database_schema = clean_sql_identifier_component(table.get("databaseSchema") or table.get("schema"))
+        if database_schema or qualified_schema:
+            normalized["databaseSchema"] = database_schema or qualified_schema
         for key in ("primaryKey", "foreignKeys", "description"):
             if key in table and table[key] is not None:
                 normalized[key] = table[key]
@@ -124,10 +171,10 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
         table_primary_key = normalized.get("primaryKey")
         if isinstance(table_primary_key, list):
             primary_key_columns = {
-                cleaned.casefold() for value in table_primary_key if (cleaned := _clean_identifier(value))
+                cleaned.casefold() for value in table_primary_key if (cleaned := clean_sql_identifier(value))
             }
             for column in columns:
-                column_name = _clean_identifier(column.get("column") or column.get("name"))
+                column_name = clean_sql_identifier(column.get("column") or column.get("name"))
                 if column_name:
                     column["primaryKey"] = column_name.casefold() in primary_key_columns
     else:
@@ -139,7 +186,7 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
 
 
 def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str] | None) -> dict[str, Any] | None:
-    table_name = _clean_identifier(match.group("name"))
+    table_name = match.group("name")
     columns: list[dict[str, Any]] = []
     primary_key: list[str] = []
     foreign_keys: list[dict[str, Any]] = []
@@ -156,7 +203,7 @@ def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str
         column_match = _COLUMN_LINE_RE.match(definition)
         if not column_match:
             continue
-        column_name = _clean_identifier(column_match.group("name"))
+        column_name = clean_sql_identifier(column_match.group("name"))
         column = {
             "name": column_name,
             "type": " ".join(_COLUMN_CONSTRAINT_RE.sub("", column_match.group("type")).split()),
@@ -235,12 +282,12 @@ def _merge_relevant_documentations(existing: dict[str, Any], incoming: list[Any]
 
 def _column_identity(column: dict[str, Any]) -> str:
     """Return the physical database-column identity used to join Conndev and DDL records."""
-    return _clean_identifier(column.get("column") or column.get("name")).lower()
+    return clean_sql_identifier(column.get("column") or column.get("name")).lower()
 
 
 def _merge_cross_source_column(conndev_column: dict[str, Any], database_column: dict[str, Any]) -> dict[str, Any]:
     """Combine one logical ConnId attribute with its physical database declaration."""
-    merged = {**database_column, **conndev_column}
+    merged = dict(conndev_column)
     for field in _DATABASE_COLUMN_FIELDS:
         if field in database_column:
             merged[field] = database_column[field]
@@ -290,10 +337,6 @@ def _merge_table_metadata(
     existing: dict[str, Any], incoming: dict[str, Any], *, existing_is_conndev: bool, incoming_is_conndev: bool
 ) -> None:
     """Merge table-level metadata with protocol-specific source precedence."""
-    for key, value in incoming.items():
-        if key not in {"columns", "relevantDocumentations"} and key not in existing:
-            existing[key] = value
-
     if existing_is_conndev != incoming_is_conndev:
         conndev_table = existing if existing_is_conndev else incoming
         database_table = incoming if existing_is_conndev else existing
@@ -303,6 +346,15 @@ def _merge_table_metadata(
         for field in _DATABASE_TABLE_FIELDS:
             if field in database_table:
                 existing[field] = database_table[field]
+        if "databaseCatalog" in database_table:
+            existing["databaseCatalog"] = database_table["databaseCatalog"]
+        if "databaseSchema" not in existing and "databaseSchema" in database_table:
+            existing["databaseSchema"] = database_table["databaseSchema"]
+        return
+
+    for key, value in incoming.items():
+        if key not in {"columns", "relevantDocumentations"} and key not in existing:
+            existing[key] = value
 
 
 def _extract_tables_from_item(item: dict, source_ref: dict[str, str] | None) -> list[dict[str, Any]]:
@@ -318,41 +370,177 @@ def _extract_tables_from_item(item: dict, source_ref: dict[str, str] | None) -> 
     return _extract_tables_from_text(normalize_to_text(item.get("content", "")), source_ref)
 
 
+def _same_source_key(table: dict[str, Any]) -> tuple[bool, _SqlTableIdentity, str]:
+    """Keep distinct logical classes separate until their physical bindings are validated."""
+    logical_name = str(table.get("objectClass") or "").strip().casefold() if is_conndev_table(table) else ""
+    return is_conndev_table(table), _table_identity(table), logical_name
+
+
+def _coalesce_same_source_tables(tables: list[_CollectedTable]) -> list[_CollectedTable]:
+    """Apply established first-document precedence only to records with the same full identity."""
+    by_identity: OrderedDict[tuple[bool, _SqlTableIdentity, str], _CollectedTable] = OrderedDict()
+    for record in tables:
+        key = _same_source_key(record.table)
+        existing_record = by_identity.get(key)
+        if existing_record is None:
+            by_identity[key] = record
+            continue
+
+        existing = existing_record.table
+        incoming = record.table
+        existing_is_conndev = is_conndev_table(existing)
+        incoming_is_conndev = is_conndev_table(incoming)
+        existing["columns"] = _merge_columns(
+            existing,
+            incoming,
+            existing_is_conndev=existing_is_conndev,
+            incoming_is_conndev=incoming_is_conndev,
+        )
+        _merge_table_metadata(
+            existing,
+            incoming,
+            existing_is_conndev=existing_is_conndev,
+            incoming_is_conndev=incoming_is_conndev,
+        )
+        _merge_relevant_documentations(existing, incoming.get("relevantDocumentations", []))
+    return list(by_identity.values())
+
+
+def _identity_conflict(table_name: str, records: list[_CollectedTable]) -> SqlTableIdentityConflictError:
+    return SqlTableIdentityConflictError(
+        table_name,
+        [_table_identity(record.table).render() for record in records],
+    )
+
+
+def _merge_complementary_tables(logical: _CollectedTable, database: _CollectedTable) -> _CollectedTable:
+    """Build a logical table enriched only by the database fields the digester understands."""
+    merged = dict(logical.table)
+    merged["columns"] = _merge_columns(
+        logical.table,
+        database.table,
+        existing_is_conndev=True,
+        incoming_is_conndev=False,
+    )
+    _merge_table_metadata(
+        merged,
+        database.table,
+        existing_is_conndev=True,
+        incoming_is_conndev=False,
+    )
+
+    merged.pop("relevantDocumentations", None)
+    for record in sorted((logical, database), key=lambda item: item.position):
+        _merge_relevant_documentations(merged, record.table.get("relevantDocumentations", []))
+    return _CollectedTable(merged, min(logical.position, database.position))
+
+
+def _reconcile_complementary_sources(records: list[_CollectedTable]) -> list[_CollectedTable]:
+    """Pair logical and physical records one-to-one without treating missing identity as a guess."""
+    by_table_name: OrderedDict[str, list[int]] = OrderedDict()
+    for index, record in enumerate(records):
+        by_table_name.setdefault(_table_identity(record.table).table, []).append(index)
+
+    logical_pairs: dict[int, int] = {}
+    paired_database: set[int] = set()
+    for table_name, indices in by_table_name.items():
+        logical_indices = [index for index in indices if is_conndev_table(records[index].table)]
+        database_indices = [index for index in indices if not is_conndev_table(records[index].table)]
+        if not logical_indices or not database_indices:
+            continue
+
+        matches_by_logical = {
+            logical_index: [
+                database_index
+                for database_index in database_indices
+                if _table_identity(records[logical_index].table).is_compatible_with(
+                    _table_identity(records[database_index].table)
+                )
+            ]
+            for logical_index in logical_indices
+        }
+        matches_by_database = {
+            database_index: [
+                logical_index
+                for logical_index in logical_indices
+                if database_index in matches_by_logical[logical_index]
+            ]
+            for database_index in database_indices
+        }
+        if any(len(matches) > 1 for matches in (*matches_by_logical.values(), *matches_by_database.values())):
+            raise _identity_conflict(table_name, [records[index] for index in indices])
+
+        unmatched_logical = [index for index, matches in matches_by_logical.items() if not matches]
+        unmatched_database = [index for index, matches in matches_by_database.items() if not matches]
+        if unmatched_logical and unmatched_database:
+            raise _identity_conflict(
+                table_name,
+                [records[index] for index in (*unmatched_logical, *unmatched_database)],
+            )
+
+        for logical_index, matches in matches_by_logical.items():
+            if matches:
+                logical_pairs[logical_index] = matches[0]
+                paired_database.add(matches[0])
+
+    reconciled: list[_CollectedTable] = []
+    for index, record in enumerate(records):
+        database_index = logical_pairs.get(index)
+        if database_index is not None:
+            reconciled.append(_merge_complementary_tables(record, records[database_index]))
+        elif index not in paired_database:
+            reconciled.append(record)
+    reconciled.sort(key=lambda item: item.position)
+    return reconciled
+
+
+def _qualify_colliding_object_classes(records: list[_CollectedTable]) -> None:
+    """Give colliding public class names stable physical identities the GUI can round-trip."""
+    by_object_class: OrderedDict[str, list[_CollectedTable]] = OrderedDict()
+    for record in records:
+        object_class = object_class_name_for_table(record.table).strip()
+        by_object_class.setdefault(object_class.casefold(), []).append(record)
+
+    for colliding in by_object_class.values():
+        identities = {_table_identity(record.table) for record in colliding}
+        if len(identities) < 2:
+            continue
+        if any(left != right and left.is_compatible_with(right) for left in identities for right in identities):
+            raise _identity_conflict(object_class_name_for_table(colliding[0].table), colliding)
+        for record in colliding:
+            record.table["objectClass"] = _table_identity(record.table).render()
+
+    qualified_names: dict[str, _CollectedTable] = {}
+    for record in records:
+        object_class = object_class_name_for_table(record.table).strip()
+        existing = qualified_names.get(object_class.casefold())
+        if existing is not None and _table_identity(existing.table) != _table_identity(record.table):
+            raise _identity_conflict(object_class, [existing, record])
+        qualified_names[object_class.casefold()] = record
+
+
 def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
     doc_items_list = list(doc_items)
-    tables_by_name: OrderedDict[str, dict[str, Any]] = OrderedDict()
     refs_by_chunk = {
         ref.chunk_id: ref.to_internal_dict() for ref in build_chunk_references_from_doc_items(doc_items_list)
     }
 
+    extracted: list[_CollectedTable] = []
+    position = 0
     for item in doc_items_list:
         chunk_id = str(item.get("chunkId") or "").strip()
         source_ref = refs_by_chunk.get(chunk_id)
         for table in _extract_tables_from_item(item, source_ref):
-            name = str(table.get("table") or "").strip()
+            name = clean_sql_identifier(table.get("table"))
             if not name:
                 continue
-            existing = tables_by_name.get(name.lower())
-            if existing is None:
-                tables_by_name[name.lower()] = table
-                continue
-            existing_is_conndev = is_conndev_table(existing)
-            incoming_is_conndev = is_conndev_table(table)
-            existing["columns"] = _merge_columns(
-                existing,
-                table,
-                existing_is_conndev=existing_is_conndev,
-                incoming_is_conndev=incoming_is_conndev,
-            )
-            _merge_table_metadata(
-                existing,
-                table,
-                existing_is_conndev=existing_is_conndev,
-                incoming_is_conndev=incoming_is_conndev,
-            )
-            _merge_relevant_documentations(existing, table.get("relevantDocumentations", []))
+            table["table"] = name
+            extracted.append(_CollectedTable(table, position))
+            position += 1
 
-    return list(tables_by_name.values())
+    reconciled = _reconcile_complementary_sources(_coalesce_same_source_tables(extracted))
+    _qualify_colliding_object_classes(reconciled)
+    return [record.table for record in reconciled]
 
 
 # Word endings that look plural but are not, so a trailing "s" must be kept
@@ -400,13 +588,17 @@ def sql_type_to_attribute_type(sql_type: Any) -> tuple[str | None, str | None]:
 
 def tables_for_object_class(tables: list[dict[str, Any]], object_class: str) -> list[dict[str, Any]]:
     target = object_class.lower().strip()
-    selected = [
-        table
-        for table in tables
-        if object_class_name_for_table(table).lower() == target
-        or object_class_name_from_table(str(table.get("table") or "")).lower() == target
-        or str(table.get("table") or "").lower() == target
+    explicitly_bound = [table for table in tables if str(table.get("objectClass") or "").strip().lower() == target]
+    if explicitly_bound:
+        return explicitly_bound
+
+    derived = [
+        table for table in tables if object_class_name_from_table(str(table.get("table") or "")).lower() == target
     ]
-    if selected:
-        return selected
+    if derived:
+        return derived
+
+    physical_name = [table for table in tables if str(table.get("table") or "").lower() == target]
+    if physical_name:
+        return physical_name
     return [table for table in tables if target in str(table.get("table") or "").lower()]

@@ -12,7 +12,14 @@ from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 from src.shared.coerce import as_dict_list, as_mapping
 
 _ATTRIBUTE_MAPPING_OPTIONAL_FIELDS = ("scimAttribute", "connectorExposed")
-_SQL_ATTRIBUTE_BINDING_FIELDS = ("table", "column", "primaryKey")
+_SQL_ATTRIBUTE_BINDING_FIELDS = (
+    "databaseCatalog",
+    "databaseSchema",
+    "table",
+    "column",
+    "primaryKey",
+    "foreignKey",
+)
 
 
 def _attribute_items(payload: AttributesPayload) -> Iterator[tuple[str, Any]]:
@@ -223,7 +230,10 @@ def build_fix_attribute_mapping_records(payload: AttributesPayload) -> List[Dict
     records already collected here. Neither builder ever disagrees about a native
     name, so the merge order is not a policy.
     """
-    records = build_attribute_mapping_records(payload)
+    records = _build_attribute_mapping_records(
+        payload,
+        optional_fields=_ATTRIBUTE_MAPPING_OPTIONAL_FIELDS + _SQL_ATTRIBUTE_BINDING_FIELDS,
+    )
     if not as_mapping(extract_scim_context(payload).get("connectorObjectClass")):
         return records
 

@@ -31,7 +31,9 @@ router = APIRouter(dependencies=[Depends(require_master_key)])
     status_code=status.HTTP_201_CREATED,
     summary="Issue a new API key",
 )
-async def create_api_key(payload: ApiKeyCreateRequest, db: AsyncSession = Depends(get_db)) -> ApiKeyCreateResponse:
+async def create_api_key(
+    payload: ApiKeyCreateRequest, db: AsyncSession = Depends(get_db, scope="function")
+) -> ApiKeyCreateResponse:
     """
     Generate and persist a new API key. The full key value is returned only in
     this response and cannot be retrieved again - only its hash is stored.
@@ -58,7 +60,7 @@ async def create_api_key(payload: ApiKeyCreateRequest, db: AsyncSession = Depend
     response_model=ApiKeyListResponse,
     summary="List API keys",
 )
-async def list_api_keys(db: AsyncSession = Depends(get_db)) -> ApiKeyListResponse:
+async def list_api_keys(db: AsyncSession = Depends(get_db, scope="function")) -> ApiKeyListResponse:
     """
     List all API key records (active and revoked), without key values.
     """
@@ -84,7 +86,7 @@ async def list_api_keys(db: AsyncSession = Depends(get_db)) -> ApiKeyListRespons
     summary="Revoke an API key",
 )
 async def revoke_api_key(
-    api_key_id: UUID = Path(..., description="API key ID"), db: AsyncSession = Depends(get_db)
+    api_key_id: UUID = Path(..., description="API key ID"), db: AsyncSession = Depends(get_db, scope="function")
 ) -> ApiKeyRevokeResponse:
     """
     Revoke an API key (soft delete). The key stops authenticating immediately;
