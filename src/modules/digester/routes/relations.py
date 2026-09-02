@@ -29,7 +29,7 @@ router = APIRouter(tags=["Digester: Relations"])
 async def extract_relations(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Extract relations between object classes from documentation.
@@ -58,7 +58,7 @@ async def extract_relations(
 async def get_relations_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the status of relations extraction job.
@@ -84,7 +84,7 @@ async def get_relations_status(
 async def override_relations(
     session_id: UUID = Path(..., description="Session ID"),
     relations: RelationsResponse = Body(..., description="Relations data as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Manually override the relations data.

@@ -28,7 +28,7 @@ router = APIRouter()
 async def discover_candidate_links(
     req: CandidateLinksInput,
     session_id: UUID = Path(..., description="Session ID"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Enqueue a job to discover candidate documentation URLs for the given application.
@@ -55,7 +55,7 @@ async def discover_candidate_links(
 async def get_discovery_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the status of candidate links discovery job.

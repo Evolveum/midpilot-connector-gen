@@ -43,9 +43,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for FastAPI to get database session.
 
-    Usage in FastAPI endpoints:
-        async def my_endpoint(db: AsyncSession = Depends(get_db)):
-            ...
+    API dependencies use ``scope="function"`` so response validation finishes before this
+    transaction commits, and the response is sent only after a successful commit. Exceptions from
+    the handler, response validation or commit roll the transaction back before error handling.
     """
     async with async_session_maker() as session:
         try:

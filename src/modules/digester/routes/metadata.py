@@ -29,7 +29,7 @@ router = APIRouter(tags=["Digester: Metadata"])
 async def extract_metadata(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Extract API metadata from documentation.
@@ -54,7 +54,7 @@ async def extract_metadata(
 async def get_metadata_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the status of metadata extraction job.
@@ -80,7 +80,7 @@ async def get_metadata_status(
 async def restore_metadata(
     session_id: UUID = Path(..., description="Session ID"),
     metadata: InfoResponse = Body(..., description="Info metadata payload as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Restore metadataOutput in session from provided infoMetadata payload.

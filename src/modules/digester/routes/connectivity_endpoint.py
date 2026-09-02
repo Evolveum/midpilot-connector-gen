@@ -29,7 +29,7 @@ router = APIRouter(tags=["Digester: Connectivity Endpoint"])
 async def extract_connectivity_endpoint(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Extract one documented endpoint suitable for testing connectivity to the target application.
@@ -54,7 +54,7 @@ async def extract_connectivity_endpoint(
 async def get_connectivity_endpoint_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the status of connectivity endpoint extraction job.
@@ -82,7 +82,7 @@ async def get_connectivity_endpoint_status(
 async def override_connectivity_endpoint(
     session_id: UUID = Path(..., description="Session ID"),
     connectivity_endpoint: ConnectivityEndpointResponse = Body(..., description="Connectivity endpoint payload"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Manually override the selected connectivity endpoint in the session.

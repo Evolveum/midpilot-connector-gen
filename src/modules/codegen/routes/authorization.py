@@ -36,7 +36,7 @@ async def generate_authorization(
         alias="apiType",
         description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     codegen_input: AuthorizationCodegenInput = Body(...),
 ):
     """
@@ -65,7 +65,7 @@ async def generate_authorization(
 async def get_authorization_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Get the status of authorization code generation job.
@@ -92,7 +92,7 @@ async def get_authorization_status(
 async def override_authorization(
     session_id: UUID = Path(..., description="Session ID"),
     authorization_code: GroovyCodePayload = Body(..., description="Authorization code as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Manually override the authorization code.
