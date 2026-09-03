@@ -7,11 +7,11 @@
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_typed_job_status_response
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.digester import orchestration, results
@@ -44,7 +44,7 @@ async def extract_object_classes(
             "defaults to management when omitted."
         ),
     ),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ):
     """
     Extract object classes from documentation stored in or uploaded to the session.
@@ -74,7 +74,7 @@ async def extract_object_classes(
 async def get_object_classes_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional, will use session's job if not provided)"),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of object classes extraction job.
@@ -104,7 +104,7 @@ async def get_object_classes_status(
 async def get_specific_object_class(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ):
     """
     Get a specific object class by name from the session.
@@ -123,7 +123,7 @@ async def get_specific_object_class(
 async def upload_all_object_classes(
     session_id: UUID = Path(..., description="Session ID"),
     object_classes_data: Dict[str, Any] = Body(..., description="Object classes data as JSON"),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ):
     """
     Upload all object classes to the session.
@@ -149,7 +149,7 @@ async def upload_one_object_class(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     object_class_data: Dict[str, Any] = Body(..., description="Object class data as JSON"),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ):
     """
     Upload or update a specific object class in the session.

@@ -7,11 +7,11 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_typed_job_status_response
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.digester import orchestration
@@ -29,7 +29,7 @@ router = APIRouter(tags=["Digester: Auth"])
 async def extract_auth(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ):
     """
     Extract authentication information from documentation.
@@ -54,7 +54,7 @@ async def extract_auth(
 async def get_auth_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of auth extraction job.
