@@ -1,0 +1,47 @@
+= SQL delete operation
+:page-nav-title: Delete operations
+:page-display-order: 1290
+:page-upkeep-status: orange
+:page-toc: top
+:page-since: 4.11
+:page-description: How the built-in SQL delete operation removes a row by exact UID transactionally, error handling, and enable/disable configuration per object class.
+:page-keywords: SQL delete operation, DELETE, UnknownUid exception, read-only object class
+
+Delete operations remove the row matching the exact UID with a transactional SQL `DELETE`.
+
+include::link-to-intro-preamble.adoc[]
+
+== Basic delete
+
+For a writable table, delete works out of the box — no operation script is required.
+
+The framework:
+
+. Builds a `DELETE` statement with the full UID mapping as an exact predicate (for xref:/connectors/sql-framework/develop/schema-discovery/#uid-detection[composite UIDs], all key columns are matched).
+. Executes the statement inside a JDBC transaction.
+. Verifies that exactly one row was affected.
+// TODO: Similarly to comment in update.adoc - can this fail?
+//       Also, what exceptions should one expect?
+
+If no row matches the UID, the operation fails with `UnknownUidException`.
+Connection failures are wrapped into `ConnectionFailedException`; failed transactions are rolled back.
+
+== Embedded child tables
+
+Rows of detected child/embedded tables are managed by the parent object class (see xref:/connectors/sql-framework/develop/relationships/[]) — embedded object classes themselves do not expose create, update, or delete.
+When the parent row is deleted, the connector only deletes the parent row;
+cleanup of child rows is delegated to the database schema (for example, foreign keys with `ON DELETE CASCADE`).
+
+== Enabling / disabling delete
+
+[source,groovy]
+----
+objectClass("Employee") {
+    delete {
+        enabled false
+    }
+}
+----
+
+Views and object classes marked `readOnly true` never get an delete handler.
+See also xref:/connectors/sql-framework/develop/schema-discovery/#built-in-mapping-rules[built-in mapping rules].
