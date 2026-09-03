@@ -6,11 +6,15 @@ import json
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from src.documents.chunking import normalize_to_text
 from src.modules.digester.errors import SqlTableIdentityConflictError
-from src.modules.digester.extractors.sql.conndev_schema import extract_conndev_sql_tables, is_conndev_table
+from src.modules.digester.extractors.sql.conndev_schema import (
+    SqlTableSource,
+    extract_conndev_sql_tables,
+    sql_table_source,
+)
 from src.modules.digester.extractors.sql.identifiers import (
     clean_sql_identifier,
     clean_sql_identifier_component,
@@ -294,37 +298,66 @@ def _merge_cross_source_column(conndev_column: dict[str, Any], database_column: 
     return merged
 
 
+def _fill_physical_column_gaps(authoritative: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
+    """Return the authoritative physical column with only the recognized SQL fields it lacks
+    supplied from a lower-precedence physical source (a raw schema)."""
+    merged = dict(authoritative)
+    for field in _DATABASE_COLUMN_FIELDS:
+        if field not in merged and field in secondary:
+            merged[field] = secondary[field]
+    return merged
+
+
+def _overlay_columns(
+    ordered: list[dict[str, Any]],
+    lookup: list[dict[str, Any]],
+    combine: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Emit ``ordered`` (its order and names win), combining each column with its identity
+    match in ``lookup`` via ``combine``, then append the ``lookup`` columns nothing matched."""
+    lookup_by_name = {_column_identity(column): column for column in lookup}
+    merged_columns: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for column in ordered:
+        identity = _column_identity(column)
+        match = lookup_by_name.get(identity)
+        merged_columns.append(combine(column, match) if identity and match is not None else column)
+        if identity:
+            seen.add(identity)
+    merged_columns.extend(
+        column for column in lookup if not (identity := _column_identity(column)) or identity not in seen
+    )
+    return merged_columns
+
+
 def _merge_columns(
-    existing: dict[str, Any], incoming: dict[str, Any], *, existing_is_conndev: bool, incoming_is_conndev: bool
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+    *,
+    existing_source: SqlTableSource,
+    incoming_source: SqlTableSource,
 ) -> list[dict[str, Any]]:
     existing_columns = [column for column in existing.get("columns", []) if isinstance(column, dict)]
     incoming_columns = [column for column in incoming.get("columns", []) if isinstance(column, dict)]
+    sources = {existing_source, incoming_source}
 
-    if existing_is_conndev != incoming_is_conndev:
-        conndev_columns = existing_columns if existing_is_conndev else incoming_columns
-        database_columns = incoming_columns if existing_is_conndev else existing_columns
-        database_by_name = {_column_identity(column): column for column in database_columns}
-        merged_columns: list[dict[str, Any]] = []
-        seen: set[str] = set()
+    if SqlTableSource.CONNDEV_OBJECT_CLASS in sources and len(sources) == 2:
+        # Logical <-> physical: the object-class export fixes column order and logical names;
+        # the physical source only overlays the recognized SQL column fields.
+        object_class_first = existing_source is SqlTableSource.CONNDEV_OBJECT_CLASS
+        conndev_columns = existing_columns if object_class_first else incoming_columns
+        database_columns = incoming_columns if object_class_first else existing_columns
+        return _overlay_columns(conndev_columns, database_columns, _merge_cross_source_column)
 
-        # Conndev order and logical names are stable; database-only columns follow afterwards.
-        for conndev_column in conndev_columns:
-            identity = _column_identity(conndev_column)
-            database_column = database_by_name.get(identity)
-            merged_columns.append(
-                _merge_cross_source_column(conndev_column, database_column)
-                if identity and database_column is not None
-                else conndev_column
-            )
-            if identity:
-                seen.add(identity)
-        merged_columns.extend(
-            column for column in database_columns if not (identity := _column_identity(column)) or identity not in seen
-        )
-        return merged_columns
+    if sources == {SqlTableSource.CONNDEV_SQL_TABLE, SqlTableSource.RAW_SCHEMA}:
+        # Two physical sources: the conndev SQL-table export is authoritative; the raw schema
+        # only fills column fields the export does not carry.
+        sql_table_first = existing_source is SqlTableSource.CONNDEV_SQL_TABLE
+        authoritative_columns = existing_columns if sql_table_first else incoming_columns
+        raw_columns = incoming_columns if sql_table_first else existing_columns
+        return _overlay_columns(authoritative_columns, raw_columns, _fill_physical_column_gaps)
 
-    # Preserve the established first-document precedence for duplicate records from the same
-    # source, while still adding columns that only the later document declares.
+    # Same source kind: keep the first document's columns, add only what the later one declares.
     merged_columns = list(existing_columns)
     seen = {_column_identity(column) for column in existing_columns}
     merged_columns.extend(
@@ -334,12 +367,21 @@ def _merge_columns(
 
 
 def _merge_table_metadata(
-    existing: dict[str, Any], incoming: dict[str, Any], *, existing_is_conndev: bool, incoming_is_conndev: bool
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+    *,
+    existing_source: SqlTableSource,
+    incoming_source: SqlTableSource,
 ) -> None:
-    """Merge table-level metadata with protocol-specific source precedence."""
-    if existing_is_conndev != incoming_is_conndev:
-        conndev_table = existing if existing_is_conndev else incoming
-        database_table = incoming if existing_is_conndev else existing
+    """Merge table-level metadata into ``existing`` with source-precedence rules."""
+    sources = {existing_source, incoming_source}
+
+    if SqlTableSource.CONNDEV_OBJECT_CLASS in sources and len(sources) == 2:
+        # Logical <-> physical: names / ConnId flags from the object-class export, physical
+        # keys and qualifiers from the database side.
+        object_class_first = existing_source is SqlTableSource.CONNDEV_OBJECT_CLASS
+        conndev_table = existing if object_class_first else incoming
+        database_table = incoming if object_class_first else existing
         for field in _CONNDEV_TABLE_FIELDS:
             if field in conndev_table:
                 existing[field] = conndev_table[field]
@@ -352,6 +394,8 @@ def _merge_table_metadata(
             existing["databaseSchema"] = database_table["databaseSchema"]
         return
 
+    # Same source kind, or a raw schema filling gaps in the authoritative SQL-table export:
+    # keep every value ``existing`` already carries, add only the keys it is missing.
     for key, value in incoming.items():
         if key not in {"columns", "relevantDocumentations"} and key not in existing:
             existing[key] = value
@@ -370,15 +414,19 @@ def _extract_tables_from_item(item: dict, source_ref: dict[str, str] | None) -> 
     return _extract_tables_from_text(normalize_to_text(item.get("content", "")), source_ref)
 
 
-def _same_source_key(table: dict[str, Any]) -> tuple[bool, _SqlTableIdentity, str]:
-    """Keep distinct logical classes separate until their physical bindings are validated."""
-    logical_name = str(table.get("objectClass") or "").strip().casefold() if is_conndev_table(table) else ""
-    return is_conndev_table(table), _table_identity(table), logical_name
+def _same_source_key(table: dict[str, Any]) -> tuple[SqlTableSource, _SqlTableIdentity, str]:
+    """Coalesce only records from the same source kind that share the same full physical
+    identity (and, for object-class exports, the same exported object-class name)."""
+    source = sql_table_source(table)
+    logical_name = (
+        str(table.get("objectClass") or "").strip().casefold() if source is SqlTableSource.CONNDEV_OBJECT_CLASS else ""
+    )
+    return source, _table_identity(table), logical_name
 
 
 def _coalesce_same_source_tables(tables: list[_CollectedTable]) -> list[_CollectedTable]:
     """Apply established first-document precedence only to records with the same full identity."""
-    by_identity: OrderedDict[tuple[bool, _SqlTableIdentity, str], _CollectedTable] = OrderedDict()
+    by_identity: OrderedDict[tuple[SqlTableSource, _SqlTableIdentity, str], _CollectedTable] = OrderedDict()
     for record in tables:
         key = _same_source_key(record.table)
         existing_record = by_identity.get(key)
@@ -388,20 +436,10 @@ def _coalesce_same_source_tables(tables: list[_CollectedTable]) -> list[_Collect
 
         existing = existing_record.table
         incoming = record.table
-        existing_is_conndev = is_conndev_table(existing)
-        incoming_is_conndev = is_conndev_table(incoming)
-        existing["columns"] = _merge_columns(
-            existing,
-            incoming,
-            existing_is_conndev=existing_is_conndev,
-            incoming_is_conndev=incoming_is_conndev,
-        )
-        _merge_table_metadata(
-            existing,
-            incoming,
-            existing_is_conndev=existing_is_conndev,
-            incoming_is_conndev=incoming_is_conndev,
-        )
+        # Records sharing a key share a source kind, so this always hits the same-kind branch.
+        source = sql_table_source(existing)
+        existing["columns"] = _merge_columns(existing, incoming, existing_source=source, incoming_source=source)
+        _merge_table_metadata(existing, incoming, existing_source=source, incoming_source=source)
         _merge_relevant_documentations(existing, incoming.get("relevantDocumentations", []))
     return list(by_identity.values())
 
@@ -413,20 +451,78 @@ def _identity_conflict(table_name: str, records: list[_CollectedTable]) -> SqlTa
     )
 
 
+def _pair_by_compatible_identity(
+    records: list[_CollectedTable],
+    *,
+    is_left: Callable[[dict[str, Any]], bool],
+    is_right: Callable[[dict[str, Any]], bool],
+) -> dict[int, int]:
+    """Pair left-set records with right-set records one-to-one by compatible physical identity.
+
+    Records are grouped by bare table name; within a group each left record matches the right
+    records whose identity ``is_compatible_with`` it (a missing catalog/schema component
+    matches, a differing one does not). Raises :class:`SqlTableIdentityConflictError` when a
+    record on either side is compatible with more than one candidate, or when a group is left
+    with both an unmatched left and an unmatched right record (a real contradiction, not one
+    under-specified identity). Returns ``{left_index: right_index}`` for every pair found.
+    """
+    by_table_name: OrderedDict[str, list[int]] = OrderedDict()
+    for index, record in enumerate(records):
+        by_table_name.setdefault(_table_identity(record.table).table, []).append(index)
+
+    pairs: dict[int, int] = {}
+    for table_name, indices in by_table_name.items():
+        left_indices = [index for index in indices if is_left(records[index].table)]
+        right_indices = [index for index in indices if is_right(records[index].table)]
+        if not left_indices or not right_indices:
+            continue
+
+        matches_by_left = {
+            left_index: [
+                right_index
+                for right_index in right_indices
+                if _table_identity(records[left_index].table).is_compatible_with(
+                    _table_identity(records[right_index].table)
+                )
+            ]
+            for left_index in left_indices
+        }
+        matches_by_right = {
+            right_index: [left_index for left_index in left_indices if right_index in matches_by_left[left_index]]
+            for right_index in right_indices
+        }
+        if any(len(matches) > 1 for matches in (*matches_by_left.values(), *matches_by_right.values())):
+            raise _identity_conflict(table_name, [records[index] for index in indices])
+
+        unmatched_left = [index for index, matches in matches_by_left.items() if not matches]
+        unmatched_right = [index for index, matches in matches_by_right.items() if not matches]
+        if unmatched_left and unmatched_right:
+            raise _identity_conflict(
+                table_name,
+                [records[index] for index in (*unmatched_left, *unmatched_right)],
+            )
+
+        for left_index, matches in matches_by_left.items():
+            if matches:
+                pairs[left_index] = matches[0]
+    return pairs
+
+
 def _merge_complementary_tables(logical: _CollectedTable, database: _CollectedTable) -> _CollectedTable:
     """Build a logical table enriched only by the database fields the digester understands."""
+    database_source = sql_table_source(database.table)
     merged = dict(logical.table)
     merged["columns"] = _merge_columns(
         logical.table,
         database.table,
-        existing_is_conndev=True,
-        incoming_is_conndev=False,
+        existing_source=SqlTableSource.CONNDEV_OBJECT_CLASS,
+        incoming_source=database_source,
     )
     _merge_table_metadata(
         merged,
         database.table,
-        existing_is_conndev=True,
-        incoming_is_conndev=False,
+        existing_source=SqlTableSource.CONNDEV_OBJECT_CLASS,
+        incoming_source=database_source,
     )
 
     merged.pop("relevantDocumentations", None)
@@ -435,57 +531,63 @@ def _merge_complementary_tables(logical: _CollectedTable, database: _CollectedTa
     return _CollectedTable(merged, min(logical.position, database.position))
 
 
+def _absorb_raw_into_sql_table(sql_table: _CollectedTable, raw: _CollectedTable) -> None:
+    """Enrich the authoritative conndev SQL-table record in place with the raw schema's gap
+    fields, then leave the raw record to be discarded by the caller."""
+    sql_table.table["columns"] = _merge_columns(
+        sql_table.table,
+        raw.table,
+        existing_source=SqlTableSource.CONNDEV_SQL_TABLE,
+        incoming_source=SqlTableSource.RAW_SCHEMA,
+    )
+    _merge_table_metadata(
+        sql_table.table,
+        raw.table,
+        existing_source=SqlTableSource.CONNDEV_SQL_TABLE,
+        incoming_source=SqlTableSource.RAW_SCHEMA,
+    )
+    # Capture both sides' references before clearing the target: ``sql_table`` is one of the
+    # records iterated, so reading it after the pop would drop its own documentation.
+    ordered_refs = [
+        ref
+        for record in sorted((sql_table, raw), key=lambda item: item.position)
+        for ref in record.table.get("relevantDocumentations", [])
+    ]
+    sql_table.table.pop("relevantDocumentations", None)
+    _merge_relevant_documentations(sql_table.table, ordered_refs)
+    sql_table.position = min(sql_table.position, raw.position)
+
+
+def _merge_physical_sources(records: list[_CollectedTable]) -> list[_CollectedTable]:
+    """Fold every raw-schema record into the conndev SQL-table record for the same table.
+
+    The SQL-table export is the physical authority; a raw schema for the same physical table
+    (possibly under a less-qualified identity, such as a bare ``CREATE TABLE``) only contributes
+    fields it alone carries and is then dropped. Guarantees at most one physical record per
+    compatible identity for :func:`_reconcile_complementary_sources`.
+    """
+    pairs = _pair_by_compatible_identity(
+        records,
+        is_left=lambda table: sql_table_source(table) is SqlTableSource.CONNDEV_SQL_TABLE,
+        is_right=lambda table: sql_table_source(table) is SqlTableSource.RAW_SCHEMA,
+    )
+    absorbed = set(pairs.values())
+    for sql_table_index, raw_index in pairs.items():
+        _absorb_raw_into_sql_table(records[sql_table_index], records[raw_index])
+    return [record for index, record in enumerate(records) if index not in absorbed]
+
+
 def _reconcile_complementary_sources(records: list[_CollectedTable]) -> list[_CollectedTable]:
-    """Pair logical and physical records one-to-one without treating missing identity as a guess."""
-    by_table_name: OrderedDict[str, list[int]] = OrderedDict()
-    for index, record in enumerate(records):
-        by_table_name.setdefault(_table_identity(record.table).table, []).append(index)
-
-    logical_pairs: dict[int, int] = {}
-    paired_database: set[int] = set()
-    for table_name, indices in by_table_name.items():
-        logical_indices = [index for index in indices if is_conndev_table(records[index].table)]
-        database_indices = [index for index in indices if not is_conndev_table(records[index].table)]
-        if not logical_indices or not database_indices:
-            continue
-
-        matches_by_logical = {
-            logical_index: [
-                database_index
-                for database_index in database_indices
-                if _table_identity(records[logical_index].table).is_compatible_with(
-                    _table_identity(records[database_index].table)
-                )
-            ]
-            for logical_index in logical_indices
-        }
-        matches_by_database = {
-            database_index: [
-                logical_index
-                for logical_index in logical_indices
-                if database_index in matches_by_logical[logical_index]
-            ]
-            for database_index in database_indices
-        }
-        if any(len(matches) > 1 for matches in (*matches_by_logical.values(), *matches_by_database.values())):
-            raise _identity_conflict(table_name, [records[index] for index in indices])
-
-        unmatched_logical = [index for index, matches in matches_by_logical.items() if not matches]
-        unmatched_database = [index for index, matches in matches_by_database.items() if not matches]
-        if unmatched_logical and unmatched_database:
-            raise _identity_conflict(
-                table_name,
-                [records[index] for index in (*unmatched_logical, *unmatched_database)],
-            )
-
-        for logical_index, matches in matches_by_logical.items():
-            if matches:
-                logical_pairs[logical_index] = matches[0]
-                paired_database.add(matches[0])
-
+    """Pair each logical object-class record with its single physical record, if one exists."""
+    pairs = _pair_by_compatible_identity(
+        records,
+        is_left=lambda table: sql_table_source(table) is SqlTableSource.CONNDEV_OBJECT_CLASS,
+        is_right=lambda table: sql_table_source(table) is not SqlTableSource.CONNDEV_OBJECT_CLASS,
+    )
+    paired_database = set(pairs.values())
     reconciled: list[_CollectedTable] = []
     for index, record in enumerate(records):
-        database_index = logical_pairs.get(index)
+        database_index = pairs.get(index)
         if database_index is not None:
             reconciled.append(_merge_complementary_tables(record, records[database_index]))
         elif index not in paired_database:
@@ -538,7 +640,7 @@ def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
             extracted.append(_CollectedTable(table, position))
             position += 1
 
-    reconciled = _reconcile_complementary_sources(_coalesce_same_source_tables(extracted))
+    reconciled = _reconcile_complementary_sources(_merge_physical_sources(_coalesce_same_source_tables(extracted)))
     _qualify_colliding_object_classes(reconciled)
     return [record.table for record in reconciled]
 

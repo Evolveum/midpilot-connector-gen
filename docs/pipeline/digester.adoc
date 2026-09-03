@@ -246,7 +246,8 @@ Three documentation shapes drive the SQL branch and they are not equivalent:
 | Table and column names, native SQL types, `NOT NULL`, primary keys, and
   table-level foreign-key definitions — but no object-class names and no
   curation of which tables matter. Foreign keys are not promoted automatically
-  to digester relations.
+  to digester relations. This is the lowest-precedence physical source: it
+  loses to a conndev SQL-table export for any field both describe.
 |===
 
 Object-class *names* follow the source. A conndev export states the name
@@ -262,6 +263,9 @@ name; a missing component may match only when there is one compatible candidate.
 Known different schemas or catalogs never merge. The object-class export keeps
 the logical object-class/attribute names and ConnID capability flags, while the
 table schema supplies only the recognized SQL types and physical constraints.
+When both a conndev SQL-table export and a raw schema describe the same physical
+table, the SQL-table export is authoritative for SQL types, nullability, keys
+and constraint names; the raw schema only supplies metadata it alone provides.
 Composite foreign keys remain grouped by their constraint name at table level
 when the source supplies one; each attribute carries its exact referenced table
 and column for downstream generation.
