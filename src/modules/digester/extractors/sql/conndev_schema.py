@@ -17,6 +17,7 @@ object-class, table and attribute extraction have a single downstream path.
 
 import json
 import logging
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from src.documents.chunking import normalize_to_text
@@ -42,8 +43,32 @@ from src.shared.enums import ApiType
 logger = logging.getLogger(__name__)
 
 
-CONNDEV_TABLE_SOURCE = "conndev"
-CONNDEV_SQL_TABLE_SOURCE = "conndev_sql_table"
+class SqlTableSource(str, Enum):
+    """Which of the three schema documents produced a collected SQL table record.
+
+    The kind fixes merge precedence in ``schema.py``: the object-class export is the logical
+    authority (object-class and attribute names, ConnId flags); the SQL-table export is the
+    physical authority (native types, nullability, keys, foreign-key constraint names); a raw
+    schema is physical best-effort and loses to the SQL-table export for any field both carry.
+    """
+
+    CONNDEV_OBJECT_CLASS = "conndev"
+    CONNDEV_SQL_TABLE = "conndev_sql_table"
+    RAW_SCHEMA = "raw_schema"
+
+
+def sql_table_source(table: Dict[str, Any]) -> SqlTableSource:
+    """Classify a collected SQL table record by the document that produced it.
+
+    Raw ``CREATE TABLE`` / JSON-schema records carry no ``source`` key and map to
+    :attr:`SqlTableSource.RAW_SCHEMA`.
+    """
+    raw = table.get("source")
+    if raw == SqlTableSource.CONNDEV_OBJECT_CLASS.value:
+        return SqlTableSource.CONNDEV_OBJECT_CLASS
+    if raw == SqlTableSource.CONNDEV_SQL_TABLE.value:
+        return SqlTableSource.CONNDEV_SQL_TABLE
+    return SqlTableSource.RAW_SCHEMA
 
 
 _CONNID_TYPE_MAP: Dict[str, tuple[str, Optional[str]]] = {
@@ -123,7 +148,7 @@ def _table_from_sql_object_class(definition: SqlObjectClassDocument) -> Dict[str
         # so a table exported as "m_user" stays "m_user" instead of being reshaped.
         "objectClass": definition.name,
         "columns": columns,
-        "source": CONNDEV_TABLE_SOURCE,
+        "source": SqlTableSource.CONNDEV_OBJECT_CLASS.value,
     }
     if table_catalog:
         table["databaseCatalog"] = table_catalog
@@ -277,7 +302,7 @@ def _table_from_sql_table_document(
     table: Dict[str, Any] = {
         "table": table_name,
         "columns": columns,
-        "source": CONNDEV_SQL_TABLE_SOURCE,
+        "source": SqlTableSource.CONNDEV_SQL_TABLE.value,
         "foreignKeys": _foreign_keys_from_columns(columns),
     }
     if (
@@ -335,8 +360,3 @@ def extract_conndev_sql_tables(
 
     definition = parse_sql_object_class_document(parsed, source_reference=source_reference)
     return [_table_from_sql_object_class(definition)] if definition is not None else []
-
-
-def is_conndev_table(table: Dict[str, Any]) -> bool:
-    """Whether a table record came from a conndev export (authoritative column list)."""
-    return table.get("source") == CONNDEV_TABLE_SOURCE

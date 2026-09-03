@@ -936,6 +936,217 @@ def test_collect_sql_tables_merges_conndev_and_ddl_column_metadata(reverse_order
     ]
 
 
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_collect_sql_tables_merges_raw_ddl_and_conndev_sql_table(reverse_order):
+    """The conndev SQL-table export is the physical authority; a raw DDL for the same table
+    only supplies fields it alone carries, regardless of upload order."""
+    ddl_doc = _sql_doc(
+        """
+        CREATE TABLE m_user (
+          nameorig VARCHAR(255) NOT NULL,
+          legacy_flag BOOLEAN
+        );
+        """
+    )
+    sql_table_doc = _conndev_sql_table_doc(
+        "m_user",
+        "midpoint_user",
+        [
+            _sql_table_column(
+                "nameorig",
+                "VARCHAR",
+                nullable=False,
+                primary_key=True,
+                referenced_table="m_object_oid",
+                referenced_column="oid",
+                foreign_key_name="m_user_nameorig_fkey",
+            )
+        ],
+    )
+    docs = [ddl_doc, sql_table_doc]
+    if reverse_order:
+        docs.reverse()
+
+    tables = collect_sql_tables(docs)
+
+    assert len(tables) == 1
+    table = tables[0]
+    assert table["table"] == "m_user"
+    assert table["source"] == "conndev_sql_table"
+    assert "objectClass" not in table
+    assert table["databaseCatalog"] == "midpoint_db"
+    assert table["databaseSchema"] == "midpoint_user"
+    assert table["primaryKey"] == ["nameorig"]
+    assert table["foreignKeys"] == [
+        {
+            "constraintName": "m_user_nameorig_fkey",
+            "columns": ["nameorig"],
+            "referencedTable": "m_object_oid",
+            "referencedColumns": ["oid"],
+        }
+    ]
+    assert table["columns"] == [
+        {
+            "name": "nameorig",
+            "type": "VARCHAR",
+            "nullable": False,
+            "primaryKey": True,
+            "foreignKey": {
+                "constraintName": "m_user_nameorig_fkey",
+                "referencedTable": "m_object_oid",
+                "referencedColumn": "oid",
+            },
+        },
+        {"name": "legacy_flag", "type": "BOOLEAN", "nullable": True, "primaryKey": False},
+    ]
+    assert table["relevantDocumentations"] == [
+        {"docId": docs[0]["docId"], "chunkId": docs[0]["chunkId"]},
+        {"docId": docs[1]["docId"], "chunkId": docs[1]["chunkId"]},
+    ]
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_collect_sql_tables_merges_raw_json_schema_and_conndev_sql_table(reverse_order):
+    """Same precedence when the raw physical source is a JSON table list, and a field only the
+    raw schema carries (``generated``) still fills a gap on the authoritative column."""
+    json_doc = _sql_doc(
+        json.dumps(
+            {
+                "tables": [
+                    {
+                        "name": "m_user",
+                        "columns": [
+                            {"name": "nameorig", "type": "text", "generated": True},
+                            {"name": "extra_col", "type": "int"},
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    sql_table_doc = _conndev_sql_table_doc(
+        "m_user",
+        "midpoint_user",
+        [_sql_table_column("nameorig", "VARCHAR", nullable=False, primary_key=True)],
+    )
+    docs = [json_doc, sql_table_doc]
+    if reverse_order:
+        docs.reverse()
+
+    tables = collect_sql_tables(docs)
+
+    assert len(tables) == 1
+    table = tables[0]
+    assert table["source"] == "conndev_sql_table"
+    assert table["primaryKey"] == ["nameorig"]
+    assert table["columns"] == [
+        {
+            "name": "nameorig",
+            "type": "VARCHAR",
+            "nullable": False,
+            "primaryKey": True,
+            "generated": True,
+        },
+        {"name": "extra_col", "type": "int"},
+    ]
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_collect_sql_tables_merges_all_three_sql_sources_for_one_table(reverse_order):
+    """Object-class export (names / ConnId flags) + SQL-table export (physical fields) + raw
+    schema (gap-fill column) collapse into one coherent record."""
+    object_class_doc = _conndev_sql_doc(
+        "m_user",
+        "midpoint_user",
+        [_conndev_attribute("UID", "string", column="oid", creatable=True, updateable=False)],
+    )
+    sql_table_doc = _conndev_sql_table_doc(
+        "m_user",
+        "midpoint_user",
+        [
+            _sql_table_column(
+                "oid",
+                "UUID",
+                nullable=False,
+                primary_key=True,
+                referenced_table="m_object_oid",
+                referenced_column="oid",
+                foreign_key_name="m_user_oid_fkey",
+            )
+        ],
+    )
+    ddl_doc = _sql_doc("CREATE TABLE m_user (oid UUID, audit_ts TIMESTAMP);")
+    docs = [object_class_doc, sql_table_doc, ddl_doc]
+    if reverse_order:
+        docs.reverse()
+
+    tables = collect_sql_tables(docs)
+
+    assert len(tables) == 1
+    table = tables[0]
+    assert table["objectClass"] == "m_user"
+    assert table["source"] == "conndev"
+    assert table["primaryKey"] == ["oid"]
+    assert table["columns"] == [
+        {
+            "name": "UID",
+            "column": "oid",
+            "connIdType": "string",
+            "creatable": True,
+            "updatable": False,
+            "type": "UUID",
+            "nullable": False,
+            "primaryKey": True,
+            "foreignKey": {
+                "constraintName": "m_user_oid_fkey",
+                "referencedTable": "m_object_oid",
+                "referencedColumn": "oid",
+            },
+        },
+        {"name": "audit_ts", "type": "TIMESTAMP", "nullable": True, "primaryKey": False},
+    ]
+    assert {(ref["docId"], ref["chunkId"]) for ref in table["relevantDocumentations"]} == {
+        (doc["docId"], doc["chunkId"]) for doc in docs
+    }
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_collect_sql_tables_merges_sql_table_and_raw_with_compatible_unequal_identity(reverse_order):
+    """A bare ``CREATE TABLE`` (no schema/catalog) still merges into the qualified SQL-table
+    export instead of surviving as a second record."""
+    sql_table_doc = _conndev_sql_table_doc(
+        "m_user",
+        "midpoint_user",
+        [_sql_table_column("oid", "UUID", nullable=False, primary_key=True)],
+        catalog="midpoint_db",
+    )
+    ddl_doc = _sql_doc("CREATE TABLE m_user (oid UUID, note TEXT);")
+    docs = [sql_table_doc, ddl_doc]
+    if reverse_order:
+        docs.reverse()
+
+    tables = collect_sql_tables(docs)
+
+    assert len(tables) == 1
+    table = tables[0]
+    assert table["databaseCatalog"] == "midpoint_db"
+    assert table["databaseSchema"] == "midpoint_user"
+    assert table["primaryKey"] == ["oid"]
+    assert [column["name"] for column in table["columns"]] == ["oid", "note"]
+
+
+def test_collect_sql_tables_conflicts_on_ambiguous_raw_to_sql_table_match():
+    """A bare raw table compatible with two different SQL-table exports is a real ambiguity."""
+    docs = [
+        _conndev_sql_table_doc("users", "schema_a", [_sql_table_column("id", "UUID")], catalog="database1"),
+        _conndev_sql_table_doc("users", "schema_b", [_sql_table_column("id", "UUID")], catalog="database1"),
+        _sql_doc("CREATE TABLE users (id UUID);"),
+    ]
+
+    with pytest.raises(SqlTableIdentityConflictError):
+        collect_sql_tables(docs)
+
+
 def test_collect_sql_tables_does_not_invent_tables_from_scalar_json_fields():
     """``uid``/``name`` are scalar fields, not column-less tables."""
     doc = _sql_doc(json.dumps({"uid": "m_user", "name": "m_user", "displayName": "User"}))
