@@ -18,14 +18,14 @@ def test_get_operation_assets_selects_sql_create_assets():
     assets = get_operation_assets("create", ApiType.SQL)
 
     assert assets.system_prompt == get_sql_create_system_prompt
-    assert assets.docs_path == "sql/50-create.adoc"
+    assert assets.docs_path == "sql/create.adoc"
 
 
 def test_get_search_operation_assets_selects_sql_filter_assets():
     assets = get_search_operation_assets(ApiType.SQL, SearchIntent.FILTER)
 
     assert assets.system_prompt == get_sql_search_filter_system_prompt
-    assert assets.docs_path == "sql/40-search.adoc"
+    assert assets.docs_path == "sql/search.adoc"
 
 
 def test_get_operation_assets_selects_complete_scim_delete_assets():

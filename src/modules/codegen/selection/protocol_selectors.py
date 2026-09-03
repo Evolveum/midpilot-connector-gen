@@ -62,21 +62,21 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
         ApiType.SCIM: OperationAssets(
             get_scim_create_system_prompt, get_scim_create_user_prompt, "scim/50-create.adoc"
         ),
-        ApiType.SQL: OperationAssets(get_sql_create_system_prompt, get_sql_create_user_prompt, "sql/50-create.adoc"),
+        ApiType.SQL: OperationAssets(get_sql_create_system_prompt, get_sql_create_user_prompt, "sql/create.adoc"),
     },
     "update": {
         ApiType.REST: OperationAssets(get_update_system_prompt, get_update_user_prompt, "rest/60-update.adoc"),
         ApiType.SCIM: OperationAssets(
             get_scim_update_system_prompt, get_scim_update_user_prompt, "scim/60-update.adoc"
         ),
-        ApiType.SQL: OperationAssets(get_sql_update_system_prompt, get_sql_update_user_prompt, "sql/60-update.adoc"),
+        ApiType.SQL: OperationAssets(get_sql_update_system_prompt, get_sql_update_user_prompt, "sql/update.adoc"),
     },
     "delete": {
         ApiType.REST: OperationAssets(get_delete_system_prompt, get_delete_user_prompt, "rest/70-delete.adoc"),
         ApiType.SCIM: OperationAssets(
             get_scim_delete_system_prompt, get_scim_delete_user_prompt, "scim/70-delete.adoc"
         ),
-        ApiType.SQL: OperationAssets(get_sql_delete_system_prompt, get_sql_delete_user_prompt, "sql/70-delete.adoc"),
+        ApiType.SQL: OperationAssets(get_sql_delete_system_prompt, get_sql_delete_user_prompt, "sql/delete.adoc"),
     },
     "native_schema": {
         ApiType.REST: OperationAssets(
@@ -88,7 +88,9 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
             "scim/25-schema-customization.adoc",
         ),
         ApiType.SQL: OperationAssets(
-            get_native_schema_system_prompt, get_native_schema_user_prompt, "sql/25-native-schema.adoc"
+            get_native_schema_system_prompt,
+            get_native_schema_user_prompt,
+            "sql/schema-customization.adoc",
         ),
     },
     # TODO add new documentation for authorization
@@ -145,17 +147,17 @@ SEARCH_PROMPT_MAP: Mapping[ApiType, Mapping[SearchIntent, OperationAssets]] = {
         SearchIntent.ALL: OperationAssets(
             get_sql_search_all_system_prompt,
             get_sql_search_user_prompt,
-            "sql/40-search.adoc",
+            "sql/search.adoc",
         ),
         SearchIntent.FILTER: OperationAssets(
             get_sql_search_filter_system_prompt,
             get_sql_search_user_prompt,
-            "sql/40-search.adoc",
+            "sql/search.adoc",
         ),
         SearchIntent.ID: OperationAssets(
             get_sql_search_id_system_prompt,
             get_sql_search_user_prompt,
-            "sql/40-search.adoc",
+            "sql/search.adoc",
         ),
     },
 }

@@ -1,0 +1,134 @@
+= SQL search and filter support
+:page-nav-title: Search operations
+:page-display-order: 1250
+:page-upkeep-status: orange
+:page-toc: top
+:page-since: 4.11
+:page-description: How built-in search works in the SQL framework, the ConnId-to-SQL filter translation matrix, searching by UID, and refining the built-in WHERE clause.
+:page-keywords: SQL search, search filter, filter translation, WHERE clause, UID search
+
+The SQL framework provides built-in search for every object class, translating ConnId filters to SQL predicates.
+
+include::link-to-intro-preamble.adoc[]
+
+== Basic search
+
+No configuration is required: for each writable or read-only object class, a built-in search handler is registered.
+It selects the mapped columns (`+++__UID__+++`, `+++__NAME__+++` and all `returnedByDefault` attributes) with an optional WHERE clause and executes the query in pages of 200 rows.
+
+ConnId `AndFilter`, `OrFilter` and `NotFilter` are translated to SQL `AND` / `OR` / negation; each `AttributeFilter` is resolved through the attribute's column mapping.
+
+== Filter translation
+// TODO: The table below confuses me—some rows are clearly filters, e.g., `endsWith` ~~ `column LIKE '%?'`, but others don't look like filters at least on one side, e.g., "Numeric columns", "String columns".
+//       As in many places, I understand this confusion is likely due to my lack of domain knowledge but I would like you to check if there really is no need for explanation
+//       and all the info in table (and, by extension, the whole article) is safely sure to be understandable by the target audience.
+
+// TODO: The table contains "EndsWith" but there is no "StartsWith" -- intended?
+
+Which filters are supported depends on the column's SQL type family:
+
+[cols="1,4", options="header"]
+|===
+|ConnId filter |Translated to |Supported by
+
+|Equals
+|`column = ?` (`IS NULL` for empty value)
+|All column types
+
+|Contains
+|`column LIKE '%?%'`
+|String columns
+
+|StartsWith
+|`column LIKE '?%'`
+|String columns
+
+|EndsWith
+|`column LIKE '%?'`
+|String columns
+
+|GreaterThan
+|`column > ?`
+|Numeric columns, timestamp/date/time columns
+
+|GreaterThanOrEqual
+|`column >= ?`
+|Numeric columns, timestamp/date/time columns
+
+|LessThan
+|`column < ?`
+|Numeric columns, timestamp/date/time columns
+
+|LessThanOrEqual
+|`column +++<=+++ ?`
+// Note: without the pass-through, you get ⇐
+|Numeric columns, timestamp/date/time columns
+
+|NotEquals / Present / NotPresent
+|not supported by the built-in translator
+|— (use xref:/connectors/sql-framework/develop/custom-search/[] or a `where {}` block)
+|===
+
+Notes:
+
+* xref:/connectors/sql-framework/develop/schema-discovery/#uid-detection[Composite (multi-column) UIDs] only support `Equals`; the value must be the column values joined with a `.` separator.
+// TODO: I don't understand one thing here: The UID comprises of values joined from multiple colums, if I search according to this, I search by the composite value which cannot match exactly no single column row…
+//       So the ConnID splits it "smartly" to pass valid queries to the DB, or the DB engine splits it, or how does it work?
+//       I feel I'm missing something here and I'm unsure it was said clearly in this or other articles here.
+// TODO: Another thing here, the sentence "composite (multi-column) UIDs only support Equals" seems to talk about ConnID filters, yet ConnID does not have any "Equals" filter listed in the table above;
+//       for SQL `Equals`, there is filter "Supported by" which incidentally relates also to my comment above the table.
+* Filters on attributes that are not mapped to an SQL column produce a `ConnectorException`.
+* `LIKE` operands are not escaped for the `LIKE` wildcards (`%`, `_`, `\`); avoid using them in filter values.
+// TODO: An example of what exactly I cannot do would be nice: e.g., I have column rows with string "45% of voters" and such but also, e.g., "no voters", and I want to filter only rows containing "% voters" - that I cannot do?
+
+== Search by UID
+
+Searching by UID works out of the box — the UID attribute is always resolvable and filterable.
+For xref:/connectors/sql-framework/develop/schema-discovery/#uid-detection[composite UIDs], pass the joined value (e.g., `tenant-1.account-42`).
+
+== Refining the built-in WHERE clause
+
+// TODO: Although I understand what this does and have a vague understanding of the use case, it would be nice to explicitly state the use case: what this does, what is it good for, what's the purpose, and what's the end result.
+
+Add a fixed predicate on top of the filter-derived WHERE clause (applied to every search, empty filter included):
+
+[source,groovy]
+----
+objectClass("User") {
+    search {
+        sql {
+            builtIn {
+                enabled true
+                where { e ->
+                    e.col("status").ne("deleted")
+                    e.col("legacy").eq(false)
+                }
+            }
+        }
+    }
+}
+----
+
+Inside the `where { e +++->+++ }` closure (delegated to `SqlWherePredicateBuilder`):
+
+[cols="1,2", options="header"]
+|===
+|Method |Description
+
+|`e.col("name")` / `e.column("name")`
+|Typed column reference, resolved from the discovered table metadata (unknown column → `IllegalArgumentException`).
+
+|`.eq(value)`
+|Adds `column = value`; `eq(null)` yields `IS NULL`.
+
+|`.ne(value)`
+|Adds `column != value`.
+
+|`e.add(predicate)`
+|Adds a raw QueryDSL `BooleanExpression` directly.
+|===
+
+Always use the explicit `eq`/`ne` method calls — Groovy's `==` operator maps to Java `equals()` and will not produce an SQL predicate.
+
+All predicates are combined with `AND`.
+To disable the built-in search entirely, use `enabled false`; see xref:/connectors/sql-framework/develop/custom-search/[] to replace it with a custom query.
