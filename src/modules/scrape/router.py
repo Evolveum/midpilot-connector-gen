@@ -5,10 +5,10 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs import get_job_status
 from src.jobs.schema import JobCreateResponse, JobStatusIterationResponse
@@ -29,7 +29,7 @@ router = APIRouter()
 async def scrape_documentation(
     req: ScrapeRequest,
     session_id: UUID = Path(..., description="Session ID"),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ):
     """
     Enqueue a job to scrape documentation from provided URLs.
@@ -56,7 +56,7 @@ async def scrape_documentation(
 async def get_scrape_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of documentation scraping job.

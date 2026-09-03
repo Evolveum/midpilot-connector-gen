@@ -14,7 +14,7 @@ after this dependency.
 import logging
 from typing import Optional
 
-from fastapi import Depends, Request, Security
+from fastapi import Request, Security
 from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,7 @@ from src.auth.context import AuthContext, AuthMode
 from src.auth.errors import InvalidApiKeyError, MasterKeyRequiredError, MissingApiKeyError
 from src.auth.keys import KEY_PREFIX_LENGTH, hash_api_key, matches_master_key
 from src.config import config
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.api_key_repository import ApiKeyRepository
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ async def _resolve_context(api_key: Optional[str], db: AsyncSession) -> AuthCont
 async def authenticate_request(
     request: Request,
     api_key: Optional[str] = Security(api_key_header),
-    db: AsyncSession = Depends(get_db, scope="function"),
+    db: AsyncSession = DbSession,
 ) -> AuthContext:
     """Authenticate the request.
 

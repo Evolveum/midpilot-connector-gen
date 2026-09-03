@@ -159,7 +159,10 @@ retention or throughput can replace this table with shared object storage
 without changing the worker-call contract.
 
 The job and its `{key}JobId` session pointer are inserted in the same request
-transaction. Database dependencies use FastAPI function scope: response-model
+transaction. Routes and router-level dependencies take the session through the
+shared `DbSession` dependency in `src/core/db.py`, which pins FastAPI function
+scope in one place so a new route cannot silently reintroduce the
+commit-after-response race. Under that scope, response-model
 validation finishes first, the transaction then commits, and only afterwards
 is the enqueue response sent. A consumer or an immediate status request sees
 neither record until both commit, and once the client receives a successful
