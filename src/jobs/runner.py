@@ -74,8 +74,6 @@ async def schedule_coroutine_job(
         worker_kwargs=dict(worker_kwargs or {}),
         dynamic_input_provider=dynamic_input_provider if dynamic_input_enabled else None,
         session_result_key=session_result_key,
-        await_documentation=await_documentation,
-        await_documentation_timeout=await_documentation_timeout,
         binary_artifacts=binary_artifacts,
     )
     repo = JobRepository(db)

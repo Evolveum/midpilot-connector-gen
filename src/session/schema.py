@@ -49,18 +49,6 @@ class ProcessedDocumentationChunk:
     metadata: Dict[str, Any]
 
 
-class Session(CamelCaseModel):
-    """
-    Canonical session model. Serializes to camelCase (``by_alias=True``) for the
-    on-disk/API shape and accepts snake_case on input for backwards compatibility.
-    """
-
-    session_id: UUID = Field(..., description="UUID v4")
-    created_at: str = Field(..., description="Session creation time (ISO 8601)")
-    updated_at: str = Field(..., description="Session update time (ISO 8601)")
-    data: Dict[str, Any] = Field(default_factory=dict, description="Arbitrary session payload")
-
-
 class DocumentationItem(CamelCaseModel):
     """Unified documentation item that can come from scraper or user upload."""
 
