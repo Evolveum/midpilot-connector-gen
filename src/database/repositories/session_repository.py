@@ -259,25 +259,29 @@ class SessionRepository:
         ).scalar_one_or_none()
 
     async def get_session_values(self, session_id: UUID, keys: Sequence[str]) -> Dict[str, Any]:
-        """Read a selected set of top-level session values in one query.
-
-        This is intended for workers that need the same result kind for many entities. It
-        avoids both the N+1 query pattern of repeated ``get_session_data`` calls and the
-        memory cost of materializing every value stored in the session.
         """
-        unique_keys = list(dict.fromkeys(key for key in keys if key))
+        Read several session-data rows in one query.
+
+        Sits between ``get_session_value`` (one row) and the keyless
+        ``get_session_data`` (every stored payload): callers that need a known set
+        of keys - e.g. every generated Groovy script of a connector - would
+        otherwise pay one round trip per key or materialize the whole session.
+
+        :param session_id: The session ID
+        :param keys: The keys to read; duplicates are collapsed
+        :return: Mapping of key to value, omitting keys that do not exist
+        """
+        unique_keys = list(dict.fromkeys(keys))
         if not unique_keys:
             return {}
 
-        rows = (
-            await self.db.execute(
-                select(SessionData.key, SessionData.value).where(
-                    SessionData.session_id == session_id,
-                    SessionData.key.in_(unique_keys),
-                )
+        rows = await self.db.execute(
+            select(SessionData.key, SessionData.value).where(
+                SessionData.session_id == session_id,
+                SessionData.key.in_(unique_keys),
             )
-        ).all()
-        return {key: value for key, value in rows}
+        )
+        return {key: value for key, value in rows.all()}
 
     async def get_session_data(self, session_id: UUID, key: Optional[Union[str, List[str]]] = None) -> Optional[Any]:
         """

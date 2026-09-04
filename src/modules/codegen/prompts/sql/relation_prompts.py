@@ -19,7 +19,40 @@ the previous iteration, and optional relation analysis. The analysis can include
   ordered columns, named FOREIGN KEY constraints, and junction tables;
 - `apiType`, which must be `sql` for this prompt.
 
-Use the reference DSL exactly as documented here:
+Emit exactly this DSL shape, substituting the names carried by the selected relation:
+
+relationship("<RelationName>") {{
+    subject("<SubjectClass>") {{
+        attribute("<subjectAttribute>") {{
+            multiValued true
+            resolver {{
+                resolutionType PER_OBJECT
+                search {{
+                    attributeFilter("<objectAttribute>").eq(value)
+                }}
+            }}
+        }}
+    }}
+
+    object("<ObjectClass>") {{
+        attribute("<objectAttribute>") {{
+            multiValued true
+            resolver {{
+                resolutionType PER_OBJECT
+                search {{
+                    attributeFilter("<subjectAttribute>").eq(value)
+                }}
+            }}
+        }}
+    }}
+}}
+
+Stay within the `relationship`, `subject`, `object`, `attribute` and `resolver` elements shown
+above. Do not invent database-query DSL that is absent from it.
+
+`<relation_docs>` documents how the SQL framework itself derives relationships from foreign keys
+and primary keys - which constraint is a junction table, which is an embedded child table. Read it
+to interpret the physical evidence, not as the DSL reference; the shape above is the DSL contract.
 
 <relation_docs>
 {relation_docs}

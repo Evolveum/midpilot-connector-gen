@@ -98,6 +98,20 @@ class EndpointExtractionNotSupportedError(AppError):
         )
 
 
+class SqlTableIdentityConflictError(AppError):
+    """Raised when SQL schema sources cannot be paired without guessing a physical table."""
+
+    status_code = 422
+    code = "sql_table_identity_conflict"
+
+    def __init__(self, table_name: str, identities: list[str]):
+        rendered_identities = ", ".join(sorted(set(identities)))
+        super().__init__(
+            f"Conflicting SQL identities for table '{table_name}': {rendered_identities}. "
+            "Catalog, schema and table metadata must identify one unambiguous physical table."
+        )
+
+
 class RelationsNotFoundError(AppError):
     """Raised when a session has no extracted relations."""
 

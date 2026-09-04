@@ -4,6 +4,7 @@
 
 from typing import AsyncGenerator
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
@@ -41,11 +42,13 @@ Base = declarative_base()
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
-    Dependency for FastAPI to get database session.
+    Yield a database session and commit it when the caller returns.
 
-    Usage in FastAPI endpoints:
-        async def my_endpoint(db: AsyncSession = Depends(get_db)):
-            ...
+    API code must not depend on this directly; use :data:`DbSession` as the default for a
+    route's ``db`` parameter. That alias pins ``scope="function"`` so the commit here runs
+    before the response is serialized and sent, and only a successful commit lets the response
+    through. Exceptions from the handler, response validation or the commit roll the
+    transaction back before error handling.
     """
     async with async_session_maker() as session:
         try:
@@ -56,6 +59,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+
+DbSession = Depends(get_db, scope="function")
+"""Shared FastAPI dependency for the request-scoped database session."""
 
 
 async def close_db() -> None:

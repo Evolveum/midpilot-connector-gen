@@ -67,3 +67,46 @@ async def test_missing_key_and_missing_session_both_read_as_none() -> None:
     repo, _ = _repo_returning(None)
 
     assert await repo.get_session_data(uuid4(), "absentOutput") is None
+
+
+def _repo_returning_rows(rows: list[tuple[str, object]]) -> tuple[SessionRepository, MagicMock]:
+    """Build a repository whose next read resolves to ``rows`` of (key, value)."""
+    db = MagicMock()
+    result = MagicMock()
+    result.all.return_value = rows
+    db.execute = AsyncMock(return_value=result)
+    return SessionRepository(db), db
+
+
+@pytest.mark.asyncio
+async def test_bulk_read_fetches_every_key_in_one_query() -> None:
+    """A caller needing many known keys must not pay one round trip per key."""
+    repo, db = _repo_returning_rows([("userCreateOutput", {"code": "a"}), ("userUpdateOutput", {"code": "b"})])
+
+    values = await repo.get_session_values(uuid4(), ["userCreateOutput", "userUpdateOutput", "userDeleteOutput"])
+
+    assert values == {"userCreateOutput": {"code": "a"}, "userUpdateOutput": {"code": "b"}}
+    db.execute.assert_awaited_once()
+    sql = " ".join(str(db.execute.await_args.args[0]).split())
+    assert "session_data.key IN " in sql
+    # Missing keys are simply absent, never None-valued entries.
+    assert "userDeleteOutput" not in values
+
+
+@pytest.mark.asyncio
+async def test_bulk_read_collapses_duplicate_keys() -> None:
+    repo, db = _repo_returning_rows([("userCreateOutput", {"code": "a"})])
+
+    await repo.get_session_values(uuid4(), ["userCreateOutput", "userCreateOutput"])
+
+    params = db.execute.await_args.args[0].compile().params
+    assert params["key_1"] == ["userCreateOutput"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_read_of_no_keys_does_not_query() -> None:
+    repo, db = _repo_returning_rows([])
+
+    assert await repo.get_session_values(uuid4(), []) == {}
+
+    db.execute.assert_not_awaited()

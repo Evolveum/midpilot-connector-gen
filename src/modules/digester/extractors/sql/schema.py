@@ -5,10 +5,21 @@
 import json
 import re
 from collections import OrderedDict
-from typing import Any, Iterable
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable
 
 from src.documents.chunking import normalize_to_text
-from src.modules.digester.extractors.sql.conndev_schema import extract_conndev_sql_tables, is_conndev_table
+from src.modules.digester.errors import SqlTableIdentityConflictError
+from src.modules.digester.extractors.sql.conndev_schema import (
+    SqlTableSource,
+    extract_conndev_sql_tables,
+    sql_table_source,
+)
+from src.modules.digester.extractors.sql.identifiers import (
+    clean_sql_identifier,
+    clean_sql_identifier_component,
+    split_sql_table_identifier,
+)
 from src.modules.digester.schemas.common import ChunkReference, build_chunk_references_from_doc_items
 
 _CREATE_TABLE_RE = re.compile(
@@ -33,11 +44,41 @@ _DATABASE_TABLE_FIELDS = frozenset({"primaryKey", "foreignKeys", "description"})
 _CONNDEV_TABLE_FIELDS = frozenset({"objectClass", "databaseSchema", "source"})
 
 
-def _clean_identifier(value: Any) -> str:
-    text = str(value or "").strip()
-    if "." in text:
-        text = text.rsplit(".", 1)[-1]
-    return text.strip('"`[] ')
+@dataclass(frozen=True)
+class _SqlTableIdentity:
+    """Normalized physical identity used only while reconciling extracted SQL records."""
+
+    catalog: str
+    schema: str
+    table: str
+
+    def is_compatible_with(self, other: "_SqlTableIdentity") -> bool:
+        return (
+            self.table == other.table
+            and (not self.schema or not other.schema or self.schema == other.schema)
+            and (not self.catalog or not other.catalog or self.catalog == other.catalog)
+        )
+
+    def render(self) -> str:
+        return ".".join(component for component in (self.catalog, self.schema, self.table) if component)
+
+
+@dataclass
+class _CollectedTable:
+    table: dict[str, Any]
+    position: int
+
+
+def _normalized_identity_component(value: Any) -> str:
+    return clean_sql_identifier_component(value).casefold()
+
+
+def _table_identity(table: dict[str, Any]) -> _SqlTableIdentity:
+    return _SqlTableIdentity(
+        catalog=_normalized_identity_component(table.get("databaseCatalog")),
+        schema=_normalized_identity_component(table.get("databaseSchema")),
+        table=clean_sql_identifier(table.get("table")).casefold(),
+    )
 
 
 def _split_sql_columns(body: str) -> list[str]:
@@ -69,7 +110,7 @@ def _primary_key_columns_from_constraint(definition: str) -> list[str]:
         identifier_match = _IDENTIFIER_PREFIX_RE.match(value)
         if not identifier_match:
             continue
-        name = _clean_identifier(identifier_match.group("identifier"))
+        name = clean_sql_identifier(identifier_match.group("identifier"))
         if name:
             columns.append(name)
     return columns
@@ -77,13 +118,13 @@ def _primary_key_columns_from_constraint(definition: str) -> list[str]:
 
 def _normalize_column(column: Any) -> dict[str, Any] | None:
     if isinstance(column, str):
-        name = _clean_identifier(column)
+        name = clean_sql_identifier(column)
         return {"name": name} if name else None
     if not isinstance(column, dict):
         return None
 
     raw_name = column.get("name") or column.get("column") or column.get("columnName")
-    name = _clean_identifier(raw_name)
+    name = clean_sql_identifier(raw_name)
     if not name:
         return None
 
@@ -105,18 +146,28 @@ def _normalize_column(column: Any) -> dict[str, Any] | None:
 
 def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> dict[str, Any] | None:
     if isinstance(table, str):
-        name = _clean_identifier(table)
+        qualified_catalog, qualified_schema, name = split_sql_table_identifier(table)
         if not name:
             return None
         normalized: dict[str, Any] = {"table": name, "columns": []}
+        if qualified_catalog:
+            normalized["databaseCatalog"] = qualified_catalog
+        if qualified_schema:
+            normalized["databaseSchema"] = qualified_schema
     elif isinstance(table, dict):
         raw_name = table.get("table") or table.get("name") or table.get("tableName")
-        name = _clean_identifier(raw_name)
+        qualified_catalog, qualified_schema, name = split_sql_table_identifier(raw_name)
         if not name:
             return None
         raw_columns = table.get("columns") or table.get("attributes") or table.get("fields") or []
         columns = [col for raw in raw_columns if (col := _normalize_column(raw))]
         normalized = {"table": name, "columns": columns}
+        database_catalog = clean_sql_identifier_component(table.get("databaseCatalog") or table.get("catalog"))
+        if database_catalog or qualified_catalog:
+            normalized["databaseCatalog"] = database_catalog or qualified_catalog
+        database_schema = clean_sql_identifier_component(table.get("databaseSchema") or table.get("schema"))
+        if database_schema or qualified_schema:
+            normalized["databaseSchema"] = database_schema or qualified_schema
         for key in ("primaryKey", "foreignKeys", "description"):
             if key in table and table[key] is not None:
                 normalized[key] = table[key]
@@ -124,10 +175,10 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
         table_primary_key = normalized.get("primaryKey")
         if isinstance(table_primary_key, list):
             primary_key_columns = {
-                cleaned.casefold() for value in table_primary_key if (cleaned := _clean_identifier(value))
+                cleaned.casefold() for value in table_primary_key if (cleaned := clean_sql_identifier(value))
             }
             for column in columns:
-                column_name = _clean_identifier(column.get("column") or column.get("name"))
+                column_name = clean_sql_identifier(column.get("column") or column.get("name"))
                 if column_name:
                     column["primaryKey"] = column_name.casefold() in primary_key_columns
     else:
@@ -139,7 +190,7 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
 
 
 def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str] | None) -> dict[str, Any] | None:
-    table_name = _clean_identifier(match.group("name"))
+    table_name = match.group("name")
     columns: list[dict[str, Any]] = []
     primary_key: list[str] = []
     foreign_keys: list[dict[str, Any]] = []
@@ -156,7 +207,7 @@ def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str
         column_match = _COLUMN_LINE_RE.match(definition)
         if not column_match:
             continue
-        column_name = _clean_identifier(column_match.group("name"))
+        column_name = clean_sql_identifier(column_match.group("name"))
         column = {
             "name": column_name,
             "type": " ".join(_COLUMN_CONSTRAINT_RE.sub("", column_match.group("type")).split()),
@@ -235,49 +286,78 @@ def _merge_relevant_documentations(existing: dict[str, Any], incoming: list[Any]
 
 def _column_identity(column: dict[str, Any]) -> str:
     """Return the physical database-column identity used to join Conndev and DDL records."""
-    return _clean_identifier(column.get("column") or column.get("name")).lower()
+    return clean_sql_identifier(column.get("column") or column.get("name")).lower()
 
 
 def _merge_cross_source_column(conndev_column: dict[str, Any], database_column: dict[str, Any]) -> dict[str, Any]:
     """Combine one logical ConnId attribute with its physical database declaration."""
-    merged = {**database_column, **conndev_column}
+    merged = dict(conndev_column)
     for field in _DATABASE_COLUMN_FIELDS:
         if field in database_column:
             merged[field] = database_column[field]
     return merged
 
 
+def _fill_physical_column_gaps(authoritative: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
+    """Return the authoritative physical column with only the recognized SQL fields it lacks
+    supplied from a lower-precedence physical source (a raw schema)."""
+    merged = dict(authoritative)
+    for field in _DATABASE_COLUMN_FIELDS:
+        if field not in merged and field in secondary:
+            merged[field] = secondary[field]
+    return merged
+
+
+def _overlay_columns(
+    ordered: list[dict[str, Any]],
+    lookup: list[dict[str, Any]],
+    combine: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Emit ``ordered`` (its order and names win), combining each column with its identity
+    match in ``lookup`` via ``combine``, then append the ``lookup`` columns nothing matched."""
+    lookup_by_name = {_column_identity(column): column for column in lookup}
+    merged_columns: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for column in ordered:
+        identity = _column_identity(column)
+        match = lookup_by_name.get(identity)
+        merged_columns.append(combine(column, match) if identity and match is not None else column)
+        if identity:
+            seen.add(identity)
+    merged_columns.extend(
+        column for column in lookup if not (identity := _column_identity(column)) or identity not in seen
+    )
+    return merged_columns
+
+
 def _merge_columns(
-    existing: dict[str, Any], incoming: dict[str, Any], *, existing_is_conndev: bool, incoming_is_conndev: bool
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+    *,
+    existing_source: SqlTableSource,
+    incoming_source: SqlTableSource,
 ) -> list[dict[str, Any]]:
     existing_columns = [column for column in existing.get("columns", []) if isinstance(column, dict)]
     incoming_columns = [column for column in incoming.get("columns", []) if isinstance(column, dict)]
+    sources = {existing_source, incoming_source}
 
-    if existing_is_conndev != incoming_is_conndev:
-        conndev_columns = existing_columns if existing_is_conndev else incoming_columns
-        database_columns = incoming_columns if existing_is_conndev else existing_columns
-        database_by_name = {_column_identity(column): column for column in database_columns}
-        merged_columns: list[dict[str, Any]] = []
-        seen: set[str] = set()
+    if SqlTableSource.CONNDEV_OBJECT_CLASS in sources and len(sources) == 2:
+        # Logical <-> physical: the object-class export fixes column order and logical names;
+        # the physical source only overlays the recognized SQL column fields.
+        object_class_first = existing_source is SqlTableSource.CONNDEV_OBJECT_CLASS
+        conndev_columns = existing_columns if object_class_first else incoming_columns
+        database_columns = incoming_columns if object_class_first else existing_columns
+        return _overlay_columns(conndev_columns, database_columns, _merge_cross_source_column)
 
-        # Conndev order and logical names are stable; database-only columns follow afterwards.
-        for conndev_column in conndev_columns:
-            identity = _column_identity(conndev_column)
-            database_column = database_by_name.get(identity)
-            merged_columns.append(
-                _merge_cross_source_column(conndev_column, database_column)
-                if identity and database_column is not None
-                else conndev_column
-            )
-            if identity:
-                seen.add(identity)
-        merged_columns.extend(
-            column for column in database_columns if not (identity := _column_identity(column)) or identity not in seen
-        )
-        return merged_columns
+    if sources == {SqlTableSource.CONNDEV_SQL_TABLE, SqlTableSource.RAW_SCHEMA}:
+        # Two physical sources: the conndev SQL-table export is authoritative; the raw schema
+        # only fills column fields the export does not carry.
+        sql_table_first = existing_source is SqlTableSource.CONNDEV_SQL_TABLE
+        authoritative_columns = existing_columns if sql_table_first else incoming_columns
+        raw_columns = incoming_columns if sql_table_first else existing_columns
+        return _overlay_columns(authoritative_columns, raw_columns, _fill_physical_column_gaps)
 
-    # Preserve the established first-document precedence for duplicate records from the same
-    # source, while still adding columns that only the later document declares.
+    # Same source kind: keep the first document's columns, add only what the later one declares.
     merged_columns = list(existing_columns)
     seen = {_column_identity(column) for column in existing_columns}
     merged_columns.extend(
@@ -287,22 +367,38 @@ def _merge_columns(
 
 
 def _merge_table_metadata(
-    existing: dict[str, Any], incoming: dict[str, Any], *, existing_is_conndev: bool, incoming_is_conndev: bool
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+    *,
+    existing_source: SqlTableSource,
+    incoming_source: SqlTableSource,
 ) -> None:
-    """Merge table-level metadata with protocol-specific source precedence."""
-    for key, value in incoming.items():
-        if key not in {"columns", "relevantDocumentations"} and key not in existing:
-            existing[key] = value
+    """Merge table-level metadata into ``existing`` with source-precedence rules."""
+    sources = {existing_source, incoming_source}
 
-    if existing_is_conndev != incoming_is_conndev:
-        conndev_table = existing if existing_is_conndev else incoming
-        database_table = incoming if existing_is_conndev else existing
+    if SqlTableSource.CONNDEV_OBJECT_CLASS in sources and len(sources) == 2:
+        # Logical <-> physical: names / ConnId flags from the object-class export, physical
+        # keys and qualifiers from the database side.
+        object_class_first = existing_source is SqlTableSource.CONNDEV_OBJECT_CLASS
+        conndev_table = existing if object_class_first else incoming
+        database_table = incoming if object_class_first else existing
         for field in _CONNDEV_TABLE_FIELDS:
             if field in conndev_table:
                 existing[field] = conndev_table[field]
         for field in _DATABASE_TABLE_FIELDS:
             if field in database_table:
                 existing[field] = database_table[field]
+        if "databaseCatalog" in database_table:
+            existing["databaseCatalog"] = database_table["databaseCatalog"]
+        if "databaseSchema" not in existing and "databaseSchema" in database_table:
+            existing["databaseSchema"] = database_table["databaseSchema"]
+        return
+
+    # Same source kind, or a raw schema filling gaps in the authoritative SQL-table export:
+    # keep every value ``existing`` already carries, add only the keys it is missing.
+    for key, value in incoming.items():
+        if key not in {"columns", "relevantDocumentations"} and key not in existing:
+            existing[key] = value
 
 
 def _extract_tables_from_item(item: dict, source_ref: dict[str, str] | None) -> list[dict[str, Any]]:
@@ -318,41 +414,235 @@ def _extract_tables_from_item(item: dict, source_ref: dict[str, str] | None) -> 
     return _extract_tables_from_text(normalize_to_text(item.get("content", "")), source_ref)
 
 
+def _same_source_key(table: dict[str, Any]) -> tuple[SqlTableSource, _SqlTableIdentity, str]:
+    """Coalesce only records from the same source kind that share the same full physical
+    identity (and, for object-class exports, the same exported object-class name)."""
+    source = sql_table_source(table)
+    logical_name = (
+        str(table.get("objectClass") or "").strip().casefold() if source is SqlTableSource.CONNDEV_OBJECT_CLASS else ""
+    )
+    return source, _table_identity(table), logical_name
+
+
+def _coalesce_same_source_tables(tables: list[_CollectedTable]) -> list[_CollectedTable]:
+    """Apply established first-document precedence only to records with the same full identity."""
+    by_identity: OrderedDict[tuple[SqlTableSource, _SqlTableIdentity, str], _CollectedTable] = OrderedDict()
+    for record in tables:
+        key = _same_source_key(record.table)
+        existing_record = by_identity.get(key)
+        if existing_record is None:
+            by_identity[key] = record
+            continue
+
+        existing = existing_record.table
+        incoming = record.table
+        # Records sharing a key share a source kind, so this always hits the same-kind branch.
+        source = sql_table_source(existing)
+        existing["columns"] = _merge_columns(existing, incoming, existing_source=source, incoming_source=source)
+        _merge_table_metadata(existing, incoming, existing_source=source, incoming_source=source)
+        _merge_relevant_documentations(existing, incoming.get("relevantDocumentations", []))
+    return list(by_identity.values())
+
+
+def _identity_conflict(table_name: str, records: list[_CollectedTable]) -> SqlTableIdentityConflictError:
+    return SqlTableIdentityConflictError(
+        table_name,
+        [_table_identity(record.table).render() for record in records],
+    )
+
+
+def _pair_by_compatible_identity(
+    records: list[_CollectedTable],
+    *,
+    is_left: Callable[[dict[str, Any]], bool],
+    is_right: Callable[[dict[str, Any]], bool],
+) -> dict[int, int]:
+    """Pair left-set records with right-set records one-to-one by compatible physical identity.
+
+    Records are grouped by bare table name; within a group each left record matches the right
+    records whose identity ``is_compatible_with`` it (a missing catalog/schema component
+    matches, a differing one does not). Raises :class:`SqlTableIdentityConflictError` when a
+    record on either side is compatible with more than one candidate, or when a group is left
+    with both an unmatched left and an unmatched right record (a real contradiction, not one
+    under-specified identity). Returns ``{left_index: right_index}`` for every pair found.
+    """
+    by_table_name: OrderedDict[str, list[int]] = OrderedDict()
+    for index, record in enumerate(records):
+        by_table_name.setdefault(_table_identity(record.table).table, []).append(index)
+
+    pairs: dict[int, int] = {}
+    for table_name, indices in by_table_name.items():
+        left_indices = [index for index in indices if is_left(records[index].table)]
+        right_indices = [index for index in indices if is_right(records[index].table)]
+        if not left_indices or not right_indices:
+            continue
+
+        matches_by_left = {
+            left_index: [
+                right_index
+                for right_index in right_indices
+                if _table_identity(records[left_index].table).is_compatible_with(
+                    _table_identity(records[right_index].table)
+                )
+            ]
+            for left_index in left_indices
+        }
+        matches_by_right = {
+            right_index: [left_index for left_index in left_indices if right_index in matches_by_left[left_index]]
+            for right_index in right_indices
+        }
+        if any(len(matches) > 1 for matches in (*matches_by_left.values(), *matches_by_right.values())):
+            raise _identity_conflict(table_name, [records[index] for index in indices])
+
+        unmatched_left = [index for index, matches in matches_by_left.items() if not matches]
+        unmatched_right = [index for index, matches in matches_by_right.items() if not matches]
+        if unmatched_left and unmatched_right:
+            raise _identity_conflict(
+                table_name,
+                [records[index] for index in (*unmatched_left, *unmatched_right)],
+            )
+
+        for left_index, matches in matches_by_left.items():
+            if matches:
+                pairs[left_index] = matches[0]
+    return pairs
+
+
+def _merge_complementary_tables(logical: _CollectedTable, database: _CollectedTable) -> _CollectedTable:
+    """Build a logical table enriched only by the database fields the digester understands."""
+    database_source = sql_table_source(database.table)
+    merged = dict(logical.table)
+    merged["columns"] = _merge_columns(
+        logical.table,
+        database.table,
+        existing_source=SqlTableSource.CONNDEV_OBJECT_CLASS,
+        incoming_source=database_source,
+    )
+    _merge_table_metadata(
+        merged,
+        database.table,
+        existing_source=SqlTableSource.CONNDEV_OBJECT_CLASS,
+        incoming_source=database_source,
+    )
+
+    merged.pop("relevantDocumentations", None)
+    for record in sorted((logical, database), key=lambda item: item.position):
+        _merge_relevant_documentations(merged, record.table.get("relevantDocumentations", []))
+    return _CollectedTable(merged, min(logical.position, database.position))
+
+
+def _absorb_raw_into_sql_table(sql_table: _CollectedTable, raw: _CollectedTable) -> None:
+    """Enrich the authoritative conndev SQL-table record in place with the raw schema's gap
+    fields, then leave the raw record to be discarded by the caller."""
+    sql_table.table["columns"] = _merge_columns(
+        sql_table.table,
+        raw.table,
+        existing_source=SqlTableSource.CONNDEV_SQL_TABLE,
+        incoming_source=SqlTableSource.RAW_SCHEMA,
+    )
+    _merge_table_metadata(
+        sql_table.table,
+        raw.table,
+        existing_source=SqlTableSource.CONNDEV_SQL_TABLE,
+        incoming_source=SqlTableSource.RAW_SCHEMA,
+    )
+    # Capture both sides' references before clearing the target: ``sql_table`` is one of the
+    # records iterated, so reading it after the pop would drop its own documentation.
+    ordered_refs = [
+        ref
+        for record in sorted((sql_table, raw), key=lambda item: item.position)
+        for ref in record.table.get("relevantDocumentations", [])
+    ]
+    sql_table.table.pop("relevantDocumentations", None)
+    _merge_relevant_documentations(sql_table.table, ordered_refs)
+    sql_table.position = min(sql_table.position, raw.position)
+
+
+def _merge_physical_sources(records: list[_CollectedTable]) -> list[_CollectedTable]:
+    """Fold every raw-schema record into the conndev SQL-table record for the same table.
+
+    The SQL-table export is the physical authority; a raw schema for the same physical table
+    (possibly under a less-qualified identity, such as a bare ``CREATE TABLE``) only contributes
+    fields it alone carries and is then dropped. Guarantees at most one physical record per
+    compatible identity for :func:`_reconcile_complementary_sources`.
+    """
+    pairs = _pair_by_compatible_identity(
+        records,
+        is_left=lambda table: sql_table_source(table) is SqlTableSource.CONNDEV_SQL_TABLE,
+        is_right=lambda table: sql_table_source(table) is SqlTableSource.RAW_SCHEMA,
+    )
+    absorbed = set(pairs.values())
+    for sql_table_index, raw_index in pairs.items():
+        _absorb_raw_into_sql_table(records[sql_table_index], records[raw_index])
+    return [record for index, record in enumerate(records) if index not in absorbed]
+
+
+def _reconcile_complementary_sources(records: list[_CollectedTable]) -> list[_CollectedTable]:
+    """Pair each logical object-class record with its single physical record, if one exists."""
+    pairs = _pair_by_compatible_identity(
+        records,
+        is_left=lambda table: sql_table_source(table) is SqlTableSource.CONNDEV_OBJECT_CLASS,
+        is_right=lambda table: sql_table_source(table) is not SqlTableSource.CONNDEV_OBJECT_CLASS,
+    )
+    paired_database = set(pairs.values())
+    reconciled: list[_CollectedTable] = []
+    for index, record in enumerate(records):
+        database_index = pairs.get(index)
+        if database_index is not None:
+            reconciled.append(_merge_complementary_tables(record, records[database_index]))
+        elif index not in paired_database:
+            reconciled.append(record)
+    reconciled.sort(key=lambda item: item.position)
+    return reconciled
+
+
+def _qualify_colliding_object_classes(records: list[_CollectedTable]) -> None:
+    """Give colliding public class names stable physical identities the GUI can round-trip."""
+    by_object_class: OrderedDict[str, list[_CollectedTable]] = OrderedDict()
+    for record in records:
+        object_class = object_class_name_for_table(record.table).strip()
+        by_object_class.setdefault(object_class.casefold(), []).append(record)
+
+    for colliding in by_object_class.values():
+        identities = {_table_identity(record.table) for record in colliding}
+        if len(identities) < 2:
+            continue
+        if any(left != right and left.is_compatible_with(right) for left in identities for right in identities):
+            raise _identity_conflict(object_class_name_for_table(colliding[0].table), colliding)
+        for record in colliding:
+            record.table["objectClass"] = _table_identity(record.table).render()
+
+    qualified_names: dict[str, _CollectedTable] = {}
+    for record in records:
+        object_class = object_class_name_for_table(record.table).strip()
+        existing = qualified_names.get(object_class.casefold())
+        if existing is not None and _table_identity(existing.table) != _table_identity(record.table):
+            raise _identity_conflict(object_class, [existing, record])
+        qualified_names[object_class.casefold()] = record
+
+
 def collect_sql_tables(doc_items: Iterable[dict]) -> list[dict[str, Any]]:
     doc_items_list = list(doc_items)
-    tables_by_name: OrderedDict[str, dict[str, Any]] = OrderedDict()
     refs_by_chunk = {
         ref.chunk_id: ref.to_internal_dict() for ref in build_chunk_references_from_doc_items(doc_items_list)
     }
 
+    extracted: list[_CollectedTable] = []
+    position = 0
     for item in doc_items_list:
         chunk_id = str(item.get("chunkId") or "").strip()
         source_ref = refs_by_chunk.get(chunk_id)
         for table in _extract_tables_from_item(item, source_ref):
-            name = str(table.get("table") or "").strip()
+            name = clean_sql_identifier(table.get("table"))
             if not name:
                 continue
-            existing = tables_by_name.get(name.lower())
-            if existing is None:
-                tables_by_name[name.lower()] = table
-                continue
-            existing_is_conndev = is_conndev_table(existing)
-            incoming_is_conndev = is_conndev_table(table)
-            existing["columns"] = _merge_columns(
-                existing,
-                table,
-                existing_is_conndev=existing_is_conndev,
-                incoming_is_conndev=incoming_is_conndev,
-            )
-            _merge_table_metadata(
-                existing,
-                table,
-                existing_is_conndev=existing_is_conndev,
-                incoming_is_conndev=incoming_is_conndev,
-            )
-            _merge_relevant_documentations(existing, table.get("relevantDocumentations", []))
+            table["table"] = name
+            extracted.append(_CollectedTable(table, position))
+            position += 1
 
-    return list(tables_by_name.values())
+    reconciled = _reconcile_complementary_sources(_merge_physical_sources(_coalesce_same_source_tables(extracted)))
+    _qualify_colliding_object_classes(reconciled)
+    return [record.table for record in reconciled]
 
 
 # Word endings that look plural but are not, so a trailing "s" must be kept
@@ -400,13 +690,17 @@ def sql_type_to_attribute_type(sql_type: Any) -> tuple[str | None, str | None]:
 
 def tables_for_object_class(tables: list[dict[str, Any]], object_class: str) -> list[dict[str, Any]]:
     target = object_class.lower().strip()
-    selected = [
-        table
-        for table in tables
-        if object_class_name_for_table(table).lower() == target
-        or object_class_name_from_table(str(table.get("table") or "")).lower() == target
-        or str(table.get("table") or "").lower() == target
+    explicitly_bound = [table for table in tables if str(table.get("objectClass") or "").strip().lower() == target]
+    if explicitly_bound:
+        return explicitly_bound
+
+    derived = [
+        table for table in tables if object_class_name_from_table(str(table.get("table") or "")).lower() == target
     ]
-    if selected:
-        return selected
+    if derived:
+        return derived
+
+    physical_name = [table for table in tables if str(table.get("table") or "").lower() == target]
+    if physical_name:
+        return physical_name
     return [table for table in tables if target in str(table.get("table") or "").lower()]

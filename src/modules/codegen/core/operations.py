@@ -360,7 +360,7 @@ class AuthorizationGenerator(BaseGroovyGenerator):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold=default_scaffold,
-            logger_prefix=f"[Codegen:Authorization:{protocol.value}]",
+            logger_prefix=f"[Codegen:Authorization:{protocol.value.upper()}]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["authorization_docs"] = docs_text

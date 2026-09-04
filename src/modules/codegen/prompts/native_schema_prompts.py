@@ -18,6 +18,12 @@ Prepare a native schema in Groovy code based on the following `.adoc` documentat
 {user_schema_docs}
 </user_schema_docs>
 
+ATTRIBUTE NAMING:
+- The second argument of `connIdAttribute` and the first argument of `attribute(...)` MUST exactly match the
+  native connector attribute name from `name` in <extracted_info>. Never substitute a protocol-level or wire
+  name for it.
+- Every generated script of one object class must use the identical native name for the same attribute; the
+  ConnID connector merges them into one and rejects a mismatch.
 """)
         + protocol_context_rules
         + "{repair_system_suffix}"

@@ -19,13 +19,14 @@ in, the same ranking out.
 """
 
 import logging
+from collections import Counter
 from typing import Any, Dict, List
 from uuid import UUID
 
 from src.documents.normalize import canonical_object_class_key
 from src.jobs import update_job_progress
 from src.modules.digester.aggregation.object_class_ranking import deduplicate_and_sort_sql_object_classes
-from src.modules.digester.extractors.sql.conndev_schema import is_conndev_table
+from src.modules.digester.extractors.sql.conndev_schema import SqlTableSource, sql_table_source
 from src.modules.digester.extractors.sql.schema import (
     collect_sql_tables,
     object_class_name_for_table,
@@ -117,10 +118,13 @@ async def extract_sql_object_classes(
         if chunk_refs:
             class_to_chunks.setdefault(class_key, []).extend(chunk_refs)
 
+    kinds = Counter(sql_table_source(table) for table in tables)
     logger.info(
-        "[Digester:ObjectClasses] SQL schema read: %s tables (%s from a conndev export)",
+        "[Digester:ObjectClasses] SQL schema read: %s tables (object-class=%s, sql-table=%s, raw=%s)",
         len(tables),
-        sum(1 for table in tables if is_conndev_table(table)),
+        kinds[SqlTableSource.CONNDEV_OBJECT_CLASS],
+        kinds[SqlTableSource.CONNDEV_SQL_TABLE],
+        kinds[SqlTableSource.RAW_SCHEMA],
     )
 
     result = await deduplicate_and_sort_sql_object_classes(

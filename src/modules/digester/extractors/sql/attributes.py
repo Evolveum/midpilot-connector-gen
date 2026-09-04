@@ -14,6 +14,7 @@ from src.modules.digester.extractors.sql.schema import (
     sql_type_to_attribute_type,
     tables_for_object_class,
 )
+from src.shared.coerce import as_nonempty_str
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
@@ -26,13 +27,32 @@ def _column_attribute_type(column: dict[str, Any]) -> tuple[str | None, str | No
     return sql_type_to_attribute_type(column.get("type"))
 
 
+def _attribute_foreign_key(column: dict[str, Any]) -> dict[str, str] | None:
+    """Keep only the typed foreign-key shape understood by downstream SQL codegen."""
+    foreign_key = column.get("foreignKey")
+    if not isinstance(foreign_key, dict):
+        return None
+
+    referenced_table = as_nonempty_str(foreign_key.get("referencedTable"))
+    referenced_column = as_nonempty_str(foreign_key.get("referencedColumn"))
+    if referenced_table is None or referenced_column is None:
+        return None
+
+    normalized = {
+        "referencedTable": referenced_table,
+        "referencedColumn": referenced_column,
+    }
+    constraint_name = as_nonempty_str(foreign_key.get("constraintName"))
+    if constraint_name is not None:
+        normalized["constraintName"] = constraint_name
+    return normalized
+
+
 def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-    name = str(column.get("name") or "").strip()
-    if not name:
+    name = as_nonempty_str(column.get("name"))
+    if name is None:
         return None
-    column_name = str(column.get("column") or name).strip()
-    if not column_name:
-        return None
+    column_name = as_nonempty_str(column.get("column")) or name
 
     attr_type, attr_format = _column_attribute_type(column)
 
@@ -53,8 +73,7 @@ def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tup
     relevant_documentations = table.get("relevantDocumentations")
     if not isinstance(relevant_documentations, list):
         relevant_documentations = []
-
-    return name, {
+    payload = {
         "type": attr_type,
         "format": attr_format,
         "description": _column_description(column_name, table),
@@ -67,8 +86,16 @@ def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tup
         "table": table.get("table"),
         "column": column_name,
         "primaryKey": column.get("primaryKey"),
+        "foreignKey": _attribute_foreign_key(column),
         "relevantDocumentations": relevant_documentations,
     }
+    database_catalog = as_nonempty_str(table.get("databaseCatalog"))
+    if database_catalog is not None:
+        payload["databaseCatalog"] = database_catalog
+    database_schema = as_nonempty_str(table.get("databaseSchema"))
+    if database_schema is not None:
+        payload["databaseSchema"] = database_schema
+    return name, payload
 
 
 def _column_description(name: str, table: dict[str, Any]) -> str:

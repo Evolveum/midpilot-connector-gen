@@ -6,7 +6,7 @@
 
 from collections import OrderedDict
 
-from src.shared.coerce import as_dict_list, as_list, as_mapping, as_str, as_str_list, is_true
+from src.shared.coerce import as_dict_list, as_list, as_mapping, as_nonempty_str, as_str, as_str_list, is_true
 
 
 def test_as_mapping_passes_through_mappings():
@@ -30,6 +30,12 @@ def test_as_str_passes_through_strings_only():
     assert as_str("hi") == "hi"
     for bad in (None, 123, [], {}):
         assert as_str(bad) == ""
+
+
+def test_as_nonempty_str_returns_stripped_value_or_none():
+    assert as_nonempty_str(" value ") == "value"
+    for bad in ("", "   ", None, 42, [], {}):
+        assert as_nonempty_str(bad) is None
 
 
 def test_as_str_list_keeps_only_strings():

@@ -79,9 +79,16 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
             "type": "string",
             "description": "User login",
             "mandatory": True,
+            "databaseCatalog": "database1",
+            "databaseSchema": "identity",
             "table": "m_user",
             "column": "nameorig",
             "primaryKey": True,
+            "foreignKey": {
+                "constraintName": "m_user_nameorig_fkey",
+                "referencedTable": "m_name",
+                "referencedColumn": "nameorig",
+            },
         },
     }
 
@@ -100,13 +107,19 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
 
     assert result == {"code": "mocked sql schema code"}
     _, kwargs = mock_generate_groovy.call_args
-    assert "SQL native schema mapping" in kwargs["extra_prompt_vars"]["user_schema_docs"]
     assert kwargs["system_prompt"] == get_native_schema_system_prompt
     assert kwargs["user_prompt"] == get_native_schema_user_prompt
     assert set(kwargs["extra_prompt_vars"]) == {"user_schema_docs"}
+    assert kwargs["records"][0]["databaseCatalog"] == "database1"
+    assert kwargs["records"][0]["databaseSchema"] == "identity"
     assert kwargs["records"][0]["table"] == "m_user"
     assert kwargs["records"][0]["column"] == "nameorig"
     assert kwargs["records"][0]["primaryKey"] is True
+    assert kwargs["records"][0]["foreignKey"] == {
+        "constraintName": "m_user_nameorig_fkey",
+        "referencedTable": "m_name",
+        "referencedColumn": "nameorig",
+    }
 
 
 @pytest.mark.asyncio

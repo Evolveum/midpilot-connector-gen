@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.context import AuthContext
 from src.auth.dependencies import get_auth_context
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.session.access import ensure_session_exists
@@ -31,7 +31,7 @@ router = APIRouter()
     summary="Get session summary",
 )
 async def get_session_summary(
-    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)
+    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = DbSession
 ) -> Dict[str, Any]:
     """
     Retrieve a top-level summary of session data by session ID.
@@ -54,7 +54,7 @@ async def get_session_summary(
     summary="List all jobs in session",
 )
 async def list_session_jobs(
-    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)
+    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = DbSession
 ) -> Dict[str, Any]:
     """
     List all jobs associated with this session.
@@ -72,7 +72,7 @@ async def list_session_jobs(
 # HEAD Endpoints
 @router.head("/{session_id}", summary="Check if session exists", status_code=204)
 async def check_session_exists(
-    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)
+    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = DbSession
 ) -> None:
     """
     Check if a session exists by session ID.
@@ -90,7 +90,7 @@ async def check_session_exists(
     summary="Create a new session",
 )
 async def create_session(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
     auth: AuthContext = Depends(get_auth_context),
 ) -> SessionCreateResponse:
     """
@@ -117,7 +117,7 @@ async def create_session(
 )
 async def create_session_with_id(
     session_id: UUID = Path(..., description="Session ID"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
     auth: AuthContext = Depends(get_auth_context),
 ) -> SessionCreateResponse:
     """
@@ -152,7 +152,7 @@ async def create_session_with_id(
     summary="Delete a session",
 )
 async def delete_session(
-    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)
+    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = DbSession
 ) -> Dict[str, Any]:
     """
     Delete a session and all associated data.

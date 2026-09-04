@@ -157,3 +157,29 @@ async def append_job_error(job_id: UUID, message: str) -> None:
         raise
     except Exception:
         logger.exception("Append job error failed for %s", job_id)
+
+
+async def report_job_error(
+    job_logger: logging.Logger,
+    job_id: UUID,
+    message: str,
+    *args: Any,
+    level: int = logging.WARNING,
+    exception: bool = False,
+) -> None:
+    """
+    Log a non-fatal job error and append the same text to the job record.
+
+    Both destinations need the same sentence, and authoring it twice per call site
+    is where the log line and the caller-visible job error drift apart. The format
+    string and its arguments stay at the call site, so the message is still a
+    greppable literal there and the log record is still formatted lazily.
+
+    ``job_logger`` is the caller's logger, so the record keeps the caller's module.
+    Pass ``exception=True`` from inside an ``except`` block to attach the traceback.
+    """
+    if exception:
+        job_logger.exception(message, *args)
+    else:
+        job_logger.log(level, message, *args)
+    await append_job_error(job_id, message % args if args else message)

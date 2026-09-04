@@ -7,11 +7,11 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_stage_status_response
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.jobs.schema import JobCreateResponse, JobStatusStageResponse
@@ -32,7 +32,7 @@ async def generate_connid(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
     codegen_input: Optional[CodegenRepairContext] = None,
 ):
     """
@@ -64,7 +64,7 @@ async def get_connid_status(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of ConnID generation job.
@@ -93,7 +93,7 @@ async def override_connid(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     connid: GroovyCodePayload = Body(..., description="ConnID code as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Manually override the ConnID for an object class.

@@ -2,11 +2,11 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Persistence of a finished job's result into its session.
+"""Persistence of scheduled-job pointers and finished results into a session.
 
-Stores the (relevance-stripped) result under the configured session key and replaces the
-session's relevant-chunk rows for that key. Failures here are non-fatal for the job: they
-are logged and recorded as a job error so the job can still finish.
+Scheduled jobs and their session pointers are written in the caller-owned transaction. Finished
+jobs store their relevance-stripped result under the configured session key and replace the
+relevant-chunk rows for that key.
 """
 
 import logging
@@ -42,11 +42,12 @@ async def persist_job_pointer(
     job_id: UUID,
 ) -> None:
     """
-    Persist a scheduled job's pointer onto the session using the shared naming
-    convention: ``{key_prefix}JobId`` (stringified job id) and ``{key_prefix}Input``.
+    Persist a scheduled job's pointer using the shared naming convention:
+    ``{key_prefix}JobId`` (stringified job id) and ``{key_prefix}Input``.
 
-    Centralizes the schedule-then-track pattern shared by the codegen and digester
-    orchestration layers so the key naming stays defined in one place.
+    The job row and pointer remain in the caller's transaction so HTTP request dependencies can
+    commit them together after response validation and non-HTTP callers can choose their own
+    transaction boundary.
     """
     await repo.update_session(
         session_id,

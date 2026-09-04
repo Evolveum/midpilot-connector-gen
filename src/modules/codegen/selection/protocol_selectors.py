@@ -8,7 +8,7 @@ Helpers that select prompts and docs based on API protocol.
 
 from typing import Mapping
 
-from src.modules.codegen.enums import SearchIntent
+from src.modules.codegen.enums import ArtifactKind, SearchIntent
 from src.modules.codegen.prompts.authorization_prompts import (
     get_authorization_system_prompt,
     get_authorization_user_prompt,
@@ -60,6 +60,11 @@ from src.modules.codegen.prompts.sql.update_prompts import get_sql_update_system
 from src.modules.codegen.schema import OperationAssets
 from src.shared.enums import ApiType
 
+# ConnID generation is protocol-independent and therefore has no PROMPT_MAP
+# entry. The fix catalog still needs its bundled reference path.
+CONNID_DOCS_PATH = "rest/30-attribute-to-connid-attributes.adoc"
+
+
 PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
     "relation": {
         ApiType.REST: OperationAssets(
@@ -75,7 +80,7 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
         ApiType.SQL: OperationAssets(
             get_sql_relation_system_prompt,
             get_sql_relation_user_prompt,
-            "sql/80-relationship.adoc",
+            "sql/relationships.adoc",
         ),
     },
     "create": {
@@ -83,21 +88,21 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
         ApiType.SCIM: OperationAssets(
             get_scim_create_system_prompt, get_scim_create_user_prompt, "scim/50-create.adoc"
         ),
-        ApiType.SQL: OperationAssets(get_sql_create_system_prompt, get_sql_create_user_prompt, "sql/50-create.adoc"),
+        ApiType.SQL: OperationAssets(get_sql_create_system_prompt, get_sql_create_user_prompt, "sql/create.adoc"),
     },
     "update": {
         ApiType.REST: OperationAssets(get_update_system_prompt, get_update_user_prompt, "rest/60-update.adoc"),
         ApiType.SCIM: OperationAssets(
             get_scim_update_system_prompt, get_scim_update_user_prompt, "scim/60-update.adoc"
         ),
-        ApiType.SQL: OperationAssets(get_sql_update_system_prompt, get_sql_update_user_prompt, "sql/60-update.adoc"),
+        ApiType.SQL: OperationAssets(get_sql_update_system_prompt, get_sql_update_user_prompt, "sql/update.adoc"),
     },
     "delete": {
         ApiType.REST: OperationAssets(get_delete_system_prompt, get_delete_user_prompt, "rest/70-delete.adoc"),
         ApiType.SCIM: OperationAssets(
             get_scim_delete_system_prompt, get_scim_delete_user_prompt, "scim/70-delete.adoc"
         ),
-        ApiType.SQL: OperationAssets(get_sql_delete_system_prompt, get_sql_delete_user_prompt, "sql/70-delete.adoc"),
+        ApiType.SQL: OperationAssets(get_sql_delete_system_prompt, get_sql_delete_user_prompt, "sql/delete.adoc"),
     },
     "native_schema": {
         ApiType.REST: OperationAssets(
@@ -109,7 +114,9 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
             "scim/25-schema-customization.adoc",
         ),
         ApiType.SQL: OperationAssets(
-            get_native_schema_system_prompt, get_native_schema_user_prompt, "sql/25-native-schema.adoc"
+            get_native_schema_system_prompt,
+            get_native_schema_user_prompt,
+            "sql/schema-customization.adoc",
         ),
     },
     # TODO add new documentation for authorization
@@ -166,17 +173,17 @@ SEARCH_PROMPT_MAP: Mapping[ApiType, Mapping[SearchIntent, OperationAssets]] = {
         SearchIntent.ALL: OperationAssets(
             get_sql_search_all_system_prompt,
             get_sql_search_user_prompt,
-            "sql/40-search.adoc",
+            "sql/search.adoc",
         ),
         SearchIntent.FILTER: OperationAssets(
             get_sql_search_filter_system_prompt,
             get_sql_search_user_prompt,
-            "sql/40-search.adoc",
+            "sql/search.adoc",
         ),
         SearchIntent.ID: OperationAssets(
             get_sql_search_id_system_prompt,
             get_sql_search_user_prompt,
-            "sql/40-search.adoc",
+            "sql/search.adoc",
         ),
     },
 }
@@ -194,3 +201,39 @@ def get_search_operation_assets(protocol: ApiType, intent: SearchIntent | str) -
     if protocol not in SEARCH_PROMPT_MAP or normalized_intent not in SEARCH_PROMPT_MAP[protocol]:
         raise ValueError(f"Unsupported search intent/protocol: {normalized_intent}/{protocol}")
     return SEARCH_PROMPT_MAP[protocol][normalized_intent]
+
+
+def resolve_operation_docs_path(
+    kind: ArtifactKind,
+    protocol: ApiType,
+    *,
+    intent: SearchIntent | None = None,
+) -> str | None:
+    """
+    Resolve the bundled DSL reference document for one generated artifact.
+
+    Returns ``None`` when the combination has no bundled reference rather than
+    raising, so an object-class caller can carry on with the documents it has.
+    """
+    if kind is ArtifactKind.CONNID:
+        return CONNID_DOCS_PATH
+
+    try:
+        if kind is ArtifactKind.SEARCH:
+            if intent is None:
+                raise ValueError("Search artifacts require an intent to resolve their documentation")
+            return get_search_operation_assets(protocol, intent).docs_path
+        operation_name = _ARTIFACT_OPERATION_NAMES.get(kind)
+        if operation_name is None:
+            return None
+        return get_operation_assets(operation_name, protocol).docs_path
+    except ValueError:
+        return None
+
+
+_ARTIFACT_OPERATION_NAMES: Mapping[ArtifactKind, str] = {
+    ArtifactKind.NATIVE_SCHEMA: "native_schema",
+    ArtifactKind.CREATE: "create",
+    ArtifactKind.UPDATE: "update",
+    ArtifactKind.DELETE: "delete",
+}

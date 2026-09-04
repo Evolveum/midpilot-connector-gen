@@ -63,7 +63,7 @@ async def generate_groovy(
                 vars_payload,
                 config=RunnableConfig(
                     callbacks=[langfuse_handler],
-                    run_name=f"codegen.{(logger_prefix or 'groovy').lower()}",
+                    run_name=f"Codegen:{logger_prefix or 'Groovy'}",
                 ),
             ),
             max_attempts=config.llm.transient_retry_attempts,
