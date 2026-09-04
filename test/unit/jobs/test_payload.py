@@ -35,8 +35,6 @@ def test_pydantic_request_round_trips_through_execution_payload() -> None:
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key="discoveryOutput",
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
 
     worker = resolve_callable(payload["worker"])
@@ -74,8 +72,6 @@ def test_raw_upload_bytes_and_dataclass_round_trip_through_execution_payload() -
         },
         dynamic_input_provider=None,
         session_result_key=None,
-        await_documentation=False,
-        await_documentation_timeout=None,
         binary_artifacts={"raw-upload": raw_upload.data},
     )
 
@@ -119,8 +115,6 @@ def test_worker_argument_can_reference_large_value_in_job_input() -> None:
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key="discoveryOutput",
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
     job_input = {"applicationName": "Example", "maxCandidateLinks": 7}
 

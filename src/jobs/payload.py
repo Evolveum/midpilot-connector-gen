@@ -176,11 +176,13 @@ def build_execution_payload(
     worker_kwargs: dict[str, Any],
     dynamic_input_provider: Callable[..., Any] | None,
     session_result_key: str | None,
-    await_documentation: bool,
-    await_documentation_timeout: float | None,
     binary_artifacts: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
-    """Build the versioned JSONB execution contract stored with a job."""
+    """Build the versioned JSONB execution contract stored with a job.
+
+    Documentation waiting is not part of this contract: the queue derives it from the
+    job row's ``documentation_wait_until``, which is the only state the claim query reads.
+    """
     artifact_names = frozenset((binary_artifacts or {}).keys())
     return {
         "version": _PAYLOAD_VERSION,
@@ -191,8 +193,6 @@ def build_execution_payload(
             callable_reference(dynamic_input_provider) if dynamic_input_provider is not None else None
         ),
         "sessionResultKey": session_result_key,
-        "awaitDocumentation": await_documentation,
-        "awaitDocumentationTimeout": await_documentation_timeout,
     }
 
 

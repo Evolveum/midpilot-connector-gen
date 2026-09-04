@@ -18,6 +18,7 @@ the HTTP layer stays in the router / exception handlers.
 """
 
 import asyncio
+import logging
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Optional, cast
 from uuid import UUID
 
@@ -55,6 +56,8 @@ from src.modules.digester.errors import (
 from src.modules.digester.schemas import RelationsResponse
 from src.session.info_metadata import resolve_effective_api_type
 from src.shared.enums import ApiType
+
+logger = logging.getLogger(__name__)
 
 # Shared preparing-stage metadata for the search/create/update/delete jobs.
 _INITIAL_STAGE = "preparing"
@@ -190,7 +193,11 @@ async def schedule_authorization_job(
                 await hydrate_auth_sequences_from_relevance(db, session_id, auth_output),
             )
         except Exception:
-            pass
+            logger.warning(
+                "[Codegen:Authorization] Could not hydrate auth relevance; "
+                "scheduling with the stored auth output instead",
+                exc_info=True,
+            )
 
     preferred_authorizations = enrich_preferred_authorizations(auth_output, input_preferred_authorizations)
     repair_context = codegen_input.repair_context()

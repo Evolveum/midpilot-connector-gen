@@ -66,7 +66,6 @@ async def extract_object_classes_raw(
         logger_prefix="[Digester:REST:ObjectClasses] ",
         job_id=job_id,
         chunk_id=chunk_id,
-        track_chunk_per_item=True,
         chunk_metadata=chunk_metadata,
         extraction_chain=extraction_chain,
     )

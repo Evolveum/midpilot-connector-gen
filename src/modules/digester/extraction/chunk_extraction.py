@@ -526,7 +526,6 @@ async def extract_single_chunk(
     job_id: UUID,
     logger_prefix: str = "",
     chunk_id: Optional[UUID] = None,
-    track_chunk_per_item: bool = False,
     chunk_metadata: Optional[Dict[str, Any]] = None,
     enabled_sequence_checking: bool = False,
     enable_marker_blending: bool = False,
@@ -556,7 +555,6 @@ async def extract_single_chunk(
         job_id: ID of the job for progress tracking
         logger_prefix: Optional prefix for log messages
         chunk_id: Optional chunk ID for tracking
-        track_chunk_per_item: Deprecated (kept for backward compatibility, always sets index to 0)
         chunk_metadata: Optional metadata about the chunk (summary, tags, etc.)
         fuzzy_start_marker_error_ratio: Optional override for fuzzy error ratio for start sequence validation
         fuzzy_end_marker_error_ratio: Optional override for fuzzy error ratio for end sequence validation
@@ -689,11 +687,6 @@ async def extract_single_chunk(
             items = [item for item in validated_item_candidates if item is not None]
 
         has_relevant_data = bool(items)
-
-        if track_chunk_per_item and items:
-            for item in items:
-                if hasattr(item, "__dict__"):
-                    item._chunk_index = 0
 
         return items, has_relevant_data
 

@@ -56,8 +56,6 @@ def _execution_payload(value: str) -> dict:
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key=None,
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
 
 
@@ -480,8 +478,6 @@ async def test_durable_runner_deserializes_publishes_and_finalizes(
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key="echoOutput",
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
     async with postgres_session_factory() as db:
         echo_job_id = await JobRepository(db).create_job(
@@ -669,8 +665,6 @@ async def test_an_expected_domain_failure_is_logged_without_a_stack_trace(
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key=None,
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
     async with postgres_session_factory() as db:
         job_id = await JobRepository(db).create_job(
@@ -710,8 +704,6 @@ async def test_a_server_app_error_is_logged_with_its_exception_chain(
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key=None,
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
     async with postgres_session_factory() as db:
         job_id = await JobRepository(db).create_job(

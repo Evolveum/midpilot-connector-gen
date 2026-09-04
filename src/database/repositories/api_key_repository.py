@@ -3,7 +3,6 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 
@@ -11,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import ApiKey
+from src.shared.clock import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class ApiKeyRepository:
             return None
 
         if api_key.revoked_at is None:
-            api_key.revoked_at = datetime.now(timezone.utc)
+            api_key.revoked_at = utc_now()
             await self.db.flush()
             logger.info("Revoked API key %s (%s)", api_key_id, api_key.name)
         return api_key

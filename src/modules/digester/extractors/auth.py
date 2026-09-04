@@ -354,6 +354,14 @@ async def deduplicate_auth(
 
     auth_list: List[AuthProcessingInfo] = [await _to_processing_info(auth) for auth in dedup_list]
 
+    if len(auth_list) <= 1:
+        await update_job_progress(
+            job_id,
+            stage=JobStage.deduplication_finished,
+            message="Auth deduplication finished",
+        )
+        return auth_list
+
     chain = build_structured_chain(
         auth_deduplication_system_prompt,
         auth_deduplication_user_prompt,
@@ -393,7 +401,7 @@ async def deduplicate_auth(
         return auth_list
 
 
-async def processInfoToAuthInfo(info: AuthProcessingInfo) -> AuthInfo:
+def _to_auth_info(info: AuthProcessingInfo) -> AuthInfo:
     return AuthInfo(
         name=info.name,
         type=info.type,
@@ -410,7 +418,12 @@ async def processInfoToAuthInfo(info: AuthProcessingInfo) -> AuthInfo:
 
 
 async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_id: UUID) -> AuthResponse[AuthInfo]:
-    dedup_list = [await processInfoToAuthInfo(info) for info in raw_dedup_list]
+    dedup_list = [_to_auth_info(info) for info in raw_dedup_list]
+
+    if len(dedup_list) <= 1:
+        await update_job_progress(job_id, stage=JobStage.sorting_finished, message="Sorting finished; finalizing")
+        return AuthResponse[AuthInfo](auth=dedup_list)
+
     try:
         logger.info("[Digester:Auth] Sorting via LLM. Items count: %d", len(dedup_list))
         chain = build_structured_chain(

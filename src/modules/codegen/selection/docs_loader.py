@@ -3,11 +3,13 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
+from functools import cache
 from importlib import resources
 
 logger = logging.getLogger(__name__)
 
 
+@cache
 def load_required_adoc_text(package: str, filename: str) -> str:
     """
     Read a required .adoc documentation file from package data using importlib.resources.
