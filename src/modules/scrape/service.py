@@ -4,7 +4,6 @@
 
 import asyncio
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -24,6 +23,7 @@ from src.modules.scrape.core.scraper import scraper_loop
 from src.modules.scrape.schema import ScrapeRequest, ScrapeResult
 from src.session.schema import DocumentationItem
 from src.session.service import build_group_documentation_response
+from src.shared.clock import utc_now
 from src.shared.enums import JobStage
 from src.shared.normalize import normalize_url
 
@@ -41,7 +41,7 @@ async def _run_scrape_async(
         )
         async with async_session_maker() as db:
             job_repo = JobRepository(db)
-            created_at_limits = datetime.now() - config.scrape_and_process.scrape_input_check_interval
+            created_at_limits = utc_now() - config.scrape_and_process.scrape_input_check_interval
             normalized_input = scrape_request.model_dump(by_alias=True, exclude={"skip_cache"})
             latest_job = await job_repo.get_job_by_input(
                 "scrape.getRelevantDocumentation",
@@ -54,7 +54,7 @@ async def _run_scrape_async(
                     "[Scrape] Job %s: Found previous job %s with same input created at %s, reusing its documentation items",
                     job_id,
                     str(latest_job.job_id),
-                    datetime.isoformat(latest_job.created_at),
+                    latest_job.created_at.isoformat(),
                 )
                 doc_repo = DocumentationRepository(db)
                 doc_items = await doc_repo.get_documentation_items_by_session_and_job(
@@ -155,7 +155,7 @@ async def _run_scrape_async(
                 logger.info(
                     "[Scrape] Job %s: No previous job found with same input since %s, proceeding with fresh scrape",
                     job_id,
-                    datetime.isoformat(datetime.now() - config.scrape_and_process.scrape_input_check_interval),
+                    created_at_limits.isoformat(),
                 )
 
     logger.info("[Scrape] Starting scrape job %s for session %s", job_id, session_id)

@@ -5,7 +5,7 @@
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Union
 from uuid import UUID, uuid4
 
@@ -16,6 +16,7 @@ from sqlalchemy.orm import aliased, defer, load_only
 
 from src.core.errors import ExecutionOwnershipLostError
 from src.database.models import Job, JobArtifact, JobProgress, Session
+from src.shared.clock import utc_now
 from src.shared.enums import JobStage, JobStatus
 from src.shared.json_values import to_jsonable
 from src.shared.normalize import normalized_input_fingerprint
@@ -98,7 +99,7 @@ class JobRepository:
 
         json_input = to_jsonable(input_payload)
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         documentation_wait_until = (
             now + timedelta(seconds=documentation_wait_timeout_seconds)
             if documentation_wait_timeout_seconds is not None
@@ -291,7 +292,7 @@ class JobRepository:
         :param job_id: Job ID
         :param message: Error message to append
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         await self._fence_claimed_write(job_id, worker_id=worker_id, execution_token=execution_token, now=now)
         job = await self.get_job(job_id)
         if job is None:
@@ -326,7 +327,7 @@ class JobRepository:
         :param total_processing: Total number of documents
         :param processing_completed: Number of processed documents
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         fenced = await self._fence_claimed_write(
             job_id,
             worker_id=worker_id,
@@ -400,7 +401,7 @@ class JobRepository:
                             job_id,
                             worker_id=worker_id,
                             execution_token=execution_token,
-                            now=datetime.now(timezone.utc),
+                            now=utc_now(),
                         )
                     )
                     .with_for_update()
@@ -417,7 +418,7 @@ class JobRepository:
 
         job.input = json_input
         job.normalized_input_hash = normalized_input_fingerprint(json_input)
-        job.updated_at = datetime.now(timezone.utc)
+        job.updated_at = utc_now()
 
         await self.db.flush()
         logger.info("Updated input for job %s", job_id)
@@ -437,7 +438,7 @@ class JobRepository:
         :param delta: Number to increment by
         """
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         if not await self._fence_claimed_write(
             job_id,
             worker_id=worker_id,
@@ -534,7 +535,7 @@ class JobRepository:
         PostgreSQL row locking with ``SKIP LOCKED`` guarantees that concurrent
         worker processes cannot receive the same execution token.
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         claimable_state = or_(
             Job.status == JobStatus.queued.value,
             and_(
@@ -654,7 +655,7 @@ class JobRepository:
         claim_timeout_seconds: float,
     ) -> bool:
         """Refresh a live claim if and only if this execution still owns it."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         statement = (
             update(Job)
             .where(
@@ -686,7 +687,7 @@ class JobRepository:
                 job_id,
                 worker_id=worker_id,
                 execution_token=execution_token,
-                now=datetime.now(timezone.utc),
+                now=utc_now(),
             )
         )
         return (await self.db.execute(query)).scalar_one_or_none() is not None
@@ -707,7 +708,7 @@ class JobRepository:
                     job_id,
                     worker_id=worker_id,
                     execution_token=execution_token,
-                    now=datetime.now(timezone.utc),
+                    now=utc_now(),
                 )
             )
             .with_for_update()
@@ -716,7 +717,7 @@ class JobRepository:
         if job is None:
             return None
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         job.status = JobStatus.finished.value
         job.updated_at = now
         job.finished_at = now
@@ -754,7 +755,7 @@ class JobRepository:
                     job_id,
                     worker_id=worker_id,
                     execution_token=execution_token,
-                    now=datetime.now(timezone.utc),
+                    now=utc_now(),
                 )
             )
             .with_for_update()
@@ -763,7 +764,7 @@ class JobRepository:
         if job is None:
             return None
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         lines = [line for line in str(error).splitlines() if line.strip()]
         errors = list(job.errors or [])
         errors.extend(line for line in lines if line not in errors)
@@ -801,7 +802,7 @@ class JobRepository:
         must still hand its job back after the claim deadline has passed, so this
         is the one ownership check that intentionally omits ``claim_expires_at``.
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         statement = (
             update(Job)
             .where(
@@ -828,7 +829,7 @@ class JobRepository:
 
     async def fail_expired_exhausted_jobs(self) -> int:
         """Fail abandoned jobs whose crash-retry budget is exhausted."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         query = (
             select(Job)
             .where(
@@ -864,7 +865,7 @@ class JobRepository:
 
     async def fail_invalid_queued_jobs(self) -> int:
         """Fail queued rows that cannot be deserialized by any worker."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         jobs = (
             (
                 await self.db.execute(
