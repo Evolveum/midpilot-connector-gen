@@ -83,6 +83,10 @@ async def build_typed_job_status_response(job_id: UUID, model_cls: type[BaseMode
             return JobStatusMultiDocResponse(
                 jobId=status.get("jobId", job_id),
                 status=JobStatus.failed,
+                createdAt=status.get("createdAt"),
+                startedAt=status.get("startedAt"),
+                updatedAt=status.get("updatedAt"),
+                progress=status.get("progress"),
                 errors=[f"Corrupted result payload: {str(exc)}"],
             )
 

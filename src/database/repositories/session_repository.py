@@ -4,7 +4,6 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Union
 from uuid import UUID
 
@@ -13,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import Session, SessionData
+from src.shared.clock import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class SessionRepository:
             return False
 
         # Update session timestamp
-        session.updated_at = datetime.now(timezone.utc)
+        session.updated_at = utc_now()
 
         # Atomic PostgreSQL upserts avoid unique-key races when multiple jobs
         # update different or identical session fields concurrently.
@@ -133,7 +133,7 @@ class SessionRepository:
 
     async def update_locked_session(self, session_id: UUID, data: Dict[str, Any]) -> bool:
         """Update data after the caller has already locked the session row."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         result = await self.db.execute(update(Session).where(Session.session_id == session_id).values(updated_at=now))
         if not bool(getattr(result, "rowcount", 0)):
             return False
@@ -143,7 +143,7 @@ class SessionRepository:
         return True
 
     async def _upsert_session_data(self, session_id: UUID, key: str, value: Any) -> None:
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         statement = (
             insert(SessionData)
             .values(
@@ -192,7 +192,7 @@ class SessionRepository:
             return False
 
         await self._upsert_session_data(session_id, result_key, value)
-        session.updated_at = datetime.now(timezone.utc)
+        session.updated_at = utc_now()
         await self.db.flush()
         return True
 

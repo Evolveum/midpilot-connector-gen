@@ -7,7 +7,12 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.digester.extractors.auth import build_auth_items, deduplicate_auth, extract_auth
+from src.modules.digester.extractors.auth import (
+    build_auth_items,
+    deduplicate_auth,
+    extract_auth,
+    sort_auth_by_importance,
+)
 from src.modules.digester.schemas import (
     AuthDedupResponse,
     AuthInfo,
@@ -345,6 +350,50 @@ async def test_deduplicate_auth_llm_pair_matches_normalized_names():
         result = await deduplicate_auth(items, uuid4())
 
     assert [auth.name for auth in result] == ["API Key"]
+
+
+@pytest.mark.parametrize("item_count", [0, 1])
+@pytest.mark.asyncio
+async def test_deduplicate_auth_skips_llm_below_two_items(item_count):
+    """A pair is the smallest input that can hold a duplicate, so shorter lists must not
+    spend a merge-plan LLM call."""
+    items = [
+        AuthProcessingInfo(name="API Key", type=AuthType.API_KEY, quirks="", relevant_sequences=[])
+        for _ in range(item_count)
+    ]
+
+    with (
+        patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.auth.build_structured_chain") as mock_chain,
+        patch("src.modules.digester.extractors.auth.invoke_llm", new_callable=AsyncMock) as mock_invoke,
+    ):
+        result = await deduplicate_auth(items, uuid4())
+
+    assert len(result) == item_count
+    mock_invoke.assert_not_awaited()
+    mock_chain.assert_not_called()
+
+
+@pytest.mark.parametrize("item_count", [0, 1])
+@pytest.mark.asyncio
+async def test_sort_auth_by_importance_skips_llm_below_two_items(item_count):
+    """A pair is the smallest input with an order to choose, so shorter lists must not
+    spend a ranking LLM call."""
+    items = [
+        AuthProcessingInfo(name="API Key", type=AuthType.API_KEY, quirks="", relevant_sequences=[])
+        for _ in range(item_count)
+    ]
+
+    with (
+        patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.auth.build_structured_chain") as mock_chain,
+        patch("src.modules.digester.extractors.auth.invoke_llm", new_callable=AsyncMock) as mock_invoke,
+    ):
+        result = await sort_auth_by_importance(items, uuid4())
+
+    assert [auth.name for auth in result.auth or []] == [item.name for item in items]
+    mock_invoke.assert_not_awaited()
+    mock_chain.assert_not_called()
 
 
 def test_auth_response_serializes_relevant_sequences_in_camel_case():
