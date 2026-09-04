@@ -32,6 +32,10 @@ directly.
 | Extracting the API model: metadata, auth, object classes, endpoints,
   attributes, relations.
 
+| link:pipeline/relations.adoc[Relation analysis]
+| The staged relation pipeline, the midPoint-facing `relationsOutput` and the
+  internal `relationsAnalysisOutput`, with a full sample run.
+
 | link:pipeline/codegen.adoc[Codegen]
 | Generating and validating the Groovy connector code.
 
@@ -65,8 +69,9 @@ top-level link:../README.md[README].
   `+link:page.adoc[Text]+` (renders correctly on GitHub, unlike `xref:`).
 * Pipeline stages live under `pipeline/`; new cross-cutting topics get a new
   top-level page and a row in the table above.
-* `api/` holds generated artifacts (OpenAPI spec) and `images/` holds
-  diagrams; hand-written pages stay in the top level and `pipeline/`.
+* `api/` holds generated artifacts (OpenAPI spec), `images/` holds diagrams and
+  `examples/` holds sample payloads referenced from a page; hand-written pages
+  stay in the top level and `pipeline/`.
 * Use `NOTE:` / `IMPORTANT:` / `WARNING:` admonitions for pitfalls, so they
   stand out when skimming.
 * Prefer linking to source files (e.g. `src/config/digester.py`) over copying

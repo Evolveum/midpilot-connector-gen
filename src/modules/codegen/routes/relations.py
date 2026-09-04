@@ -18,6 +18,7 @@ from src.modules.codegen.orchestration import schedule_relation_job
 from src.modules.codegen.persistence import store_relation_override
 from src.modules.codegen.schema import GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
+from src.shared.enums import ApiType
 
 router = APIRouter(tags=["Codegen: Relations"])
 
@@ -31,6 +32,11 @@ async def generate_relation_code(
     session_id: UUID = Path(..., description="Session ID"),
     relation_name: str = Path(..., description="Relation name"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data for generation"),
+    api_type: Optional[ApiType] = Query(
+        None,
+        alias="apiType",
+        description="Override the integration protocol (REST/SCIM/SQL); uses relation analysis or detection.",
+    ),
     db: AsyncSession = DbSession,
 ):
     """
@@ -45,6 +51,7 @@ async def generate_relation_code(
         session_id=session_id,
         relation_name=relation_name,
         skip_cache=skip_cache,
+        api_type=api_type,
     )
 
     return JobCreateResponse(jobId=job_id)

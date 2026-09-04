@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Unit tests for codegen service CRUD generators."""
+"""Unit tests for codegen service operation generators."""
 
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -10,70 +10,88 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen import generation
+from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.sql.create_prompts import get_sql_create_system_prompt
 from src.shared.enums import ApiType
 
+_ATTRIBUTES = {
+    "username": {"type": "string", "description": "User's login name"},
+    "email": {"type": "string", "format": "email", "description": "Email address"},
+}
+_ENDPOINTS = {"endpoints": [{"method": "GET", "path": "/users"}]}
+
 
 @pytest.mark.asyncio
-async def test_generate_create():
-    """Test generating create code from attributes and endpoints."""
-    test_attributes = {
-        "username": {"type": "string", "description": "User's login name"},
-        "email": {"type": "string", "format": "email", "description": "Email address"},
-    }
-
-    test_endpoints = {"endpoints": [{"method": "POST", "path": "/users", "description": "Create user"}]}
-    test_preferred_endpoints = [
-        {"method": "POST", "path": "/users"},
-        {"method": "POST", "path": "/users/create"},
-    ]
-
+@pytest.mark.parametrize(
+    ("generate_code", "generator_name", "preferred_endpoints", "extra_kwargs"),
+    [
+        (
+            generation.generate_create_code,
+            "CreateGenerator",
+            [{"method": "POST", "path": "/users"}, {"method": "POST", "path": "/users/create"}],
+            {},
+        ),
+        (
+            generation.generate_update_code,
+            "UpdateGenerator",
+            [{"method": "PATCH", "path": "/users/{id}"}, {"method": "PUT", "path": "/users/{id}"}],
+            {},
+        ),
+        (
+            generation.generate_delete_code,
+            "DeleteGenerator",
+            [{"method": "DELETE", "path": "/users/{id}"}],
+            {},
+        ),
+        (
+            generation.generate_search_code,
+            "SearchGenerator",
+            [{"method": "GET", "path": "/users/search"}, {"method": "GET", "path": "/users/{id}"}],
+            {"intent": SearchIntent.FILTER},
+        ),
+    ],
+    ids=["create", "update", "delete", "search"],
+)
+async def test_operation_generation_delegates_to_its_generator(
+    generate_code,
+    generator_name: str,
+    preferred_endpoints: list[dict],
+    extra_kwargs: dict,
+):
+    """Every operation resolves its connection target and hands the request to its own generator."""
     session_id = uuid4()
-    job_id = uuid4()
 
     with (
-        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
-        patch(
-            "src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository"
-        ) as mock_relevant_chunk_repository,
         patch(
             "src.modules.codegen.generation.get_session_connection_target",
             new_callable=AsyncMock,
             return_value=("", ""),
         ) as mock_get_connection_target,
-        patch("src.modules.codegen.generation.CreateGenerator") as mock_create_generator_class,
+        patch("src.modules.codegen.generation._collect_relevant_chunks", new_callable=AsyncMock, return_value=None),
+        patch(f"src.modules.codegen.generation.{generator_name}") as mock_generator_class,
     ):
-        mock_db_cm = mock_session_maker.return_value
-        mock_db = AsyncMock()
-        mock_db_cm.__aenter__.return_value = mock_db
+        mock_generator_instance = mock_generator_class.return_value
+        mock_generator_instance.generate = AsyncMock(return_value="mocked code")
 
-        mock_repo_instance = mock_relevant_chunk_repository.return_value
-        mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value={})
-
-        # Mock the generator instance and its generate method (must be async)
-        mock_generator_instance = mock_create_generator_class.return_value
-        mock_generator_instance.generate = AsyncMock(return_value="mocked create code")
-
-        result = await generation.generate_create_code(
-            attributes=test_attributes,
-            endpoints=test_endpoints,
-            preferred_endpoints=test_preferred_endpoints,
+        result = await generate_code(
+            attributes=_ATTRIBUTES,
+            endpoints=_ENDPOINTS,
+            preferred_endpoints=preferred_endpoints,
             session_id=session_id,
             object_class="User",
-            job_id=job_id,
+            job_id=uuid4(),
             protocol=ApiType.REST,
+            **extra_kwargs,
         )
 
-        assert isinstance(result, dict)
-        assert "code" in result
-        assert result["code"] == "mocked create code"
-
-        # Verify generator was instantiated and generate method was called
-        mock_create_generator_class.assert_called_once()
-        _, kwargs = mock_create_generator_class.call_args
-        assert kwargs["preferred_endpoints"] == test_preferred_endpoints
-        mock_get_connection_target.assert_awaited_once_with(session_id, protocol=ApiType.REST)
-        mock_generator_instance.generate.assert_called_once()
+    assert result == {"code": "mocked code"}
+    mock_get_connection_target.assert_awaited_once_with(session_id, protocol=ApiType.REST)
+    mock_generator_class.assert_called_once()
+    generator_kwargs = mock_generator_class.call_args.kwargs
+    assert generator_kwargs["preferred_endpoints"] == preferred_endpoints
+    for name, value in extra_kwargs.items():
+        assert generator_kwargs[name] == value
+    mock_generator_instance.generate.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -110,115 +128,3 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
     _, kwargs = mock_create_generator_class.call_args
     assert kwargs["system_prompt"] == get_sql_create_system_prompt
     assert kwargs["protocol_label"] == "SQL"
-
-
-@pytest.mark.asyncio
-async def test_generate_update():
-    """Test generating update code from attributes and endpoints."""
-    test_attributes = {
-        "username": {"type": "string", "description": "User's login name"},
-        "email": {"type": "string", "format": "email", "description": "Email address"},
-    }
-
-    test_endpoints = {"endpoints": [{"method": "PUT", "path": "/users/{id}", "description": "Update user"}]}
-    test_preferred_endpoints = [
-        {"method": "PATCH", "path": "/users/{id}"},
-        {"method": "PUT", "path": "/users/{id}"},
-    ]
-
-    with (
-        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
-        patch(
-            "src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository"
-        ) as mock_relevant_chunk_repository,
-        patch(
-            "src.modules.codegen.generation.get_session_connection_target",
-            new_callable=AsyncMock,
-            return_value=("", ""),
-        ),
-        patch("src.modules.codegen.generation.UpdateGenerator") as mock_update_generator_class,
-    ):
-        mock_db_cm = mock_session_maker.return_value
-        mock_db = AsyncMock()
-        mock_db_cm.__aenter__.return_value = mock_db
-
-        mock_repo_instance = mock_relevant_chunk_repository.return_value
-        mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value={})
-
-        # Mock the generator instance and its generate method (must be async)
-        mock_generator_instance = mock_update_generator_class.return_value
-        mock_generator_instance.generate = AsyncMock(return_value="mocked update code")
-
-        result = await generation.generate_update_code(
-            attributes=test_attributes,
-            endpoints=test_endpoints,
-            preferred_endpoints=test_preferred_endpoints,
-            session_id=uuid4(),
-            object_class="User",
-            job_id=uuid4(),
-            protocol=ApiType.REST,
-        )
-
-        assert isinstance(result, dict)
-        assert "code" in result
-        assert result["code"] == "mocked update code"
-
-        # Verify generator was instantiated and generate method was called
-        mock_update_generator_class.assert_called_once()
-        _, kwargs = mock_update_generator_class.call_args
-        assert kwargs["preferred_endpoints"] == test_preferred_endpoints
-        mock_generator_instance.generate.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_generate_delete():
-    """Test generating delete code from attributes and endpoints."""
-    test_attributes = {
-        "id": {"type": "string", "format": "uuid", "description": "Unique ID"},
-    }
-
-    test_endpoints = {"endpoints": [{"method": "DELETE", "path": "/users/{id}", "description": "Delete user"}]}
-    test_preferred_endpoints = [{"method": "DELETE", "path": "/users/{id}"}]
-
-    with (
-        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
-        patch(
-            "src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository"
-        ) as mock_relevant_chunk_repository,
-        patch(
-            "src.modules.codegen.generation.get_session_connection_target",
-            new_callable=AsyncMock,
-            return_value=("", ""),
-        ),
-        patch("src.modules.codegen.generation.DeleteGenerator") as mock_delete_generator_class,
-    ):
-        mock_db_cm = mock_session_maker.return_value
-        mock_db = AsyncMock()
-        mock_db_cm.__aenter__.return_value = mock_db
-
-        mock_repo_instance = mock_relevant_chunk_repository.return_value
-        mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value={})
-
-        # Mock the generator instance and its generate method (must be async)
-        mock_generator_instance = mock_delete_generator_class.return_value
-        mock_generator_instance.generate = AsyncMock(return_value="mocked delete code")
-
-        result = await generation.generate_delete_code(
-            attributes=test_attributes,
-            endpoints=test_endpoints,
-            preferred_endpoints=test_preferred_endpoints,
-            session_id=uuid4(),
-            object_class="User",
-            job_id=uuid4(),
-            protocol=ApiType.REST,
-        )
-
-        assert isinstance(result, dict)
-        assert "code" in result
-        assert result["code"] == "mocked delete code"
-
-        # Verify generator was instantiated and generate method was called
-        mock_delete_generator_class.assert_called_once()
-        _, kwargs = mock_delete_generator_class.call_args
-        assert kwargs["preferred_endpoints"] == test_preferred_endpoints
-        mock_generator_instance.generate.assert_called_once()

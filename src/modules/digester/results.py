@@ -58,6 +58,10 @@ CONNECTIVITY_ENDPOINT_RESULT_KEY = "connectivityEndpointOutput"
 RELATIONS_RESULT_KEY = "relationsOutput"
 METADATA_RESULT_KEY = "metadataOutput"
 
+# Working state of the relation pipeline. Not part of the midPoint-facing contract and not
+# returned by any endpoint; kept so a reviewer can see why a relation was accepted or rejected.
+RELATIONS_ANALYSIS_RESULT_KEY = "relationsAnalysisOutput"
+
 
 def attributes_result_key(object_class: str) -> str:
     return f"{normalize_object_class_name(object_class)}AttributesOutput"
@@ -307,7 +311,15 @@ async def store_relations_override(
     session_id: UUID,
     payload: Dict[str, Any],
 ) -> None:
-    await repo.update_session(session_id, {RELATIONS_RESULT_KEY: payload})
+    # A manual contract override has no machine analysis. Clear the old companion in the
+    # same session-row transaction so codegen can never attach another run's analysis.
+    await repo.update_session(
+        session_id,
+        {
+            RELATIONS_RESULT_KEY: payload,
+            RELATIONS_ANALYSIS_RESULT_KEY: None,
+        },
+    )
 
 
 async def store_metadata_output(

@@ -215,29 +215,105 @@ class DigesterSettings(BaseModel):
         description="Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance."
         "This is only applied after fuzzy matching because in regex search, there is a significant drop in performance with a lot of \\s patterns  ",
     )
-    relation_generic_attribute_tokens: list[str] = Field(
-        default_factory=lambda: [
-            "a",
-            "an",
-            "are",
-            "as",
-            "by",
-            "has",
-            "have",
-            "id",
-            "ids",
-            "is",
-            "of",
-            "ref",
-            "refs",
-            "reference",
-            "references",
-            "the",
-            "to",
-            "via",
-            "with",
-        ],
-        description="Generic relation attribute tokens ignored when collapsing wording-only relation duplicates.",
+    relation_sweep_include_medium_confidence: bool = Field(
+        True,
+        description=(
+            "Whether the per-class relation sweep also covers medium-confidence object classes. "
+            "High-confidence classes are always covered; low-confidence ones never are."
+        ),
+    )
+    relation_class_sweep_limit: int = Field(
+        15,
+        ge=0,
+        description=(
+            "Maximum object classes given their own relation sweep, in IGA ranking order. "
+            "0 disables the sweep stage. Classes beyond the limit are logged, never dropped silently."
+        ),
+    )
+    relation_max_adjudicated_pairs: int = Field(
+        200,
+        ge=1,
+        description=(
+            "Safety ceiling on how many class pairs are judged by the LLM in one run. Pairs are "
+            "ordered by evidence strength first, so the ceiling drops the weakest candidates; the "
+            "number dropped is always logged."
+        ),
+    )
+    relation_max_refocused_pairs: int = Field(
+        200,
+        ge=1,
+        description=(
+            "Maximum weak class pairs given a focused documentation re-read. Pairs whose "
+            "object classes have higher extraction confidence are selected first, followed "
+            "by evidence strength."
+        ),
+    )
+    relation_link_object_min_reference_ratio: float = Field(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum share of an object class's attributes that must reference other object classes "
+            "before it is treated as an association class carrying a relation between them. Structural, "
+            "not name-based: a join class is mostly references plus a few qualifying columns. Applied "
+            "only when the class's attributes have been extracted."
+        ),
+    )
+    relation_link_object_max_expanded_pairs: int = Field(
+        50,
+        ge=0,
+        description=(
+            "Maximum class pairs synthesized from association classes in one run. 0 disables the "
+            "expansion. A class referencing many others would otherwise contribute a pair per "
+            "combination; the number skipped is always logged."
+        ),
+    )
+    relation_max_stored_observations_per_pair: int = Field(
+        40,
+        ge=1,
+        description=(
+            "Maximum observations kept per pair in the persisted relationsAnalysisOutput. Bounds the "
+            "session payload; the full set is still used for adjudication."
+        ),
+    )
+    relation_max_prompt_observations_per_pair: int = Field(
+        80,
+        ge=1,
+        description=(
+            "Maximum distinct, evidence-ranked observations serialized into one relation "
+            "focus, adjudication or verification prompt."
+        ),
+    )
+    relation_prompt_max_description_chars: int = Field(
+        200,
+        ge=0,
+        description=(
+            "Maximum object-class description length in a relation prompt. The class list is re-sent "
+            "on every per-chunk call, so untruncated descriptions dominate the prompt cost."
+        ),
+    )
+    relation_verification_enabled: bool = Field(
+        True,
+        description=(
+            "Whether every accepted relation gets an adversarial verification call. Disabling it "
+            "raises recall and lowers precision."
+        ),
+    )
+    relation_prompt_max_object_classes: int = Field(
+        80,
+        ge=1,
+        description=(
+            "Maximum object classes listed in a relation prompt. Truncation is logged so a missing "
+            "class can be traced back to this limit."
+        ),
+    )
+    relation_context_max_chars: int = Field(
+        120_000,
+        ge=1000,
+        description=(
+            "Maximum characters of documentation assembled for one class sweep or pair re-read. "
+            "Chunks past the budget are skipped and counted in the log line for that stage."
+        ),
     )
     attributes_debug_table_log: bool = Field(
         False,

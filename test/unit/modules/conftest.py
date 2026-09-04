@@ -4,7 +4,11 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import sys
 from contextlib import ExitStack
+from functools import cache
+from importlib import import_module
+from pkgutil import walk_packages
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +17,7 @@ from langchain_openai import ChatOpenAI
 
 from src.app import api
 from src.integrations.web import SearchResult
+from src.jobs import update_job_progress
 
 # Common fixtures
 
@@ -50,21 +55,36 @@ def mock_search_web():
         yield mock
 
 
-_DIGESTER_UPDATE_JOB_PROGRESS_TARGETS = (
-    "src.modules.digester.extractors.auth.update_job_progress",
-    "src.modules.digester.extractors.connectivity_endpoint.update_job_progress",
-    "src.modules.digester.extractors.endpoints.update_job_progress",
-    "src.modules.digester.extractors.info.update_job_progress",
-    "src.modules.digester.extractors.rest.relations.update_job_progress",
-)
+_DIGESTER_PACKAGE = "src.modules.digester"
+
+
+@cache
+def _digester_update_job_progress_targets() -> tuple[str, ...]:
+    """Return a patch target for every digester module that imported ``update_job_progress``.
+
+    ``from src.jobs import update_job_progress`` binds the helper into the importing module,
+    so each importer needs its own patch. The list is discovered instead of hardcoded: a
+    module missing from a hardcoded list keeps calling the real helper, which writes to the
+    configured database and swallows the error, leaving the test green.
+    """
+    package = import_module(_DIGESTER_PACKAGE)
+    for module_info in walk_packages(package.__path__, prefix=f"{_DIGESTER_PACKAGE}."):
+        import_module(module_info.name)
+
+    return tuple(
+        f"{name}.update_job_progress"
+        for name, module in sorted(sys.modules.items())
+        if name.startswith(f"{_DIGESTER_PACKAGE}.")
+        and getattr(module, "update_job_progress", None) is update_job_progress
+    )
 
 
 @pytest.fixture
 def mock_digester_update_job_progress():
-    """Mock job progress update across digester modules (workflows live in extractors/)."""
+    """Mock job progress update across every digester module that reports progress."""
     mock = AsyncMock()
     with ExitStack() as stack:
-        for target in _DIGESTER_UPDATE_JOB_PROGRESS_TARGETS:
+        for target in _digester_update_job_progress_targets():
             stack.enter_context(patch(target, mock))
         yield mock
 

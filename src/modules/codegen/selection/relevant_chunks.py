@@ -22,7 +22,6 @@ from src.modules.codegen.selection.authorization import (
     has_matching_preferred_authorization,
     select_authorization_chunk_refs,
 )
-from src.modules.digester.schemas import RelationsResponse
 from src.shared.normalize import normalize_chunk_pair
 
 logger = logging.getLogger(__name__)
@@ -117,13 +116,17 @@ def _select_chunk_refs(*ref_groups: Sequence[Any]) -> List[Dict[str, Any]]:
 
 
 async def _collect_relation_object_class_pairs(
-    relations: RelationsResponse,
     session_id: UUID,
+    object_class_names: Sequence[str],
 ) -> List[Dict[str, Any]]:
     """
-    Select object-class documentation chunks for the relation subject and object.
+    Select object-class documentation chunks for the classes a relation is built from.
+
+    Which classes those are is decided by the caller: besides the subject and the object it
+    can include the class carrying the association, whose documentation holds the endpoints
+    implementing the link and appears in neither end's own documentation.
     """
-    if not relations.relations:
+    if not object_class_names:
         return []
 
     async with async_session_maker() as db:
@@ -133,9 +136,8 @@ async def _collect_relation_object_class_pairs(
             result_key="objectClassesOutput",
         )
 
-    selected_relation = relations.relations[0]
     ref_groups: List[Sequence[Any]] = []
-    for class_name in (selected_relation.subject, selected_relation.object):
+    for class_name in object_class_names:
         relevant_refs = chunk_map.get(normalize_object_class_name(class_name), [])
         if not relevant_refs:
             logger.warning("[Codegen:Relation] No relevant chunks found for object class %s", class_name)

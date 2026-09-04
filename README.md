@@ -22,7 +22,8 @@ import-linter (`uv run poe importcheck`, configured in `pyproject.toml`).
 - [`src/core`](src/core) - technical foundations: LLM client, observability, DB engine, base errors/schema
 - [`src/shared`](src/shared) - pure helpers and product-wide vocabulary (no imports from other src packages)
 - [`src/config`](src/config) - settings loaded from environment
-- [`test/unit`](test/unit), [`test/integration`](test/integration) - tests, mirroring the src layout
+- [`test/unit`](test/unit) - in-process tests, mirroring the src layout (no database, no HTTP stack)
+- [`test/integration`](test/integration) - tests that cross a real boundary: the HTTP app ([`api`](test/integration/api)) or PostgreSQL ([`database`](test/integration/database))
 
 Important files:
 
@@ -273,7 +274,7 @@ uv run poe typecheck
 uv run poe lint
 uv run poe stylecheck
 
-# optionally run all quality checks (including unit tests)
+# optionally run all quality checks (including the full test suite)
 uv run poe qa
 
 # attempt to fix formatting and lint errors
@@ -297,6 +298,11 @@ uv run poe test test/unit
 # run integration tests only
 uv run poe test test/integration
 ```
+
+The PostgreSQL tests in [`test/integration/database`](test/integration/database) need `TEST_DATABASE_URL`
+(set in `.env.test`). Each test runs against its own throwaway schema, created and dropped by the
+`postgres_session_factory` fixture. Without that variable they report as skipped rather than failing,
+so check the `-ra` summary if you expect them to run.
 
 ### Pre-commit hooks
 

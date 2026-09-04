@@ -10,7 +10,12 @@ from pydantic import BaseModel
 
 from src.config import config
 from src.core.errors import LLMUnavailableError
-from src.modules.digester.extraction.chunk_extraction import extract_single_chunk, run_all_items_build_parallel
+from src.modules.digester.extraction.chunk_extraction import (
+    DEFAULT_CHUNK_PROGRESS_MESSAGE,
+    extract_single_chunk,
+    run_all_items_build_parallel,
+)
+from src.shared.enums import JobStage
 
 
 # PyCharm's monkeypatch inspection does not resolve pydantic model fields as attribute names
@@ -204,3 +209,57 @@ async def test_run_all_items_build_parallel_reuses_one_chain():
     build_chain.assert_called_once_with("system", "user", _RetryResponse, user_role="human")
     assert run_item.await_count == 2
     assert all(await_args.args[1] is chain for await_args in run_item.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_chunk_progress_keeps_its_default_message_for_every_extractor():
+    """The generic per-chunk wording is the default, so existing extractors are unaffected."""
+    chain = AsyncMock()
+    chain.ainvoke.return_value = _RetryResponse(items=["User"])
+
+    with patch(
+        "src.modules.digester.extraction.chunk_extraction.update_job_progress",
+        new_callable=AsyncMock,
+    ) as progress:
+        await extract_single_chunk(
+            schema="User resource documentation",
+            pydantic_model=_RetryResponse,
+            system_prompt="system",
+            user_prompt="user",
+            parse_fn=lambda result: result.items,
+            job_id=uuid4(),
+            chunk_id=uuid4(),
+            extraction_chain=chain,
+        )
+
+    assert progress.await_args_list[0].kwargs["message"] == DEFAULT_CHUNK_PROGRESS_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_a_caller_can_keep_its_own_stage_message_across_the_chunk_loop():
+    """A pipeline that reports its own step must not have it overwritten once per chunk.
+
+    The stage is still written, so opting out costs no progress information.
+    """
+    chain = AsyncMock()
+    chain.ainvoke.return_value = _RetryResponse(items=["User"])
+
+    with patch(
+        "src.modules.digester.extraction.chunk_extraction.update_job_progress",
+        new_callable=AsyncMock,
+    ) as progress:
+        await extract_single_chunk(
+            schema="User resource documentation",
+            pydantic_model=_RetryResponse,
+            system_prompt="system",
+            user_prompt="user",
+            parse_fn=lambda result: result.items,
+            job_id=uuid4(),
+            chunk_id=uuid4(),
+            extraction_chain=chain,
+            progress_message=None,
+        )
+
+    first_call = progress.await_args_list[0].kwargs
+    assert first_call["message"] is None
+    assert first_call["stage"] == JobStage.processing_chunks

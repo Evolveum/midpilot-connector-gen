@@ -53,6 +53,7 @@ async def schedule_coroutine_job(
     initial_message: Optional[str] = None,
     session_id: UUID,
     session_result_key: Optional[str] = None,
+    session_companion_result_keys: Tuple[str, ...] = (),
     await_documentation: bool = False,
     await_documentation_timeout: Optional[float] = None,
     binary_artifacts: Mapping[str, bytes] | None = None,
@@ -74,6 +75,7 @@ async def schedule_coroutine_job(
         worker_kwargs=dict(worker_kwargs or {}),
         dynamic_input_provider=dynamic_input_provider if dynamic_input_enabled else None,
         session_result_key=session_result_key,
+        session_companion_result_keys=session_companion_result_keys,
         await_documentation=await_documentation,
         await_documentation_timeout=await_documentation_timeout,
         binary_artifacts=binary_artifacts,
@@ -174,6 +176,13 @@ async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
             return result
         return {"value": repr(result)}
 
+    raw_companion_keys = payload.get("sessionCompanionResultKeys", [])
+    required_companion_keys = (
+        tuple(key for key in raw_companion_keys if isinstance(key, str) and key)
+        if isinstance(raw_companion_keys, list)
+        else ()
+    )
+
     if "scrape" not in claimed_job.job_type and not input_payload.get("skipCache", False):
         result_dict = await cache.reuse_or_run(
             job_type=claimed_job.job_type,
@@ -181,6 +190,7 @@ async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
             session_id=claimed_job.session_id,
             input_payload=input_payload,
             run_normal_worker=run_normal_worker,
+            required_companion_keys=required_companion_keys,
         )
     else:
         result_dict = await run_normal_worker()
@@ -192,6 +202,7 @@ async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
             session_id=claimed_job.session_id,
             session_result_key=session_result_key,
             result_dict=result_dict,
+            required_companion_keys=required_companion_keys,
         )
         if not published_to_session:
             message = (

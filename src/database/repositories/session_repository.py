@@ -5,7 +5,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -170,13 +170,36 @@ class SessionRepository:
         job_id: UUID,
         value: Any,
     ) -> bool:
+        """Write one result while the session still points at this job."""
+        return await self.update_results_if_current_job(
+            session_id=session_id,
+            result_key=result_key,
+            job_id=job_id,
+            values={result_key: value},
+        )
+
+    async def update_results_if_current_job(
+        self,
+        *,
+        session_id: UUID,
+        result_key: str,
+        job_id: UUID,
+        values: Mapping[str, Any],
+    ) -> bool:
         """Write a result only while the session still points at this job.
 
         Locking the job-pointer row serializes a result write with a concurrent
-        request scheduling a newer job for the same output key.
+        request scheduling a newer job for the same output key. Companion outputs
+        are written under the same locks and transaction, so consumers can never
+        observe the primary result paired with another run's companion state.
         """
         if not result_key.endswith("Output"):
             raise ValueError(f"Session result key {result_key!r} does not follow the *Output convention")
+        if result_key not in values:
+            raise ValueError(f"Primary session result {result_key!r} is missing from the result values")
+        invalid_keys = [key for key in values if not key.endswith("Output")]
+        if invalid_keys:
+            raise ValueError(f"Session result keys do not follow the *Output convention: {invalid_keys!r}")
         pointer_key = f"{result_key[: -len('Output')]}JobId"
         session = (
             await self.db.execute(select(Session).where(Session.session_id == session_id).with_for_update())
@@ -191,7 +214,8 @@ class SessionRepository:
         ):
             return False
 
-        await self._upsert_session_data(session_id, result_key, value)
+        for key, value in values.items():
+            await self._upsert_session_data(session_id, key, value)
         session.updated_at = datetime.now(timezone.utc)
         await self.db.flush()
         return True

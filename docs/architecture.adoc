@@ -40,8 +40,13 @@ asynchronous background jobs; HTTP endpoints only enqueue jobs and read results
 | `alembic/`
 | Database schema migrations.
 
-| `test/unit`, `test/integration`
-| Tests, mirroring the `src/` structure.
+| `test/unit`
+| In-process tests, mirroring the `src/` structure. No database and no HTTP stack: route handlers are
+called directly with their repositories patched.
+
+| `test/integration`
+| Tests that cross a real boundary - `api/` drives the assembled FastAPI app over HTTP,
+`database/` runs against a real PostgreSQL schema.
 
 
 |===

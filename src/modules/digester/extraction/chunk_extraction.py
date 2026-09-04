@@ -31,13 +31,18 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
-async def _invoke_extraction_chain_with_retry(
+async def invoke_extraction_chain_with_retry(
     extraction_chain: Any,
     payload: Dict[str, Any],
     *,
     logger_prefix: str,
-    chunk_id: Optional[UUID],
+    chunk_id: Optional[UUID] = None,
 ) -> Any:
+    """Invoke a structured extraction chain, retrying transient LLM failures with backoff.
+
+    Shared by every extractor that talks to the LLM, including the per-pair relation
+    stages that have no chunk of their own (``chunk_id`` is then omitted).
+    """
     max_attempts = max(1, config.digester.chunk_llm_retry_attempts)
     base_delay = max(0.0, config.digester.chunk_llm_retry_base_delay_seconds)
 
@@ -56,10 +61,13 @@ async def _invoke_extraction_chain_with_retry(
                 raise
 
             delay = base_delay * (2 ** (attempt - 1))
+            # Callers without a chunk of their own (the per-pair relation stages) pass no
+            # chunk id; naming a chunk of "None" in the record would only be misleading.
+            target = f"chunk {chunk_id}" if chunk_id else "request"
             logger.warning(
-                "%sTransient LLM chunk failure for chunk %s; retrying attempt %s/%s in %.1fs: %s",
+                "%sTransient LLM failure for %s; retrying attempt %s/%s in %.1fs: %s",
                 logger_prefix,
-                chunk_id,
+                target,
                 attempt + 1,
                 max_attempts,
                 delay,
@@ -507,6 +515,10 @@ def _result_snippet(result: Any, limit: int = 2000) -> str:
     return raw if len(raw) <= limit else raw[:limit] + "...(truncated)"
 
 
+DEFAULT_CHUNK_PROGRESS_MESSAGE = "Processing chunk and extracting relevant information"
+"""Progress message written per chunk unless the caller supplies its own wording."""
+
+
 def build_chunk_extraction_chain(
     *,
     pydantic_model: type[T],
@@ -540,6 +552,7 @@ async def extract_single_chunk(
     max_end_sequence_length: Optional[int] = None,
     marker_word_cutoff_length: Optional[int] = None,
     extraction_chain: Any | None = None,
+    progress_message: Optional[str] = DEFAULT_CHUNK_PROGRESS_MESSAGE,
 ) -> Tuple[List[Any], bool]:
     """
     Run LLM extraction on a pre-chunked documentation item.
@@ -568,6 +581,10 @@ async def extract_single_chunk(
         max_end_sequence_length: Maximum length for the end sequence
         marker_word_cutoff_length: Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance
         extraction_chain: Optional pre-built reusable extraction chain. When not provided, one is built from prompts.
+        progress_message: Per-chunk progress message. Defaults to the generic wording every
+            chunk extractor has always written. Pass None when the calling pipeline sets a
+            richer stage message of its own that must survive the whole chunk loop; the stage
+            is still written either way, so progress reporting is unaffected.
 
     Returns:
         - Flat list of extracted items
@@ -611,11 +628,12 @@ async def extract_single_chunk(
         max_end_sequence_length if max_end_sequence_length is not None else digester_config.max_end_sequence_length
     )
 
-    # Progress: start processing
+    # Progress: start processing. A None message leaves the caller's wording in place -
+    # update_job_progress only writes the fields it is given.
     await update_job_progress(
         job_id,
         stage=JobStage.processing_chunks,
-        message="Processing chunk and extracting relevant information",
+        message=progress_message,
     )
 
     logger.info("%sLLM call for chunk %s", logger_prefix, chunk_id)
@@ -633,7 +651,7 @@ async def extract_single_chunk(
 
         result = cast(
             T,
-            await _invoke_extraction_chain_with_retry(
+            await invoke_extraction_chain_with_retry(
                 extraction_chain,
                 {"chunk": text, "summary": summary, "tags": tags, **(extra_llm_attrs or {})},
                 logger_prefix=logger_prefix,

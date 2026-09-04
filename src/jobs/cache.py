@@ -13,7 +13,7 @@ callback.
 import copy
 import logging
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Sequence
 from uuid import UUID, uuid4
 
 from src.config import config
@@ -28,6 +28,7 @@ from src.documents.relevance import (
 )
 from src.jobs import lifecycle
 from src.jobs.errors import JobClaimLostError
+from src.jobs.result_envelope import missing_session_companion_outputs
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ async def reuse_or_run(
     session_id: UUID,
     input_payload: Dict[str, Any],
     run_normal_worker: RunNormalWorker,
+    required_companion_keys: Sequence[str] = (),
 ) -> Dict[str, Any]:
     """Return a cached/reused result for the job, or the freshly computed worker result.
 
@@ -80,6 +82,16 @@ async def reuse_or_run(
             job_type,
             str(job_id),
             datetime.isoformat(created_at_limits),
+        )
+        return await run_normal_worker()
+
+    missing_companions = missing_session_companion_outputs(latest_job.result, required_companion_keys)
+    if missing_companions:
+        logger.info(
+            "[%s] Cached job %s lacks required companion output(s) %s; running the worker",
+            job_type,
+            str(latest_job.job_id),
+            ", ".join(missing_companions),
         )
         return await run_normal_worker()
 

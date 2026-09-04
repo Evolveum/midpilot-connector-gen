@@ -1,0 +1,911 @@
+= Relation analysis
+:toc: left
+
+link:digester.adoc[← Digester] | link:index.adoc[Pipeline overview] |
+link:../index.adoc[Documentation index]
+
+`POST /api/digester/{sessionId}/relations` detects associations between the
+session's object classes — user–group membership, project assignment, a link
+carried by a third class such as `Membership`. It is a digester extraction like
+any other, but it is not a single LLM call: relations are produced by a staged
+pipeline that deliberately separates *finding* evidence from *judging* it.
+
+The run produces *two* payloads:
+
+* `relationsOutput` — the stable, midPoint-facing contract, seven fields per
+  relation. This is what leaves the service.
+* `relationsAnalysisOutput` — the internal working state: every observation,
+  every decision, every rejection reason and the verification result. It is
+  stored in the session only, is never returned by any endpoint, and exists so
+  a human can answer *why did this relation appear (or disappear)?*
+
+A complete sample run of both files is committed beside this page:
+
+* link:../examples/relations/relationsOutput.json[`relationsOutput.json`] —
+  180 relations (64 KB)
+* link:../examples/relations/relationsAnalysisOutput.json[`relationsAnalysisOutput.json`]
+  — the analysis behind them, 178 pairs (896 KB)
+
+== Why a pipeline
+
+A relation is a *cross-chunk* object. Chunking splits the subject schema, the
+object schema and the sub-resource endpoint into different fragments, so no
+single fragment contains enough to judge one. A single call over one chunk
+therefore has to guess, and a single call over everything does not fit.
+
+The pipeline splits the problem in two: stages 1–4 only *observe* — they are
+recall-first and reject nothing — and stage 5 is the only stage allowed to
+accept, reject, and assign subject/object orientation, with every observation
+for one class pair in view at once. Stage 6 then tries to destroy what stage 5
+accepted.
+
+== The stages
+
+[cols="1,2,2,2", options="header"]
+|===
+| Step | Unit of work | LLM | What it does
+
+| 1 — seed
+| object classes
+| none
+| Reads the session's already extracted attributes, endpoints and object-class
+  metadata and turns them into observations. `format=reference` attributes,
+  sub-resource endpoint paths, inheritance and embedded markers. Deterministic
+  and free.
+
+| 2 — harvest
+| documentation chunk
+| one call per chunk
+| Recall-first sweep over every selected chunk: collect every possible mention
+  of a class-to-class link, accept or reject nothing.
+
+| 3 — class sweep
+| object class
+| one call per class
+| For the top-ranked object classes, assembles that class's documentation
+  *across* chunks and asks what it relates to. This is the pass that recovers
+  links whose two ends live in different fragments.
+
+| — link-object expansion
+| association classes
+| none
+| Unfolds an association/link class (`Membership` → `User` + `Group`) into the
+  direct candidate pair `User`–`Group`. Structural, not name-based: a class
+  qualifies when a large enough share of its attributes are references
+  (`relation_link_object_min_reference_ratio`).
+
+| 4 — focused re-read
+| candidate pair
+| one call per weak pair
+| Pairs whose evidence is thin or one-sided get one more targeted pass over the
+  documentation of both classes.
+
+| 5 — adjudication
+| candidate pair
+| one call per pair
+| The deciding stage. With all evidence for the pair at once it decides whether
+  a relation exists, its direction, kind, attributes, cardinality — and *how
+  many* associations the pair holds.
+
+| 6 — verification
+| accepted association
+| one call per association
+| An adversarial second opinion that tries to *refute* each accepted
+  association. A refuted association is dropped; an association that is real
+  but names the wrong attribute is corrected rather than discarded.
+
+| — projection
+| relation records
+| none
+| Attribute grounding, semantic deduplication, name disambiguation and IGA
+  ordering. Produces `relationsOutput`.
+|===
+
+Steps 1–6 are the numbered steps you see in the job progress and in the logs:
+
+[source]
+----
+[Digester:Relations] Step 5/6 - Judging relation candidates: 178 candidate pairs
+----
+
+The numbering is fixed, not derived from what actually ran. A step can be
+skipped entirely (no chunks selected, sweep disabled, no weak pairs,
+verification turned off), and a gap in the sequence is more honest than
+renumbering the rest mid-run.
+
+=== Units of work
+
+The stages count five *different* things, and the vocabulary matters when
+reading a log or the `stats` block:
+
+[source]
+----
+chunk  ->  observation  ->  pair  ->  association  ->  relation
+----
+
+* One *chunk* can produce many *observations*.
+* Many observations fold onto one unordered *pair* of classes.
+* One pair can hold several *associations* — a user can be both a member and an
+  owner of the same group.
+* One association projects to at most one *relation* record; duplicates are
+  merged away.
+
+Counts between steps therefore do not decrease monotonically. In the attached
+run:
+
+[source]
+----
+44 chunks -> 1013 observations -> 178 pairs -> 207 associations -> 180 relations
+----
+
+178 pairs producing 207 associations is not an inconsistency: 33 pairs carried
+more than one association, and 23 pairs carried none.
+
+== `relationsOutput` (midPoint contract)
+
+The final, stable output. Seven fields, unchanged by this pipeline, sorted by
+the IGA ranking already established in `objectClassesOutput` (subject class
+first, then object class) — not by LLM confidence and not alphabetically.
+
+[source,json]
+----
+{
+  "relations": [
+    {
+      "name": "group_to_user_members",
+      "displayName": "Group to User (members)",
+      "shortDescription": "Group lists its member Users via the 'members' attribute.",
+      "subject": "group",
+      "subjectAttribute": "members",
+      "object": "user",
+      "objectAttribute": ""
+    }
+  ]
+}
+----
+
+[cols="1,3", options="header"]
+|===
+| Field | Meaning
+
+| `name`
+| Stable lowercase snake_case identifier. Also the path segment of
+  `POST /api/codegen/{sessionId}/relations/{relationName}`.
+
+| `displayName`
+| Human-readable title.
+
+| `shortDescription`
+| One sentence grounded in the documentation. Empty when nothing trustworthy
+  could be derived.
+
+| `subject`
+| Normalized (lowercase) class whose instances *receive or consume* the access,
+  membership or assignment.
+
+| `subjectAttribute`
+| Attribute on the subject holding references to the object. Empty when the
+  documentation names none — for example when the link is carried by a third
+  class or exists only as an endpoint.
+
+| `object`
+| Normalized (lowercase) class that *grants, defines or scopes* the access.
+
+| `objectAttribute`
+| Inverse attribute on the object. Empty when undocumented.
+|===
+
+IMPORTANT: This is the stable contract consumed by midPoint. Everything the
+pipeline learned beyond these seven fields — relation kind, per-side
+cardinality, the carrying class, confidence, rationale, rejections — is *not*
+added here; it goes to `relationsAnalysisOutput`.
+
+== `relationsAnalysisOutput` (internal)
+
+Purpose: explain why the pipeline accepted or rejected a specific relation.
+It is a companion of one exact `relationsOutput`, written in the same
+transaction as it.
+
+[source,json]
+----
+{
+  "jobId": "09095e7c-34ff-4575-9de6-8b1a53c80c0c",
+  "apiType": "rest",
+  "outputFingerprint": "sha256 of the relationsOutput this analysis describes",
+  "stats": { "...": 0 },
+  "pairs": [
+    {
+      "pairKey": "attachment|principal",
+      "classA": "Attachment",
+      "classB": "Principal",
+      "accepted": true,
+      "rejectionReason": "",
+      "observationSources": ["link_object_expansion"],
+      "observations": [],
+      "decisions": [],
+      "relevantDocumentations": []
+    }
+  ]
+}
+----
+
+=== Where it lives
+
+Stored as a session key, never exposed over HTTP
+(`src/modules/digester/results.py`, `RELATIONS_ANALYSIS_RESULT_KEY`):
+
+[source,sql]
+----
+SELECT value
+FROM session_data
+WHERE session_id = '<session id>'
+  AND key = 'relationsAnalysisOutput';
+----
+
+NOTE: `PUT /api/digester/{sessionId}/relations` — a manual override of the
+relation result — clears the stored analysis in the same transaction. A
+hand-written relation list has no machine analysis, and keeping the previous
+one would let codegen attach another run's reasoning to it.
+
+=== Top-level fields
+
+[cols="1,3", options="header"]
+|===
+| Field | Meaning
+
+| `jobId`
+| Job that produced the analysis. Confirms the analysis belongs to the run you
+  are looking at.
+
+| `apiType`
+| Protocol profile (`rest`, `scim`, `sql`) used by every LLM stage of this run.
+  Codegen also reads it when no explicit `apiType` override is given.
+
+| `outputFingerprint`
+| SHA-256 identity of the exact `relationsOutput` this analysis describes. It
+  pairs the two payloads without adding metadata to the stable contract; codegen
+  refuses to attach the analysis to a relation list it does not match.
+
+| `stats`
+| Per-stage counters, so a thin result can be traced back to the stage that
+  thinned it.
+
+| `pairs`
+| Every analyzed class pair, accepted and rejected alike.
+|===
+
+=== `stats`
+
+[cols="2,3,1", options="header"]
+|===
+| Counter | Meaning | Sample run
+
+| `chunksHarvested`
+| Documentation chunks that went through the recall-first harvest.
+| 44
+
+| `classesSwept`
+| Object classes given their own cross-chunk sweep.
+| 15
+
+| `linkObjectPairsExpanded`
+| Candidate pairs derived through a third, connecting class.
+| 50
+
+| `pairsRefocused`
+| Weak or one-sided pairs that got a focused documentation re-read.
+| 143
+
+| `pairsAdjudicated`
+| Pairs that reached the deciding stage.
+| 178
+
+| `relationsVerified`
+| Accepted associations sent to adversarial verification.
+| 207
+
+| `observationsTotal`
+| All observations collected before adjudication.
+| 1013
+
+| `observationsDeterministic`
+| Observations produced without an LLM, from already extracted attributes,
+  endpoints and class metadata.
+| 5
+
+| `relationsEmitted`
+| Relations that reached `relationsOutput`.
+| 180
+|===
+
+NOTE: `observationsTotal` counts what adjudication *used*; the persisted
+`pairs[].observations` are capped per pair
+(`relation_max_stored_observations_per_pair`, default 40) to bound the session
+payload. In the attached run 1013 observations were used and 777 stored — the
+difference is the cap, not lost evidence.
+
+=== `pairs[]`
+
+One entry per analyzed *unordered* class pair. This is not every possible
+combination of classes: it is the pairs for which the pipeline found at least
+some reason to analyze and that reached the deciding stage.
+
+[cols="1,3", options="header"]
+|===
+| Field | Meaning
+
+| `pairKey`
+| Stable identifier, `"<classA>\|<classB>"`, sorted. Sorting is what makes two
+  documented navigation directions one pair. *The order in `pairKey`, `classA`
+  and `classB` carries no meaning* — it does not determine subject and object.
+
+| `classA`, `classB`
+| The two classes, in sorted order.
+
+| `accepted`
+| `true` when at least one association from this pair reached
+  `relationsOutput`.
+
+| `rejectionReason`
+| Why the whole pair carries no association, when the deciding stage produced
+  no decision at all. When `decisions` is non-empty, the detailed reason lives
+  on the individual `decisions[].rejectionReason` instead.
+
+| `observationSources`
+| Distinct pipeline stages that contributed evidence for this pair (see below).
+
+| `observations`
+| Raw, unjudged evidence collected across all stages.
+
+| `decisions`
+| One entry per candidate association the deciding stage found for this pair.
+
+| `relevantDocumentations`
+| `{docId, chunkId}` references to the chunks that backed this pair — the way
+  back to the original text.
+|===
+
+`observationSources` values:
+
+[cols="1,3", options="header"]
+|===
+| Source | Produced by
+
+| `chunk_harvest` | Step 2 — the LLM saw the link in a single chunk.
+| `class_sweep` | Step 3 — the LLM saw it with one class's full documentation in view.
+| `pair_focus` | Step 4 — the targeted re-read of a weak pair.
+| `attribute_schema` | Step 1 — derived from already extracted attributes.
+| `endpoint_schema` | Step 1 — derived from already extracted endpoints.
+| `object_class_metadata` | Step 1 — from object-class metadata (inheritance, embedded type).
+| `link_object_expansion` | Derived through a third, connecting class.
+|===
+
+=== `pairs[].observations[]`
+
+An observation is a *raw finding*, not a decision. It says what the pipeline
+saw in the documentation or the schema.
+
+[source,json]
+----
+{
+  "sourceClass": "Attachment",
+  "targetClass": "Principal",
+  "sourceAttribute": "",
+  "targetAttribute": "",
+  "multiValued": null,
+  "evidenceKind": "schema_reference",
+  "quote": "Activity.attachments -> Attachment; Activity.user -> Principal",
+  "note": "Connected only through Activity, which references both ends.",
+  "viaClass": "Activity"
+}
+----
+
+[cols="1,3", options="header"]
+|===
+| Field | Meaning
+
+| `sourceClass`
+| Class on which the reference or direction was found.
+
+| `targetClass`
+| Class the reference points at. The direction `sourceClass → targetClass`
+  describes *this piece of evidence*; it need not match the final
+  `subject → object` orientation.
+
+| `sourceAttribute`
+| Attribute on `sourceClass` carrying the reference (`groups`), copied verbatim.
+  Empty means the evidence names none — never an inferred or invented name.
+
+| `targetAttribute`
+| Inverse attribute on `targetClass` (`members`). Empty when undocumented.
+
+| `multiValued`
+| `true` multi-valued, `false` single-valued, `null` when the documentation does
+  not say.
+
+| `evidenceKind`
+| What the observation rests on (see below).
+
+| `quote`
+| Short verbatim excerpt from the documentation supporting it — copied, never
+  paraphrased. Empty for deterministically derived observations.
+
+| `note`
+| One-line remark, e.g. that a third class connects the two ends.
+
+| `viaClass`
+| The connecting class (`Membership`, `Activity`). System-populated during
+  link-object expansion; empty otherwise.
+|===
+
+`evidenceKind` values:
+
+[cols="1,3", options="header"]
+|===
+| Kind | Meaning
+
+| `schema_property` | A declared property in the schema.
+| `schema_reference` | An explicit type reference, e.g. an OpenAPI `$ref`.
+| `endpoint_path` | Derived from an API endpoint or sub-resource path.
+| `narrative` | Described in prose.
+| `attribute_metadata` | From already extracted attribute metadata.
+| `inheritance_metadata` | Evidence of inheritance.
+| `embedded_metadata` | Evidence that the target is an embedded object, not a separately manageable class.
+| `scim_reference` | SCIM reference metadata (`$ref`, `referenceTypes`) — SCIM runs only.
+| `scim_mapping` | A documented vendor-specific SCIM mapping — the weakest SCIM signal.
+| `sql_foreign_key` | A declared `FOREIGN KEY` constraint — SQL runs only.
+| `sql_junction_table` | A junction/association table — SQL runs only.
+|===
+
+`schema_reference`, `endpoint_path`, `attribute_metadata`, `sql_foreign_key`
+and `sql_junction_table` are *deterministic*: they are read off an already
+validated schema rather than interpreted from prose, and every stage that has
+to rank or trim observations prefers them.
+
+`inheritance_metadata` and `embedded_metadata` are never a pointer at another
+class; they are recorded so the pair can be rejected *explicitly*, once,
+instead of being rediscovered and re-proposed on every run.
+
+A SCIM run additionally carries `scimEvidence` on an observation (application
+attribute vs. SCIM wire path such as `groups.$ref`, `referenceTypes`, vendor
+deviation); a SQL run carries `sqlEvidence` (logical attribute, source/target
+tables, ordered columns of a composite key, constraint name, junction table).
+Both are absent in the attached REST sample.
+
+=== `pairs[].decisions[]`
+
+One entry per *candidate association* between `classA` and `classB`. A pair has
+several entries when the documentation describes several distinct associations.
+
+[cols="1,3", options="header"]
+|===
+| Field | Meaning
+
+| `verdict`
+| The adjudicated association itself (see below).
+
+| `accepted`
+| `true` when this association reached `relationsOutput`. *This — not
+  `verdict.isRelation` — is the reliable indicator of the final outcome*, because
+  an association can still be dropped after adjudication.
+
+| `rejectionReason`
+| Why it did not: insufficient evidence, embedded/inheritance, an invalid class
+  orientation, refuted during verification, not projectable onto a relation
+  record, or merged into a duplicate. Empty on an accepted association.
+
+| `refutation`
+| The verification result, or `null` when verification did not run.
+
+| `ungroundedAttributes`
+| Attribute names the LLM claimed that appear neither in the class's extracted
+  attributes nor in the cited evidence, as `Class.attribute`. Such a name is
+  cleared from the emitted relation — the relation survives, the name does not.
+  A non-empty list is a signal worth checking: either a hallucinated attribute
+  or an incomplete attribute extraction.
+
+| `attributeSchemaStates`
+| Per class, how usable its extracted attribute schema was while grounding this
+  decision: `missing`, `invalid`, `empty` or `available`. `missing` next to a
+  non-empty `ungroundedAttributes` usually means the attribute extraction, not
+  the LLM, is the problem.
+|===
+
+=== `decisions[].verdict`
+
+[cols="1,3", options="header"]
+|===
+| Field | Meaning
+
+| `isRelation`
+| Whether the deciding stage considers this a real association between two
+  separately manageable object classes.
+
+| `kind`
+| Classification, see the table below.
+
+| `subject`
+| Class whose instances *receive or consume* the access, membership or
+  assignment (a user in a group: `User`). Chosen from the two classes of the
+  pair by documented behavior, never by the class name.
+
+| `subjectAttribute`
+| Attribute on the subject holding references to the object (`groups`). Empty
+  when the link only exists on the other side or via an endpoint.
+
+| `subjectMultiValued`
+| `true` / `false` / `null` (unknown).
+
+| `object`
+| Class that *grants, defines or scopes* the access (a user in a group:
+  `Group`).
+
+| `objectAttribute`
+| Inverse attribute on the object (`members`). Empty when undocumented.
+
+| `objectMultiValued`
+| `true` / `false` / `null` (unknown).
+
+| `linkObjectClass`
+| The third class that physically carries the association. Set for
+  `kind: "link_object"`, empty otherwise.
+
+| `name`
+| Stable lowercase snake_case identifier, default `{subject}_to_{object}`.
+
+| `displayName`
+| Human-readable title.
+
+| `shortDescription`
+| One sentence on what the association means.
+
+| `confidence`
+| `low` / `medium` / `high` — the LLM's own estimate of evidence strength. High
+  confidence is not proof; it has to be backed by the observations and quotes.
+
+| `rationale`
+| One or two sentences naming the evidence that drove the decision. It should
+  point at concrete evidence, not at a similarity between class names.
+|===
+
+`kind` values:
+
+[cols="1,3", options="header"]
+|===
+| Kind | Meaning
+
+| `reference` | The subject holds a direct reference to the object.
+| `inverse_reference` | The reference is documented only on the object side.
+| `link_object` | A third, separately manageable class carries the association.
+| `virtual_endpoint` | The association exists through an API endpoint without a direct attribute.
+| `embedded` | One class is only a complex attribute of the other — not a ConnId association.
+| `inheritance` | One class extends the other — a schema relationship, not an association.
+| `not_a_relation` | The evidence does not describe a real association.
+|===
+
+Only the first four can reach `relationsOutput`, and only with
+`isRelation: true`. The last three are recorded as explicit rejections rather
+than silently dropped, so a reviewer confirms them once instead of seeing them
+re-proposed on every run.
+
+=== `decisions[].refutation`
+
+The result of the adversarial second opinion on an accepted candidate. `null`
+when verification was disabled, never ran, or returned nothing usable.
+
+[cols="1,3", options="header"]
+|===
+| Field | Meaning
+
+| `refuted`
+| `true` — the verifier concluded the evidence does not support the relation; it
+  is dropped. `false` — the verifier did not refute it.
+
+| `relationSupportedAfterCorrection`
+| `true` when the association *is* real and only the attribute names were wrong.
+  Lets verification repair, for example, a nested SCIM path (`groups.$ref` →
+  `groups`) instead of destroying a real relation. Implies `refuted: false`.
+
+| `reason`
+| One sentence on what the evidence does or does not show.
+
+| `correctedSubjectAttribute`, `correctedObjectAttribute`
+| Replacement attribute names proposed by the verifier. Empty means no
+  correction was needed.
+|===
+
+NOTE: A correction is refused — and logged — when applying it would make this
+association identical to another association of the same pair. Otherwise the
+later deduplication would silently collapse two real associations
+(`membership` and `ownership`) into one.
+
+== Worked examples
+
+All three are in the attached sample files.
+
+=== Link carried by a third class
+
+Pair `attachment|principal`. Neither class references the other; `Activity`
+references both. The link-object expansion synthesized the pair, and
+adjudication named the carrying class:
+
+[source,json]
+----
+{
+  "pairKey": "attachment|principal",
+  "classA": "Attachment",
+  "classB": "Principal",
+  "accepted": true,
+  "observationSources": ["link_object_expansion"],
+  "observations": [
+    {
+      "sourceClass": "Attachment",
+      "targetClass": "Principal",
+      "evidenceKind": "schema_reference",
+      "quote": "Activity.attachments -> Attachment; Activity.user -> Principal",
+      "note": "Connected only through Activity, which references both ends.",
+      "viaClass": "Activity"
+    }
+  ],
+  "decisions": [
+    {
+      "verdict": {
+        "kind": "link_object",
+        "name": "principal_to_attachment",
+        "subject": "Principal",
+        "subjectAttribute": "user",
+        "object": "Attachment",
+        "objectAttribute": "attachments",
+        "linkObjectClass": "Activity",
+        "confidence": "medium",
+        "isRelation": true,
+        "rationale": "The schema reference 'Activity.attachments -> Attachment' together with 'Activity.user -> Principal' shows that Activity acts as a link object connecting the two classes; no direct reference exists on either side."
+      },
+      "accepted": true,
+      "refutation": { "refuted": false, "reason": "..." },
+      "rejectionReason": "",
+      "ungroundedAttributes": []
+    }
+  ]
+}
+----
+
+The emitted record keeps only the seven contract fields — note that
+`linkObjectClass: "Activity"`, the part that makes this relation
+*implementable*, exists nowhere in it:
+
+[source,json]
+----
+{
+  "name": "principal_to_attachment",
+  "displayName": "Principal to Attachment (via Activity)",
+  "shortDescription": "Principal and Attachment are linked through Activity, which references both the user and the attached files.",
+  "subject": "principal",
+  "subjectAttribute": "user",
+  "object": "attachment",
+  "objectAttribute": "attachments"
+}
+----
+
+That gap is exactly why relation codegen reads the analysis — see
+<<codegen,How codegen uses the analysis>>.
+
+=== One pair, two associations
+
+Pair `portfolio|principal` carries two independent link-object associations,
+through `Capability` and through `Membership`. Both are accepted, verified and
+projected separately, and each gets its own name and description so the two are
+never interchangeable:
+
+[source,json]
+----
+{ "name": "principal_to_portfolio_capability",
+  "displayName": "Principal to Portfolio (Capability)",
+  "subject": "principal", "subjectAttribute": "principal",
+  "object": "portfolio", "objectAttribute": "context" }
+
+{ "name": "principal_to_portfolio_membership",
+  "displayName": "Principal to Portfolio (Membership)",
+  "subject": "principal", "subjectAttribute": "",
+  "object": "portfolio", "objectAttribute": "" }
+----
+
+=== An explicit rejection
+
+Pair `group|principalmodel` has strong evidence — and is still not a relation.
+`decisions` is empty, so the reason sits on the pair:
+
+[source,json]
+----
+{
+  "pairKey": "group|principalmodel",
+  "accepted": false,
+  "decisions": [],
+  "observations": [
+    { "evidenceKind": "inheritance_metadata",
+      "quote": "Group extends PrincipalModel",
+      "note": "Schema inheritance, not an association." },
+    { "evidenceKind": "schema_reference",
+      "quote": "\"$ref\":\"#/components/schemas/PrincipalModel\"",
+      "note": "Group schema inherits from PrincipalModel via $ref in allOf." }
+  ],
+  "rejectionReason": "Both observations state that Group extends PrincipalModel (inheritance_metadata) and that Group's schema references PrincipalModel via $ref/allOf (schema_reference). This indicates a subclass relationship, i.e., inheritance, not an association."
+}
+----
+
+A rejection at the level of a single association looks the same but sits on
+`decisions[].rejectionReason`, with `accepted: false` and — when verification
+was what killed it — `refutation.refuted: true` beside it. In the attached run
+all 27 rejected associations came from verification; one of them is a
+`createWorkPackage` hypermedia action on `Project` that describes an
+*operation*, not a persistent reference.
+
+== Reviewing a run
+
+A practical order for reading `relationsAnalysisOutput`:
+
+1. Check `stats` first. A surprisingly small `relationsEmitted` is almost always
+   explained by one counter — no `chunksHarvested` (nothing selected), a low
+   `classesSwept` (sweep limit), or `pairsAdjudicated` at exactly the configured
+   ceiling.
+2. Filter `pairs[]` by `accepted: false` and read `rejectionReason`. Wrong
+   rejections are cheaper to spot than wrong acceptances.
+3. For anything suspicious, read `observations[].quote` — the quote is a verbatim
+   excerpt, so it is directly checkable, and `relevantDocumentations` leads back
+   to the chunk.
+4. Grep for non-empty `ungroundedAttributes`. Each one is either a hallucinated
+   attribute or a hole in the attribute extraction; `attributeSchemaStates` says
+   which.
+5. Treat `confidence: "low"` together with `evidenceKind: "narrative"` as the
+   weakest combination in the file, and a deterministic `evidenceKind` with a
+   named attribute on both sides as the strongest.
+6. Check `accepted`, not `verdict.isRelation`, when you want to know what
+   midPoint actually received.
+
+Job errors are recorded rather than hidden: pairs dropped by a configured
+ceiling appear both in the log and in the job's error list.
+
+[[codegen]]
+== How codegen uses the analysis
+
+`relationsOutput` has no room for *how* an association is carried, and for a
+`link_object` relation that is not decoration but the executable part — the
+carrying class is named nowhere in the record. Relation codegen therefore joins
+the emitted record back onto the verdict it came from
+(`src/modules/codegen/selection/relation_analysis.py`) and passes a compact
+context to generation: the relation kind, the carrying class, the attributes of
+that class pointing at each end, and the protocol-specific evidence (SCIM wire
+paths, SQL tables and foreign-key columns).
+
+The join is guarded by `outputFingerprint`, so an analysis from a different run
+is never attached to the current relation list. When the analysis is missing,
+unreadable or does not contain the relation, generation falls back to the record
+alone — and logs that it did, because a `link_object` relation generated without
+the context is quietly ungrounded.
+
+See link:codegen.adoc[Codegen] for the generation side.
+
+== Protocol differences
+
+The stage structure is identical for all three protocols; the prompts and the
+evidence vocabulary differ (`src/modules/digester/prompts/relation_profiles.py`).
+
+[cols="1,3", options="header"]
+|===
+| Protocol | What relation analysis reads
+
+| `rest`
+| Schema references and properties, endpoint paths, prose.
+
+| `scim`
+| Reference metadata, ResourceTypes, vendor mappings, examples, prose. The
+  relation attribute stays the parent logical attribute (`groups`); the full
+  wire path (`groups.$ref`) is kept in `observations[].scimEvidence` and never
+  becomes the ConnId relation attribute.
+
+| `sql`
+| DDL, foreign keys, composite keys, junction tables, logical mappings and
+  narrative model documentation. Parsed foreign keys are *not* promoted to
+  relations heuristically — they are confirmed against object-class semantics,
+  and the physical binding is preserved in `observations[].sqlEvidence`.
+|===
+
+The protocol comes from the `apiType` query override, otherwise from the
+session's detected link:../api-type.adoc[apiType]; it is recorded in
+`relationsAnalysisOutput.apiType`.
+
+== Limits and settings
+
+Settings live in `src/config/digester.py`; the environment variable is the same
+name in uppercase with the `+DIGESTER__+` prefix
+(`relation_class_sweep_limit` → `+DIGESTER__RELATION_CLASS_SWEEP_LIMIT+`). The
+lowercase form below is what the log messages print. Every limit that drops
+something logs what it dropped.
+
+[cols="2,1,3", options="header"]
+|===
+| Setting | Default | Effect
+
+| `relation_class_sweep_limit`
+| 15
+| Object classes given their own sweep, in IGA ranking order. `0` disables
+  step 3.
+
+| `relation_sweep_include_medium_confidence`
+| `true`
+| Whether the sweep also covers medium-confidence classes. High-confidence
+  classes are always covered, low-confidence ones never.
+
+| `relation_max_refocused_pairs`
+| 200
+| Weak pairs given a focused re-read in step 4.
+
+| `relation_max_adjudicated_pairs`
+| 200
+| Ceiling on pairs judged in one run. Pairs are ordered by class confidence and
+  evidence strength, so the ceiling drops the weakest.
+
+| `relation_link_object_min_reference_ratio`
+| 0.5
+| Share of a class's attributes that must be references before it counts as an
+  association class.
+
+| `relation_link_object_max_expanded_pairs`
+| 50
+| Pairs synthesized from association classes. `0` disables the expansion.
+
+| `relation_verification_enabled`
+| `true`
+| Whether step 6 runs. Disabling it raises recall and lowers precision.
+
+| `relation_max_prompt_observations_per_pair`
+| 80
+| Observations serialized into one focus/adjudication/verification prompt.
+
+| `relation_max_stored_observations_per_pair`
+| 40
+| Observations kept per pair in the persisted analysis. Bounds the session
+  payload; adjudication still used the full set.
+
+| `relation_prompt_max_object_classes`
+| 80
+| Object classes listed in a relation prompt.
+
+| `relation_prompt_max_description_chars`
+| 200
+| Object-class description length in a prompt. The class list is re-sent on
+  every per-chunk call, so untruncated descriptions dominate prompt cost.
+
+| `relation_context_max_chars`
+| 120000
+| Documentation assembled for one class sweep or pair re-read.
+|===
+
+NOTE: The relation pipeline is the most expensive digester step by a wide
+margin — its cost is roughly `chunks + swept classes + weak pairs + pairs +
+accepted associations` LLM calls. Results are cached by input like every other
+digester step; use `skipCache=true` after prompt or documentation changes.
+
+== The sample run
+
+[cols="1,3", options="header"]
+|===
+| File | Contents
+
+| link:../examples/relations/relationsAnalysisOutput.json[`relationsAnalysisOutput.json`]
+| One job: 178 analyzed pairs (143 accepted), 777 stored observations and 207
+  decisions, 27 of them rejected.
+
+| link:../examples/relations/relationsOutput.json[`relationsOutput.json`]
+| The 180 relations those decisions produced.
+|===
+
+Kinds across the 207 decisions: 134 `reference`, 47 `link_object`, 17
+`virtual_endpoint`, 9 `inverse_reference`. Evidence behind the stored
+observations: 293 `schema_property`, 259 `endpoint_path`, 103
+`schema_reference`, 84 `narrative`, 21 `inheritance_metadata`, 17
+`embedded_metadata`.
+
+NOTE: The sample was produced before `apiType`, `outputFingerprint`,
+`attributeSchemaStates` and `relationSupportedAfterCorrection` were added, so
+those fields are absent from it. Everything else matches the current schema.

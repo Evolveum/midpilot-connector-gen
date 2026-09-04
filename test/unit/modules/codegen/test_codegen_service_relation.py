@@ -10,7 +10,9 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen import generation
+from src.modules.codegen.schema import RelationCodegenContext
 from src.modules.digester.schemas import RelationsResponse
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio
@@ -76,6 +78,7 @@ async def test_generate_relation():
             relation_name="project_to_membership",
             session_id=uuid4(),
             job_id=uuid4(),
+            protocol=ApiType.REST,
         )
 
         assert isinstance(result, dict)
@@ -90,5 +93,67 @@ async def test_generate_relation():
         assert generate_kwargs["relevant_chunk_pairs"] == [
             {"doc_id": "doc-1", "chunk_id": "project-chunk"},
             {"doc_id": "doc-2", "chunk_id": "shared-chunk"},
+            {"doc_id": "doc-3", "chunk_id": "membership-chunk"},
+        ]
+        assert mock_relation_generator_class.call_args.kwargs["relation_context"] is None
+
+
+@pytest.mark.asyncio
+async def test_generate_relation_loads_the_association_class_documentation():
+    """A relation carried by a third class generates with that class's chunks and context."""
+    relations_model = RelationsResponse.model_validate(
+        {
+            "relations": [
+                {
+                    "name": "user_to_group",
+                    "displayName": "User to Group",
+                    "subject": "user",
+                    "object": "group",
+                    "subjectAttribute": "",
+                    "objectAttribute": "",
+                    "shortDescription": "",
+                }
+            ]
+        }
+    )
+    relation_context = RelationCodegenContext(
+        kind="link_object",
+        linkObjectClass="Membership",
+        linkAttributes=[{"attribute": "userId", "references": "user"}],
+    )
+
+    with (
+        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository") as mock_relevant_repository,
+        patch("src.modules.codegen.generation.RelationGenerator") as mock_relation_generator_class,
+    ):
+        mock_db_cm = mock_session_maker.return_value
+        mock_db_cm.__aenter__.return_value = AsyncMock()
+
+        mock_repo_instance = mock_relevant_repository.return_value
+        mock_repo_instance.get_relevant_chunks_grouped_by_entity = AsyncMock(
+            return_value={
+                "user": [{"docId": "doc-1", "chunkId": "user-chunk"}],
+                "group": [{"docId": "doc-2", "chunkId": "group-chunk"}],
+                "membership": [{"docId": "doc-3", "chunkId": "membership-chunk"}],
+            }
+        )
+
+        mock_generator_instance = mock_relation_generator_class.return_value
+        mock_generator_instance.generate = AsyncMock(return_value="mocked relation code")
+
+        await generation.generate_relation_code(
+            relations=relations_model,
+            relation_name="user_to_group",
+            session_id=uuid4(),
+            job_id=uuid4(),
+            protocol=ApiType.REST,
+            relation_context=relation_context,
+        )
+
+        assert mock_relation_generator_class.call_args.kwargs["relation_context"] is relation_context
+        assert mock_generator_instance.generate.await_args.kwargs["relevant_chunk_pairs"] == [
+            {"doc_id": "doc-1", "chunk_id": "user-chunk"},
+            {"doc_id": "doc-2", "chunk_id": "group-chunk"},
             {"doc_id": "doc-3", "chunk_id": "membership-chunk"},
         ]

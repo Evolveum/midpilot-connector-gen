@@ -8,6 +8,10 @@ structured model of the target API: metadata, authentication, object classes,
 endpoints, attributes and relations. Everything the
 link:codegen.adoc[codegen] stage generates is built on these outputs.
 
+NOTE: Relation extraction is a multi-stage pipeline with its own internal
+diagnostic output; it has a separate page —
+link:relations.adoc[Relation analysis].
+
 Module: `src/modules/digester/`
 
 == Endpoints
@@ -41,7 +45,9 @@ link:../sessions-and-jobs.adoc[job pattern]: `POST` enqueues extraction,
 | Attribute schema for one object class.
 
 | `/{sessionId}/relations`
-| Relations between object classes (e.g. user–group membership).
+| Relations between object classes (e.g. user–group membership). Accepts an
+  `apiType` query override. The staged pipeline behind it and its two outputs
+  are described in link:relations.adoc[Relation analysis].
 
 | `/{sessionId}/connectivity-endpoint`
 | A cheap endpoint suitable for a connection test.
@@ -56,8 +62,9 @@ link:../sessions-and-jobs.adoc[job pattern]: `POST` enqueues extraction,
 2. *Protocol-specific extractors* — the worker layer under `extractors/` is
    split by protocol: `rest/`, `scim/`, `sql/`, chosen by the effective
    link:../api-type.adoc[apiType]. REST derives everything from prose; SCIM and
-   SQL start from a deterministic contract and only use the LLM where the
-   contract is silent.
+   SQL start from a deterministic contract and use focused LLM stages where
+   interpretation or vendor-specific mappings are required. Relation detection
+   always retains the full harvest/sweep/focus/adjudicate/verify LLM pipeline.
 3. *Sequence-based extraction* — for large prose-based extractions (including
    REST attributes and shared auth extraction), the LLM returns start/end
    *markers* into the source text; the actual content is then located by fuzzy
@@ -101,10 +108,16 @@ Progress of the multi-phase jobs is reported through `JobStage` values
   object-class export, or from the native SQL types in a conndev SQL-table
   export or raw schema.
 | `relations`
-| Extracted from the documentation.
-| Extracted from the documentation.
-| No SQL-specific implementation. The shared documentation-based LLM extractor
-  can run, but parsed foreign keys are not converted into relation records.
+| REST-focused staged LLM analysis over schema references, properties,
+  endpoints, and prose.
+| SCIM-focused staged LLM analysis over reference metadata, ResourceTypes,
+  vendor mappings, examples, and prose. Custom application attributes remain
+  separate from SCIM wire paths. A complex reference is represented by its
+  parent relation attribute (`groups`, `members`, `manager`) while the complete
+  wire path (`groups.$ref`, `members.$ref`, `manager.$ref`) remains in
+  `relationsAnalysisOutput.scimEvidence`.
+| SQL-focused staged LLM analysis over DDL, foreign keys, composite keys,
+  junction tables, logical mappings, and narrative model documentation.
 | `auth`
 | Documented authentication methods.
 | Documented authentication methods.
@@ -284,8 +297,11 @@ keys, foreign keys or nullability. When a matching conndev SQL-table export is
 uploaded, those values enrich the attributes; a raw schema can provide the
 same class of metadata. Without either table source, `primaryKey` remains
 unknown and `mandatory` is set only for columns marked `required`. Parsed
-foreign keys are available to codegen but are not converted automatically into
-`relationsOutput`.
+foreign keys are not converted heuristically into `relationsOutput`; the SQL
+relation LLM profile confirms them against logical object-class semantics and
+preserves physical bindings in `relationsAnalysisOutput`. Review ambiguous
+associations before codegen, especially when the DDL has no comments or
+logical-name mapping.
 
 == Order matters
 
@@ -302,11 +318,13 @@ attributes require object classes to exist (jobs fail with
 `ObjectClassesNotFoundError` otherwise); relations build on extracted
 classes/attributes.
 
-For a `sql` session the order is shorter: `classes` → per class `attributes`.
+For a `sql` session the order is shorter: `classes` → per class `attributes` →
+`relations`.
 `endpoints` is skipped entirely — it is rejected for a SQL session, and codegen
 does not require it, because each extracted attribute already carries the table
-identity and column it maps to. The shared `auth`, `relations`, and
-`connectivity-endpoint` routes are not SQL-aware and are not part of this
+identity and column it maps to. Relation analysis reads SQL documentation
+through its own prompt profile and never requires endpoints. The shared `auth`
+and `connectivity-endpoint` routes are not SQL-aware and are not part of this
 normal path.
 
 == Pitfalls

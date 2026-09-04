@@ -86,3 +86,6 @@ each source of schema provides.
 NOTE: Every stage is exposed as an asynchronous job: `POST` starts it and
 returns a `jobId`, `GET` on the same path polls the status/result. See
 link:../sessions-and-jobs.adoc[Sessions and jobs].
+
+NOTE: Relation detection inside the digester is a staged pipeline of its own
+and has a dedicated page: link:relations.adoc[Relation analysis].

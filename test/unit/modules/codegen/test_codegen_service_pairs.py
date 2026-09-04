@@ -10,7 +10,6 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen.selection import relevant_chunks
-from src.modules.digester.schemas import RelationsResponse
 
 
 def test_collect_pairs_new_format():
@@ -46,22 +45,7 @@ def test_collect_pairs_empty_input():
 
 
 @pytest.mark.asyncio
-async def test_collect_relation_object_class_pairs_uses_subject_and_object_chunks():
-    relations = RelationsResponse.model_validate(
-        {
-            "relations": [
-                {
-                    "name": "principal_to_membership",
-                    "displayName": "Principal to Membership",
-                    "shortDescription": "",
-                    "subject": "principal",
-                    "subjectAttribute": "memberships",
-                    "object": "membership",
-                    "objectAttribute": "",
-                }
-            ]
-        }
-    )
+async def test_collect_relation_object_class_pairs_uses_the_requested_class_chunks():
     with (
         patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
         patch("src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository") as mock_relevant_repository,
@@ -85,10 +69,39 @@ async def test_collect_relation_object_class_pairs_uses_subject_and_object_chunk
             }
         )
 
-        result = await relevant_chunks._collect_relation_object_class_pairs(relations, uuid4())
+        result = await relevant_chunks._collect_relation_object_class_pairs(uuid4(), ["principal", "membership"])
 
         assert result == [
             {"doc_id": "doc-1", "chunk_id": "principal-1"},
             {"doc_id": "doc-2", "chunk_id": "shared"},
+            {"doc_id": "doc-3", "chunk_id": "membership-1"},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_collect_relation_object_class_pairs_covers_the_association_class():
+    """The class carrying an association contributes its own documentation chunks."""
+    with (
+        patch("src.modules.codegen.selection.relevant_chunks.async_session_maker") as mock_session_maker,
+        patch("src.modules.codegen.selection.relevant_chunks.RelevantChunkRepository") as mock_relevant_repository,
+    ):
+        mock_db_cm = mock_session_maker.return_value
+        mock_db = AsyncMock()
+        mock_db_cm.__aenter__.return_value = mock_db
+
+        mock_repo_instance = mock_relevant_repository.return_value
+        mock_repo_instance.get_relevant_chunks_grouped_by_entity = AsyncMock(
+            return_value={
+                "user": [{"docId": "doc-1", "chunkId": "user-1"}],
+                "group": [{"docId": "doc-2", "chunkId": "group-1"}],
+                "membership": [{"docId": "doc-3", "chunkId": "membership-1"}],
+            }
+        )
+
+        result = await relevant_chunks._collect_relation_object_class_pairs(uuid4(), ["user", "group", "Membership"])
+
+        assert result == [
+            {"doc_id": "doc-1", "chunk_id": "user-1"},
+            {"doc_id": "doc-2", "chunk_id": "group-1"},
             {"doc_id": "doc-3", "chunk_id": "membership-1"},
         ]

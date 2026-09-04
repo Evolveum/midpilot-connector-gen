@@ -4,15 +4,12 @@
 
 import asyncio
 import logging
-import os
-from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-import pytest_asyncio
-from sqlalchemy import delete, func, select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.errors import LLMUnavailableError
 from src.core.job_execution import (
@@ -20,7 +17,7 @@ from src.core.job_execution import (
     reset_current_execution,
     set_current_execution,
 )
-from src.database.models import Base, DocumentationChunk, Job, JobProgress, Session
+from src.database.models import DocumentationChunk, Job, JobProgress, Session
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import ClaimedJob, JobRepository
 from src.database.repositories.session_repository import SessionRepository
@@ -59,31 +56,6 @@ def _execution_payload(value: str) -> dict:
         await_documentation=False,
         await_documentation_timeout=None,
     )
-
-
-@pytest_asyncio.fixture
-async def postgres_session_factory() -> AsyncIterator[SessionFactory]:
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL repository integration tests")
-
-    schema_name = f"test_job_worker_{uuid4().hex}"
-    engine = create_async_engine(
-        database_url,
-        execution_options={"schema_translate_map": {None: schema_name}},
-    )
-    schema_created = False
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
-            schema_created = True
-            await connection.run_sync(Base.metadata.create_all)
-        yield async_sessionmaker(engine, expire_on_commit=False)
-    finally:
-        if schema_created:
-            async with engine.begin() as connection:
-                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
-        await engine.dispose()
 
 
 async def _create_session(session_factory: SessionFactory) -> UUID:

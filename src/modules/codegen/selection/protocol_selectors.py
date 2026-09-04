@@ -17,6 +17,7 @@ from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_system_prompt,
     get_native_schema_user_prompt,
 )
+from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
 from src.modules.codegen.prompts.rest.create_prompts import get_create_system_prompt, get_create_user_prompt
 from src.modules.codegen.prompts.rest.delete_prompts import get_delete_system_prompt, get_delete_user_prompt
 from src.modules.codegen.prompts.rest.search_prompts import (
@@ -32,6 +33,10 @@ from src.modules.codegen.prompts.scim.native_schema_prompts import (
     get_scim_native_schema_system_prompt,
     get_scim_native_schema_user_prompt,
 )
+from src.modules.codegen.prompts.scim.relation_prompts import (
+    get_scim_relation_system_prompt,
+    get_scim_relation_user_prompt,
+)
 from src.modules.codegen.prompts.scim.search_prompts import (
     get_scim_search_all_system_prompt,
     get_scim_search_filter_system_prompt,
@@ -41,6 +46,10 @@ from src.modules.codegen.prompts.scim.search_prompts import (
 from src.modules.codegen.prompts.scim.update_prompts import get_scim_update_system_prompt, get_scim_update_user_prompt
 from src.modules.codegen.prompts.sql.create_prompts import get_sql_create_system_prompt, get_sql_create_user_prompt
 from src.modules.codegen.prompts.sql.delete_prompts import get_sql_delete_system_prompt, get_sql_delete_user_prompt
+from src.modules.codegen.prompts.sql.relation_prompts import (
+    get_sql_relation_system_prompt,
+    get_sql_relation_user_prompt,
+)
 from src.modules.codegen.prompts.sql.search_prompts import (
     get_sql_search_all_system_prompt,
     get_sql_search_filter_system_prompt,
@@ -57,6 +66,23 @@ CONNID_DOCS_PATH = "rest/30-attribute-to-connid-attributes.adoc"
 
 
 PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
+    "relation": {
+        ApiType.REST: OperationAssets(
+            get_relation_system_prompt,
+            get_relation_user_prompt,
+            "rest/50-relationship.adoc",
+        ),
+        ApiType.SCIM: OperationAssets(
+            get_scim_relation_system_prompt,
+            get_scim_relation_user_prompt,
+            "scim/90-relationship-support.adoc",
+        ),
+        ApiType.SQL: OperationAssets(
+            get_sql_relation_system_prompt,
+            get_sql_relation_user_prompt,
+            "sql/relationships.adoc",
+        ),
+    },
     "create": {
         ApiType.REST: OperationAssets(get_create_system_prompt, get_create_user_prompt, "rest/50-create.adoc"),
         ApiType.SCIM: OperationAssets(

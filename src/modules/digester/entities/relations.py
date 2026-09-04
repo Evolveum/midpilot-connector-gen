@@ -2,12 +2,24 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import hashlib
+import json
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from src.config import config
 from src.documents.normalize import normalize_object_class_name
-from src.modules.digester.schemas import RelationRecord
+from src.modules.digester.schemas import RelationRecord, RelationsResponse
+
+
+def relation_output_fingerprint(payload: Any) -> str:
+    """Return a deterministic identity for one exact midPoint relation output.
+
+    The fingerprint pairs ``relationsOutput`` with its separately stored analysis without
+    adding metadata to the stable midPoint-facing payload.
+    """
+    normalized = RelationsResponse.model_validate(payload).model_dump(by_alias=True, mode="json")
+    canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def split_relation_tokens(value: str) -> List[str]:
@@ -16,32 +28,15 @@ def split_relation_tokens(value: str) -> List[str]:
     return [token.lower() for token in re.sub(r"[^A-Za-z0-9]+", " ", with_spaces).split() if token]
 
 
-def _singularize_relation_token(token: str) -> str:
-    if token.endswith("ies") and len(token) > 4:
-        return f"{token[:-3]}y"
-    if token.endswith("s") and not token.endswith("ss") and len(token) > 3:
-        return token[:-1]
-    return token
-
-
-def _generic_attribute_tokens() -> set[str]:
-    return {token.casefold() for token in config.digester.relation_generic_attribute_tokens}
-
-
 def canonical_relation_attribute(value: Optional[str]) -> str:
     """
-    Normalize relation attribute wording for duplicate detection.
+    Normalize separators and casing for duplicate detection without interpreting words.
 
-    This intentionally removes generic relation words so variants such as
-    `hasMembership`, `membershipIds`, and `membership` collapse to the same key.
+    Attribute vocabulary is application-specific. Removing English words or applying
+    English singularization can merge two distinct attributes from an unrelated API, so
+    semantic deduplication is left to the adjudication LLM.
     """
-    generic_tokens = _generic_attribute_tokens()
-    tokens = [
-        _singularize_relation_token(token)
-        for token in split_relation_tokens(value or "")
-        if token not in generic_tokens
-    ]
-    return " ".join(tokens)
+    return " ".join(split_relation_tokens(value or ""))
 
 
 def _normalize_relation_id(value: str) -> str:
@@ -66,12 +61,46 @@ def _select_preferred_attribute(values: List[Optional[str]]) -> str:
     return max(non_empty_values, key=_attribute_preference_key)
 
 
+def relation_identity(
+    subject: str,
+    object_class: str,
+    subject_attribute: Optional[str],
+    object_attribute: Optional[str],
+) -> Tuple[str, str, str, str]:
+    """
+    Canonical identity of one association: the class pair plus the attributes that distinguish it.
+
+    One class pair can carry several associations, so the pair alone does not identify one.
+    The attribute names do, once separators and casing are normalized away - which is what
+    lets a projected ``RelationRecord`` be joined back onto the verdict it came from, even
+    after duplicate merging swapped one raw spelling of an attribute for another.
+    """
+    return (
+        normalize_object_class_name(subject),
+        normalize_object_class_name(object_class),
+        "".join(split_relation_tokens(subject_attribute or "")),
+        "".join(split_relation_tokens(object_attribute or "")),
+    )
+
+
 def _relation_semantic_key(relation: RelationRecord) -> Tuple[str, str, str, str]:
+    """Key that collapses wording-only duplicates of the same association.
+
+    The attribute pair is what distinguishes two associations between the same classes - a
+    user that is both a member and an owner of a group holds two of them. When neither side
+    names an attribute there is nothing structural left to tell them apart, so the relation
+    identifier stands in: it was assigned by the stage that saw all the evidence, and two
+    differently named entries from that stage are a deliberate distinction, not a duplicate.
+    """
+    subject_attribute = canonical_relation_attribute(relation.subject_attribute)
+    object_attribute = canonical_relation_attribute(relation.object_attribute)
+    if not subject_attribute and not object_attribute:
+        subject_attribute = _normalize_relation_id(relation.name)
     return (
         normalize_object_class_name(relation.subject),
         normalize_object_class_name(relation.object),
-        canonical_relation_attribute(relation.subject_attribute),
-        canonical_relation_attribute(relation.object_attribute),
+        subject_attribute,
+        object_attribute,
     )
 
 
@@ -93,7 +122,7 @@ def merge_duplicate_relation(left: RelationRecord, right: RelationRecord) -> Rel
     """
     Merge wording-only duplicates while preserving the richest metadata.
 
-    The LLM sometimes emits both `user has membership` and `user to membership`.
+    The LLM can emit two differently worded labels for the same association.
     In ConnId/midPoint relationship terms those are one subject->object association;
     the difference belongs in the relation label, not in a second relation record.
     """

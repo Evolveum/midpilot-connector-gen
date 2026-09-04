@@ -39,7 +39,8 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 | The CRUD operations.
 
 | `/{sessionId}/relations/{relationName}`
-| Code for one extracted relation (e.g. group membership handling).
+| Code for one extracted relation (e.g. group membership handling). Accepts an
+  `apiType` query override.
 
 | `/{sessionId}/classes/{objectClass}/fix`
 | Fixes all generated CRUD, search, native-schema, and ConnID scripts of one
@@ -77,8 +78,7 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 | `connid` | yes | yes | yes (protocol-independent)
 | `search/{intent}` | yes | yes | yes
 | `create` / `update` / `delete` | yes | yes | yes
-| `relations/{relationName}` | yes | yes | generic path; usable only when a
-  suitable `relationsOutput` has been supplied or extracted
+| `relations/{relationName}` | yes | yes | yes
 | `authorization` | yes | yes | *not supported*
 |===
 
@@ -138,8 +138,21 @@ Complete the digester sequence for the class first — `endpoints` →
 `authorization` before operations that need authenticated calls.
 
 NOTE: Protocol-specific generation endpoints accept an `apiType` query
-parameter that overrides the detected protocol for that request. ConnID and
-relation generation are protocol-independent and do not accept the override.
+parameter that overrides the detected protocol for that request. Relation
+generation first uses the explicit override, then a matching
+`relationsAnalysisOutput.apiType`, then the detected session protocol. ConnID
+generation remains protocol-independent.
+
+NOTE: Relation codegen receives the accepted seven-field relation record plus a
+compact internal context. SCIM context keeps application attributes (for
+example `Username`) separate from SCIM wire paths (for example `userName`). For
+complex references, codegen uses the parent relation attribute (`groups`) and
+the stored nested wire path (`groups.$ref`) for their distinct purposes; bare
+`$ref`/`value` is never treated as a ConnId relation attribute. SQL context
+keeps logical attributes separate from physical tables, ordered foreign-key
+columns, constraints, and junction tables. Where that context comes from, and what
+happens when it is missing, is described in
+link:relations.adoc[Relation analysis].
 
 NOTE: Generated code is stored per operation and can be regenerated or
 manually replaced (`PUT`) independently — you do not need to redo the whole
