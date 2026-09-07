@@ -9,6 +9,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from langchain_core.prompts import ChatPromptTemplate
 
 from src.modules.codegen import generation
 from src.modules.codegen.prompts.native_schema_prompts import (
@@ -19,7 +20,11 @@ from src.modules.codegen.prompts.scim.native_schema_prompts import (
     get_scim_native_schema_system_prompt,
     get_scim_native_schema_user_prompt,
 )
+from src.modules.codegen.selection.docs_loader import load_required_adoc_text
+from src.modules.codegen.selection.protocol_selectors import get_operation_assets
 from src.shared.enums import ApiType
+
+_DOCUMENTATIONS_PACKAGE = "src.modules.codegen.documentations"
 
 
 def test_protocol_neutral_native_schema_prompts_contain_no_scim_context():
@@ -69,7 +74,7 @@ async def test_generate_native_schema():
         _, kwargs = mock_generate_groovy.call_args
         assert kwargs["system_prompt"] == get_native_schema_system_prompt
         assert kwargs["user_prompt"] == get_native_schema_user_prompt
-        assert set(kwargs["extra_prompt_vars"]) == {"user_schema_docs"}
+        assert set(kwargs["extra_prompt_vars"]) == {"protocol_schema_docs", "connid_attribute_docs"}
 
 
 @pytest.mark.asyncio
@@ -109,7 +114,7 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
     _, kwargs = mock_generate_groovy.call_args
     assert kwargs["system_prompt"] == get_native_schema_system_prompt
     assert kwargs["user_prompt"] == get_native_schema_user_prompt
-    assert set(kwargs["extra_prompt_vars"]) == {"user_schema_docs"}
+    assert set(kwargs["extra_prompt_vars"]) == {"protocol_schema_docs", "connid_attribute_docs"}
     assert kwargs["records"][0]["databaseCatalog"] == "database1"
     assert kwargs["records"][0]["databaseSchema"] == "identity"
     assert kwargs["records"][0]["table"] == "m_user"
@@ -212,3 +217,82 @@ async def test_generate_conn_id_uses_scim_connector_projection():
 
     _, kwargs = mock_generate_groovy.call_args
     assert [record["name"] for record in kwargs["records"]] == ["id", "userName"]
+
+
+@pytest.mark.parametrize(
+    ("protocol", "expected_extra_variables"),
+    [
+        (ApiType.REST, set()),
+        (ApiType.SQL, set()),
+        (
+            ApiType.SCIM,
+            {
+                "scim_protocol_schema_json",
+                "scim_resource_contract_json",
+                "connid_object_class_json",
+                "scim_service_provider_config_json",
+            },
+        ),
+    ],
+)
+def test_native_schema_prompt_renders_with_all_expected_variables(protocol, expected_extra_variables):
+    """
+    Guards the merged prompt against an unescaped brace.
+
+    The Groovy examples in these rules contain literal braces, which a LangChain
+    f-string template reads as placeholders unless they are doubled. Getting that
+    wrong fails inside the background job, not at import, so it is asserted here.
+    """
+    assets = get_operation_assets("native_schema", protocol)
+
+    template = ChatPromptTemplate.from_messages([("system", assets.system_prompt), ("human", assets.user_prompt)])
+
+    assert (
+        set(template.input_variables)
+        == {
+            "object_class",
+            "records_json",
+            "protocol_schema_docs",
+            "connid_attribute_docs",
+            "repair_system_suffix",
+            "repair_user_suffix",
+        }
+        | expected_extra_variables
+    )
+
+
+@pytest.mark.parametrize("protocol", [ApiType.REST, ApiType.SCIM, ApiType.SQL])
+def test_native_schema_prompt_states_documentation_precedence(protocol):
+    """Both reference slots exist and the protocol's own DSL is named as the syntax authority."""
+    system_prompt = get_operation_assets("native_schema", protocol).system_prompt
+
+    assert "<protocol_schema_docs>" in system_prompt
+    assert "<connid_attribute_docs>" in system_prompt
+    assert "DOCUMENTATION PRECEDENCE:" in system_prompt
+    assert "CONNID MAPPING:" in system_prompt
+    assert "Take the meaning" in system_prompt
+
+
+@pytest.mark.parametrize("protocol", [ApiType.REST, ApiType.SCIM, ApiType.SQL])
+def test_connid_reference_is_resolved_for_every_native_schema_protocol(protocol):
+    assets = get_operation_assets("native_schema", protocol)
+
+    assert assets.connid_docs_path == "connid-attributes.adoc"
+    assert load_required_adoc_text(_DOCUMENTATIONS_PACKAGE, assets.connid_docs_path)
+
+
+def test_sql_native_schema_documentation_never_shows_connid_attribute_calls():
+    """
+    Canary for the single-document decision.
+
+    SQL declares ConnID names as a nested ``connId { name "__UID__" }`` block. The
+    shared ConnID reference shows the ``connIdAttribute(...)`` call instead, and the
+    prompt resolves that conflict by making this document the syntax authority. If
+    ``connIdAttribute`` ever appears here, that rule starts selecting the wrong form.
+    """
+    sql_schema_docs = load_required_adoc_text(
+        _DOCUMENTATIONS_PACKAGE, get_operation_assets("native_schema", ApiType.SQL).docs_path
+    )
+
+    assert "connIdAttribute" not in sql_schema_docs
+    assert 'connId { name "__UID__" }' in sql_schema_docs

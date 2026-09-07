@@ -2,8 +2,16 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Codegen ConnID endpoints."""
+"""
+Codegen ConnID endpoints (deprecated).
 
+The ConnID attribute mapping is generated into the native-schema script by
+``POST /{session_id}/classes/{object_class}/native-schema``. These endpoints still
+work for callers that have not migrated, but they are outside the pipeline: the
+object-class fix no longer loads or repairs ``{objectClass}ConnidOutput``.
+"""
+
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -20,13 +28,16 @@ from src.modules.codegen.persistence import store_object_class_output_override
 from src.modules.codegen.schema import CodegenRepairContext, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["Codegen: ConnID"])
 
 
 @router.post(
     "/{session_id}/classes/{object_class}/connid",
     response_model=JobCreateResponse,
-    summary="Generate ConnID for object class",
+    summary="Generate ConnID for object class (deprecated)",
+    deprecated=True,
 )
 async def generate_connid(
     session_id: UUID = Path(..., description="Session ID"),
@@ -38,8 +49,22 @@ async def generate_connid(
     """
     Generate ConnID Groovy code from attributes.
     Loads attributes from session automatically.
+
+    Deprecated: use `POST /{session_id}/classes/{object_class}/native-schema`, which now
+    emits the ConnID mapping into the native schema script.
+
+    Do not use both. Two scripts declaring the mapping for the same object class are
+    merged by the connector, and duplicate declarations are at best redundant and at
+    worst rejected. The result of this endpoint is also outside the object-class fix
+    scope: it is never repaired, and a `scripts` override naming this operation in a
+    `POST .../fix` body is rejected as an unknown operation.
     """
     object_class = normalize_object_class_name(object_class)
+    logger.warning(
+        "[Codegen:ConnID] Deprecated ConnID generation requested for object class %s; "
+        "the native-schema endpoint now emits the ConnID mapping",
+        object_class,
+    )
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -57,8 +82,9 @@ async def generate_connid(
 @router.get(
     "/{session_id}/classes/{object_class}/connid",
     response_model=JobStatusStageResponse,
-    summary="Get ConnID generation status",
+    summary="Get ConnID generation status (deprecated)",
     response_model_exclude_none=True,
+    deprecated=True,
 )
 async def get_connid_status(
     session_id: UUID = Path(..., description="Session ID"),
@@ -68,6 +94,8 @@ async def get_connid_status(
 ):
     """
     Get the status of ConnID generation job.
+
+    Deprecated together with the generation endpoint.
     """
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
@@ -87,7 +115,8 @@ async def get_connid_status(
 
 @router.put(
     "/{session_id}/classes/{object_class}/connid",
-    summary="Override ConnID",
+    summary="Override ConnID (deprecated)",
+    deprecated=True,
 )
 async def override_connid(
     session_id: UUID = Path(..., description="Session ID"),
@@ -97,6 +126,9 @@ async def override_connid(
 ):
     """
     Manually override the ConnID for an object class.
+
+    Deprecated: override the native schema instead, which now carries the ConnID
+    mapping. Code stored here is not loaded by the object-class fix.
     """
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)

@@ -17,6 +17,95 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-07 Native schema absorbs the ConnID attribute mapping
+
+*Author:* Alexander Brecko
+
+*Description:* The ConnID attribute mapping (`UID` / `NAME`) is now generated
+into the native-schema script instead of a separate ConnID script. One LLM call
+per object class produces one `objectClass("...")` block containing both the
+attribute definitions and the mapping.
+
+The two scripts were merged into a single object class by the ConnID connector
+at runtime, so the same native attribute name had to be spelled identically in
+both or the connector was rejected. Generating them together removes that
+cross-script contract.
+
+What changed:
+
+* `POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema` now
+  emits the ConnID mapping. `{objectClass}NativeSchemaOutput` therefore has
+  different content for the same input. The HTTP request and response contracts
+  are unchanged.
+* `POST|GET|PUT .../classes/{objectClass}/connid` still work but are marked
+  deprecated in the OpenAPI specification. Their prompt and worker are unchanged.
+* The object-class fix no longer collects `{objectClass}ConnidOutput`. That
+  script is never repaired, and a `scripts` override naming a ConnID operation in
+  a `POST .../fix` body is now rejected with `UnknownConnectorOperationError`.
+* The bundled reference moved from
+  `src/modules/codegen/documentations/rest/30-attribute-to-connid-attributes.adoc`
+  to `src/modules/codegen/documentations/connid-attributes.adoc`, because every
+  protocol now reads it.
+
+No database schema change and no development-database recreation are required.
+The step below is a data-only cache invalidation.
+
+.Required Upgrade Steps
+. Invalidate reusable native-schema job results. This is the only mandatory step
+and the only one that fails silently if skipped:
++
+[source,sql]
+----
+UPDATE jobs SET normalized_input_hash = NULL WHERE job_type = 'codegen.getNativeSchema';
+----
++
+Finished jobs are reused whenever `skipCache` is false and the normalized input
+hash matches (`src/jobs/runner.py`, `src/jobs/cache.py`). The native-schema job
+input is unchanged by this work, `skipCache` and `sessionId` are stripped from
+the fingerprint, reuse is scoped to the API-key owner - deployment-wide when
+`AUTH__API_KEY_REQUIRED` is off - and the window is
+`SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL`, which defaults to four weeks. Without
+this step a session can be handed a pre-merge script, with the job reported
+`finished` and its progress reading `Reused output from job <uuid>`. The
+connector then ships with no `UID`/`NAME` mapping and midPoint rejects the object
+class. The rows keep their status and result, so job history and `GET` polling
+are unaffected; they simply stop matching. Note this is *not* undone by rolling
+the code back - nothing recomputes the fingerprint - which is acceptable because
+the only consequence is one fresh generation.
+. Alternative for operators who cannot run SQL: regenerate each object class with
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema?skipCache=true`.
+. Regenerate `native-schema` for every object class generated before the upgrade.
+An old native schema has no `UID`/`NAME` mapping unless its old ConnID script is
+still deployed beside it.
+. Remove the old ConnID script from any assembled connector that also uses a
+regenerated native schema, or regenerate both. Two scripts declaring the mapping
+for one object class are merged by the connector; duplicate declarations are at
+best redundant and at worst rejected.
+. Validate with `uv run poe qa`, then generate a native schema for one object
+class per protocol and confirm the result is a single `objectClass` block
+containing both the attribute definitions and the ConnID mapping.
+
+.Rollback Procedure (If Upgrade Fails)
+. Revert the application commit and redeploy. No migration to reverse.
+. Regenerate `native-schema` for every object class generated after the upgrade -
+the reverted prompt no longer emits the ConnID mapping - and regenerate the
+matching `connid` script for each of them.
+. Queued `codegen.getNativeSchema` jobs stay claimable by either snapshot; their
+inputs are identical across the change.
+. The cache invalidation is not reversed and does not need to be; it only forces
+one fresh generation per input.
+
+.Notes & References
+* *Related PR:* Not assigned.
+* *Affected endpoints:* `POST|GET|PUT /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema`,
+`POST|GET|PUT /api/v1/codegen/{sessionId}/classes/{objectClass}/connid` (deprecated),
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix`.
+* *Affected session keys:* `{objectClass}NativeSchemaOutput` (content),
+`{objectClass}ConnidOutput` (orphaned).
+* *Affected configs:* None. `SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL` determines
+how long stale reuse would persist if step 1 is skipped.
+* *Docs:* `docs/pipeline/codegen.adoc`, `docs/api-type.adoc`.
+
 === 2026-08-20 Security upgrade of pypdf, aiohttp, h2 and cryptography
 
 *Author:* Alexander Brecko

@@ -3318,9 +3318,10 @@
         "tags": [
           "Codegen: ConnID"
         ],
-        "summary": "Generate ConnID for object class",
-        "description": "Generate ConnID Groovy code from attributes.\nLoads attributes from session automatically.",
+        "summary": "Generate ConnID for object class (deprecated)",
+        "description": "Generate ConnID Groovy code from attributes.\nLoads attributes from session automatically.\n\nDeprecated: use `POST /{session_id}/classes/{object_class}/native-schema`, which now\nemits the ConnID mapping into the native schema script.\n\nDo not use both. Two scripts declaring the mapping for the same object class are\nmerged by the connector, and duplicate declarations are at best redundant and at\nworst rejected. The result of this endpoint is also outside the object-class fix\nscope: it is never repaired, and a `scripts` override naming this operation in a\n`POST .../fix` body is rejected as an unknown operation.",
         "operationId": "generate_connid_api_v1_codegen__session_id__classes__object_class__connid_post",
+        "deprecated": true,
         "security": [
           {
             "APIKeyHeader": []
@@ -3407,9 +3408,10 @@
         "tags": [
           "Codegen: ConnID"
         ],
-        "summary": "Get ConnID generation status",
-        "description": "Get the status of ConnID generation job.",
+        "summary": "Get ConnID generation status (deprecated)",
+        "description": "Get the status of ConnID generation job.\n\nDeprecated together with the generation endpoint.",
         "operationId": "get_connid_status_api_v1_codegen__session_id__classes__object_class__connid_get",
+        "deprecated": true,
         "security": [
           {
             "APIKeyHeader": []
@@ -3486,9 +3488,10 @@
         "tags": [
           "Codegen: ConnID"
         ],
-        "summary": "Override ConnID",
-        "description": "Manually override the ConnID for an object class.",
+        "summary": "Override ConnID (deprecated)",
+        "description": "Manually override the ConnID for an object class.\n\nDeprecated: override the native schema instead, which now carries the ConnID\nmapping. Code stored here is not loaded by the object-class fix.",
         "operationId": "override_connid_api_v1_codegen__session_id__classes__object_class__connid_put",
+        "deprecated": true,
         "security": [
           {
             "APIKeyHeader": []
@@ -4838,7 +4841,7 @@
           "Codegen: Fix"
         ],
         "summary": "Fix one object class from midPoint errors",
-        "description": "Fix faulty Groovy scripts for one object class from the errors midPoint reported.\n\nLoads generated search, create, update, delete, native-schema, and ConnID code only for the selected\nobject class. The model receives those scripts and the reported errors, and only\nchanged scripts are written back. Optional scripts in the body must also belong\nto this object class. The session is updated only if the fix succeeds.",
+        "description": "Fix faulty Groovy scripts for one object class from the errors midPoint reported.\n\nLoads generated search, create, update, delete and native-schema code only for the selected\nobject class; the native-schema script carries that class's ConnID attribute mapping.\nThe model receives those scripts and the reported errors, and only\nchanged scripts are written back. Optional scripts in the body must also belong\nto this object class. The session is updated only if the fix succeeds.",
         "operationId": "fix_connector_api_v1_codegen__session_id__classes__objectClass__fix_post",
         "security": [
           {

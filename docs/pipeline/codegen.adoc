@@ -24,10 +24,12 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
   output and the preferred authorization methods.
 
 | `/{sessionId}/classes/{objectClass}/native-schema`
-| The native schema definition for one object class.
+| The native schema definition for one object class, including its ConnId
+  attribute mapping (`UID` / `NAME`). Both live in the same Groovy script.
 
 | `/{sessionId}/classes/{objectClass}/connid`
-| The ConnId schema mapping for one object class.
+| *Deprecated.* The ConnId schema mapping as a separate script. Superseded by
+  `native-schema`; see <<connid-deprecation>>.
 
 | `/{sessionId}/classes/{objectClass}/search/{intent}`
 | Search operation; `intent` is `all` (list all), `filter` (query by
@@ -42,8 +44,8 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 | Code for one extracted relation (e.g. group membership handling).
 
 | `/{sessionId}/classes/{objectClass}/fix`
-| Fixes all generated CRUD, search, native-schema, and ConnID scripts of one
-  object class from midPoint runtime errors. `POST` enqueues and `GET` polls.
+| Fixes all generated CRUD, search and native-schema scripts of one object class
+  from midPoint runtime errors. `POST` enqueues and `GET` polls.
 |===
 
 == How generation works
@@ -74,7 +76,7 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 | Endpoint | `rest` | `scim` | `sql`
 
 | `native-schema` | yes | yes | yes (REST prompt, SQL reference doc)
-| `connid` | yes | yes | yes (protocol-independent)
+| `connid` (deprecated) | yes | yes | yes (protocol-independent)
 | `search/{intent}` | yes | yes | yes
 | `create` / `update` / `delete` | yes | yes | yes
 | `relations/{relationName}` | yes | yes | generic path; usable only when a
@@ -88,6 +90,28 @@ the only preferred authorization is the custom `other` method, which returns a
 static scaffold without calling the LLM. Write the database authentication
 block by hand for now.
 
+[[connid-deprecation]]
+== The deprecated `connid` endpoint
+
+The ConnId attribute mapping and the native schema are merged into one object
+class by the ConnId connector, so the same native attribute name had to be
+spelled identically in two independently generated scripts. `native-schema` now
+emits both in one script from one LLM call, and `connid` is deprecated.
+
+The endpoint still generates, polls and accepts overrides exactly as before, and
+its prompt is frozen. Two things changed around it:
+
+* Its output is no longer loaded by the object-class fix. It is never repaired,
+  and a `scripts` override naming that operation in a `POST .../fix` body is
+  rejected as an unknown operation.
+* Do not use it together with `native-schema`. Two scripts declaring the mapping
+  for the same object class are merged by the connector; duplicate declarations
+  are at best redundant and at worst rejected.
+
+The reference document both paths share moved to
+`src/modules/codegen/documentations/connid-attributes.adoc`, since it is now read
+for every protocol rather than only REST.
+
 == Fixing a deployed connector
 
 `POST /{sessionId}/classes/{objectClass}/fix` acts on one object class, for the
@@ -95,10 +119,11 @@ case the per-operation repair cannot serve: midPoint rejected that object class
 and you do not know which of its operations is at fault. `objectClass` is a
 required path parameter and must identify a class in `objectClassesOutput`.
 
-1. *Collect* - generated Create, Search All/Filter/ID, Update, Delete,
-   NativeSchema, and ConnID scripts are loaded only for the selected object
-   class. Authorization, relation scripts, and scripts of all other object
-   classes are intentionally outside the fix scope. A class removed from
+1. *Collect* - generated Create, Search All/Filter/ID, Update, Delete and
+   NativeSchema scripts are loaded only for the selected object class.
+   Authorization, relation scripts, scripts of all other object classes, and any
+   `{objectClass}ConnidOutput` left by the deprecated `connid` endpoint are
+   intentionally outside the fix scope. A class removed from
    `objectClassesOutput` cannot be fixed through this endpoint.
 2. *Fix* - all scripts plus the midPoint errors go to the LLM in one call,
    together with the bundled midPoint DSL reference for the operations present.
@@ -138,8 +163,10 @@ Complete the digester sequence for the class first — `endpoints` →
 `authorization` before operations that need authenticated calls.
 
 NOTE: Protocol-specific generation endpoints accept an `apiType` query
-parameter that overrides the detected protocol for that request. ConnID and
-relation generation are protocol-independent and do not accept the override.
+parameter that overrides the detected protocol for that request. The deprecated
+`connid` endpoint and relation generation are protocol-independent and do not
+accept the override. Because the ConnId mapping is now part of `native-schema`,
+that endpoint's existing `apiType` override governs it too.
 
 NOTE: Generated code is stored per operation and can be regenerated or
 manually replaced (`PUT`) independently — you do not need to redo the whole

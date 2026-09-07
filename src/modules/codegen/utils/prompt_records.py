@@ -97,14 +97,6 @@ def build_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str
     )
 
 
-def build_sql_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
-    """Convert attributes into native-schema records that retain physical SQL bindings."""
-    return _build_attribute_mapping_records(
-        payload,
-        optional_fields=_ATTRIBUTE_MAPPING_OPTIONAL_FIELDS + _SQL_ATTRIBUTE_BINDING_FIELDS,
-    )
-
-
 def extract_scim_context(payload: AttributesPayload) -> Dict[str, Any]:
     """Return class-specific SCIM context persisted beside the extracted attributes."""
     if isinstance(payload, AttributeResponse):
@@ -217,13 +209,15 @@ def build_connid_attribute_mapping_records(payload: AttributesPayload) -> List[D
     return build_attribute_mapping_records({"attributes": projected_attributes})
 
 
-def build_fix_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
+def build_complete_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
     """
     Every extracted attribute, plus the identifiers only the ConnID projection knows.
 
-    A fix reasons about the whole native schema, so the projection-filtered ConnID
-    record set is not enough on its own: it drops every attribute the connector does
-    not already expose, and that is exactly where a wrong native name hides. The
+    The record set for any prompt that reasons about a whole object class: native
+    schema generation, which writes the attribute definitions and the ConnID mapping
+    into one script, and the object-class fix. The projection-filtered ConnID record
+    set is not enough on its own - it drops every attribute the connector does not
+    already expose, and that is exactly where a wrong native name hides. The
     projection is merged in only where it can contribute something new - ``UID`` maps
     to ``id``, which the extracted attributes do not carry - which is the SCIM path,
     since :func:`build_connid_attribute_mapping_records` otherwise just rebuilds the

@@ -19,8 +19,9 @@ from src.modules.codegen.prompts.repair_prompts import REPAIR_POLICY_RULES
 
 get_connector_fix_system_prompt = (
     textwrap.dedent("""\
-You are a midPoint connector engineer. You are given the connector's CRUD, search,
-native-schema, and ConnID Groovy scripts and the errors midPoint reported for them.
+You are a midPoint connector engineer. You are given the connector's create, update, delete, search and
+native-schema Groovy scripts and the errors midPoint reported for them. The native-schema
+script also carries the object class's ConnID attribute mapping.
 Your task is to find which scripts are at fault and fix them.
 
 Protocol: {protocol}. Connection target: {connection_target}.
@@ -45,6 +46,9 @@ ATTRIBUTE NAMING (<extracted_info> is the <extracted_attributes> block below):
   naming question, however consistent they look.
 - Every script of one object class must use the identical native name for the same attribute; the ConnID
   connector merges them into one and rejects a mismatch.
+- <dsl_documentation> may contain more than one reference. `connid-attributes.adoc` explains which native
+  attribute belongs to which ConnID built-in; it never overrides the syntax of the protocol's own schema
+  reference, which is the section before it. Do not rewrite a ConnID mapping from one form into the other.
 """)
     + REPAIR_POLICY_RULES
     + textwrap.dedent("""\

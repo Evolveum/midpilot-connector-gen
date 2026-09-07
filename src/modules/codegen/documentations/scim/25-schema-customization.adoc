@@ -114,8 +114,9 @@ name*, never the SCIM wire attribute. In the example above the application docum
 and the SCIM API exposes it as `userName`, so the ConnId mapping uses `Username` and the wire name appears only in
 that attribute's `scim { path ... }` block.
 
-The same mapping may also appear in the ConnId mapping script for this object class. Both scripts are merged into
-one connector, so the native name must be identical in both; a mismatch is rejected.
+The mapping belongs in this schema script, alongside the attribute definitions of the same object class. Every
+script of the object class must use the identical native name for the same attribute; the connector merges them
+and rejects a mismatch.
 
 == SCIM-specific schema blocks
 

@@ -337,7 +337,7 @@ async def deduplicate_auth(
     """
     Deduplicate auth info.
     First pass is heurestic deduplication based on name/type similarity and merging relevant sequences for exact duplicates.
-    Second pass is LLM-based deduplication.
+    Second pass is LLM-based deduplication and weak-documentation screening.
 
     Args:
         auth_info: List of DiscoveryAuth instances from all documents
@@ -354,7 +354,7 @@ async def deduplicate_auth(
 
     auth_list: List[AuthProcessingInfo] = [await _to_processing_info(auth) for auth in dedup_list]
 
-    if len(auth_list) <= 1:
+    if not auth_list:
         await update_job_progress(
             job_id,
             stage=JobStage.deduplication_finished,

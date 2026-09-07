@@ -7,10 +7,9 @@ import json
 from src.modules.codegen.utils.prompt_records import (
     build_attribute_context_records,
     build_attribute_mapping_records,
+    build_complete_attribute_mapping_records,
     build_connid_attribute_mapping_records,
-    build_fix_attribute_mapping_records,
     build_scim_contract_prompt_vars,
-    build_sql_attribute_mapping_records,
     extract_scim_context,
 )
 from src.modules.digester.schemas import AttributeInfoScim, AttributeInfoSql, AttributeResponse
@@ -119,7 +118,7 @@ def test_typed_attribute_response_accepts_foreign_key_target_without_constraint_
         }
     )
 
-    record = build_sql_attribute_mapping_records(payload)[0]
+    record = build_complete_attribute_mapping_records(payload)[0]
 
     assert record["foreignKey"] == {
         "constraintName": None,
@@ -196,7 +195,7 @@ def test_build_attribute_mapping_records_preserves_scim_mapping_fields_when_pres
     assert records[0]["connectorExposed"] is True
 
 
-def test_build_sql_attribute_mapping_records_preserves_physical_binding():
+def test_complete_mapping_records_preserve_physical_sql_binding():
     payload = {
         "attributes": {
             "Username": {
@@ -215,7 +214,7 @@ def test_build_sql_attribute_mapping_records_preserves_physical_binding():
         }
     }
 
-    sql_record = build_sql_attribute_mapping_records(payload)[0]
+    sql_record = build_complete_attribute_mapping_records(payload)[0]
     assert sql_record["databaseCatalog"] == "database1"
     assert sql_record["databaseSchema"] == "identity"
     assert sql_record["table"] == "m_user"
@@ -232,12 +231,6 @@ def test_build_sql_attribute_mapping_records_preserves_physical_binding():
     assert "column" not in protocol_neutral_record
     assert "primaryKey" not in protocol_neutral_record
     assert "foreignKey" not in protocol_neutral_record
-
-    fix_record = build_fix_attribute_mapping_records(payload)[0]
-    assert fix_record["databaseCatalog"] == "database1"
-    assert fix_record["databaseSchema"] == "identity"
-    assert fix_record["table"] == "m_user"
-    assert fix_record["column"] == "nameorig"
 
 
 def test_connid_mapping_prefers_scim_connector_object_class_projection():
@@ -427,3 +420,46 @@ def test_build_scim_contract_prompt_vars_preserves_extension_relationship():
     assert json.loads(prompt_vars["scim_protocol_schema_json"]) == {"name": "EnterpriseUser"}
     assert json.loads(prompt_vars["scim_resource_contract_json"]) == {"extensionOf": "User"}
     assert json.loads(prompt_vars["connid_object_class_json"]) == {}
+
+
+def test_complete_records_add_the_projection_only_identifier_for_scim():
+    """
+    The functional gain of the merged native schema.
+
+    ``id`` exists only in the SCIM ConnID projection, never among the extracted
+    provider attributes. Without it the prompt is asked to map UID to an attribute
+    it was never shown.
+    """
+    payload = {
+        "attributes": {"Username": {"type": "string", "scimAttribute": "userName"}},
+        "scimContext": {
+            "connectorObjectClass": {
+                "attributes": [
+                    {"name": "userName", "type": "string", "connectorExposed": True},
+                    {"name": "id", "type": "string", "connectorExposed": True},
+                ]
+            }
+        },
+    }
+
+    names = [record["name"] for record in build_complete_attribute_mapping_records(payload)]
+
+    assert names == ["id", "Username"]
+
+
+def test_complete_records_match_the_protocol_neutral_builder_without_a_scim_projection():
+    """
+    Pins the equivalence that makes one builder safe for every protocol.
+
+    REST and SQL payloads carry no ``connectorObjectClass``, so the ConnID merge is a
+    no-op and the SQL binding fields are emitted only where they exist. Any drift here
+    would start leaking projection or binding fields into a prompt that never had them.
+    """
+    rest_payload = {
+        "attributes": {
+            "id": {"type": "string", "description": "Unique identifier"},
+            "login": {"type": "string", "mandatory": True},
+        }
+    }
+
+    assert build_complete_attribute_mapping_records(rest_payload) == build_attribute_mapping_records(rest_payload)

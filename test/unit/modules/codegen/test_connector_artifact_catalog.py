@@ -28,9 +28,9 @@ def _slot_keys(**kwargs) -> list[str]:
 def test_slots_cover_every_operation_of_every_object_class():
     keys = _slot_keys(object_classes=["user", "group"])
 
-    assert len(keys) == 16
+    assert len(keys) == 14
     for object_class in ("user", "group"):
-        for suffix in ("NativeSchema", "Connid", "Create", "Update", "Delete"):
+        for suffix in ("NativeSchema", "Create", "Update", "Delete"):
             assert f"{object_class}{suffix}Output" in keys
         for suffix in ("SearchAll", "SearchFilter", "SearchId"):
             assert f"{object_class}{suffix}Output" in keys
@@ -54,7 +54,7 @@ def test_qualified_sql_object_class_is_preserved_in_artifact_keys():
 def test_slots_skip_blank_names():
     keys = _slot_keys(object_classes=["user", "", "   "])
 
-    assert len(keys) == 8
+    assert len(keys) == 7
 
 
 def test_search_slots_carry_their_intent():
@@ -86,7 +86,7 @@ async def test_load_keeps_only_generated_slots_and_uses_two_queries():
     assert artifacts[1].intent is SearchIntent.ALL
     assert repo.get_session_value.await_count == 1
     repo.get_session_values.assert_awaited_once()
-    assert len(repo.get_session_values.await_args.args[1]) == 8
+    assert len(repo.get_session_values.await_args.args[1]) == 7
 
 
 @pytest.mark.asyncio
@@ -144,7 +144,8 @@ def test_docs_paths_are_deduplicated_across_object_classes():
 
     assert len(paths) == len(set(paths))
     assert "rest/50-create.adoc" in paths
-    assert "rest/30-attribute-to-connid-attributes.adoc" in paths
+    # Reached through the native-schema slot: the ConnID mapping shares its script.
+    assert paths.index("rest/25-user-schema.adoc") + 1 == paths.index("connid-attributes.adoc")
 
 
 @pytest.mark.parametrize(
@@ -163,11 +164,44 @@ def test_docs_paths_are_deduplicated_across_object_classes():
     ids=["object-class", "search-intent", "no-object-class"],
 )
 def test_an_artifact_survives_the_job_input_round_trip(artifact):
-    """The fix job serializes artifacts into its input and rebuilds them in the worker."""
+    """
+    The fix job serializes artifacts into its input and rebuilds them in the worker.
+
+    The ConnID case is deliberate: no slot builds that kind any more, but a fix job
+    scheduled before the ConnID mapping moved into the native schema still rehydrates
+    one from its persisted input. Removing ``ArtifactKind.CONNID`` from the enum would
+    make those jobs raise on rehydration.
+    """
     assert ConnectorArtifact.from_payload(artifact.to_payload()) == artifact
 
 
-def test_connid_reference_is_protocol_independent():
+def test_connid_reference_is_still_resolvable_for_a_persisted_connid_artifact():
+    """No slot builds this kind any more, but a fix job scheduled before the merge rehydrates one."""
     slots = [ConnectorArtifactSlot(operation_key="userConnid", kind=ArtifactKind.CONNID, object_class="user")]
 
-    assert resolve_artifact_docs_paths(slots, ApiType.SQL) == ["rest/30-attribute-to-connid-attributes.adoc"]
+    assert resolve_artifact_docs_paths(slots, ApiType.SQL) == ["connid-attributes.adoc"]
+
+
+@pytest.mark.parametrize(
+    ("protocol", "schema_docs_path"),
+    [
+        (ApiType.REST, "rest/25-user-schema.adoc"),
+        (ApiType.SCIM, "scim/25-schema-customization.adoc"),
+        (ApiType.SQL, "sql/schema-customization.adoc"),
+    ],
+)
+def test_fix_docs_include_both_references_for_a_native_schema_artifact(protocol, schema_docs_path):
+    """
+    Order is part of the contract.
+
+    ``_load_dsl_documentation`` concatenates these in sequence and the fix prompt tells
+    the model the protocol's own schema reference outranks the ConnID one on syntax.
+    For REST this is also the regression guard: ``rest/25-user-schema.adoc`` carries no
+    ConnID content of its own, so dropping the second document would leave a merged
+    native-schema script with no reference for the mapping it contains.
+    """
+    slots = [
+        ConnectorArtifactSlot(operation_key="userNativeSchema", kind=ArtifactKind.NATIVE_SCHEMA, object_class="user")
+    ]
+
+    assert resolve_artifact_docs_paths(slots, protocol) == [schema_docs_path, "connid-attributes.adoc"]
