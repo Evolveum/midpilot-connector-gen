@@ -16,7 +16,7 @@ from sqlalchemy.orm import contains_eager
 
 from src.core.errors import ExecutionOwnershipLostError
 from src.core.job_execution import get_current_execution
-from src.database.models import Document, DocumentationChunk
+from src.database.models import Document, DocumentationChunk, RelevantChunk
 from src.database.repositories.job_repository import JobRepository
 from src.shared.content_types import CONNDEV_CONTENT_TYPES
 
@@ -333,6 +333,45 @@ class DocumentationRepository:
         result = await self.db.execute(query)
         chunks = result.scalars().unique().all()
 
+        return [self._to_item_dict(chunk) for chunk in chunks]
+
+    async def get_relevant_documentation_items(
+        self,
+        session_id: UUID,
+        *,
+        result_key: str,
+        entity_key: str,
+        offset: int,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """Read an ordered page of distinct source chunks for one persisted entity.
+
+        EXISTS avoids duplicating content when several evidence sequences refer to
+        the same chunk. Pagination happens in SQL before content is materialized.
+        """
+        reference_exists = (
+            select(RelevantChunk.id)
+            .where(
+                RelevantChunk.session_id == session_id,
+                RelevantChunk.result_key == result_key,
+                RelevantChunk.entity_key == entity_key,
+                RelevantChunk.chunk_id == DocumentationChunk.chunk_id,
+                RelevantChunk.doc_id == DocumentationChunk.doc_id,
+            )
+            .exists()
+        )
+        query = (
+            self._chunks_with_document()
+            .where(DocumentationChunk.session_id == session_id, reference_exists)
+            .order_by(
+                DocumentationChunk.doc_id,
+                DocumentationChunk.chunk_number.asc().nulls_last(),
+                DocumentationChunk.chunk_id,
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        chunks = (await self.db.execute(query)).scalars().unique().all()
         return [self._to_item_dict(chunk) for chunk in chunks]
 
     async def get_documentation_items_by_chunk_ids(

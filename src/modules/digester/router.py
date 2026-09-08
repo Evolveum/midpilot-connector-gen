@@ -16,6 +16,7 @@ from src.modules.digester.routes import (
     attributes,
     auth,
     connectivity_endpoint,
+    documentation,
     endpoints,
     metadata,
     object_classes,
@@ -25,6 +26,7 @@ from src.modules.digester.routes import (
 router = APIRouter()
 
 router.include_router(object_classes.router)
+router.include_router(documentation.router)
 router.include_router(attributes.router)
 router.include_router(endpoints.router)
 router.include_router(relations.router)

@@ -12,6 +12,11 @@ from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.modules.digester.enums import ConfidenceLevel
+from src.modules.digester.errors import (
+    InvalidObjectClassesOutputError,
+    ObjectClassesNotFoundError,
+    ObjectClassNotFoundError,
+)
 from src.shared.coerce import as_dict_list, as_list
 
 logger = logging.getLogger(__name__)
@@ -63,6 +68,20 @@ def sort_object_class_dicts(object_classes: List[Any]) -> List[Any]:
         ),
     )
     return [*sorted_classes, *passthrough]
+
+
+async def resolve_object_class(repo: SessionRepository, session_id: UUID, object_class: str) -> Dict[str, Any]:
+    """Resolve a stored class using the established digester read/error contract."""
+    output = await repo.get_session_data(session_id, "objectClassesOutput")
+    if not output or not isinstance(output, dict):
+        raise ObjectClassesNotFoundError(session_id)
+    classes = output.get("objectClasses", [])
+    if not isinstance(classes, list):
+        raise InvalidObjectClassesOutputError(session_id)
+    target = find_object_class(classes, object_class)
+    if target is None:
+        raise ObjectClassNotFoundError(object_class, session_id)
+    return target
 
 
 def find_object_class(object_classes: List[Any], object_class: str) -> Optional[Dict[str, Any]]:

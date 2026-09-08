@@ -3,11 +3,24 @@
 # Licensed under the EUPL-1.2 or later.
 
 import uuid
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from src.core.schema import CamelCaseModel
+
+
+class RelevantDocumentationItem(CamelCaseModel):
+    """Stored source chunk and its document metadata, suitable for read-only display."""
+
+    doc_id: uuid.UUID
+    chunk_id: uuid.UUID
+    content: str
+    source: Literal["scraper", "upload"]
+    url: str | None = None
+    filename: str | None = None
+    content_type: str | None = None
+    chunk_number: int | None = None
 
 
 def normalize_count(value: Any) -> Any:

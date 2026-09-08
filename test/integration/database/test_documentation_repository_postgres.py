@@ -10,8 +10,103 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from src.database.models import Base, Document, DocumentationChunk, Session
+from src.database.models import Base, Document, DocumentationChunk, RelevantChunk, Session
 from src.database.repositories.documentation_repository import DocumentationRepository
+
+
+@pytest.mark.asyncio
+async def test_relevant_documentation_pages_are_distinct_ordered_and_session_scoped():
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL repository integration tests")
+
+    schema_name = f"test_relevant_documentation_{uuid4().hex}"
+    engine = create_async_engine(database_url, execution_options={"schema_translate_map": {None: schema_name}})
+    schema_created = False
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
+            schema_created = True
+            await connection.run_sync(Base.metadata.create_all)
+
+        session_id, other_session = uuid4(), uuid4()
+        doc_id = uuid4()
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as db:
+            doc = Document(session_id=session_id, doc_id=doc_id, source="upload", filename="groups.md")
+            foreign_doc = Document(session_id=other_session, doc_id=doc_id, source="upload")
+            chunks = [
+                DocumentationChunk(
+                    chunk_id=uuid4(),
+                    session_id=session_id,
+                    doc_id=doc_id,
+                    content=f"chunk-{number}",
+                    chunk_number=number,
+                )
+                for number in [2, None, 1, 0]
+            ]
+            foreign_chunk = DocumentationChunk(
+                chunk_id=uuid4(),
+                session_id=other_session,
+                doc_id=doc_id,
+                content="other session",
+            )
+            db.add_all([Session(session_id=session_id), Session(session_id=other_session), doc, foreign_doc])
+            await db.flush()
+            db.add_all([*chunks, foreign_chunk])
+            await db.flush()
+
+            def reference(chunk, entity="POST /groups", result="groupEndpointsOutput", sequence=None):
+                return RelevantChunk(
+                    session_id=chunk.session_id,
+                    doc_id=chunk.doc_id,
+                    chunk_id=chunk.chunk_id,
+                    result_key=result,
+                    entity_key=entity,
+                    relevant_sequence=sequence or {},
+                )
+
+            db.add_all(
+                [
+                    *(reference(chunk) for chunk in chunks[:3]),
+                    reference(chunks[0], sequence={"startSequence": "start", "endSequence": "end"}),
+                    reference(chunks[3], entity="GET /groups"),
+                    reference(chunks[3], entity="group", result="objectClassesOutput"),
+                    reference(foreign_chunk),
+                ]
+            )
+            await db.commit()
+            repo = DocumentationRepository(db)
+
+            async def page(offset=0, limit=2, entity="POST /groups", result="groupEndpointsOutput"):
+                return await repo.get_relevant_documentation_items(
+                    session_id,
+                    result_key=result,
+                    entity_key=entity,
+                    offset=offset,
+                    limit=limit,
+                )
+
+            first = await page()
+            second = await page(offset=2)
+            assert [item["content"] for item in first] == ["chunk-1", "chunk-2"]
+            assert [item["content"] for item in second] == ["chunk-None"]
+            assert first[0]["metadata"]["filename"] == "groups.md"
+            assert len({item["chunkId"] for item in first + second}) == 3
+            assert await page() == first
+            assert await page(offset=3) == []
+            assert [item["content"] for item in await page(entity="GET /groups")] == ["chunk-0"]
+            assert [item["content"] for item in await page(entity="group", result="objectClassesOutput")] == ["chunk-0"]
+            assert await page(entity="POST /Groups") == []
+
+            await db.delete(doc)
+            await db.commit()
+            assert await page() == []
+    finally:
+        if schema_created:
+            async with engine.begin() as connection:
+                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

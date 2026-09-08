@@ -12,7 +12,7 @@ Module: `src/modules/digester/`
 
 == Endpoints
 
-All paths are prefixed with `/api/digester`. Each resource follows the
+All paths are prefixed with `/api/v1/digester` by default. Extraction resources follow the
 link:../sessions-and-jobs.adoc[job pattern]: `POST` enqueues extraction,
 `GET` polls status/result, `PUT` overwrites the stored result manually.
 
@@ -37,6 +37,10 @@ link:../sessions-and-jobs.adoc[job pattern]: `POST` enqueues extraction,
 | `/{sessionId}/classes/{objectClass}/endpoints`
 | CRUD/search endpoints for one object class.
 
+| `GET /{sessionId}/classes/{objectClass}/documentation`
+| Read stored source chunks for a class or an exact external API endpoint;
+  see <<source-documentation>>. This read does not create or poll a job.
+
 | `/{sessionId}/classes/{objectClass}/attributes`
 | Attribute schema for one object class.
 
@@ -46,6 +50,68 @@ link:../sessions-and-jobs.adoc[job pattern]: `POST` enqueues extraction,
 | `/{sessionId}/connectivity-endpoint`
 | A cheap endpoint suitable for a connection test.
 |===
+
+[[source-documentation]]
+== Source documentation for the wizard
+
+The documentation panel retrieves content already linked to an extracted or
+manually supplied object class or endpoint. It performs no LLM calls, extraction,
+or scraping. For example:
+
+[source,http]
+----
+GET /api/v1/digester/{sessionId}/classes/GROUP/documentation
+GET /api/v1/digester/{sessionId}/classes/GROUP/documentation?method=POST&path=%2Fgroups
+----
+
+The first request returns class-level sources. In the second, `method=POST`
+and `path=/groups` identify the *external application's endpoint* for creating
+a group; the request to midPilot itself is still a `GET`. Supply both filters
+or neither. Path templates must match stored endpoints exactly, including case;
+HTTP methods and class names are normalized as in existing digester lookups.
+Use URL query encoding for paths, including templates such as `/groups/{id}`.
+
+The response has `objectClass`, `endpoint` (`{method, path}` or `null`), `items`,
+and `nextOffset`. Each item contains `docId`, `chunkId`, full stored `content`,
+`source` (`scraper` or `upload`), `url`, `filename`, `contentType`, and
+`chunkNumber`. Unavailable source metadata is `null`. Content is returned as
+stored: `contentType` describes the source and does not guarantee HTML or a
+particular rendering format. SCIM sources can be schema/capability JSON rather
+than prose. A reference identifies provenance, not a guarantee of correctness.
+
+Use `offset` (default `0`) and `limit` (default `10`, maximum `50`) to page
+through distinct chunks, ordered by document ID, chunk number (unknown numbers
+last), then chunk ID. Follow `nextOffset` until it is `null`. The page-size
+defaults are configurable in link:../configuration.adoc[configuration]. Whole
+chunks are returned without truncation; limits count chunks, not bytes. If
+documentation or extraction results change while paging, restart from offset
+zero to read the current selection.
+
+The GUI should display a "Source documentation" panel with source links or
+filenames and a "Load more" control. Escape content as text or sanitize Markdown;
+never render untrusted raw HTML. For `200` with empty `items`, display "No source
+documentation is linked to this operation" (or "object class" for class reads).
+Missing endpoint references never fall back to class-level sources.
+
+Invalid/incomplete filters return `422`. Missing sessions, classes, or stored
+endpoints return `404`; foreign sessions are also masked as `404`. Class lookup
+uses the same rules as the existing class-detail endpoint: absent, empty or
+non-object results return `404`; a present `objectClasses` collection of the
+wrong type returns `422`. Malformed stored endpoint results return `422`.
+Database failures remain errors,
+not empty successful results. Class-level reads also support SQL schema sources;
+endpoint reads require an existing stored HTTP endpoint. The JSON content and
+original content type are preserved. SCIM class references can include its
+schema, resource descriptor and extension documents; derived embedded classes
+retain their source schema references. Selection uses stored entity references,
+not a fallback to every document of a matching content type.
+
+At debug level, `[Digester:Documentation]` records the selected class, result and
+entity keys, returned chunk count, offset and whether another page exists. It
+logs no document content and does not issue a total-count query.
+
+Existing extraction
+responses and the database schema are unchanged; no database recreation is needed.
 
 == How extraction works
 
