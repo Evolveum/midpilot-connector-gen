@@ -1657,6 +1657,128 @@
         }
       }
     },
+    "/api/v1/digester/{session_id}/classes/{object_class}/documentation": {
+      "get": {
+        "tags": [
+          "Digester: Documentation"
+        ],
+        "summary": "Get source documentation for an object class or endpoint",
+        "description": "Return whole stored source chunks. Omit method and path for class-level sources.\n\nReferences identify provenance, not a guarantee of correctness. No extraction\nor LLM calls are performed. Missing references produce an empty items array.",
+        "operationId": "get_class_documentation_api_v1_digester__session_id__classes__object_class__documentation_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "object_class",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Object Class"
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EndpointMethod"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "External API HTTP method; requires path.",
+              "title": "Method"
+            },
+            "description": "External API HTTP method; requires path."
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact external API path template; requires method.",
+              "title": "Path"
+            },
+            "description": "Exact external API path template; requires method."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelevantDocumentationResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session, class or endpoint unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/digester/{session_id}/classes/{object_class}/attributes": {
       "post": {
         "tags": [
@@ -5740,6 +5862,23 @@
         "title": "DocumentationChunk",
         "description": "API model for one documentation chunk payload."
       },
+      "DocumentationEndpoint": {
+        "properties": {
+          "method": {
+            "$ref": "#/components/schemas/EndpointMethod"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "path"
+        ],
+        "title": "DocumentationEndpoint"
+      },
       "EndpointMethod": {
         "type": "string",
         "enum": [
@@ -6419,6 +6558,129 @@
         "type": "object",
         "title": "RelationsResponse",
         "description": "Container for relation records extracted from a schema fragment. Return an empty list when none qualify."
+      },
+      "RelevantDocumentationItem": {
+        "properties": {
+          "docId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Docid"
+          },
+          "chunkId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Chunkid"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "scraper",
+              "upload"
+            ],
+            "title": "Source"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "contentType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contenttype"
+          },
+          "chunkNumber": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunknumber"
+          }
+        },
+        "type": "object",
+        "required": [
+          "docId",
+          "chunkId",
+          "content",
+          "source"
+        ],
+        "title": "RelevantDocumentationItem",
+        "description": "Stored source chunk and its document metadata, suitable for read-only display."
+      },
+      "RelevantDocumentationResponse": {
+        "properties": {
+          "objectClass": {
+            "type": "string",
+            "title": "Objectclass"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentationEndpoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RelevantDocumentationItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "nextOffset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextoffset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "objectClass",
+          "endpoint",
+          "items",
+          "nextOffset"
+        ],
+        "title": "RelevantDocumentationResponse"
       },
       "RestAvailabilityInfo": {
         "properties": {

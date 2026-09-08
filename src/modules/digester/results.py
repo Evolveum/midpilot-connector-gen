@@ -35,12 +35,7 @@ from src.documents.relevance import (
     strip_object_class_relevance,
 )
 from src.jobs.schema import JobStatusMultiDocResponse
-from src.modules.digester.entities.object_classes import find_object_class, upsert_object_class
-from src.modules.digester.errors import (
-    InvalidObjectClassesOutputError,
-    ObjectClassesNotFoundError,
-    ObjectClassNotFoundError,
-)
+from src.modules.digester.entities.object_classes import resolve_object_class, upsert_object_class
 from src.modules.digester.schemas import (
     AttributeResponse,
     ConnectivityEndpointResponse,
@@ -346,20 +341,10 @@ async def build_object_class_detail(
 ) -> Dict[str, Any]:
     """Assemble a single object class enriched with relevance, attributes and endpoints.
 
-    Raises ObjectClassesNotFoundError / InvalidObjectClassesOutputError /
-    ObjectClassNotFoundError so the caller can map them to HTTP 404.
+    Uses the shared class lookup contract (404 for missing classes, 422 for
+    an invalid objectClasses collection).
     """
-    object_classes_output = await repo.get_session_data(session_id, OBJECT_CLASSES_RESULT_KEY)
-    if not object_classes_output or not isinstance(object_classes_output, dict):
-        raise ObjectClassesNotFoundError(session_id)
-
-    object_classes = object_classes_output.get("objectClasses", [])
-    if not isinstance(object_classes, list):
-        raise InvalidObjectClassesOutputError(session_id)
-
-    target_object_class = find_object_class(object_classes, object_class)
-    if not target_object_class:
-        raise ObjectClassNotFoundError(object_class, session_id)
+    target_object_class = await resolve_object_class(repo, session_id, object_class)
 
     result = target_object_class.copy()
     normalized_name = normalize_object_class_name(object_class)

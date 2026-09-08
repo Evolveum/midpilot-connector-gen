@@ -14,6 +14,30 @@ from uuid import UUID
 from src.core.errors import AppError
 
 
+class InvalidDocumentationFilterError(AppError):
+    status_code = 422
+    code = "invalid_documentation_filter"
+
+    def __init__(self):
+        super().__init__("Provide both method and a non-empty path, or omit both for class documentation.")
+
+
+class DocumentationEndpointNotFoundError(AppError):
+    status_code = 404
+    code = "documentation_endpoint_not_found"
+
+    def __init__(self):
+        super().__init__("The requested endpoint is not available for this object class.")
+
+
+class InvalidEndpointsOutputError(AppError):
+    status_code = 422
+    code = "invalid_endpoints_output"
+
+    def __init__(self):
+        super().__init__("Stored endpoints data is invalid. Re-run endpoint extraction or override its result.")
+
+
 class ObjectClassesNotFoundError(AppError):
     """Raised when a session has no object classes available for a requested operation."""
 
