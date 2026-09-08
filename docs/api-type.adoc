@@ -115,8 +115,10 @@ When a digester or codegen job needs a single protocol, it resolves it via
 1. If a protocol-aware request carries an explicit `apiType` *query parameter*,
    that value wins. The override is available on digester `classes`,
    `endpoints`, and `attributes`, and on codegen `authorization`,
-   `native-schema`, `search`, `create`, `update`, and `delete`. ConnID and
-   relation generation are protocol-independent and do not accept it.
+   `native-schema`, `search`, `create`, `update`, and `delete`. Since
+   `native-schema` also emits the ConnID mapping, this override governs that
+   mapping too. The deprecated `connid` endpoint and relation generation are
+   protocol-independent and do not accept it.
 2. Otherwise the stored `apiType` list from the session metadata is used. When
    several protocols are stored, the single protocol is picked in the order
    *SQL → SCIM → REST*.
@@ -150,9 +152,10 @@ IMPORTANT: When the target exposes several protocols (detection stored e.g.
 both `rest` and `scim`), decide which connector you want and pass the
 explicit `apiType=` override consistently on every protocol-aware extraction
 and generation request. Mixing protocols mid-pipeline (classes extracted as
-SCIM, code generated as REST) produces inconsistent results. ConnID and
-relation generation consume the already stored model and have no protocol
-override of their own.
+SCIM, code generated as REST) produces inconsistent results. The deprecated
+ConnID endpoint and relation generation consume the already stored model and
+have no protocol override of their own; the ConnID mapping emitted by
+`native-schema` follows that endpoint's override.
 
 WARNING: The `integrationType` field of the
 link:pipeline/discovery.adoc[discovery] request is *not* the apiType — it only

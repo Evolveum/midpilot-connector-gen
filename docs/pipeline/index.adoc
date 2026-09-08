@@ -48,9 +48,9 @@ and codegen stages too. The recommended full sequence is:
    c. `classes` (object classes),
    d. per object class: `endpoints`, then `attributes`,
    e. `relations`, `connectivity-endpoint`.
-5. *Codegen*: `authorization`, then per object class `native-schema`,
-   `connid`, `search/{intent}`, `create`, `update`, `delete`, and
-   `relations/{relationName}`.
+5. *Codegen*: `authorization`, then per object class `native-schema`
+   (which also emits the ConnId mapping), `search/{intent}`, `create`,
+   `update`, `delete`, and `relations/{relationName}`.
 
 IMPORTANT: If digester metadata extraction is skipped or detects the wrong
 protocol, every subsequent protocol-specific step silently uses the wrong
@@ -76,9 +76,10 @@ bypassing web discovery and scraping:
    session — a database connector has no endpoints. The shared `auth`,
    `relations`, and `connectivity-endpoint` extractors have no SQL-specific
    behavior and are skipped in the normal SQL flow.
-6. *Codegen*: per object class `native-schema`, `connid`, `search/{intent}`,
-   `create`, `update`, `delete`. `authorization` has no SQL prompt family;
-   relation code requires a manually supplied or otherwise extracted relation.
+6. *Codegen*: per object class `native-schema` (which also emits the ConnId
+   mapping), `search/{intent}`, `create`, `update`, `delete`.
+   `authorization` has no SQL prompt family; relation code requires a manually
+   supplied or otherwise extracted relation.
 
 See link:../api-type.adoc[API type] and link:digester.adoc[Digester] for what
 each source of schema provides.

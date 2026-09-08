@@ -51,9 +51,12 @@ from src.modules.codegen.prompts.sql.update_prompts import get_sql_update_system
 from src.modules.codegen.schema import OperationAssets
 from src.shared.enums import ApiType
 
-# ConnID generation is protocol-independent and therefore has no PROMPT_MAP
-# entry. The fix catalog still needs its bundled reference path.
-CONNID_DOCS_PATH = "rest/30-attribute-to-connid-attributes.adoc"
+# The ConnID mapping is part of the native schema and shares its script, so this
+# reference is attached to every ``native_schema`` asset rather than owning a
+# PROMPT_MAP entry. It explains *which* native attribute belongs to *which* ConnID
+# built-in; the protocol's own schema document remains the authority on syntax.
+# Protocol-neutral, hence the documentations root rather than ``rest/``.
+CONNID_ATTRIBUTES_DOCS_PATH = "connid-attributes.adoc"
 
 
 PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
@@ -80,17 +83,22 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
     },
     "native_schema": {
         ApiType.REST: OperationAssets(
-            get_native_schema_system_prompt, get_native_schema_user_prompt, "rest/25-user-schema.adoc"
+            get_native_schema_system_prompt,
+            get_native_schema_user_prompt,
+            "rest/25-user-schema.adoc",
+            connid_docs_path=CONNID_ATTRIBUTES_DOCS_PATH,
         ),
         ApiType.SCIM: OperationAssets(
             get_scim_native_schema_system_prompt,
             get_scim_native_schema_user_prompt,
             "scim/25-schema-customization.adoc",
+            connid_docs_path=CONNID_ATTRIBUTES_DOCS_PATH,
         ),
         ApiType.SQL: OperationAssets(
             get_native_schema_system_prompt,
             get_native_schema_user_prompt,
             "sql/schema-customization.adoc",
+            connid_docs_path=CONNID_ATTRIBUTES_DOCS_PATH,
         ),
     },
     # TODO add new documentation for authorization
@@ -177,32 +185,45 @@ def get_search_operation_assets(protocol: ApiType, intent: SearchIntent | str) -
     return SEARCH_PROMPT_MAP[protocol][normalized_intent]
 
 
-def resolve_operation_docs_path(
+def resolve_operation_docs_paths(
     kind: ArtifactKind,
     protocol: ApiType,
     *,
     intent: SearchIntent | None = None,
-) -> str | None:
+) -> tuple[str, ...]:
     """
-    Resolve the bundled DSL reference document for one generated artifact.
+    Resolve the bundled DSL references for one generated artifact, primary first.
 
-    Returns ``None`` when the combination has no bundled reference rather than
-    raising, so an object-class caller can carry on with the documents it has.
+    A native-schema artifact resolves to two documents - the protocol's schema DSL
+    followed by the ConnID mapping reference - because its script carries both. The
+    order is part of the contract: the fix prompt tells the model that the first
+    document is the syntax authority.
+
+    Returns an empty tuple when the combination has no bundled reference rather
+    than raising, so an object-class caller can carry on with the documents it has.
     """
     if kind is ArtifactKind.CONNID:
-        return CONNID_DOCS_PATH
+        # No slot produces this kind any more, but a connector-fix job scheduled
+        # before the ConnID mapping moved into the native schema still rehydrates
+        # one from its persisted input, and it needs its reference.
+        return (CONNID_ATTRIBUTES_DOCS_PATH,)
 
     try:
         if kind is ArtifactKind.SEARCH:
             if intent is None:
                 raise ValueError("Search artifacts require an intent to resolve their documentation")
-            return get_search_operation_assets(protocol, intent).docs_path
-        operation_name = _ARTIFACT_OPERATION_NAMES.get(kind)
-        if operation_name is None:
-            return None
-        return get_operation_assets(operation_name, protocol).docs_path
+            assets = get_search_operation_assets(protocol, intent)
+        else:
+            operation_name = _ARTIFACT_OPERATION_NAMES.get(kind)
+            if operation_name is None:
+                return ()
+            assets = get_operation_assets(operation_name, protocol)
     except ValueError:
-        return None
+        return ()
+
+    if assets.connid_docs_path is None:
+        return (assets.docs_path,)
+    return (assets.docs_path, assets.connid_docs_path)
 
 
 _ARTIFACT_OPERATION_NAMES: Mapping[ArtifactKind, str] = {

@@ -46,8 +46,9 @@ async def fix_connector(
     """
     Fix faulty Groovy scripts for one object class from the errors midPoint reported.
 
-    Loads generated search, create, update, delete, native-schema, and ConnID code only for the selected
-    object class. The model receives those scripts and the reported errors, and only
+    Loads generated search, create, update, delete and native-schema code only for the selected
+    object class; the native-schema script carries that class's ConnID attribute mapping.
+    The model receives those scripts and the reported errors, and only
     changed scripts are written back. Optional scripts in the body must also belong
     to this object class. The session is updated only if the fix succeeds.
     """

@@ -41,9 +41,19 @@ class OperationConfig:
 
 @dataclass(frozen=True)
 class OperationAssets:
+    """
+    The prompts and bundled DSL references one operation is generated from.
+
+    ``connid_docs_path`` is the second reference a native-schema script needs: the
+    ConnID mapping lives in the same script as the attribute definitions, and the
+    protocol's own schema document does not always explain the built-in ConnID
+    attributes. Operations that carry no ConnID mapping leave it unset.
+    """
+
     system_prompt: str
     user_prompt: str
     docs_path: str
+    connid_docs_path: str | None = None
 
 
 class GroovyCodePayload(BaseModel):

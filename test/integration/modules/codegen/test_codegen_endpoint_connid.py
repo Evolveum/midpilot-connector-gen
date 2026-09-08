@@ -79,3 +79,16 @@ async def test_generate_connid_uses_repair_context_only():
     inputs = update_args[1]["userConnidInput"]
     assert "preferredEndpoints" not in inputs
     assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]
+
+
+def test_connid_routes_are_marked_deprecated():
+    """
+    The endpoints keep working, but the ConnID mapping is now generated into the
+    native schema, so every ConnID operation is advertised as deprecated.
+    """
+    from src.modules.codegen.routes.connid import router
+
+    connid_routes = [route for route in router.routes if route.path.endswith("/connid")]
+
+    assert {method for route in connid_routes for method in route.methods} == {"POST", "GET", "PUT"}
+    assert all(route.deprecated for route in connid_routes)

@@ -25,17 +25,20 @@ from src.modules.codegen.selection.authorization import (
     prepare_preferred_authorizations_for_generation,
 )
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
-from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
+from src.modules.codegen.selection.protocol_selectors import (
+    CONNID_ATTRIBUTES_DOCS_PATH,
+    get_operation_assets,
+    get_search_operation_assets,
+)
 from src.modules.codegen.selection.relevant_chunks import (
     _collect_authorization_relevant_chunks,
     _collect_relation_object_class_pairs,
     _collect_relevant_chunks,
 )
 from src.modules.codegen.utils.prompt_records import (
-    build_attribute_mapping_records,
+    build_complete_attribute_mapping_records,
     build_connid_attribute_mapping_records,
     build_scim_contract_prompt_vars,
-    build_sql_attribute_mapping_records,
 )
 from src.modules.digester.schemas import RelationsResponse
 from src.session.info_metadata import (
@@ -63,18 +66,23 @@ async def generate_native_schema_code(
     repair_context: Optional[CodegenRepairContext] = None,
 ) -> Dict[str, str]:
     """
-    Generate Groovy for native schema mapping from attributes.
+    Generate Groovy for the native schema, including the object class's ConnID mapping.
+
+    One script carries both: the attribute definitions written against the protocol's
+    schema DSL, and the ConnID built-in mapping. They used to be generated separately
+    and had to agree on every native attribute name or the connector was rejected.
     """
 
     assets = get_operation_assets("native_schema", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    if assets.connid_docs_path is None:
+        raise ValueError(f"Native-schema assets for {protocol.value} are missing their ConnID reference document")
 
-    records = (
-        build_sql_attribute_mapping_records(attributes_payload)
-        if protocol == ApiType.SQL
-        else build_attribute_mapping_records(attributes_payload)
-    )
-    extra_prompt_vars = {"user_schema_docs": docs_text}
+    docs_package = __package__ + ".documentations"
+    records = build_complete_attribute_mapping_records(attributes_payload)
+    extra_prompt_vars = {
+        "protocol_schema_docs": load_required_adoc_text(docs_package, assets.docs_path),
+        "connid_attribute_docs": load_required_adoc_text(docs_package, assets.connid_docs_path),
+    }
     if protocol == ApiType.SCIM:
         extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))
 
@@ -155,10 +163,12 @@ async def generate_conn_id_code(
 ) -> Dict[str, str]:
     """
     Generate Groovy for ConnID attribute mapping from attributes.
+
+    Deprecated: ``generate_native_schema_code`` emits this mapping into the native
+    schema script. Kept working for callers that have not migrated; its prompt is
+    deliberately frozen.
     """
-    docs_text = load_required_adoc_text(
-        __package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc"
-    )
+    docs_text = load_required_adoc_text(__package__ + ".documentations", CONNID_ATTRIBUTES_DOCS_PATH)
 
     records = build_connid_attribute_mapping_records(attributes_payload)
 

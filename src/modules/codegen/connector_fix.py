@@ -47,7 +47,7 @@ from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, re
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.relevant_chunks import collect_connector_relevant_chunks
 from src.modules.codegen.utils.groovy_validation import normalize_groovy_code, validate_groovy_code
-from src.modules.codegen.utils.prompt_records import build_fix_attribute_mapping_records, render_prompt_records
+from src.modules.codegen.utils.prompt_records import build_complete_attribute_mapping_records, render_prompt_records
 from src.session.info_metadata import get_session_connection_target
 from src.shared.enums import ApiType, JobStage
 
@@ -102,7 +102,7 @@ async def fix_connector_code(
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
     connection_target = base_api_url or database_name
     dsl_documentation = _load_dsl_documentation(artifacts, protocol)
-    extracted_attributes = render_prompt_records(build_fix_attribute_mapping_records(attributes))
+    extracted_attributes = render_prompt_records(build_complete_attribute_mapping_records(attributes))
     extracted_endpoints = render_prompt_records(endpoints_to_records(endpoints)) if endpoints is not None else ""
 
     async def run_pass(

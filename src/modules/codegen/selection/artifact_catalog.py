@@ -28,7 +28,7 @@ from uuid import UUID
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.modules.codegen.enums import ArtifactKind, SearchIntent, build_search_operation_key
-from src.modules.codegen.selection.protocol_selectors import resolve_operation_docs_path
+from src.modules.codegen.selection.protocol_selectors import resolve_operation_docs_paths
 from src.modules.digester.errors import ObjectClassesNotFoundError, ObjectClassNotFoundError
 from src.shared.enums import ApiType
 
@@ -38,7 +38,6 @@ OBJECT_CLASSES_RESULT_KEY = "objectClassesOutput"
 
 _OBJECT_CLASS_OPERATIONS: Sequence[tuple[ArtifactKind, str]] = (
     (ArtifactKind.NATIVE_SCHEMA, "NativeSchema"),
-    (ArtifactKind.CONNID, "Connid"),
     (ArtifactKind.CREATE, "Create"),
     (ArtifactKind.UPDATE, "Update"),
     (ArtifactKind.DELETE, "Delete"),
@@ -193,18 +192,19 @@ def resolve_artifact_docs_paths(
     paths: List[str] = []
     seen: set[str] = set()
     for artifact in artifacts:
-        docs_path = resolve_operation_docs_path(artifact.kind, protocol, intent=artifact.intent)
-        if docs_path is None:
+        docs_paths = resolve_operation_docs_paths(artifact.kind, protocol, intent=artifact.intent)
+        if not docs_paths:
             logger.info(
                 "[Codegen:Artifacts] No bundled DSL reference for %s on protocol %s",
                 artifact.operation_key,
                 protocol.value,
             )
             continue
-        if docs_path in seen:
-            continue
-        seen.add(docs_path)
-        paths.append(docs_path)
+        for docs_path in docs_paths:
+            if docs_path in seen:
+                continue
+            seen.add(docs_path)
+            paths.append(docs_path)
     return paths
 
 

@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import json
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -352,26 +353,64 @@ async def test_deduplicate_auth_llm_pair_matches_normalized_names():
     assert [auth.name for auth in result] == ["API Key"]
 
 
-@pytest.mark.parametrize("item_count", [0, 1])
 @pytest.mark.asyncio
-async def test_deduplicate_auth_skips_llm_below_two_items(item_count):
-    """A pair is the smallest input that can hold a duplicate, so shorter lists must not
-    spend a merge-plan LLM call."""
-    items = [
-        AuthProcessingInfo(name="API Key", type=AuthType.API_KEY, quirks="", relevant_sequences=[])
-        for _ in range(item_count)
-    ]
-
+async def test_deduplicate_auth_skips_llm_for_empty_input():
     with (
         patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.auth.build_structured_chain") as mock_chain,
         patch("src.modules.digester.extractors.auth.invoke_llm", new_callable=AsyncMock) as mock_invoke,
     ):
-        result = await deduplicate_auth(items, uuid4())
+        result = await deduplicate_auth([], uuid4())
 
-    assert len(result) == item_count
+    assert result == []
     mock_invoke.assert_not_awaited()
     mock_chain.assert_not_called()
+
+
+@pytest.mark.parametrize("item_count", [1, 2], ids=["singleton", "heuristic-collapse"])
+@pytest.mark.parametrize("is_built", [False, True], ids=["discovery", "built"])
+@pytest.mark.parametrize("weak_evidence", [True, False], ids=["delete-weak", "keep-documented"])
+@pytest.mark.asyncio
+async def test_deduplicate_auth_screens_singleton_documentation(item_count, is_built, weak_evidence):
+    """Both passes must apply quality decisions even when heuristics leave one candidate."""
+    evidence = (
+        "The API supports API keys."
+        if weak_evidence
+        else "Create a key in Settings > API keys. Send X-API-Key: <key> on every request."
+    )
+    sequence = DocSequenceItem(chunk_id=str(uuid4()), start_sequence=evidence, end_sequence=evidence)
+    if is_built:
+        item = AuthProcessingInfo(
+            name="API Key",
+            type=AuthType.API_KEY,
+            quirks="" if weak_evidence else "Header: X-API-Key",
+            relevant_sequences=[DocProcessingSequenceItem(**sequence.model_dump(), text=evidence)],
+        )
+    else:
+        item = DiscoveryAuth(name="API Key", type=AuthType.API_KEY, relevant_sequences=[sequence])
+    items = [item.model_copy(deep=True) for _ in range(item_count)]
+    plan = AuthDedupResponse(
+        duplicates=[],
+        to_be_deleted=[("API Key", "apiKey")] if weak_evidence else [],
+    )
+
+    with (
+        patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extractors.auth.extract_sequence", new_callable=AsyncMock, return_value=evidence),
+        patch("src.modules.digester.extractors.auth.build_structured_chain"),
+        patch(
+            "src.modules.digester.extractors.auth.invoke_llm", new_callable=AsyncMock, return_value=plan
+        ) as mock_invoke,
+    ):
+        result = await deduplicate_auth(items, uuid4())
+
+    assert [auth.name for auth in result] == ([] if weak_evidence else ["API Key"])
+    mock_invoke.assert_awaited_once()
+    submitted_items = json.loads(mock_invoke.await_args.args[1]["auth_list"])
+    assert len(submitted_items) == 1
+    assert submitted_items[0]["relevant_sequences"][0]["text"] == evidence
+    if not weak_evidence:
+        assert result[0].relevant_sequences[0].text == evidence
 
 
 @pytest.mark.parametrize("item_count", [0, 1])
