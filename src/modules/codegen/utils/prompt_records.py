@@ -19,6 +19,11 @@ _SQL_ATTRIBUTE_BINDING_FIELDS = (
     "column",
     "primaryKey",
     "foreignKey",
+    "databaseType",
+    "nullable",
+    "unique",
+    "generated",
+    "defaultValue",
 )
 
 
@@ -102,6 +107,30 @@ def extract_scim_context(payload: AttributesPayload) -> Dict[str, Any]:
     if isinstance(payload, AttributeResponse):
         return dict(payload.scimContext)
     return dict(as_mapping(payload.get("scimContext")))
+
+
+def extract_sql_context(payload: AttributesPayload) -> Dict[str, Any]:
+    """Return class-specific SQL physical identity and ConnId projection context."""
+    if isinstance(payload, AttributeResponse):
+        if payload.sqlContext is None:
+            return {}
+        return payload.sqlContext.model_dump(by_alias=True, mode="json")
+    return dict(as_mapping(payload.get("sqlContext")))
+
+
+def build_sql_context_prompt_vars(payload: AttributesPayload) -> Dict[str, str]:
+    """Serialize physical table identity and projection into distinct prompt variables."""
+    context = extract_sql_context(payload)
+    physical_table = dict(as_mapping(context.get("physicalTable")))
+    connector_object_class = dict(as_mapping(context.get("connectorObjectClass")))
+    return {
+        "sql_physical_table_json": json.dumps(physical_table, ensure_ascii=False, separators=(",", ":")),
+        "sql_connector_object_class_json": json.dumps(
+            connector_object_class,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    }
 
 
 def build_scim_contract_prompt_vars(

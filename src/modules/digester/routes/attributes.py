@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Path, Query
+from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_typed_job_status_response
@@ -21,6 +22,15 @@ from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
 
 router = APIRouter(tags=["Digester: Attributes"])
+
+
+class AttributeJobStatusResponse(JobStatusMultiDocResponse):
+    """Attribute status response with its finished result exposed in OpenAPI."""
+
+    result: Optional[AttributeResponse] = Field(
+        default=None,
+        description="Extracted attributes and protocol-specific context when the job is finished.",
+    )
 
 
 @router.post(
@@ -64,7 +74,7 @@ async def extract_class_attributes(
 
 @router.get(
     "/{session_id}/classes/{object_class}/attributes",
-    response_model=JobStatusMultiDocResponse,
+    response_model=AttributeJobStatusResponse,
     summary="Get attributes extraction status",
 )
 async def get_class_attributes_status(

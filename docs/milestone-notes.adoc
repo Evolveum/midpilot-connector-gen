@@ -17,6 +17,72 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-09 SQL columns separated from the ConnId projection
+
+Author: Alexander Brecko
+
+Description: SQL attribute extraction now treats the database table export or
+raw DDL/JSON schema as the sole authority for physical columns and SQL/JDBC
+types. The Conndev object-class export is stored separately in `sqlContext` as
+the desired ConnId projection. Projection-only names such as `__NAME__` are no
+longer emitted as database columns, and `connIdType` no longer replaces the
+database type.
+
+Existing SQL attribute and native-schema results are incompatible with this
+snapshot. SQL attribute payloads generated before this change have no
+`sqlContext`; native-schema scheduling rejects them with
+`sql_physical_schema_not_found` and requires regeneration. The successful
+midPoint-facing native-schema response remains `{"code":"..."}` and supported
+HTTP response fields, status codes, and nesting are unchanged.
+
+No database schema change and no development-database recreation are required.
+The SQL statement below invalidates reusable result fingerprints only; it does
+not delete jobs or session data.
+
+.Required Upgrade Steps
+. Invalidate cached SQL attribute-extraction and native-schema results:
++
+[source,sql]
+----
+UPDATE jobs
+SET normalized_input_hash = NULL
+WHERE job_type IN (
+    'digester.getObjectClassSchema',
+    'codegen.getNativeSchema'
+);
+----
+. For every existing SQL session, rerun
+`POST /api/v1/digester/{sessionId}/classes/{objectClass}/attributes?skipCache=true`
+for each object class. Confirm that the response contains `sqlContext.physicalTable`
+and that `attributes` is keyed only by physical column name.
+. Rerun
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema?skipCache=true`
+for each SQL object class. Replace the previously generated native-schema
+artifact with the new result.
+. Validate the deployment with `uv run poe qa`. Generate the reported
+`app_user` class and confirm that its physical attributes are exactly `id`,
+`username`, `email`, `created_at`, and `birthdate`, while `__NAME__` appears only
+under `sqlContext.connectorObjectClass.attributes`.
+
+.Rollback Procedure (If Upgrade Fails)
+. Revert the application commit and redeploy the previous snapshot. There is no
+database migration to reverse and no backup to restore.
+. Rerun SQL attribute extraction and native-schema generation with
+`skipCache=true` for sessions regenerated after this upgrade, because the
+previous snapshot expects the combined development payload.
+. The cache invalidation does not need to be reversed. It only forces a fresh
+execution and is safe to leave in place after rollback.
+
+.Notes & References
+* Related PR: Not assigned.
+* Docs: `src/modules/codegen/documentations/sql/schema-customization.adoc`
+* Affected endpoints: `POST|GET|PUT /api/v1/digester/{sessionId}/classes/{objectClass}/attributes`,
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema`, and
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix`.
+* Affected session keys: `{objectClass}AttributesOutput` and
+`{objectClass}NativeSchemaOutput`.
+* Affected configs: None.
+
 === 2026-09-07 Native schema absorbs the ConnID attribute mapping
 
 *Author:* Alexander Brecko

@@ -7,11 +7,29 @@ from uuid import uuid4
 
 import pytest
 
+from src.app import create_api
 from src.modules.digester.results import (
     _select_attributes_payload,
     build_object_class_detail,
     store_attributes_override,
 )
+
+SQL_CONTEXT = {
+    "physicalTable": {
+        "databaseCatalog": "connector_project_db",
+        "databaseSchema": "public",
+        "table": "app_user",
+        "tableType": "TABLE",
+    },
+    "connectorObjectClass": {
+        "name": "app_user",
+        "attributes": [
+            {"name": "__NAME__", "connIdType": "string", "column": None},
+            {"name": "login", "connIdType": "string", "column": "username"},
+            {"name": "username", "connIdType": "string", "column": None},
+        ],
+    },
+}
 
 
 def test_wrapped_attributes_map_is_unwrapped():
@@ -127,3 +145,56 @@ async def test_object_class_detail_exposes_scim_context_beside_attributes():
 
     assert result["attributes"] == {"userName": {"type": "string"}}
     assert result["scimContext"] == scim_context
+
+
+@pytest.mark.asyncio
+async def test_sql_context_survives_attribute_override_and_object_class_detail():
+    session_id = uuid4()
+    repo = MagicMock()
+    repo.get_session_data = AsyncMock(
+        return_value={"attributes": {"id": {"type": "integer"}}, "sqlContext": SQL_CONTEXT}
+    )
+    with patch("src.modules.digester.results._store_result_with_relevance", new_callable=AsyncMock) as store_result:
+        await store_attributes_override(
+            MagicMock(),
+            repo,
+            session_id,
+            "app_user",
+            {"id": {"type": "integer", "mandatory": True}},
+        )
+
+    assert store_result.await_args.args[4]["sqlContext"] == SQL_CONTEXT
+
+    detail_repo = MagicMock()
+    detail_repo.get_session_data = AsyncMock(
+        side_effect=[
+            {"objectClasses": [{"name": "app_user"}]},
+            {"attributes": {"id": {"type": "integer"}}, "sqlContext": SQL_CONTEXT},
+            None,
+        ]
+    )
+    with (
+        patch(
+            "src.modules.digester.results.load_object_class_relevance_map",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "src.modules.digester.results.hydrate_attributes_with_relevance",
+            new_callable=AsyncMock,
+            return_value={"attributes": {"id": {"type": "integer"}}, "sqlContext": SQL_CONTEXT},
+        ),
+    ):
+        detail = await build_object_class_detail(MagicMock(), detail_repo, session_id, "app_user")
+
+    assert detail["sqlContext"] == SQL_CONTEXT
+
+
+def test_attribute_status_openapi_exposes_typed_sql_context():
+    schemas = create_api().openapi()["components"]["schemas"]
+
+    result_schema = schemas["AttributeJobStatusResponse"]["properties"]["result"]
+    assert "#/components/schemas/AttributeResponse" in {variant.get("$ref") for variant in result_schema["anyOf"]}
+    sql_context = schemas["AttributeResponse"]["properties"]["sqlContext"]
+    assert "#/components/schemas/SqlContext" in {variant.get("$ref") for variant in sql_context["anyOf"]}
+    assert schemas["SqlContext"]["properties"]["physicalTable"]["$ref"] == "#/components/schemas/SqlPhysicalTable"

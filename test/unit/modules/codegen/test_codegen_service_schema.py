@@ -5,13 +5,14 @@
 """Unit tests for codegen service schema generators."""
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.modules.codegen import generation
+from src.modules.codegen.orchestration import schedule_native_schema_job
 from src.modules.codegen.prompts.native_schema_prompts import (
     get_native_schema_system_prompt,
     get_native_schema_user_prompt,
@@ -20,11 +21,40 @@ from src.modules.codegen.prompts.scim.native_schema_prompts import (
     get_scim_native_schema_system_prompt,
     get_scim_native_schema_user_prompt,
 )
+from src.modules.codegen.prompts.sql.native_schema_prompts import (
+    get_sql_native_schema_system_prompt,
+    get_sql_native_schema_user_prompt,
+)
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets
+from src.modules.codegen.utils.prompt_records import (
+    build_attribute_context_records,
+    build_complete_attribute_mapping_records,
+    build_sql_context_prompt_vars,
+    extract_sql_context,
+)
+from src.modules.digester.errors import SqlPhysicalSchemaNotFoundError
+from src.modules.digester.schemas import AttributeResponse
 from src.shared.enums import ApiType
 
 _DOCUMENTATIONS_PACKAGE = "src.modules.codegen.documentations"
+
+SQL_CONTEXT = {
+    "physicalTable": {
+        "databaseCatalog": "connector_project_db",
+        "databaseSchema": "public",
+        "table": "app_user",
+        "tableType": "TABLE",
+    },
+    "connectorObjectClass": {
+        "name": "app_user",
+        "attributes": [
+            {"name": "__NAME__", "connIdType": "string", "column": None},
+            {"name": "login", "connIdType": "string", "column": "username"},
+            {"name": "username", "connIdType": "string", "column": None},
+        ],
+    },
+}
 
 
 def test_protocol_neutral_native_schema_prompts_contain_no_scim_context():
@@ -80,19 +110,32 @@ async def test_generate_native_schema():
 @pytest.mark.asyncio
 async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
     test_attributes = {
-        "Username": {
-            "type": "string",
-            "description": "User login",
-            "mandatory": True,
-            "databaseCatalog": "database1",
-            "databaseSchema": "identity",
-            "table": "m_user",
-            "column": "nameorig",
-            "primaryKey": True,
-            "foreignKey": {
-                "constraintName": "m_user_nameorig_fkey",
-                "referencedTable": "m_name",
-                "referencedColumn": "nameorig",
+        "attributes": {
+            "nameorig": {
+                "type": "string",
+                "databaseType": "VARCHAR",
+                "databaseCatalog": "database1",
+                "databaseSchema": "identity",
+                "table": "m_user",
+                "column": "nameorig",
+                "primaryKey": True,
+                "foreignKey": {
+                    "constraintName": "m_user_nameorig_fkey",
+                    "referencedTable": "m_name",
+                    "referencedColumn": "nameorig",
+                },
+            }
+        },
+        "sqlContext": {
+            "physicalTable": {
+                "databaseCatalog": "database1",
+                "databaseSchema": "identity",
+                "table": "m_user",
+                "tableType": "TABLE",
+            },
+            "connectorObjectClass": {
+                "name": "User",
+                "attributes": [{"name": "Username", "connIdType": "string", "column": "nameorig"}],
             },
         },
     }
@@ -112,9 +155,14 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
 
     assert result == {"code": "mocked sql schema code"}
     _, kwargs = mock_generate_groovy.call_args
-    assert kwargs["system_prompt"] == get_native_schema_system_prompt
-    assert kwargs["user_prompt"] == get_native_schema_user_prompt
-    assert set(kwargs["extra_prompt_vars"]) == {"protocol_schema_docs", "connid_attribute_docs"}
+    assert kwargs["system_prompt"] == get_sql_native_schema_system_prompt
+    assert kwargs["user_prompt"] == get_sql_native_schema_user_prompt
+    assert set(kwargs["extra_prompt_vars"]) == {
+        "protocol_schema_docs",
+        "connid_attribute_docs",
+        "sql_physical_table_json",
+        "sql_connector_object_class_json",
+    }
     assert kwargs["records"][0]["databaseCatalog"] == "database1"
     assert kwargs["records"][0]["databaseSchema"] == "identity"
     assert kwargs["records"][0]["table"] == "m_user"
@@ -125,6 +173,11 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
         "referencedTable": "m_name",
         "referencedColumn": "nameorig",
     }
+    assert kwargs["records"][0]["databaseType"] == "VARCHAR"
+    assert json.loads(kwargs["extra_prompt_vars"]["sql_physical_table_json"])["table"] == "m_user"
+    assert json.loads(kwargs["extra_prompt_vars"]["sql_connector_object_class_json"])["attributes"] == [
+        {"name": "Username", "connIdType": "string", "column": "nameorig"}
+    ]
 
 
 @pytest.mark.asyncio
@@ -223,7 +276,7 @@ async def test_generate_conn_id_uses_scim_connector_projection():
     ("protocol", "expected_extra_variables"),
     [
         (ApiType.REST, set()),
-        (ApiType.SQL, set()),
+        (ApiType.SQL, {"sql_physical_table_json", "sql_connector_object_class_json"}),
         (
             ApiType.SCIM,
             {
@@ -296,3 +349,62 @@ def test_sql_native_schema_documentation_never_shows_connid_attribute_calls():
 
     assert "connIdAttribute" not in sql_schema_docs
     assert 'connId { name "__UID__" }' in sql_schema_docs
+
+
+def test_sql_context_is_typed_and_excluded_from_crud_attribute_records():
+    payload = AttributeResponse.model_validate(
+        {
+            "attributes": {
+                "id": {
+                    "type": "integer",
+                    "databaseType": "SERIAL",
+                    "nullable": False,
+                    "unique": True,
+                    "generated": True,
+                    "table": "app_user",
+                    "column": "id",
+                    "primaryKey": True,
+                }
+            },
+            "sqlContext": SQL_CONTEXT,
+        }
+    )
+
+    context = extract_sql_context(payload)
+    assert context["physicalTable"]["table"] == "app_user"
+    assert context["connectorObjectClass"]["attributes"][0]["name"] == "__NAME__"
+    assert [record["name"] for record in build_attribute_context_records(payload)] == ["id"]
+    assert [record["name"] for record in build_complete_attribute_mapping_records(payload)] == ["id"]
+    assert "__NAME__" not in json.dumps(build_attribute_context_records(payload))
+    prompt_vars = build_sql_context_prompt_vars(payload)
+    assert json.loads(prompt_vars["sql_physical_table_json"])["databaseSchema"] == "public"
+    assert json.loads(prompt_vars["sql_connector_object_class_json"])["attributes"][0]["column"] is None
+
+
+@pytest.mark.asyncio
+async def test_native_schema_scheduling_rejects_stale_sql_attributes_without_context():
+    repo = MagicMock()
+    repo.get_session_data = AsyncMock(
+        return_value={"attributes": {"__NAME__": {"table": "app_user", "column": "__NAME__"}}}
+    )
+    with (
+        patch(
+            "src.modules.codegen.orchestration.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SQL,
+        ),
+        patch("src.modules.codegen.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as schedule,
+        pytest.raises(SqlPhysicalSchemaNotFoundError) as exc_info,
+    ):
+        await schedule_native_schema_job(
+            repo=repo,
+            session_id=uuid4(),
+            object_class="app_user",
+            api_type=None,
+            skip_cache=False,
+            codegen_input=None,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "Rerun attribute extraction" in str(exc_info.value)
+    schedule.assert_not_awaited()

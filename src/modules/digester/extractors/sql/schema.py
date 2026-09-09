@@ -39,9 +39,7 @@ _PRIMARY_KEY_COLUMNS_RE = re.compile(
 _IDENTIFIER_PREFIX_RE = re.compile(r"^\s*(?P<identifier>\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|[\w.]+)")
 _TABLE_KEYS = ("tables", "schema", "databaseSchema", "nativeSchema")
 
-_DATABASE_COLUMN_FIELDS = frozenset({"type", "nullable", "primaryKey", "foreignKey", "default", "generated"})
-_DATABASE_TABLE_FIELDS = frozenset({"primaryKey", "foreignKeys", "description"})
-_CONNDEV_TABLE_FIELDS = frozenset({"objectClass", "databaseSchema", "source"})
+_DATABASE_COLUMN_FIELDS = frozenset({"type", "nullable", "primaryKey", "foreignKey", "default", "generated", "unique"})
 
 
 @dataclass(frozen=True)
@@ -137,7 +135,9 @@ def _normalize_column(column: Any) -> dict[str, Any] | None:
         ("primaryKey", "primaryKey"),
         ("foreignKey", "foreignKey"),
         ("default", "default"),
+        ("defaultValue", "default"),
         ("generated", "generated"),
+        ("unique", "unique"),
     ):
         if source_key in column and column[source_key] is not None:
             normalized[target_key] = column[source_key]
@@ -168,7 +168,7 @@ def _normalize_table(table: Any, source_ref: dict[str, str] | None = None) -> di
         database_schema = clean_sql_identifier_component(table.get("databaseSchema") or table.get("schema"))
         if database_schema or qualified_schema:
             normalized["databaseSchema"] = database_schema or qualified_schema
-        for key in ("primaryKey", "foreignKeys", "description"):
+        for key in ("primaryKey", "foreignKeys", "description", "tableType"):
             if key in table and table[key] is not None:
                 normalized[key] = table[key]
 
@@ -232,6 +232,7 @@ def _table_from_create_statement(match: re.Match[str], source_ref: dict[str, str
             "columns": columns,
             "primaryKey": normalized_primary_key,
             "foreignKeys": foreign_keys,
+            "tableType": "TABLE",
         },
         source_ref,
     )
@@ -289,15 +290,6 @@ def _column_identity(column: dict[str, Any]) -> str:
     return clean_sql_identifier(column.get("column") or column.get("name")).lower()
 
 
-def _merge_cross_source_column(conndev_column: dict[str, Any], database_column: dict[str, Any]) -> dict[str, Any]:
-    """Combine one logical ConnId attribute with its physical database declaration."""
-    merged = dict(conndev_column)
-    for field in _DATABASE_COLUMN_FIELDS:
-        if field in database_column:
-            merged[field] = database_column[field]
-    return merged
-
-
 def _fill_physical_column_gaps(authoritative: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
     """Return the authoritative physical column with only the recognized SQL fields it lacks
     supplied from a lower-precedence physical source (a raw schema)."""
@@ -341,14 +333,6 @@ def _merge_columns(
     incoming_columns = [column for column in incoming.get("columns", []) if isinstance(column, dict)]
     sources = {existing_source, incoming_source}
 
-    if SqlTableSource.CONNDEV_OBJECT_CLASS in sources and len(sources) == 2:
-        # Logical <-> physical: the object-class export fixes column order and logical names;
-        # the physical source only overlays the recognized SQL column fields.
-        object_class_first = existing_source is SqlTableSource.CONNDEV_OBJECT_CLASS
-        conndev_columns = existing_columns if object_class_first else incoming_columns
-        database_columns = incoming_columns if object_class_first else existing_columns
-        return _overlay_columns(conndev_columns, database_columns, _merge_cross_source_column)
-
     if sources == {SqlTableSource.CONNDEV_SQL_TABLE, SqlTableSource.RAW_SCHEMA}:
         # Two physical sources: the conndev SQL-table export is authoritative; the raw schema
         # only fills column fields the export does not carry.
@@ -366,36 +350,14 @@ def _merge_columns(
     return merged_columns
 
 
-def _merge_table_metadata(
-    existing: dict[str, Any],
-    incoming: dict[str, Any],
-    *,
-    existing_source: SqlTableSource,
-    incoming_source: SqlTableSource,
-) -> None:
-    """Merge table-level metadata into ``existing`` with source-precedence rules."""
-    sources = {existing_source, incoming_source}
+def _merge_table_metadata(existing: dict[str, Any], incoming: dict[str, Any]) -> None:
+    """Merge table-level metadata into ``existing``.
 
-    if SqlTableSource.CONNDEV_OBJECT_CLASS in sources and len(sources) == 2:
-        # Logical <-> physical: names / ConnId flags from the object-class export, physical
-        # keys and qualifiers from the database side.
-        object_class_first = existing_source is SqlTableSource.CONNDEV_OBJECT_CLASS
-        conndev_table = existing if object_class_first else incoming
-        database_table = incoming if object_class_first else existing
-        for field in _CONNDEV_TABLE_FIELDS:
-            if field in conndev_table:
-                existing[field] = conndev_table[field]
-        for field in _DATABASE_TABLE_FIELDS:
-            if field in database_table:
-                existing[field] = database_table[field]
-        if "databaseCatalog" in database_table:
-            existing["databaseCatalog"] = database_table["databaseCatalog"]
-        if "databaseSchema" not in existing and "databaseSchema" in database_table:
-            existing["databaseSchema"] = database_table["databaseSchema"]
-        return
-
-    # Same source kind, or a raw schema filling gaps in the authoritative SQL-table export:
-    # keep every value ``existing`` already carries, add only the keys it is missing.
+    Only reached for two records of the same source kind, or a raw schema filling gaps in the
+    authoritative conndev SQL-table export: keep every value ``existing`` already carries and
+    add only the keys it is missing. The logical object-class projection is attached separately
+    by :func:`_merge_complementary_tables` and never flows through here.
+    """
     for key, value in incoming.items():
         if key not in {"columns", "relevantDocumentations"} and key not in existing:
             existing[key] = value
@@ -439,7 +401,7 @@ def _coalesce_same_source_tables(tables: list[_CollectedTable]) -> list[_Collect
         # Records sharing a key share a source kind, so this always hits the same-kind branch.
         source = sql_table_source(existing)
         existing["columns"] = _merge_columns(existing, incoming, existing_source=source, incoming_source=source)
-        _merge_table_metadata(existing, incoming, existing_source=source, incoming_source=source)
+        _merge_table_metadata(existing, incoming)
         _merge_relevant_documentations(existing, incoming.get("relevantDocumentations", []))
     return list(by_identity.values())
 
@@ -509,24 +471,20 @@ def _pair_by_compatible_identity(
 
 
 def _merge_complementary_tables(logical: _CollectedTable, database: _CollectedTable) -> _CollectedTable:
-    """Build a logical table enriched only by the database fields the digester understands."""
-    database_source = sql_table_source(database.table)
-    merged = dict(logical.table)
-    merged["columns"] = _merge_columns(
-        logical.table,
-        database.table,
-        existing_source=SqlTableSource.CONNDEV_OBJECT_CLASS,
-        incoming_source=database_source,
-    )
-    _merge_table_metadata(
-        merged,
-        database.table,
-        existing_source=SqlTableSource.CONNDEV_OBJECT_CLASS,
-        incoming_source=database_source,
-    )
+    """Attach a logical projection to an otherwise unchanged physical table record."""
+    merged = dict(database.table)
+    merged["columns"] = [dict(column) for column in database.table.get("columns", [])]
+    merged["objectClass"] = logical.table.get("objectClass")
+    projection = logical.table.get("connectorObjectClass")
+    if isinstance(projection, dict):
+        merged["connectorObjectClass"] = projection
+    for identity_field in ("databaseCatalog", "databaseSchema"):
+        if identity_field not in merged and identity_field in logical.table:
+            merged[identity_field] = logical.table[identity_field]
 
     merged.pop("relevantDocumentations", None)
-    for record in sorted((logical, database), key=lambda item: item.position):
+    # Source order is stable across upload order so cached extraction output is deterministic.
+    for record in (database, logical):
         _merge_relevant_documentations(merged, record.table.get("relevantDocumentations", []))
     return _CollectedTable(merged, min(logical.position, database.position))
 
@@ -540,12 +498,7 @@ def _absorb_raw_into_sql_table(sql_table: _CollectedTable, raw: _CollectedTable)
         existing_source=SqlTableSource.CONNDEV_SQL_TABLE,
         incoming_source=SqlTableSource.RAW_SCHEMA,
     )
-    _merge_table_metadata(
-        sql_table.table,
-        raw.table,
-        existing_source=SqlTableSource.CONNDEV_SQL_TABLE,
-        incoming_source=SqlTableSource.RAW_SCHEMA,
-    )
+    _merge_table_metadata(sql_table.table, raw.table)
     # Capture both sides' references before clearing the target: ``sql_table`` is one of the
     # records iterated, so reading it after the pop would drop its own documentation.
     ordered_refs = [
