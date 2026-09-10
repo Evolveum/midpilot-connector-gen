@@ -7,11 +7,11 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_typed_job_status_response
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.digester import orchestration, results
@@ -29,7 +29,7 @@ router = APIRouter(tags=["Digester: Connectivity Endpoint"])
 async def extract_connectivity_endpoint(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Extract one documented endpoint suitable for testing connectivity to the target application.
@@ -54,7 +54,7 @@ async def extract_connectivity_endpoint(
 async def get_connectivity_endpoint_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of connectivity endpoint extraction job.
@@ -82,7 +82,7 @@ async def get_connectivity_endpoint_status(
 async def override_connectivity_endpoint(
     session_id: UUID = Path(..., description="Session ID"),
     connectivity_endpoint: ConnectivityEndpointResponse = Body(..., description="Connectivity endpoint payload"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Manually override the selected connectivity endpoint in the session.

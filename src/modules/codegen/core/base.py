@@ -49,6 +49,44 @@ class ChunkProcessor:
     """Handles chunk selection and processing logic."""
 
     @staticmethod
+    def exclude_conndev_contracts(
+        documentation_items: List[Dict[str, Any]],
+        relevant_chunk_pairs: Optional[List[Dict[str, Any]]],
+    ) -> tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+        """
+        Drop the deterministic conndev contracts, and the pairs that select them.
+
+        conndev contracts are generated from a machine-readable schema and are never
+        LLM input. Dropping the selecting pairs as well keeps
+        :meth:`build_chunks_from_pairs` from reporting a deliberately excluded chunk
+        as a missing one. ``None`` pairs mean "no selection exists" and stay ``None``.
+        """
+        llm_documentation_items: List[Dict[str, Any]] = []
+        excluded_chunk_ids: set[str] = set()
+        for item in documentation_items:
+            if is_conndev_documentation_item(item):
+                chunk_id = item.get("chunkId")
+                if isinstance(chunk_id, str):
+                    excluded_chunk_ids.add(chunk_id)
+                continue
+            llm_documentation_items.append(item)
+
+        if len(llm_documentation_items) < len(documentation_items):
+            logger.info(
+                "[Codegen:Chunks] Excluded %d conndev contract document(s) from codegen LLM chunks",
+                len(documentation_items) - len(llm_documentation_items),
+            )
+
+        if relevant_chunk_pairs is None:
+            return llm_documentation_items, None
+
+        return llm_documentation_items, [
+            pair
+            for pair in relevant_chunk_pairs
+            if (pair.get("chunk_id") or pair.get("chunkId")) not in excluded_chunk_ids
+        ]
+
+    @staticmethod
     def build_chunks_from_pairs(
         relevant_chunk_pairs: List[Dict[str, Any]],
         documentation_items: List[Dict[str, Any]],
@@ -255,7 +293,7 @@ class BaseGroovyGenerator(ABC):
                 {"groovy_code": code},
                 config=RunnableConfig(
                     callbacks=[langfuse_handler],
-                    run_name=f"{self.config.logger_prefix.strip('[]')}:cleanup",
+                    run_name=f"{self.config.logger_prefix.strip('[]')}:Cleanup",
                 ),
             )
             candidate = strip_markdown_fences(coerce_llm_text(response).strip())
@@ -326,41 +364,24 @@ class BaseGroovyGenerator(ABC):
             logger.warning("%s No documentation items available", self.config.logger_prefix)
             return [], [], {}, []
 
-        llm_documentation_items: List[Dict[str, Any]] = []
-        excluded_chunk_ids: set[str] = set()
-        for item in documentation_items:
-            if is_conndev_documentation_item(item):
-                chunk_id = item.get("chunkId")
-                if isinstance(chunk_id, str):
-                    excluded_chunk_ids.add(chunk_id)
-                continue
-            llm_documentation_items.append(item)
-        if len(llm_documentation_items) < len(documentation_items):
-            logger.info(
-                "%s Excluded %d conndev contract document(s) from codegen LLM chunks",
-                self.config.logger_prefix,
-                len(documentation_items) - len(llm_documentation_items),
-            )
+        llm_documentation_items, llm_relevant_chunk_pairs = ChunkProcessor.exclude_conndev_contracts(
+            documentation_items,
+            relevant_chunk_pairs,
+        )
 
-        if relevant_chunk_pairs is not None:
-            llm_relevant_chunk_pairs = [
-                pair
-                for pair in relevant_chunk_pairs
-                if (pair.get("chunk_id") or pair.get("chunkId")) not in excluded_chunk_ids
-            ]
+        if llm_relevant_chunk_pairs is not None:
             # Use selected chunks based on pairs
-            chunks, provenance, per_chunk_counts, selected_chunk_ids = ChunkProcessor.build_chunks_from_pairs(
+            return ChunkProcessor.build_chunks_from_pairs(
                 llm_relevant_chunk_pairs,
                 llm_documentation_items,
                 self.config.logger_prefix,
             )
-            return chunks, provenance, per_chunk_counts, selected_chunk_ids
-        else:
-            # Use all documentation items directly
-            chunks = [normalize_to_text(item.get("content", "")) for item in llm_documentation_items]
-            provenance = [item.get("chunkId") for item in llm_documentation_items]
-            logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
-            return chunks, provenance, {}, []
+
+        # Use all documentation items directly
+        chunks = [normalize_to_text(item.get("content", "")) for item in llm_documentation_items]
+        provenance: List[Optional[str]] = [item.get("chunkId") for item in llm_documentation_items]
+        logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
+        return chunks, provenance, {}, []
 
     async def _initialize_progress(
         self,

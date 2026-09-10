@@ -7,11 +7,11 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_typed_job_status_response
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.digester import orchestration, results
@@ -29,7 +29,7 @@ router = APIRouter(tags=["Digester: Relations"])
 async def extract_relations(
     session_id: UUID = Path(..., description="Session ID"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Extract relations between object classes from documentation.
@@ -58,7 +58,7 @@ async def extract_relations(
 async def get_relations_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of relations extraction job.
@@ -84,7 +84,7 @@ async def get_relations_status(
 async def override_relations(
     session_id: UUID = Path(..., description="Session ID"),
     relations: RelationsResponse = Body(..., description="Relations data as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Manually override the relations data.

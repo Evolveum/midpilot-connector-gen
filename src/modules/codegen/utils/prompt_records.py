@@ -4,7 +4,7 @@
 
 import json
 from collections.abc import Iterator
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Sequence
 
 from src.documents.normalize import normalize_scim_path_for_lookup
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload
@@ -12,7 +12,19 @@ from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 from src.shared.coerce import as_dict_list, as_mapping
 
 _ATTRIBUTE_MAPPING_OPTIONAL_FIELDS = ("scimAttribute", "connectorExposed")
-_SQL_ATTRIBUTE_BINDING_FIELDS = ("table", "column", "primaryKey")
+_SQL_ATTRIBUTE_BINDING_FIELDS = (
+    "databaseCatalog",
+    "databaseSchema",
+    "table",
+    "column",
+    "primaryKey",
+    "foreignKey",
+    "databaseType",
+    "nullable",
+    "unique",
+    "generated",
+    "defaultValue",
+)
 
 
 def _attribute_items(payload: AttributesPayload) -> Iterator[tuple[str, Any]]:
@@ -90,19 +102,35 @@ def build_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str
     )
 
 
-def build_sql_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
-    """Convert attributes into native-schema records that retain physical SQL bindings."""
-    return _build_attribute_mapping_records(
-        payload,
-        optional_fields=_ATTRIBUTE_MAPPING_OPTIONAL_FIELDS + _SQL_ATTRIBUTE_BINDING_FIELDS,
-    )
-
-
 def extract_scim_context(payload: AttributesPayload) -> Dict[str, Any]:
     """Return class-specific SCIM context persisted beside the extracted attributes."""
     if isinstance(payload, AttributeResponse):
         return dict(payload.scimContext)
     return dict(as_mapping(payload.get("scimContext")))
+
+
+def extract_sql_context(payload: AttributesPayload) -> Dict[str, Any]:
+    """Return class-specific SQL physical identity and ConnId projection context."""
+    if isinstance(payload, AttributeResponse):
+        if payload.sqlContext is None:
+            return {}
+        return payload.sqlContext.model_dump(by_alias=True, mode="json")
+    return dict(as_mapping(payload.get("sqlContext")))
+
+
+def build_sql_context_prompt_vars(payload: AttributesPayload) -> Dict[str, str]:
+    """Serialize physical table identity and projection into distinct prompt variables."""
+    context = extract_sql_context(payload)
+    physical_table = dict(as_mapping(context.get("physicalTable")))
+    connector_object_class = dict(as_mapping(context.get("connectorObjectClass")))
+    return {
+        "sql_physical_table_json": json.dumps(physical_table, ensure_ascii=False, separators=(",", ":")),
+        "sql_connector_object_class_json": json.dumps(
+            connector_object_class,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    }
 
 
 def build_scim_contract_prompt_vars(
@@ -208,6 +236,49 @@ def build_connid_attribute_mapping_records(payload: AttributesPayload) -> List[D
         projected_attributes[native_name] = effective_attribute
 
     return build_attribute_mapping_records({"attributes": projected_attributes})
+
+
+def build_complete_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
+    """
+    Every extracted attribute, plus the identifiers only the ConnID projection knows.
+
+    The record set for any prompt that reasons about a whole object class: native
+    schema generation, which writes the attribute definitions and the ConnID mapping
+    into one script, and the object-class fix. The projection-filtered ConnID record
+    set is not enough on its own - it drops every attribute the connector does not
+    already expose, and that is exactly where a wrong native name hides. The
+    projection is merged in only where it can contribute something new - ``UID`` maps
+    to ``id``, which the extracted attributes do not carry - which is the SCIM path,
+    since :func:`build_connid_attribute_mapping_records` otherwise just rebuilds the
+    records already collected here. Neither builder ever disagrees about a native
+    name, so the merge order is not a policy.
+    """
+    records = _build_attribute_mapping_records(
+        payload,
+        optional_fields=_ATTRIBUTE_MAPPING_OPTIONAL_FIELDS + _SQL_ATTRIBUTE_BINDING_FIELDS,
+    )
+    if not as_mapping(extract_scim_context(payload).get("connectorObjectClass")):
+        return records
+
+    known = {record["name"] for record in records}
+    records.extend(record for record in build_connid_attribute_mapping_records(payload) if record["name"] not in known)
+    records.sort(key=lambda record: str(record.get("name", "")).lower())
+    return records
+
+
+def render_prompt_records(records: Sequence[Mapping[str, Any]]) -> str:
+    """
+    Serialize extracted records as an indented JSON block for a prompt.
+
+    Deliberately indented, unlike the compact ``attributes_json`` / ``endpoints_json``
+    the generators send: the fix prompt tells the model these records outrank the
+    scripts under repair and the bundled DSL examples, so they are meant to be read
+    rather than merely referenced. An empty set says so in words, because ``[]`` reads
+    to a model as "this attribute has no properties" rather than "nothing was extracted".
+    """
+    if not records:
+        return "No extracted records are available for this object class."
+    return json.dumps(list(records), ensure_ascii=False, indent=2)
 
 
 def strip_relevant_documentation_refs(record: Mapping[str, Any]) -> Dict[str, Any]:

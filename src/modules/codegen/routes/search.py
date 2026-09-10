@@ -7,11 +7,11 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_multi_doc_status_response
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
@@ -41,7 +41,7 @@ async def generate_search(
         alias="apiType",
         description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
     codegen_input: Optional[CodegenOperationInput] = None,
 ):
     """
@@ -81,7 +81,7 @@ async def get_search_status(
     object_class: str = Path(..., description="Object class name"),
     intent: SearchIntent = Path(..., description="Intent"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of search code generation job.
@@ -114,7 +114,7 @@ async def override_search(
     object_class: str = Path(..., description="Object class name"),
     intent: SearchIntent = Path(..., description="Intent"),
     search_code: GroovyCodePayload = Body(..., description="Search code as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Manually override the search code for an object class.

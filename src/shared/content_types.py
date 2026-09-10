@@ -17,6 +17,7 @@ digester or other DB-backed runtime paths.
 from collections.abc import Mapping
 from typing import Any
 
+from src.shared.coerce import as_nonempty_str
 from src.shared.enums import ApiType
 
 # The conndev connector schema is JSON.
@@ -35,6 +36,7 @@ CONNDEV_SUFFIX = ".conndev"
 CONNDEV_JSON_FILENAME_PREFIX = "conndev_"
 CONNDEV_SCIM_BINDING = "scim"
 CONNDEV_SQL_BINDING = "sql"
+CONNDEV_SQL_TABLE_CONTENT = "tableContent"
 
 # The protocol discriminator of every conndev export: the binding key present on an object-class
 # document or on one of its attribute shadows. Single source of truth for both lookups.
@@ -123,6 +125,17 @@ def is_conndev_object_class_document(document: Any) -> bool:
     return bool(str(document.get("uid") or "").strip()) and bool(str(document.get("name") or "").strip())
 
 
+def is_conndev_sql_table_document(document: Any) -> bool:
+    """True when a conndev document is a serialized SQL table export."""
+    if not isinstance(document, Mapping):
+        return False
+    return (
+        as_nonempty_str(document.get("name")) is not None
+        and as_nonempty_str(document.get("tableType")) is not None
+        and as_nonempty_str(document.get(CONNDEV_SQL_TABLE_CONTENT)) is not None
+    )
+
+
 def detect_conndev_object_class_api_type(document: Any) -> ApiType | None:
     """
     Return the protocol declared by a shadow-wrapped Conndev object-class export.
@@ -151,6 +164,9 @@ def detect_conndev_object_class_api_type(document: Any) -> ApiType | None:
 
 def detect_conndev_api_type(document: Any) -> ApiType | None:
     """Classify any supported Conndev contract as SQL or SCIM from its JSON shape."""
+    if is_conndev_sql_table_document(document):
+        return ApiType.SQL
+
     object_class_api_type = detect_conndev_object_class_api_type(document)
     if object_class_api_type is not None:
         return object_class_api_type

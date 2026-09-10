@@ -7,11 +7,12 @@
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Path, Query
+from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_typed_job_status_response
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
@@ -21,6 +22,15 @@ from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
 
 router = APIRouter(tags=["Digester: Attributes"])
+
+
+class AttributeJobStatusResponse(JobStatusMultiDocResponse):
+    """Attribute status response with its finished result exposed in OpenAPI."""
+
+    result: Optional[AttributeResponse] = Field(
+        default=None,
+        description="Extracted attributes and protocol-specific context when the job is finished.",
+    )
 
 
 @router.post(
@@ -37,7 +47,7 @@ async def extract_class_attributes(
         alias="apiType",
         description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Extract attributes schema for a specific object class.
@@ -64,14 +74,14 @@ async def extract_class_attributes(
 
 @router.get(
     "/{session_id}/classes/{object_class}/attributes",
-    response_model=JobStatusMultiDocResponse,
+    response_model=AttributeJobStatusResponse,
     summary="Get attributes extraction status",
 )
 async def get_class_attributes_status(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of attributes extraction job for the specified object class.
@@ -103,7 +113,7 @@ async def override_class_attributes(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     attributes: Dict[str, Any] = Body(..., description="Attributes schema as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Manually override the attributes for an object class.

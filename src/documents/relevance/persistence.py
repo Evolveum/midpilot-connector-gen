@@ -26,14 +26,17 @@ async def load_relevance_map_for_result(
     session_id: UUID,
     result_key: str,
 ) -> Dict[str, list[Dict[str, Any]]]:
-    try:
-        repo = RelevantChunkRepository(db)
-        by_entity = await repo.get_relevant_chunks_grouped_by_entity(
-            session_id=session_id,
-            result_key=result_key,
-        )
-    except Exception:
-        return {}
+    """Return the stored relevance references grouped by entity key.
+
+    Database failures propagate: an empty map means the result genuinely has no
+    relevance rows, and callers that want to degrade on an outage decide that
+    themselves rather than being handed an indistinguishable empty result.
+    """
+    repo = RelevantChunkRepository(db)
+    by_entity = await repo.get_relevant_chunks_grouped_by_entity(
+        session_id=session_id,
+        result_key=result_key,
+    )
 
     normalized: Dict[str, list[Dict[str, Any]]] = {}
     for entity_key, refs in by_entity.items():

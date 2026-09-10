@@ -14,17 +14,51 @@ create/update/delete/search prompt families stay consistent.
 
 import textwrap
 
+SQL_PHYSICAL_PROJECTION_SYSTEM_RULES = textwrap.dedent("""\
+
+SQL PHYSICAL SCHEMA VS CONNID PROJECTION:
+- <physical_sql_table> is authoritative for the physical table identity. The physical attribute records supplied
+  alongside it are authoritative for database columns and SQL/JDBC types.
+- <connid_object_class_projection> is authoritative for desired ConnID attribute names and flags. A projection
+  name is a logical ConnID name, not a physical database column; never create or rename a physical column from it.
+- A non-null projection `column` is the explicit binding to a physical column and must be honored. A projection
+  with `column: null` does not describe a database column and must never be presented as one.
+- Keep these two abstractions separate. Bind a projection to a physical attribute only when the mapping is
+  explicit or supported by the physical schema; never merge `__NAME__`, aliases or other projection-only entries
+  into the physical attribute set.
+""")
+
+SQL_PHYSICAL_PROJECTION_USER_SECTION = textwrap.dedent("""\
+
+Physical SQL table identity:
+
+<physical_sql_table>
+{sql_physical_table_json}
+</physical_sql_table>
+
+Separate ConnID object-class projection from Conndev (desired names and flags only):
+
+<connid_object_class_projection>
+{sql_connector_object_class_json}
+</connid_object_class_projection>
+
+""")
+
 SQL_SCHEMA_CONTEXT_SYSTEM_RULES = textwrap.dedent("""\
 
 SQL SCHEMA CONTEXT RULES:
 - <extracted_attributes> is the complete schema context. Every attribute carries the `table` and
   `column` it maps to, its type, and the resolved `mandatory`, `creatable` and `updatable` flags.
-  There is no separate endpoint or table listing, and none is needed.
+  `databaseCatalog` and `databaseSchema` qualify the table when the source supplies them. Treat
+  catalog, schema and table as one physical identity and never drop a supplied qualifier. There is
+  no separate endpoint or table listing, and none is needed.
 - Treat those flags as already resolved. They account for generated, identity and primary key
   columns, so do not re-derive writability from a column name or type.
-- An attribute extracted from a midPoint conndev export carries no primary key and no nullability,
-  because the export does not state them. Never infer a primary key from a column name - leave a
-  TODO instead.
+- A conndev object-class export alone states no primary key, foreign key or nullability. A paired
+  SQL-table export can enrich each attribute with `primaryKey` and an exact `foreignKey` target
+  (`referencedTable`, `referencedColumn`) plus an optional `constraintName` when the source supplies
+  it. Use those values when present, but never infer a key, relationship or constraint name from a
+  column name - leave a TODO instead.
 - Never invent tables, columns, joins, constraints or identifiers that are absent from
   <extracted_attributes>. When required information is missing, add one concise TODO comment
   inside the Groovy code.

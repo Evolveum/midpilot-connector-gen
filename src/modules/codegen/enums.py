@@ -21,3 +21,22 @@ _SEARCH_INTENT_SUFFIX: dict[SearchIntent, str] = {
 def build_search_operation_key(object_class: str, intent: SearchIntent | str) -> str:
     normalized_intent = SearchIntent(intent) if isinstance(intent, str) else intent
     return f"{object_class}Search{_SEARCH_INTENT_SUFFIX[normalized_intent]}"
+
+
+class ArtifactKind(StrEnum):
+    """
+    The kinds of Groovy artifact a generated connector is made of.
+
+    One kind per codegen result key family. Used to map a stored ``{key}Output``
+    back to the operation that produced it, so the object-class fix can pick
+    the right DSL reference and address the LLM in the same vocabulary.
+    """
+
+    AUTHORIZATION = "authorization"
+    NATIVE_SCHEMA = "nativeSchema"
+    CONNID = "connid"
+    SEARCH = "search"
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    RELATION = "relation"

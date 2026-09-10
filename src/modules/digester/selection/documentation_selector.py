@@ -11,13 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.repositories.relevant_chunk_repository import RelevantChunkRepository
 from src.documents.filtering.filter import filter_documentation_items
 from src.documents.normalize import normalize_object_class_name
-from src.modules.digester.entities.object_classes import find_object_class
-from src.modules.digester.errors import (
-    InvalidObjectClassesOutputError,
-    ObjectClassesNotFoundError,
-    ObjectClassNotFoundError,
-    RelevantChunksNotFoundError,
-)
+from src.modules.digester.entities.object_classes import resolve_object_class
+from src.modules.digester.errors import RelevantChunksNotFoundError
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, tables_for_object_class
 from src.modules.digester.schemas.common import ChunkReference
 from src.modules.digester.selection.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
@@ -166,19 +161,7 @@ class DocumentationSelector:
         )
 
     async def _get_target_object_class(self, repo: Any, session_id: UUID, object_class: str) -> Dict[str, Any]:
-        object_classes_output = await repo.get_session_data(session_id, "objectClassesOutput")
-        if not object_classes_output or not isinstance(object_classes_output, dict):
-            raise ObjectClassesNotFoundError(session_id)
-
-        object_classes = object_classes_output.get("objectClasses", [])
-        if not isinstance(object_classes, list):
-            raise InvalidObjectClassesOutputError(session_id)
-
-        target_object_class = find_object_class(object_classes, object_class)
-        if not target_object_class:
-            raise ObjectClassNotFoundError(object_class, session_id)
-
-        return target_object_class
+        return await resolve_object_class(repo, session_id, object_class)
 
     async def _load_sql_object_class_chunk_refs(
         self,

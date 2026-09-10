@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.core.errors import AppError
 from src.modules.digester.errors import RelevantChunksNotFoundError
 from src.modules.digester.selection import DocumentationSelector
 
@@ -271,3 +272,26 @@ async def test_attribute_plan_rejects_rest_without_relevant_chunks():
                 session_id=session_id,
                 object_class="User",
             )
+
+
+@pytest.mark.parametrize(
+    "output,status,code",
+    [
+        (None, 404, "object_classes_not_found"),
+        ({}, 404, "object_classes_not_found"),
+        ("invalid", 404, "object_classes_not_found"),
+        ({"foo": 1}, 404, "object_class_not_found"),
+        ({"objectClasses": []}, 404, "object_class_not_found"),
+        ({"objectClasses": None}, 422, "invalid_object_classes_output"),
+        ({"objectClasses": {}}, 422, "invalid_object_classes_output"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_selector_preserves_shared_class_lookup_errors(output, status, code):
+    repo = MagicMock()
+    repo.get_session_data = AsyncMock(return_value=output)
+    selector = DocumentationSelector(MagicMock())
+    with pytest.raises(AppError) as error:
+        await selector._get_target_object_class(repo, uuid4(), "Group")
+    assert error.value.status_code == status
+    assert error.value.code == code

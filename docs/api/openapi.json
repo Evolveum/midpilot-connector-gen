@@ -1657,6 +1657,128 @@
         }
       }
     },
+    "/api/v1/digester/{session_id}/classes/{object_class}/documentation": {
+      "get": {
+        "tags": [
+          "Digester: Documentation"
+        ],
+        "summary": "Get source documentation for an object class or endpoint",
+        "description": "Return whole stored source chunks. Omit method and path for class-level sources.\n\nReferences identify provenance, not a guarantee of correctness. No extraction\nor LLM calls are performed. Missing references produce an empty items array.",
+        "operationId": "get_class_documentation_api_v1_digester__session_id__classes__object_class__documentation_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "object_class",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Object Class"
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EndpointMethod"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "External API HTTP method; requires path.",
+              "title": "Method"
+            },
+            "description": "External API HTTP method; requires path."
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact external API path template; requires method.",
+              "title": "Path"
+            },
+            "description": "Exact external API path template; requires method."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelevantDocumentationResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session, class or endpoint unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/digester/{session_id}/classes/{object_class}/attributes": {
       "post": {
         "tags": [
@@ -3318,9 +3440,10 @@
         "tags": [
           "Codegen: ConnID"
         ],
-        "summary": "Generate ConnID for object class",
-        "description": "Generate ConnID Groovy code from attributes.\nLoads attributes from session automatically.",
+        "summary": "Generate ConnID for object class (deprecated)",
+        "description": "Generate ConnID Groovy code from attributes.\nLoads attributes from session automatically.\n\nDeprecated: use `POST /{session_id}/classes/{object_class}/native-schema`, which now\nemits the ConnID mapping into the native schema script.\n\nDo not use both. Two scripts declaring the mapping for the same object class are\nmerged by the connector, and duplicate declarations are at best redundant and at\nworst rejected. The result of this endpoint is also outside the object-class fix\nscope: it is never repaired, and a `scripts` override naming this operation in a\n`POST .../fix` body is rejected as an unknown operation.",
         "operationId": "generate_connid_api_v1_codegen__session_id__classes__object_class__connid_post",
+        "deprecated": true,
         "security": [
           {
             "APIKeyHeader": []
@@ -3407,9 +3530,10 @@
         "tags": [
           "Codegen: ConnID"
         ],
-        "summary": "Get ConnID generation status",
-        "description": "Get the status of ConnID generation job.",
+        "summary": "Get ConnID generation status (deprecated)",
+        "description": "Get the status of ConnID generation job.\n\nDeprecated together with the generation endpoint.",
         "operationId": "get_connid_status_api_v1_codegen__session_id__classes__object_class__connid_get",
+        "deprecated": true,
         "security": [
           {
             "APIKeyHeader": []
@@ -3486,9 +3610,10 @@
         "tags": [
           "Codegen: ConnID"
         ],
-        "summary": "Override ConnID",
-        "description": "Manually override the ConnID for an object class.",
+        "summary": "Override ConnID (deprecated)",
+        "description": "Manually override the ConnID for an object class.\n\nDeprecated: override the native schema instead, which now carries the ConnID\nmapping. Code stored here is not loaded by the object-class fix.",
         "operationId": "override_connid_api_v1_codegen__session_id__classes__object_class__connid_put",
+        "deprecated": true,
         "security": [
           {
             "APIKeyHeader": []
@@ -4832,6 +4957,176 @@
         }
       }
     },
+    "/api/v1/codegen/{session_id}/classes/{objectClass}/fix": {
+      "post": {
+        "tags": [
+          "Codegen: Fix"
+        ],
+        "summary": "Fix one object class from midPoint errors",
+        "description": "Fix faulty Groovy scripts for one object class from the errors midPoint reported.\n\nLoads generated search, create, update, delete and native-schema code only for the selected\nobject class; the native-schema script carries that class's ConnID attribute mapping.\nThe model receives those scripts and the reported errors, and only\nchanged scripts are written back. Optional scripts in the body must also belong\nto this object class. The session is updated only if the fix succeeds.",
+        "operationId": "fix_connector_api_v1_codegen__session_id__classes__objectClass__fix_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Session ID",
+              "title": "Session Id"
+            },
+            "description": "Session ID"
+          },
+          {
+            "name": "objectClass",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Object class whose generated connector scripts should be fixed.",
+              "title": "Objectclass"
+            },
+            "description": "Object class whose generated connector scripts should be fixed."
+          },
+          {
+            "name": "apiType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ApiType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
+              "title": "Apitype"
+            },
+            "description": "Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectorFixInput",
+                "description": "midPoint errors and optional script overrides"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Codegen: Fix"
+        ],
+        "summary": "Get object-class connector fix status",
+        "description": "Get the fix job status and complete selected script set for one object class.",
+        "operationId": "get_connector_fix_status_api_v1_codegen__session_id__classes__objectClass__fix_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Session ID",
+              "title": "Session Id"
+            },
+            "description": "Session ID"
+          },
+          {
+            "name": "objectClass",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Object class whose connector fix status should be returned.",
+              "title": "Objectclass"
+            },
+            "description": "Object class whose connector fix status should be returned."
+          },
+          {
+            "name": "jobId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Job ID (optional)",
+              "title": "Jobid"
+            },
+            "description": "Job ID (optional)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusMultiDocResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -5036,6 +5331,14 @@
       },
       "AuthorizationCodegenInput": {
         "properties": {
+          "midpointErrors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Midpointerrors",
+            "description": "midPoint runtime or validation errors returned for the current script."
+          },
           "currentScript": {
             "anyOf": [
               {
@@ -5047,14 +5350,6 @@
             ],
             "title": "Currentscript",
             "description": "Current user-edited Groovy script to repair."
-          },
-          "midpointErrors": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Midpointerrors",
-            "description": "midPoint runtime or validation errors returned for the current script."
           },
           "preferredAuthorizations": {
             "items": {
@@ -5261,6 +5556,14 @@
       },
       "CodegenOperationInput": {
         "properties": {
+          "midpointErrors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Midpointerrors",
+            "description": "midPoint runtime or validation errors returned for the current script."
+          },
           "currentScript": {
             "anyOf": [
               {
@@ -5272,14 +5575,6 @@
             ],
             "title": "Currentscript",
             "description": "Current user-edited Groovy script to repair."
-          },
-          "midpointErrors": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Midpointerrors",
-            "description": "midPoint runtime or validation errors returned for the current script."
           },
           "preferredEndpoints": {
             "items": {
@@ -5295,6 +5590,14 @@
       },
       "CodegenRepairContext": {
         "properties": {
+          "midpointErrors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Midpointerrors",
+            "description": "midPoint runtime or validation errors returned for the current script."
+          },
           "currentScript": {
             "anyOf": [
               {
@@ -5306,14 +5609,6 @@
             ],
             "title": "Currentscript",
             "description": "Current user-edited Groovy script to repair."
-          },
-          "midpointErrors": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Midpointerrors",
-            "description": "midPoint runtime or validation errors returned for the current script."
           }
         },
         "type": "object",
@@ -5406,6 +5701,54 @@
         "type": "object",
         "title": "ConnectivityEndpointResponse",
         "description": "Ranked list of endpoints for testing connectivity between midPoint connector generator and the target application.\nEmpty list when no suitable endpoint is documented. First endpoint is the most suitable."
+      },
+      "ConnectorFixInput": {
+        "properties": {
+          "midpointErrors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Midpointerrors",
+            "description": "midPoint runtime or validation errors reported for the selected object class."
+          },
+          "scripts": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorScriptOverride"
+            },
+            "type": "array",
+            "title": "Scripts",
+            "description": "Optional user-edited scripts of the selected object class that replace the stored ones as input to the fix. The session is only updated if the fix succeeds."
+          }
+        },
+        "type": "object",
+        "required": [
+          "midpointErrors"
+        ],
+        "title": "ConnectorFixInput",
+        "description": "Request body for fixing generated scripts of one object class."
+      },
+      "ConnectorScriptOverride": {
+        "properties": {
+          "operationKey": {
+            "type": "string",
+            "title": "Operationkey",
+            "description": "Operation key of the script being replaced, e.g. 'userUpdate'."
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Groovy code to use instead of the stored script."
+          }
+        },
+        "type": "object",
+        "required": [
+          "operationKey",
+          "code"
+        ],
+        "title": "ConnectorScriptOverride",
+        "description": "A user-edited Groovy script supplied in place of the one stored in the session."
       },
       "DetectionSource": {
         "type": "string",
@@ -5518,6 +5861,23 @@
         ],
         "title": "DocumentationChunk",
         "description": "API model for one documentation chunk payload."
+      },
+      "DocumentationEndpoint": {
+        "properties": {
+          "method": {
+            "$ref": "#/components/schemas/EndpointMethod"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "path"
+        ],
+        "title": "DocumentationEndpoint"
       },
       "EndpointMethod": {
         "type": "string",
@@ -6198,6 +6558,129 @@
         "type": "object",
         "title": "RelationsResponse",
         "description": "Container for relation records extracted from a schema fragment. Return an empty list when none qualify."
+      },
+      "RelevantDocumentationItem": {
+        "properties": {
+          "docId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Docid"
+          },
+          "chunkId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Chunkid"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "scraper",
+              "upload"
+            ],
+            "title": "Source"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "contentType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contenttype"
+          },
+          "chunkNumber": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunknumber"
+          }
+        },
+        "type": "object",
+        "required": [
+          "docId",
+          "chunkId",
+          "content",
+          "source"
+        ],
+        "title": "RelevantDocumentationItem",
+        "description": "Stored source chunk and its document metadata, suitable for read-only display."
+      },
+      "RelevantDocumentationResponse": {
+        "properties": {
+          "objectClass": {
+            "type": "string",
+            "title": "Objectclass"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentationEndpoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RelevantDocumentationItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "nextOffset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextoffset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "objectClass",
+          "endpoint",
+          "items",
+          "nextOffset"
+        ],
+        "title": "RelevantDocumentationResponse"
       },
       "RestAvailabilityInfo": {
         "properties": {

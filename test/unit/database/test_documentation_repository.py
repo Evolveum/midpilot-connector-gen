@@ -21,6 +21,25 @@ def _build_repo() -> tuple[DocumentationRepository, MagicMock]:
 
 
 @pytest.mark.asyncio
+async def test_get_documentation_items_by_chunk_ids_filters_in_the_database() -> None:
+    repo, db = _build_repo()
+    result = MagicMock()
+    result.scalars.return_value.unique.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=result)
+    session_id = uuid4()
+    chunk_ids = [uuid4(), uuid4()]
+
+    assert await repo.get_documentation_items_by_chunk_ids(session_id, chunk_ids) == []
+
+    compiled = db.execute.await_args.args[0].compile(dialect=postgresql.dialect())
+    sql = " ".join(str(compiled).split())
+    assert "documentation_chunks.session_id =" in sql
+    assert "documentation_chunks.chunk_id IN" in sql
+    assert session_id in compiled.params.values()
+    assert compiled.params["chunk_id_1"] == chunk_ids
+
+
+@pytest.mark.asyncio
 async def test_get_conndev_documentation_items_builds_normalized_postgres_filter() -> None:
     repo, db = _build_repo()
     result = MagicMock()

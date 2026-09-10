@@ -186,7 +186,7 @@ async def merge_attribute_candidates(
                     seq.start_sequence,
                     seq.end_sequence,
                     enable_marker_blending=True,
-                    logger_prefix="[Digester:Attributes] [Merge] ",
+                    logger_prefix="[Digester:Attributes:Merge] ",
                 )
 
             relevant_sequences.append(
@@ -257,12 +257,6 @@ async def merge_attribute_candidates(
 
     merged = list(seen.values())
     logger.info("[Digester:Attributes] Heuristic merge complete. Unique count: %d", len(merged))
-    # TODO: DELETE
-    logger.info(
-        "[Digester:Attributes] Names of candidates after heuristic merge for %s: %s",
-        object_class,
-        [attr.name for attr in merged],
-    )
 
     if len(merged) <= 1:
         await update_job_progress(
@@ -285,9 +279,6 @@ async def merge_attribute_candidates(
                 config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:DedupAttributes"),
             ),
         )
-
-        # TODO: DELETE
-        logger.info("[Digester:Attributes] LLM deduplication result for %s: %s", object_class, result)
 
         if not result:
             logger.warning("[Digester:Attributes] Deduplication LLM returned empty result; keeping heuristic output.")

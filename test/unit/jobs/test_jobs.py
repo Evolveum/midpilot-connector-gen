@@ -161,8 +161,6 @@ async def test_superseded_session_result_is_explicitly_recorded_before_job_finis
             worker_kwargs={},
             dynamic_input_provider=None,
             session_result_key="testOutput",
-            await_documentation=False,
-            await_documentation_timeout=None,
         ),
         worker_id="worker-a",
         execution_token=uuid4(),

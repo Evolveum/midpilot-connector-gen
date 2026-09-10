@@ -1,73 +1,67 @@
-= Develop SQL database connector
+= How to develop connectors using the SQL framework
+:page-nav-title: Develop SQL connectors
+:page-display-order: 1200
+:page-toc: top
+:page-since: 4.11
+:page-description: Entry point for SQL framework connector development. The guides cover automatic schema discovery, schema customization with Groovy or YAML, search, create, update, delete, multitable relationships, incremental sync, and building custom connector bundles.
+:page-keywords: SQL development, connector guide, ConnId connector, Groovy DSL, JDBC connector, read-write connector
 
-This reference covers database connector generation from an uploaded SQL schema, either a midPoint
-conndev SQL export or a raw `CREATE TABLE` / JSON schema.
+This section provides a reference and development guidance on building connectors with the Polygon SQL framework.
 
-The uploaded schema provides tables, columns and - for a raw schema - primary keys, foreign keys,
-nullable flags and generated columns. A conndev export instead provides authoritative ConnId types
-and `required` / `creatable` / `updateable` flags, but no keys and no nullability.
+Like the xref:/connectors/scimrest-framework/[SCIMREST framework], the SQL framework is designed using the terminology of the ConnId framework, so it is recommended to have a basic understanding of the xref:/connectors/connid/[ConnID architecture and terminology].
 
-== Principles
+== Documentation structure
 
-* There are no endpoints to call and no table listing to extract. Each attribute carries the
-  `table` and `column` it maps to.
-* The table and column mapping is declared once by the native schema. Operations only declare
-  capabilities inside a native `sql {}` block; they never carry statements or table names.
-* Identity comes from the primary key. Where the primary key is unknown, leave a TODO instead of
-  guessing it from a column name.
-* Use foreign keys only when joins or relationship handling are required by the selected object
-  class.
-* Do not write generated, identity or serial columns during create.
-* Do not update primary keys or generated columns.
-* Leave TODO comments for missing join, cascade or transaction semantics instead of guessing.
+The SQL connector tutorial is organized as progressive steps:
 
-== Operation block shape
+++++
+{% children style: table %}
+++++
 
-Every operation follows the same shape - the operation block holds a `sql { builtIn { ... } }`
-declaration and nothing REST-like:
+== Get started with the SQL framework
+// TODO: In this whole H2 section, you basically repeat the information provided in /connectors/sql-framework/functionality-overview/.
+//       Is it necessary, or can we delete the whole section and jump right to the Initial development steps?
+//       Its name is also not the best fitting choice - it's more like "Get to know" but I would rather see it gone altogether as it is just a very small fragment of repeated information.
 
-[source,groovy]
-----
-objectClass("m_user") {
-    search {
-        sql {
-            builtIn {
-                enabled true
-                emptyFilterSupported true
-                anyFilterSupported true
-            }
-        }
-    }
+The SQL framework provides built-in support for relational databases, handling schema discovery, filtering, and standard operations while allowing customization through Groovy DSLs or declarative YAML.
 
-    create {
-        sql {
-            builtIn {
-                enabled true
-            }
-        }
-    }
+=== SQL specific features
 
-    update {
-        sql {
-            builtIn {
-                enabled true
-            }
-        }
-    }
+The framework includes:
 
-    delete {
-        sql {
-            builtIn {
-                enabled true
-            }
-        }
-    }
-}
-----
+* *Automatic schema discovery* — object classes and attributes are discovered from the database schema using JDBC metadata
+* *Built-in operations* — native support for search with ConnId filter translation, and transactional create/update/delete
+* *Multitable support* — child-table and junction-table relationships are detected automatically and exposed as attributes
+* *Customizable* — override default behavior with Groovy DSLs or YAML documents when needed
 
-`builtIn` accepts only `enabled`, `emptyFilterSupported` and `anyFilterSupported`; the last two are
-meaningful for search. `attributeResolver` and `custom` blocks keep the same shape as in the REST
-and SCIM connectors and are generated only when the built-in behavior is provably insufficient.
+== Initial development steps
 
-See xref:40-search.adoc[Search], xref:50-create.adoc[Create], xref:60-update.adoc[Update] and
-xref:70-delete.adoc[Delete] for the per-operation rules.
+If you are starting with the Polygon SQL framework, start building a connector capable only of the read operations.
+Then, continue with the more complex create, update, and delete operations.
+
+=== Read-only connector
+
+. Obtain the documentation for the database/schema that the connector
+will read from
+. Determine the connection & authentication parameters (JDBC URL, user, password)
+. Implement (or configure) test connection using xref:/connectors/sql-framework/develop/configuration/[]
+. Determine the list of object classes and their attributes - discovery
+is automatic, verify the discovered schema in development mode
+. xref:/connectors/sql-framework/develop/search/[] - Verify search works for each object class, including
+searching by `+++__UID__+++`
+. Determine relationships (child tables, references) between object classes,
+xref:/connectors/sql-framework/develop/relationships/[] - verify detected relationships
+. (optional) xref:/connectors/sql-framework/develop/schema-customization/[] - customize naming or attribute set
+
+=== Read-write connector
+
+In addition to the read-only steps:
+
+. xref:/connectors/sql-framework/develop/create/[] - Verify create works for writable object classes
+. xref:/connectors/sql-framework/develop/update/[] - Verify update works for writable object classes
+. xref:/connectors/sql-framework/develop/delete/[] - Verify delete works for writable object classes
+
+== See also
+
+* xref:/connectors/connid/[ConnID architecture and terminology]
+* xref:/connectors/scimrest-framework/[] - The sibling SCIMREST framework for REST/SCIM 2.0 based connectors

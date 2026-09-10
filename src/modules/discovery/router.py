@@ -5,11 +5,11 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_stage_status_response
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs.schema import JobCreateResponse, JobStatusStageResponse
 from src.modules.discovery import orchestration
@@ -28,7 +28,7 @@ router = APIRouter()
 async def discover_candidate_links(
     req: CandidateLinksInput,
     session_id: UUID = Path(..., description="Session ID"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Enqueue a job to discover candidate documentation URLs for the given application.
@@ -55,7 +55,7 @@ async def discover_candidate_links(
 async def get_discovery_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of candidate links discovery job.

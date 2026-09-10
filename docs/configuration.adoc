@@ -82,6 +82,13 @@ toggle.
   OpenAI-compatible provider.
 | `+LLM__MODEL_NAME+` | `openai/gpt-oss-120b` | Model selection (cost/quality).
 | `+DATABASE__URL+` | — | Required; asyncpg connection string.
+| `+DIGESTER__DOCUMENTATION_PAGE_SIZE+` | `10` | Default number of whole source
+  chunks returned by the wizard documentation API. Must be positive and no
+  larger than `DIGESTER__DOCUMENTATION_MAX_PAGE_SIZE`.
+| `+DIGESTER__DOCUMENTATION_MAX_PAGE_SIZE+` | `50` | Maximum requested source
+  documentation page size in chunks. Must be positive. These limits do not
+  truncate individual chunks or impose a byte limit. Restart the backend
+  after changing either setting.
 | `+APP__WORKERS+` | `1` | HTTP and job-consumer processes in this container.
   Every process claims independently from the same PostgreSQL queue.
 | `+JOBS__ENABLED+` | `true` | Run an embedded queue consumer in this FastAPI

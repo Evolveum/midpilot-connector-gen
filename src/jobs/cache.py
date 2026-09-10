@@ -12,7 +12,6 @@ callback.
 
 import copy
 import logging
-from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List
 from uuid import UUID, uuid4
 
@@ -28,6 +27,7 @@ from src.documents.relevance import (
 )
 from src.jobs import lifecycle
 from src.jobs.errors import JobClaimLostError
+from src.shared.clock import utc_now
 from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
@@ -62,9 +62,9 @@ async def reuse_or_run(
     )
 
     created_at_limits = (
-        datetime.now() - config.digester.digester_input_check_interval
+        utc_now() - config.digester.digester_input_check_interval
         if "digester" in job_type
-        else datetime.now() - config.search.discovery_input_check_interval
+        else utc_now() - config.search.discovery_input_check_interval
     )
     async with async_session_maker() as db:
         latest_job = await JobRepository(db).get_job_by_input(
@@ -79,7 +79,7 @@ async def reuse_or_run(
             "[%s] Job %s: No previous finished job found with same input since %s",
             job_type,
             str(job_id),
-            datetime.isoformat(created_at_limits),
+            created_at_limits.isoformat(),
         )
         return await run_normal_worker()
 
@@ -96,7 +96,7 @@ async def reuse_or_run(
                 job_type,
                 str(job_id),
                 str(latest_job.job_id),
-                datetime.isoformat(latest_job.created_at),
+                latest_job.created_at.isoformat(),
             )
             reused_output: Dict[str, Any] = copy.deepcopy(latest_job.result)
             current_doc_items: List[Dict[str, Any]] = input_payload.get("documentationItems", [])

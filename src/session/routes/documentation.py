@@ -15,12 +15,12 @@ import uuid
 from typing import Any, Dict
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile, status
+from fastapi import APIRouter, File, Path, Query, Response, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import config
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
@@ -51,7 +51,7 @@ _DOC_UPLOAD_API_SEMAPHORE = asyncio.Semaphore(_DOC_UPLOAD_API_LIMIT)
     summary="Get documentation upload processing status",
 )
 async def get_documentation_upload_status(
-    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)
+    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = DbSession
 ) -> Dict[str, Any]:
     """
     Get the status of all documentation upload jobs for this session.
@@ -72,7 +72,7 @@ async def get_documentation_upload_status(
 
 @router.get("/{session_id}/documentation", summary="Get documentation from session")
 async def get_documentation(
-    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)
+    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = DbSession
 ) -> list[Documentation]:
     """
     Retrieve all documentation items stored in the session grouped by document.
@@ -96,7 +96,7 @@ async def get_documentation(
 async def get_documentation_by_id(
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation UUID (doc_id)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ) -> Documentation:
     """
     Retrieve all chunks for a single documentation document (doc_id).
@@ -123,7 +123,7 @@ async def get_documentation_by_id(
 async def check_documentation_item(
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation ID"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ) -> Response:
     """
     Checks a single documentation item from the session by its UUID.
@@ -203,7 +203,7 @@ async def _queue_documentation_upload(
 async def upload_documentation(
     session_id: UUID = Path(..., description="Session ID"),
     documentation: UploadFile = File(..., description="Documentation file"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ) -> Dict[str, Any]:
     """
     Upload, chunk, and process documentation in the session.
@@ -226,7 +226,7 @@ async def upload_documentation_by_id(
     documentation_id: UUID = Path(..., description="Documentation ID"),
     documentation: UploadFile = File(..., description="Documentation file"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ) -> Dict[str, Any]:
     """
     Process uploaded documentation file using LLM.
@@ -250,7 +250,7 @@ async def replace_documentation(
     session_id: UUID = Path(..., description="Session ID"),
     documentation: UploadFile = File(..., description="Documentation file"),
     skip_cache: bool = Query(False, alias="skipCache", description="Whether to skip cached data"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ) -> Dict[str, Any]:
     """
     Replace all existing documentation in the session with a single uploaded file.
@@ -276,7 +276,7 @@ async def import_documentation_by_id(
     document: Documentation,
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation UUID (doc_id)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ) -> Dict[str, Any]:
     """
     Replace one documentation document (doc_id) with provided chunks.
@@ -305,7 +305,7 @@ async def import_documentation_by_id(
 # DELETE Endpoints
 @router.delete("/{session_id}/documentation", summary="Delete all documentation from session")
 async def delete_documentation(
-    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = Depends(get_db)
+    session_id: UUID = Path(..., description="Session ID"), db: AsyncSession = DbSession
 ) -> dict:
     """
     Remove all documentation (both scraped and uploaded) from the session.
@@ -322,7 +322,7 @@ async def delete_documentation(
 async def delete_documentation_item(
     session_id: UUID = Path(..., description="Session ID"),
     documentation_id: UUID = Path(..., description="Documentation doc_id (deletes all chunks with this doc_id)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ) -> Dict[str, Any]:
     """
     Delete all documentation chunks with the specified doc_id from the session.

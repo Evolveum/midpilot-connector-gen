@@ -35,12 +35,7 @@ from src.documents.relevance import (
     strip_object_class_relevance,
 )
 from src.jobs.schema import JobStatusMultiDocResponse
-from src.modules.digester.entities.object_classes import find_object_class, upsert_object_class
-from src.modules.digester.errors import (
-    InvalidObjectClassesOutputError,
-    ObjectClassesNotFoundError,
-    ObjectClassNotFoundError,
-)
+from src.modules.digester.entities.object_classes import resolve_object_class, upsert_object_class
 from src.modules.digester.schemas import (
     AttributeResponse,
     ConnectivityEndpointResponse,
@@ -260,18 +255,20 @@ async def store_attributes_override(
     result_key = attributes_result_key(object_class)
     stripped_attributes = strip_attributes_relevance(attributes)
     existing_output = await repo.get_session_data(session_id, result_key)
-    existing_scim_context = existing_output.get("scimContext") if isinstance(existing_output, dict) else None
-    incoming_scim_context = attributes.get("scimContext")
-    scim_context = incoming_scim_context if isinstance(incoming_scim_context, dict) else existing_scim_context
-    stripped_attributes.pop("scimContext", None)
-    if isinstance(scim_context, dict):
+    contexts: Dict[str, Dict[str, Any]] = {}
+    for context_key in ("scimContext", "sqlContext"):
+        existing_context = existing_output.get(context_key) if isinstance(existing_output, dict) else None
+        incoming_context = attributes.get(context_key)
+        context = incoming_context if isinstance(incoming_context, dict) else existing_context
+        stripped_attributes.pop(context_key, None)
+        if isinstance(context, dict):
+            contexts[context_key] = context
+
+    if contexts:
         if isinstance(stripped_attributes.get("attributes"), dict):
-            stripped_attributes["scimContext"] = scim_context
+            stripped_attributes.update(contexts)
         else:
-            stripped_attributes = {
-                "attributes": stripped_attributes,
-                "scimContext": scim_context,
-            }
+            stripped_attributes = {"attributes": stripped_attributes, **contexts}
     relevance_rows = extract_attribute_relevance_rows(attributes, result_key)
     await _store_result_with_relevance(db, repo, session_id, result_key, stripped_attributes, relevance_rows)
 
@@ -346,20 +343,10 @@ async def build_object_class_detail(
 ) -> Dict[str, Any]:
     """Assemble a single object class enriched with relevance, attributes and endpoints.
 
-    Raises ObjectClassesNotFoundError / InvalidObjectClassesOutputError /
-    ObjectClassNotFoundError so the caller can map them to HTTP 404.
+    Uses the shared class lookup contract (404 for missing classes, 422 for
+    an invalid objectClasses collection).
     """
-    object_classes_output = await repo.get_session_data(session_id, OBJECT_CLASSES_RESULT_KEY)
-    if not object_classes_output or not isinstance(object_classes_output, dict):
-        raise ObjectClassesNotFoundError(session_id)
-
-    object_classes = object_classes_output.get("objectClasses", [])
-    if not isinstance(object_classes, list):
-        raise InvalidObjectClassesOutputError(session_id)
-
-    target_object_class = find_object_class(object_classes, object_class)
-    if not target_object_class:
-        raise ObjectClassNotFoundError(object_class, session_id)
+    target_object_class = await resolve_object_class(repo, session_id, object_class)
 
     result = target_object_class.copy()
     normalized_name = normalize_object_class_name(object_class)
@@ -388,6 +375,9 @@ async def build_object_class_detail(
         scim_context = hydrated_attributes.get("scimContext")
         if isinstance(scim_context, dict):
             result["scimContext"] = scim_context
+        sql_context = hydrated_attributes.get("sqlContext")
+        if isinstance(sql_context, dict):
+            result["sqlContext"] = sql_context
 
     endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
     if endpoints_output and isinstance(endpoints_output, dict):

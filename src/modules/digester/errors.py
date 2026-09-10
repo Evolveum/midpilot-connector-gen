@@ -14,6 +14,30 @@ from uuid import UUID
 from src.core.errors import AppError
 
 
+class InvalidDocumentationFilterError(AppError):
+    status_code = 422
+    code = "invalid_documentation_filter"
+
+    def __init__(self):
+        super().__init__("Provide both method and a non-empty path, or omit both for class documentation.")
+
+
+class DocumentationEndpointNotFoundError(AppError):
+    status_code = 404
+    code = "documentation_endpoint_not_found"
+
+    def __init__(self):
+        super().__init__("The requested endpoint is not available for this object class.")
+
+
+class InvalidEndpointsOutputError(AppError):
+    status_code = 422
+    code = "invalid_endpoints_output"
+
+    def __init__(self):
+        super().__init__("Stored endpoints data is invalid. Re-run endpoint extraction or override its result.")
+
+
 class ObjectClassesNotFoundError(AppError):
     """Raised when a session has no object classes available for a requested operation."""
 
@@ -96,6 +120,40 @@ class EndpointExtractionNotSupportedError(AppError):
             "code generation reads the table and column of each attribute from /classes/"
             f"{object_class}/attributes."
         )
+
+
+class SqlTableIdentityConflictError(AppError):
+    """Raised when SQL schema sources cannot be paired without guessing a physical table."""
+
+    status_code = 422
+    code = "sql_table_identity_conflict"
+
+    def __init__(self, table_name: str, identities: list[str]):
+        rendered_identities = ", ".join(sorted(set(identities)))
+        super().__init__(
+            f"Conflicting SQL identities for table '{table_name}': {rendered_identities}. "
+            "Catalog, schema and table metadata must identify one unambiguous physical table."
+        )
+
+
+class SqlPhysicalSchemaNotFoundError(AppError):
+    """Raised when a SQL projection has no physical table/column schema."""
+
+    status_code = 422
+    code = "sql_physical_schema_not_found"
+
+    def __init__(self, object_class: str, *, stale_payload: bool = False):
+        if stale_payload:
+            detail = (
+                "The stored SQL attributes use the obsolete combined attribute format and have no sqlContext. "
+                "Rerun attribute extraction for this object class before scheduling native-schema generation."
+            )
+        else:
+            detail = (
+                "A Conndev object-class projection was found, but no matching physical table with columns was "
+                "found. Upload the SQL-table export or database DDL/JSON schema and rerun attribute extraction."
+            )
+        super().__init__(f"Physical SQL schema not found for '{object_class}'. {detail}")
 
 
 class RelationsNotFoundError(AppError):

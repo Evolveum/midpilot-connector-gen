@@ -7,11 +7,11 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_multi_doc_status_response
-from src.core.db import get_db
+from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.codegen.orchestration import schedule_authorization_job
@@ -36,7 +36,7 @@ async def generate_authorization(
         alias="apiType",
         description="Override the API protocol (REST/SCIM/SQL); falls back to the detected apiType when omitted.",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
     codegen_input: AuthorizationCodegenInput = Body(...),
 ):
     """
@@ -65,7 +65,7 @@ async def generate_authorization(
 async def get_authorization_status(
     session_id: UUID = Path(..., description="Session ID"),
     jobId: Optional[UUID] = Query(None, description="Job ID (optional)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Get the status of authorization code generation job.
@@ -92,7 +92,7 @@ async def get_authorization_status(
 async def override_authorization(
     session_id: UUID = Path(..., description="Session ID"),
     authorization_code: GroovyCodePayload = Body(..., description="Authorization code as JSON"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = DbSession,
 ):
     """
     Manually override the authorization code.

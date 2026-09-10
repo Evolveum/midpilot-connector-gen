@@ -4,8 +4,7 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -13,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import Session, SessionData
+from src.shared.clock import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class SessionRepository:
             return False
 
         # Update session timestamp
-        session.updated_at = datetime.now(timezone.utc)
+        session.updated_at = utc_now()
 
         # Atomic PostgreSQL upserts avoid unique-key races when multiple jobs
         # update different or identical session fields concurrently.
@@ -133,7 +133,7 @@ class SessionRepository:
 
     async def update_locked_session(self, session_id: UUID, data: Dict[str, Any]) -> bool:
         """Update data after the caller has already locked the session row."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         result = await self.db.execute(update(Session).where(Session.session_id == session_id).values(updated_at=now))
         if not bool(getattr(result, "rowcount", 0)):
             return False
@@ -143,7 +143,7 @@ class SessionRepository:
         return True
 
     async def _upsert_session_data(self, session_id: UUID, key: str, value: Any) -> None:
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         statement = (
             insert(SessionData)
             .values(
@@ -192,7 +192,7 @@ class SessionRepository:
             return False
 
         await self._upsert_session_data(session_id, result_key, value)
-        session.updated_at = datetime.now(timezone.utc)
+        session.updated_at = utc_now()
         await self.db.flush()
         return True
 
@@ -233,6 +233,31 @@ class SessionRepository:
                 )
             )
         ).scalar_one_or_none()
+
+    async def get_session_values(self, session_id: UUID, keys: Sequence[str]) -> Dict[str, Any]:
+        """
+        Read several session-data rows in one query.
+
+        Sits between ``get_session_value`` (one row) and the keyless
+        ``get_session_data`` (every stored payload): callers that need a known set
+        of keys - e.g. every generated Groovy script of a connector - would
+        otherwise pay one round trip per key or materialize the whole session.
+
+        :param session_id: The session ID
+        :param keys: The keys to read; duplicates are collapsed
+        :return: Mapping of key to value, omitting keys that do not exist
+        """
+        unique_keys = list(dict.fromkeys(keys))
+        if not unique_keys:
+            return {}
+
+        rows = await self.db.execute(
+            select(SessionData.key, SessionData.value).where(
+                SessionData.session_id == session_id,
+                SessionData.key.in_(unique_keys),
+            )
+        )
+        return {key: value for key, value in rows.all()}
 
     async def get_session_data(self, session_id: UUID, key: Optional[Union[str, List[str]]] = None) -> Optional[Any]:
         """
