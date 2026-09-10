@@ -54,9 +54,9 @@ def _attribute_from_column(column: dict[str, Any], table: dict[str, Any]) -> tup
 
     attr_type, attr_format = _column_attribute_type(column)
 
-    mandatory = None
-    if column.get("nullable") is not None:
-        mandatory = not bool(column.get("nullable"))
+    mandatory = column.get("mandatory")
+    if mandatory is None and column.get("nullable") is not None:
+        mandatory = not bool(column["nullable"])
 
     is_view = str(table.get("tableType") or "").strip().casefold() == "view"
     updatable = not bool(column.get("primaryKey")) and not is_view

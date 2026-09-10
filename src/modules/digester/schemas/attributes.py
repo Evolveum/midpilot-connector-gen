@@ -391,6 +391,7 @@ class AttributeResponse(BaseModel):
     )
     sqlContext: Optional[SqlContext] = Field(
         default=None,
+        exclude_if=lambda value: value is None,
         description=(
             "Physical SQL table identity and optional Conndev ConnId projection. Absent for non-SQL object classes."
         ),

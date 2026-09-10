@@ -31,6 +31,31 @@ SCRIPTS = [
     {"operationKey": "userUpdate", "kind": "update", "objectClass": "user", "code": UPDATE_CODE},
 ]
 
+SQL_ATTRIBUTES = {
+    "attributes": {
+        "username": {
+            "type": "string",
+            "databaseType": "VARCHAR",
+            "table": "app_user",
+            "column": "username",
+        }
+    },
+    "sqlContext": {
+        "physicalTable": {
+            "databaseCatalog": "connector_project_db",
+            "databaseSchema": "public",
+            "table": "app_user",
+        },
+        "connectorObjectClass": {
+            "name": "app_user",
+            "attributes": [
+                {"name": "__NAME__", "connIdType": "string", "column": None},
+                {"name": "login", "connIdType": "string", "column": "username"},
+            ],
+        },
+    },
+}
+
 
 def _llm(**kwargs) -> ConnectorFixLLMResponse:
     return ConnectorFixLLMResponse.model_validate(kwargs)
@@ -42,7 +67,13 @@ def _reported(errors: AsyncMock) -> str:
     return message % tuple(args) if args else message
 
 
-async def _run(pass_results, *, documentation="chunk text"):
+async def _run(
+    pass_results,
+    *,
+    documentation="chunk text",
+    protocol=ApiType.REST,
+    attributes=None,
+):
     with (
         patch("src.modules.codegen.connector_fix.run_connector_fix_pass", new_callable=AsyncMock) as pass_mock,
         patch("src.modules.codegen.connector_fix.store_fixed_connector_scripts", new_callable=AsyncMock) as store,
@@ -64,10 +95,10 @@ async def _run(pass_results, *, documentation="chunk text"):
         result = await fix_connector_code(
             scripts=SCRIPTS,
             midpoint_errors=["unsupported filter"],
-            attributes={"attributes": {"Username": {"type": "string", "scimAttribute": "userName"}}},
+            attributes=attributes or {"attributes": {"Username": {"type": "string", "scimAttribute": "userName"}}},
             session_id=uuid4(),
             job_id=uuid4(),
-            protocol=ApiType.REST,
+            protocol=protocol,
         )
     return result, pass_mock, store, errors
 
@@ -204,6 +235,30 @@ async def test_the_first_pass_carries_the_extracted_native_attribute_names():
     assert '"scimAttribute": "userName"' in first_kwargs["extracted_attributes"]
     # A session with no endpoint surface (SQL) simply sends no endpoint section.
     assert first_kwargs["extracted_endpoints"] == ""
+
+
+@pytest.mark.asyncio
+async def test_sql_context_stays_separate_and_is_reused_for_escalation():
+    first = _llm(fixedScripts=[], needsDocumentation=True, documentationQuery="How is login mapped?")
+    second = _llm(fixedScripts=[])
+
+    _, pass_mock, _, _ = await _run(
+        [first, second],
+        protocol=ApiType.SQL,
+        attributes=SQL_ATTRIBUTES,
+    )
+
+    first_kwargs = pass_mock.await_args_list[0].kwargs
+    second_kwargs = pass_mock.await_args_list[1].kwargs
+    assert '"name": "username"' in first_kwargs["extracted_attributes"]
+    assert '"column": "username"' in first_kwargs["extracted_attributes"]
+    assert '"name": "login"' not in first_kwargs["extracted_attributes"]
+    assert '"name": "__NAME__"' not in first_kwargs["extracted_attributes"]
+    assert first_kwargs["sql_context"] == second_kwargs["sql_context"]
+    assert '"table":"app_user"' in first_kwargs["sql_context"]["sql_physical_table_json"]
+    projection = first_kwargs["sql_context"]["sql_connector_object_class_json"]
+    assert '"name":"login"' in projection
+    assert '"name":"__NAME__"' in projection
 
 
 @pytest.mark.asyncio

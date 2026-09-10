@@ -1418,6 +1418,36 @@ async def test_extract_sql_attributes_from_table_columns(mock_digester_update_jo
 
 
 @pytest.mark.asyncio
+async def test_extract_sql_attributes_preserves_required_and_falls_back_to_nullable(
+    mock_digester_update_job_progress,
+):
+    doc = _sql_doc(
+        """
+        {"tables": [{"name": "users", "columns": [
+          {"name": "required_true", "type": "varchar", "required": true},
+          {"name": "required_false", "type": "varchar", "required": false},
+          {"name": "not_nullable", "type": "varchar", "nullable": false},
+          {"name": "nullable", "type": "varchar", "nullable": true},
+          {"name": "unknown", "type": "varchar"},
+          {"name": "required_true_nullable", "type": "varchar", "required": true, "nullable": true},
+          {"name": "required_false_not_nullable", "type": "varchar", "required": false, "nullable": false}
+        ]}]}
+        """
+    )
+
+    result = await extract_sql_attributes([doc], "users", uuid4())
+    attributes = result["result"]["attributes"]
+
+    assert attributes["required_true"]["mandatory"] is True
+    assert attributes["required_false"]["mandatory"] is False
+    assert attributes["not_nullable"]["mandatory"] is True
+    assert attributes["nullable"]["mandatory"] is False
+    assert attributes["unknown"]["mandatory"] is None
+    assert attributes["required_true_nullable"]["mandatory"] is True
+    assert attributes["required_false_not_nullable"]["mandatory"] is False
+
+
+@pytest.mark.asyncio
 async def test_extract_sql_attributes_ignores_untyped_raw_foreign_key(mock_digester_update_job_progress):
     doc = _sql_doc(
         """

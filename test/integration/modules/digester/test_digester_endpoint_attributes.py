@@ -8,8 +8,16 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import Request
+from fastapi.testclient import TestClient
 
+from src.app import create_api
+from src.auth.context import AuthContext, AuthMode
+from src.auth.dependencies import authenticate_request
+from src.config import config
+from src.core.db import get_db
 from src.jobs import job_input_reference
+from src.jobs.schema import JobStatusMultiDocResponse
 from src.modules.digester.routes.attributes import (
     extract_class_attributes,
     get_class_attributes_status,
@@ -17,6 +25,22 @@ from src.modules.digester.routes.attributes import (
 )
 from src.modules.digester.schemas import AttributeInfoScim, AttributeResponse
 from src.shared.enums import JobStatus
+
+SQL_CONTEXT = {
+    "physicalTable": {
+        "databaseCatalog": "connector_project_db",
+        "databaseSchema": "public",
+        "table": "app_user",
+        "tableType": "TABLE",
+    },
+    "connectorObjectClass": {
+        "name": "app_user",
+        "attributes": [
+            {"name": "__NAME__", "connIdType": "string", "column": None},
+            {"name": "login", "connIdType": "string", "column": "username"},
+        ],
+    },
+}
 
 
 # CLASS ATTRIBUTES
@@ -195,6 +219,11 @@ async def test_get_class_attributes_status_found():
             new_callable=AsyncMock,
             return_value=MagicMock(jobId=job_id, status=JobStatus.finished, result=None),
         ) as mock_status_builder,
+        patch(
+            "src.modules.digester.results.hydrate_attributes_with_relevance",
+            new_callable=AsyncMock,
+            side_effect=lambda _db, _session_id, _result_key, payload: payload,
+        ),
     ):
         session_id = uuid4()
         response = await get_class_attributes_status(
@@ -216,6 +245,82 @@ async def test_get_class_attributes_status_found():
         call(session_id, "userAttributesOutput"),
     ]
     mock_status_builder.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("protocol", "result_payload"),
+    [
+        pytest.param(
+            "rest",
+            {"attributes": {"id": {"type": "string"}}},
+            id="rest",
+        ),
+        pytest.param(
+            "scim",
+            {
+                "attributes": {"userName": {"type": "string", "scimAttribute": "userName"}},
+                "scimContext": {"resource": {"endpoint": "/Users"}},
+            },
+            id="scim",
+        ),
+        pytest.param(
+            "sql",
+            {
+                "attributes": {
+                    "username": {
+                        "type": "string",
+                        "table": "app_user",
+                        "column": "username",
+                    }
+                },
+                "sqlContext": SQL_CONTEXT,
+            },
+            id="sql",
+        ),
+    ],
+)
+def test_attribute_status_http_serializes_sql_context_only_for_sql(protocol, result_payload):
+    session_id = uuid4()
+    job_id = uuid4()
+    repo = MagicMock()
+    repo.session_exists = AsyncMock(return_value=True)
+    repo.get_session_data = AsyncMock(return_value=str(job_id))
+    typed_result = AttributeResponse.model_validate(result_payload)
+    status = JobStatusMultiDocResponse(
+        jobId=job_id,
+        status=JobStatus.finished,
+        result=typed_result,
+    )
+
+    async def authenticate(request: Request):
+        request.state.auth = AuthContext(AuthMode.disabled)
+
+    app = create_api()
+    app.dependency_overrides[authenticate_request] = authenticate
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+    with (
+        patch("src.modules.digester.routes.attributes.SessionRepository", return_value=repo),
+        patch(
+            "src.modules.digester.routes.attributes.build_typed_job_status_response",
+            new_callable=AsyncMock,
+            return_value=status,
+        ),
+        patch(
+            "src.modules.digester.routes.attributes.results.refresh_attributes_status",
+            new_callable=AsyncMock,
+            return_value=status,
+        ),
+    ):
+        response = TestClient(app).get(
+            f"{config.app.api_base_url}/v1/digester/{session_id}/classes/{protocol}/attributes"
+        )
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    if protocol == "sql":
+        assert result["sqlContext"] == typed_result.model_dump(mode="json")["sqlContext"]
+    else:
+        assert "sqlContext" not in result
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from src.modules.digester.results import (
     build_object_class_detail,
     store_attributes_override,
 )
+from src.modules.digester.schemas import AttributeResponse
 
 SQL_CONTEXT = {
     "physicalTable": {
@@ -30,6 +31,29 @@ SQL_CONTEXT = {
         ],
     },
 }
+
+
+def test_attribute_response_excludes_only_an_absent_sql_context():
+    non_sql = AttributeResponse.model_validate({"attributes": {"id": {"type": "string"}}})
+    sql = AttributeResponse.model_validate(
+        {
+            "attributes": {
+                "id": {
+                    "type": "integer",
+                    "table": "app_user",
+                    "column": "id",
+                }
+            },
+            "sqlContext": SQL_CONTEXT,
+        }
+    )
+
+    non_sql_payload = non_sql.model_dump(mode="json")
+    sql_payload = sql.model_dump(mode="json")
+
+    assert "sqlContext" not in non_sql_payload
+    assert sql_payload["sqlContext"]["physicalTable"] == SQL_CONTEXT["physicalTable"]
+    assert sql_payload["sqlContext"]["connectorObjectClass"]["attributes"][0]["name"] == "__NAME__"
 
 
 def test_wrapped_attributes_map_is_unwrapped():
