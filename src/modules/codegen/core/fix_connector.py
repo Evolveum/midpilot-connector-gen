@@ -13,7 +13,7 @@ must not touch the session repository or the job scheduler.
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -32,6 +32,10 @@ from src.modules.codegen.prompts.fix_prompts import (
     CONNECTOR_FIX_PREVIOUS_ATTEMPT_SECTION,
     get_connector_fix_system_prompt,
     get_connector_fix_user_prompt,
+)
+from src.modules.codegen.prompts.sql.fix_prompts import (
+    get_sql_connector_fix_system_prompt,
+    get_sql_connector_fix_user_prompt,
 )
 from src.modules.codegen.schema import ConnectorFixLLMResponse
 from src.shared.enums import ApiType
@@ -67,13 +71,15 @@ def render_previous_attempt(response: ConnectorFixLLMResponse) -> str:
 
 async def _enforce_prompt_token_budget(
     *,
+    system_prompt: str,
+    user_prompt: str,
     partial_variables: Dict[str, Any],
     prompt_vars: Dict[str, Any],
 ) -> None:
     """Estimate the complete rendered chat input before invoking the provider."""
     parser: PydanticOutputParser[Any] = PydanticOutputParser(pydantic_object=ConnectorFixLLMResponse)
-    system_text = get_connector_fix_system_prompt.format(**partial_variables)
-    user_text = get_connector_fix_user_prompt.format(**prompt_vars)
+    system_text = system_prompt.format(**partial_variables)
+    user_text = user_prompt.format(**prompt_vars)
     rendered_input = f"{system_text}\n\n{parser.get_format_instructions()}\n\n{user_text}"
     input_tokens = await asyncio.to_thread(count_tokens, rendered_input)
     limit = config.codegen.fix_max_input_tokens
@@ -90,6 +96,7 @@ async def run_connector_fix_pass(
     dsl_documentation: str,
     extracted_attributes: str,
     extracted_endpoints: str,
+    sql_context: Mapping[str, str] | None,
     job_id: UUID,
     documentation_query: str | None = None,
     documentation_chunks: str = "",
@@ -136,11 +143,26 @@ async def run_connector_fix_pass(
         "documentation_context": documentation_context,
         "previous_attempt": previous_attempt_section,
     }
-    await _enforce_prompt_token_budget(partial_variables=partial_variables, prompt_vars=prompt_vars)
+    if protocol is ApiType.SQL:
+        if sql_context is None:
+            raise ValueError("SQL connector fix requires physical table and ConnID projection context")
+        prompt_vars.update(sql_context)
+        system_prompt = get_sql_connector_fix_system_prompt
+        user_prompt = get_sql_connector_fix_user_prompt
+    else:
+        system_prompt = get_connector_fix_system_prompt
+        user_prompt = get_connector_fix_user_prompt
+
+    await _enforce_prompt_token_budget(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        partial_variables=partial_variables,
+        prompt_vars=prompt_vars,
+    )
 
     chain = build_structured_chain(
-        get_connector_fix_system_prompt,
-        get_connector_fix_user_prompt,
+        system_prompt,
+        user_prompt,
         ConnectorFixLLMResponse,
         partial_variables=partial_variables,
     )

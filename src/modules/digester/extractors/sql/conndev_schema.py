@@ -108,9 +108,9 @@ def connid_type_to_attribute_type(connid_type: Any) -> tuple[Optional[str], Opti
     return mapped
 
 
-def _column_from_connid_attribute(attribute: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _projection_attribute(attribute: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Build one table column from a flattened ConnId attribute.
+    Build one projection attribute without inventing a physical SQL column.
 
     Only flags the export actually carries are set; the rest is left unset so attribute
     extraction can apply its own defaults instead of inventing a value here.
@@ -119,27 +119,30 @@ def _column_from_connid_attribute(attribute: Dict[str, Any]) -> Optional[Dict[st
     if not name:
         return None
 
-    column: Dict[str, Any] = {"name": name, "connIdType": attribute.get("type")}
+    projected: Dict[str, Any] = {"name": name}
+    connid_type = as_nonempty_str(attribute.get("type"))
+    if connid_type is not None:
+        projected["connIdType"] = connid_type
 
     column_name = attribute.get("column")
     if isinstance(column_name, str) and column_name.strip():
         # ``name`` is the logical ConnId attribute exposed to midPoint. The SQL binding may
         # point it at a differently named physical column, so keep both identities.
-        column["column"] = column_name.strip()
+        projected["column"] = column_name.strip()
 
     if "required" in attribute:
-        column["mandatory"] = bool(attribute.get("required"))
+        projected["mandatory"] = bool(attribute.get("required"))
     if "creatable" in attribute:
-        column["creatable"] = bool(attribute.get("creatable"))
+        projected["creatable"] = bool(attribute.get("creatable"))
     if "updateable" in attribute or "updatable" in attribute:
-        column["updatable"] = bool(attribute.get("updatable", attribute.get("updateable")))
+        projected["updatable"] = bool(attribute.get("updatable", attribute.get("updateable")))
 
-    return column
+    return projected
 
 
 def _table_from_sql_object_class(definition: SqlObjectClassDocument) -> Dict[str, Any]:
-    """Convert one parsed conndev SQL object class into a table record."""
-    columns = [column for attribute in definition.attributes if (column := _column_from_connid_attribute(attribute))]
+    """Associate a separate ConnId projection with its declared physical table identity."""
+    attributes = [item for attribute in definition.attributes if (item := _projection_attribute(attribute))]
     table_catalog, table_schema, table_name = split_sql_table_identifier(definition.table)
 
     table: Dict[str, Any] = {
@@ -147,7 +150,8 @@ def _table_from_sql_object_class(definition: SqlObjectClassDocument) -> Dict[str
         # The object-class name midPoint exported. It is authoritative and is used verbatim,
         # so a table exported as "m_user" stays "m_user" instead of being reshaped.
         "objectClass": definition.name,
-        "columns": columns,
+        "columns": [],
+        "connectorObjectClass": {"name": definition.name, "attributes": attributes},
         "source": SqlTableSource.CONNDEV_OBJECT_CLASS.value,
     }
     if table_catalog:
@@ -198,7 +202,7 @@ def _column_from_sql_table(column: Any) -> Dict[str, Any] | None:
     if type_name is not None:
         normalized["type"] = type_name
 
-    for key in ("nullable", "primaryKey"):
+    for key in ("nullable", "primaryKey", "unique"):
         value = column.get(key)
         if isinstance(value, bool):
             normalized[key] = value
@@ -211,8 +215,8 @@ def _column_from_sql_table(column: Any) -> Dict[str, Any] | None:
 
     if column.get("defaultValue") is not None:
         normalized["default"] = column["defaultValue"]
-    if column.get("autoIncrement") is True:
-        normalized["generated"] = True
+    if isinstance(column.get("autoIncrement"), bool):
+        normalized["generated"] = column["autoIncrement"]
 
     foreign_key = _foreign_key_from_sql_table_column(column, name)
     if foreign_key is not None:
@@ -305,6 +309,9 @@ def _table_from_sql_table_document(
         "source": SqlTableSource.CONNDEV_SQL_TABLE.value,
         "foreignKeys": _foreign_keys_from_columns(columns),
     }
+    table_type = as_nonempty_str(table_content.get("tableType") or document.get("tableType"))
+    if table_type is not None:
+        table["tableType"] = table_type
     if (
         raw_columns
         and len(columns) == len(raw_columns)

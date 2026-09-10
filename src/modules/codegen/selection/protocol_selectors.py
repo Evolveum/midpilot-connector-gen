@@ -41,6 +41,10 @@ from src.modules.codegen.prompts.scim.search_prompts import (
 from src.modules.codegen.prompts.scim.update_prompts import get_scim_update_system_prompt, get_scim_update_user_prompt
 from src.modules.codegen.prompts.sql.create_prompts import get_sql_create_system_prompt, get_sql_create_user_prompt
 from src.modules.codegen.prompts.sql.delete_prompts import get_sql_delete_system_prompt, get_sql_delete_user_prompt
+from src.modules.codegen.prompts.sql.native_schema_prompts import (
+    get_sql_native_schema_system_prompt,
+    get_sql_native_schema_user_prompt,
+)
 from src.modules.codegen.prompts.sql.search_prompts import (
     get_sql_search_all_system_prompt,
     get_sql_search_filter_system_prompt,
@@ -95,8 +99,8 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
             connid_docs_path=CONNID_ATTRIBUTES_DOCS_PATH,
         ),
         ApiType.SQL: OperationAssets(
-            get_native_schema_system_prompt,
-            get_native_schema_user_prompt,
+            get_sql_native_schema_system_prompt,
+            get_sql_native_schema_user_prompt,
             "sql/schema-customization.adoc",
             connid_docs_path=CONNID_ATTRIBUTES_DOCS_PATH,
         ),

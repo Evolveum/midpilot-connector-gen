@@ -47,7 +47,11 @@ from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, re
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.relevant_chunks import collect_connector_relevant_chunks
 from src.modules.codegen.utils.groovy_validation import normalize_groovy_code, validate_groovy_code
-from src.modules.codegen.utils.prompt_records import build_complete_attribute_mapping_records, render_prompt_records
+from src.modules.codegen.utils.prompt_records import (
+    build_complete_attribute_mapping_records,
+    build_sql_context_prompt_vars,
+    render_prompt_records,
+)
 from src.session.info_metadata import get_session_connection_target
 from src.shared.enums import ApiType, JobStage
 
@@ -104,6 +108,7 @@ async def fix_connector_code(
     dsl_documentation = _load_dsl_documentation(artifacts, protocol)
     extracted_attributes = render_prompt_records(build_complete_attribute_mapping_records(attributes))
     extracted_endpoints = render_prompt_records(endpoints_to_records(endpoints)) if endpoints is not None else ""
+    sql_context = build_sql_context_prompt_vars(attributes) if protocol is ApiType.SQL else None
 
     async def run_pass(
         *,
@@ -119,6 +124,7 @@ async def fix_connector_code(
             dsl_documentation=dsl_documentation,
             extracted_attributes=extracted_attributes,
             extracted_endpoints=extracted_endpoints,
+            sql_context=sql_context,
             job_id=job_id,
             documentation_query=documentation_query,
             documentation_chunks=documentation_chunks,

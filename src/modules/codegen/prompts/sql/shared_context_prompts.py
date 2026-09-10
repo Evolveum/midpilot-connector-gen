@@ -14,6 +14,36 @@ create/update/delete/search prompt families stay consistent.
 
 import textwrap
 
+SQL_PHYSICAL_PROJECTION_SYSTEM_RULES = textwrap.dedent("""\
+
+SQL PHYSICAL SCHEMA VS CONNID PROJECTION:
+- <physical_sql_table> is authoritative for the physical table identity. The physical attribute records supplied
+  alongside it are authoritative for database columns and SQL/JDBC types.
+- <connid_object_class_projection> is authoritative for desired ConnID attribute names and flags. A projection
+  name is a logical ConnID name, not a physical database column; never create or rename a physical column from it.
+- A non-null projection `column` is the explicit binding to a physical column and must be honored. A projection
+  with `column: null` does not describe a database column and must never be presented as one.
+- Keep these two abstractions separate. Bind a projection to a physical attribute only when the mapping is
+  explicit or supported by the physical schema; never merge `__NAME__`, aliases or other projection-only entries
+  into the physical attribute set.
+""")
+
+SQL_PHYSICAL_PROJECTION_USER_SECTION = textwrap.dedent("""\
+
+Physical SQL table identity:
+
+<physical_sql_table>
+{sql_physical_table_json}
+</physical_sql_table>
+
+Separate ConnID object-class projection from Conndev (desired names and flags only):
+
+<connid_object_class_projection>
+{sql_connector_object_class_json}
+</connid_object_class_projection>
+
+""")
+
 SQL_SCHEMA_CONTEXT_SYSTEM_RULES = textwrap.dedent("""\
 
 SQL SCHEMA CONTEXT RULES:

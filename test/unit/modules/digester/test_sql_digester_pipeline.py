@@ -9,7 +9,11 @@ from uuid import uuid4
 import pytest
 
 from src.modules.digester import orchestration
-from src.modules.digester.errors import EndpointExtractionNotSupportedError, SqlTableIdentityConflictError
+from src.modules.digester.errors import (
+    EndpointExtractionNotSupportedError,
+    SqlPhysicalSchemaNotFoundError,
+    SqlTableIdentityConflictError,
+)
 from src.modules.digester.extractors.conndev import detect_object_class_binding
 from src.modules.digester.extractors.endpoints import extract_endpoints
 from src.modules.digester.extractors.object_class import extract_object_classes
@@ -422,7 +426,7 @@ async def test_extract_sql_object_classes_from_conndev_export(mock_digester_upda
 
     candidates, _job_id = ranking.await_args.args
     class_to_chunks = ranking.await_args.kwargs["class_to_chunks"]
-    assert candidates[0].description == "Database table 'midpoint_user.m_user' with 1 columns: nameorig."
+    assert candidates[0].description == "Database table 'midpoint_user.m_user' with no documented columns."
     assert class_to_chunks["m_user"] == [{"doc_id": docs[0]["docId"], "chunk_id": docs[0]["chunkId"]}]
 
 
@@ -444,11 +448,15 @@ def test_collect_sql_tables_reads_conndev_export_columns():
     assert table["table"] == "m_user"
     assert table["databaseSchema"] == "midpoint_user"
     assert table["source"] == "conndev"
-    assert table["columns"] == [
-        {"name": "nameorig", "connIdType": "string", "mandatory": True},
-        {"name": "createtimestamp", "connIdType": "zoneddatetime"},
-        {"name": "oid", "connIdType": "string", "creatable": False, "updatable": False},
-    ]
+    assert table["columns"] == []
+    assert table["connectorObjectClass"] == {
+        "name": "m_user",
+        "attributes": [
+            {"name": "nameorig", "connIdType": "string", "mandatory": True},
+            {"name": "createtimestamp", "connIdType": "zoneddatetime"},
+            {"name": "oid", "connIdType": "string", "creatable": False, "updatable": False},
+        ],
+    }
     assert table["relevantDocumentations"] == [{"docId": doc["docId"], "chunkId": doc["chunkId"]}]
 
 
@@ -461,7 +469,10 @@ def test_collect_sql_tables_preserves_logical_attribute_name_and_physical_column
 
     table = collect_sql_tables([doc])[0]
 
-    assert table["columns"] == [{"name": "Username", "column": "nameorig", "connIdType": "string", "mandatory": True}]
+    assert table["columns"] == []
+    assert table["connectorObjectClass"]["attributes"] == [
+        {"name": "Username", "column": "nameorig", "connIdType": "string", "mandatory": True}
+    ]
 
 
 def test_collect_sql_tables_reads_conndev_sql_table_constraints():
@@ -502,6 +513,8 @@ def test_collect_sql_tables_reads_conndev_sql_table_constraints():
         "type": "UUID",
         "nullable": False,
         "primaryKey": True,
+        "unique": True,
+        "generated": False,
         "foreignKey": {
             "constraintName": "m_user_oid_fkey",
             "referencedTable": "m_object_oid",
@@ -613,28 +626,25 @@ def test_collect_sql_tables_merges_conndev_object_class_and_sql_table(reverse_or
     table = collect_sql_tables(docs)[0]
 
     assert table["objectClass"] == "m_user"
-    assert table["source"] == "conndev"
+    assert table["source"] == "conndev_sql_table"
     assert table["primaryKey"] == ["oid"]
-    assert table["columns"] == [
-        {
-            "name": "UID",
-            "column": "oid",
-            "connIdType": "string",
-            "creatable": True,
-            "updatable": False,
-            "type": "UUID",
-            "nullable": False,
-            "primaryKey": True,
-            "foreignKey": {
-                "constraintName": "m_user_oid_fkey",
-                "referencedTable": "m_object_oid",
-                "referencedColumn": "oid",
-            },
-        }
-    ]
+    assert [column["name"] for column in table["columns"]] == ["oid"]
+    assert table["columns"][0]["type"] == "UUID"
+    assert table["connectorObjectClass"] == {
+        "name": "m_user",
+        "attributes": [
+            {
+                "name": "UID",
+                "column": "oid",
+                "connIdType": "string",
+                "creatable": True,
+                "updatable": False,
+            }
+        ],
+    }
     assert table["relevantDocumentations"] == [
-        {"docId": docs[0]["docId"], "chunkId": docs[0]["chunkId"]},
-        {"docId": docs[1]["docId"], "chunkId": docs[1]["chunkId"]},
+        {"docId": sql_table_doc["docId"], "chunkId": sql_table_doc["chunkId"]},
+        {"docId": object_class_doc["docId"], "chunkId": object_class_doc["chunkId"]},
     ]
 
 
@@ -816,12 +826,12 @@ async def test_multi_schema_qualified_class_round_trips_to_attributes(mock_diges
     ]
     schema_a_attributes = schema_a_result["result"]["attributes"]
     schema_b_attributes = schema_b_result["result"]["attributes"]
-    assert set(schema_a_attributes) == {"SchemaAId"}
-    assert schema_a_attributes["SchemaAId"]["databaseCatalog"] == "database1"
-    assert schema_a_attributes["SchemaAId"]["databaseSchema"] == "schema_a"
-    assert set(schema_b_attributes) == {"SchemaBEmail"}
-    assert schema_b_attributes["SchemaBEmail"]["databaseCatalog"] == "database1"
-    assert schema_b_attributes["SchemaBEmail"]["databaseSchema"] == "schema_b"
+    assert set(schema_a_attributes) == {"id"}
+    assert schema_a_attributes["id"]["databaseCatalog"] == "database1"
+    assert schema_a_attributes["id"]["databaseSchema"] == "schema_a"
+    assert set(schema_b_attributes) == {"email"}
+    assert schema_b_attributes["email"]["databaseCatalog"] == "database1"
+    assert schema_b_attributes["email"]["databaseSchema"] == "schema_b"
 
 
 def test_collect_sql_tables_skips_mismatched_conndev_sql_table(caplog):
@@ -919,9 +929,10 @@ def test_collect_sql_tables_merges_conndev_and_ddl_column_metadata(reverse_order
 
     assert table["objectClass"] == "m_user"
     assert table["databaseSchema"] == "midpoint_user"
-    assert table["source"] == "conndev"
+    assert "source" not in table
     assert table["primaryKey"] == ["nameorig"]
-    assert table["columns"] == [
+    assert table["columns"] == [{"name": "nameorig", "type": "VARCHAR(255)", "nullable": False, "primaryKey": True}]
+    assert table["connectorObjectClass"]["attributes"] == [
         {
             "name": "Username",
             "column": "nameorig",
@@ -929,9 +940,6 @@ def test_collect_sql_tables_merges_conndev_and_ddl_column_metadata(reverse_order
             "mandatory": True,
             "creatable": False,
             "updatable": False,
-            "type": "VARCHAR(255)",
-            "nullable": False,
-            "primaryKey": True,
         }
     ]
 
@@ -991,6 +999,8 @@ def test_collect_sql_tables_merges_raw_ddl_and_conndev_sql_table(reverse_order):
             "type": "VARCHAR",
             "nullable": False,
             "primaryKey": True,
+            "unique": True,
+            "generated": False,
             "foreignKey": {
                 "constraintName": "m_user_nameorig_fkey",
                 "referencedTable": "m_object_oid",
@@ -1045,7 +1055,8 @@ def test_collect_sql_tables_merges_raw_json_schema_and_conndev_sql_table(reverse
             "type": "VARCHAR",
             "nullable": False,
             "primaryKey": True,
-            "generated": True,
+            "generated": False,
+            "unique": True,
         },
         {"name": "extra_col", "type": "int"},
     ]
@@ -1085,26 +1096,10 @@ def test_collect_sql_tables_merges_all_three_sql_sources_for_one_table(reverse_o
     assert len(tables) == 1
     table = tables[0]
     assert table["objectClass"] == "m_user"
-    assert table["source"] == "conndev"
+    assert table["source"] == "conndev_sql_table"
     assert table["primaryKey"] == ["oid"]
-    assert table["columns"] == [
-        {
-            "name": "UID",
-            "column": "oid",
-            "connIdType": "string",
-            "creatable": True,
-            "updatable": False,
-            "type": "UUID",
-            "nullable": False,
-            "primaryKey": True,
-            "foreignKey": {
-                "constraintName": "m_user_oid_fkey",
-                "referencedTable": "m_object_oid",
-                "referencedColumn": "oid",
-            },
-        },
-        {"name": "audit_ts", "type": "TIMESTAMP", "nullable": True, "primaryKey": False},
-    ]
+    assert [column["name"] for column in table["columns"]] == ["oid", "audit_ts"]
+    assert table["connectorObjectClass"]["attributes"][0]["name"] == "UID"
     assert {(ref["docId"], ref["chunkId"]) for ref in table["relevantDocumentations"]} == {
         (doc["docId"], doc["chunkId"]) for doc in docs
     }
@@ -1229,7 +1224,7 @@ def test_tables_for_object_class_matches_the_exported_name():
 
 
 @pytest.mark.asyncio
-async def test_extract_sql_attributes_from_conndev_export(mock_digester_update_job_progress):
+async def test_extract_sql_attributes_rejects_projection_without_physical_schema(mock_digester_update_job_progress):
     doc = _conndev_sql_doc(
         "m_user",
         "midpoint_user",
@@ -1242,36 +1237,23 @@ async def test_extract_sql_attributes_from_conndev_export(mock_digester_update_j
         ],
     )
 
-    result = await extract_sql_attributes([doc], "m_user", uuid4())
+    with pytest.raises(SqlPhysicalSchemaNotFoundError) as exc_info:
+        await extract_sql_attributes([doc], "m_user", uuid4())
 
-    attributes = result["result"]["attributes"]
-    assert set(attributes) == {"nameorig", "createtimestamp", "modifychannelid", "oid", "photo"}
-    assert attributes["nameorig"]["mandatory"] is True
-    assert attributes["createtimestamp"]["type"] == "string"
-    assert attributes["createtimestamp"]["format"] == "date-time"
-    assert attributes["modifychannelid"]["type"] == "integer"
-    assert attributes["photo"]["format"] == "binary"
-    assert attributes["oid"]["creatable"] is False
-    assert attributes["oid"]["updatable"] is False
-    assert attributes["nameorig"]["description"] == "Column 'nameorig' from table 'midpoint_user.m_user'."
-    assert result["relevantDocumentations"] == [{"doc_id": doc["docId"], "chunk_id": doc["chunkId"]}]
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.code == "sql_physical_schema_not_found"
 
 
 @pytest.mark.asyncio
-async def test_extract_sql_attributes_maps_logical_name_to_physical_column(mock_digester_update_job_progress):
+async def test_projection_binding_is_not_used_as_a_physical_schema(mock_digester_update_job_progress):
     doc = _conndev_sql_doc(
         "m_user",
         "midpoint_user",
         [_conndev_attribute("Username", "string", column="nameorig")],
     )
 
-    result = await extract_sql_attributes([doc], "m_user", uuid4())
-
-    assert set(result["result"]["attributes"]) == {"Username"}
-    assert result["result"]["attributes"]["Username"]["column"] == "nameorig"
-    assert result["result"]["attributes"]["Username"]["description"] == (
-        "Column 'nameorig' from table 'midpoint_user.m_user'."
-    )
+    with pytest.raises(SqlPhysicalSchemaNotFoundError):
+        await extract_sql_attributes([doc], "m_user", uuid4())
 
 
 @pytest.mark.asyncio
@@ -1311,9 +1293,77 @@ async def test_extract_sql_attributes_enriches_conndev_primary_and_foreign_key(
     assert oid["updatable"] is False
     assert oid["mandatory"] is True
     assert result["relevantDocumentations"] == [
-        {"doc_id": object_class_doc["docId"], "chunk_id": object_class_doc["chunkId"]},
         {"doc_id": sql_table_doc["docId"], "chunk_id": sql_table_doc["chunkId"]},
+        {"doc_id": object_class_doc["docId"], "chunk_id": object_class_doc["chunkId"]},
     ]
+
+
+@pytest.mark.asyncio
+async def test_app_user_keeps_physical_columns_and_projection_separate(mock_digester_update_job_progress):
+    projection_doc = _conndev_sql_doc(
+        "app_user",
+        "public",
+        [
+            _conndev_attribute("__NAME__", "string", required=True, creatable=False, updateable=False),
+            _conndev_attribute("login", "string", column="username"),
+            _conndev_attribute("id", "string", column="id", updateable=False),
+            _conndev_attribute("birthDate", "zoneddatetime", column="birthdate"),
+        ],
+    )
+    physical_doc = _conndev_sql_table_doc(
+        "app_user",
+        "public",
+        [
+            _sql_table_column("id", "SERIAL", nullable=False, primary_key=True),
+            _sql_table_column("username", "VARCHAR", nullable=False, primary_key=False),
+            _sql_table_column("email", "VARCHAR", nullable=True, primary_key=False),
+            _sql_table_column("created_at", "TIMESTAMP", nullable=False, primary_key=False),
+            _sql_table_column("birthdate", "DATE", nullable=True, primary_key=False),
+        ],
+        catalog="connector_project_db",
+    )
+
+    forward = await extract_sql_attributes([projection_doc, physical_doc], "app_user", uuid4())
+    reverse = await extract_sql_attributes([physical_doc, projection_doc], "app_user", uuid4())
+
+    assert forward == reverse
+    attributes = forward["result"]["attributes"]
+    assert list(attributes) == ["id", "username", "email", "created_at", "birthdate"]
+    assert "__NAME__" not in attributes
+    assert attributes["id"]["type"] == "integer"
+    assert attributes["id"]["databaseType"] == "SERIAL"
+    assert attributes["birthdate"]["type"] == "string"
+    assert attributes["birthdate"]["format"] == "date"
+    assert attributes["birthdate"]["databaseType"] == "DATE"
+    assert forward["result"]["sqlContext"] == {
+        "physicalTable": {
+            "databaseCatalog": "connector_project_db",
+            "databaseSchema": "public",
+            "table": "app_user",
+            "tableType": "TABLE",
+        },
+        "connectorObjectClass": {
+            "name": "app_user",
+            "attributes": [
+                {
+                    "name": "__NAME__",
+                    "connIdType": "string",
+                    "column": None,
+                    "mandatory": True,
+                    "creatable": False,
+                    "updatable": False,
+                },
+                {"name": "login", "connIdType": "string", "column": "username"},
+                {"name": "id", "connIdType": "string", "column": "id", "updatable": False},
+                {"name": "birthDate", "connIdType": "zoneddatetime", "column": "birthdate"},
+            ],
+        },
+    }
+    assert {(ref["doc_id"], ref["chunk_id"]) for ref in forward["relevantDocumentations"]} == {
+        (projection_doc["docId"], projection_doc["chunkId"]),
+        (physical_doc["docId"], physical_doc["chunkId"]),
+    }
+    AttributeResponse.model_validate(forward["result"])
 
 
 @pytest.mark.asyncio
@@ -1368,6 +1418,36 @@ async def test_extract_sql_attributes_from_table_columns(mock_digester_update_jo
 
 
 @pytest.mark.asyncio
+async def test_extract_sql_attributes_preserves_required_and_falls_back_to_nullable(
+    mock_digester_update_job_progress,
+):
+    doc = _sql_doc(
+        """
+        {"tables": [{"name": "users", "columns": [
+          {"name": "required_true", "type": "varchar", "required": true},
+          {"name": "required_false", "type": "varchar", "required": false},
+          {"name": "not_nullable", "type": "varchar", "nullable": false},
+          {"name": "nullable", "type": "varchar", "nullable": true},
+          {"name": "unknown", "type": "varchar"},
+          {"name": "required_true_nullable", "type": "varchar", "required": true, "nullable": true},
+          {"name": "required_false_not_nullable", "type": "varchar", "required": false, "nullable": false}
+        ]}]}
+        """
+    )
+
+    result = await extract_sql_attributes([doc], "users", uuid4())
+    attributes = result["result"]["attributes"]
+
+    assert attributes["required_true"]["mandatory"] is True
+    assert attributes["required_false"]["mandatory"] is False
+    assert attributes["not_nullable"]["mandatory"] is True
+    assert attributes["nullable"]["mandatory"] is False
+    assert attributes["unknown"]["mandatory"] is None
+    assert attributes["required_true_nullable"]["mandatory"] is True
+    assert attributes["required_false_not_nullable"]["mandatory"] is False
+
+
+@pytest.mark.asyncio
 async def test_extract_sql_attributes_ignores_untyped_raw_foreign_key(mock_digester_update_job_progress):
     doc = _sql_doc(
         """
@@ -1414,6 +1494,43 @@ async def test_extract_sql_attributes_marks_generated_columns_non_creatable(
     result = await extract_sql_attributes([doc], "User", uuid4())
 
     assert result["result"]["attributes"]["id"]["creatable"] is False
+    assert result["result"]["attributes"]["id"]["generated"] is True
+
+
+@pytest.mark.asyncio
+async def test_extract_sql_attributes_preserves_unique_default_and_view_facts(mock_digester_update_job_progress):
+    raw_view = _sql_doc(
+        json.dumps(
+            {
+                "tables": [
+                    {
+                        "name": "active_users",
+                        "tableType": "VIEW",
+                        "columns": [
+                            {
+                                "name": "username",
+                                "type": "VARCHAR",
+                                "nullable": False,
+                                "unique": True,
+                                "default": "CURRENT_USER",
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+
+    result = await extract_sql_attributes([raw_view], "ActiveUser", uuid4())
+
+    username = result["result"]["attributes"]["username"]
+    assert username["databaseType"] == "VARCHAR"
+    assert username["nullable"] is False
+    assert username["unique"] is True
+    assert username["defaultValue"] == "CURRENT_USER"
+    assert username["creatable"] is False
+    assert username["updatable"] is False
+    assert result["result"]["sqlContext"] == {"physicalTable": {"table": "active_users", "tableType": "VIEW"}}
 
 
 @pytest.mark.asyncio

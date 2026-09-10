@@ -136,6 +136,26 @@ class SqlTableIdentityConflictError(AppError):
         )
 
 
+class SqlPhysicalSchemaNotFoundError(AppError):
+    """Raised when a SQL projection has no physical table/column schema."""
+
+    status_code = 422
+    code = "sql_physical_schema_not_found"
+
+    def __init__(self, object_class: str, *, stale_payload: bool = False):
+        if stale_payload:
+            detail = (
+                "The stored SQL attributes use the obsolete combined attribute format and have no sqlContext. "
+                "Rerun attribute extraction for this object class before scheduling native-schema generation."
+            )
+        else:
+            detail = (
+                "A Conndev object-class projection was found, but no matching physical table with columns was "
+                "found. Upload the SQL-table export or database DDL/JSON schema and rerun attribute extraction."
+            )
+        super().__init__(f"Physical SQL schema not found for '{object_class}'. {detail}")
+
+
 class RelationsNotFoundError(AppError):
     """Raised when a session has no extracted relations."""
 

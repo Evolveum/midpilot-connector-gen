@@ -17,8 +17,11 @@ import textwrap
 
 from src.modules.codegen.prompts.repair_prompts import REPAIR_POLICY_RULES
 
-get_connector_fix_system_prompt = (
-    textwrap.dedent("""\
+
+def build_connector_fix_system_prompt(protocol_context_rules: str = "") -> str:
+    """Build the connector-fix system prompt with optional protocol rules."""
+    return (
+        textwrap.dedent("""\
 You are a midPoint connector engineer. You are given the connector's create, update, delete, search and
 native-schema Groovy scripts and the errors midPoint reported for them. The native-schema
 script also carries the object class's ConnID attribute mapping.
@@ -50,8 +53,9 @@ ATTRIBUTE NAMING (<extracted_info> is the <extracted_attributes> block below):
   attribute belongs to which ConnID built-in; it never overrides the syntax of the protocol's own schema
   reference, which is the section before it. Do not rewrite a ConnID mapping from one form into the other.
 """)
-    + REPAIR_POLICY_RULES
-    + textwrap.dedent("""\
+        + protocol_context_rules
+        + REPAIR_POLICY_RULES
+        + textwrap.dedent("""\
 - Scripts you do not return are kept exactly as they are. This is the normal case for most of them.
 - Every script you return must be one complete, syntactically valid Groovy script for its
   operation - never a fragment, a diff, or a comment describing the change.
@@ -64,9 +68,13 @@ WHEN YOU CANNOT FIX IT:
   put the specific question in `documentationQuery`. Do not guess an endpoint, payload shape or
   filter syntax that the material in front of you does not support. You get one such request.
 {documentation_instruction}""")
-)
+    )
 
-get_connector_fix_user_prompt = textwrap.dedent("""\
+
+def build_connector_fix_user_prompt(protocol_context_section: str = "") -> str:
+    """Build the connector-fix user prompt with optional protocol context."""
+    return (
+        textwrap.dedent("""\
 midPoint reported these errors for the deployed connector:
 <midpoint_errors>
 {midpoint_errors}
@@ -82,6 +90,9 @@ Native attributes extracted from the application documentation for this object c
 {extracted_attributes}
 </extracted_attributes>
 
+""")
+        + protocol_context_section
+        + textwrap.dedent("""\
 {extracted_endpoints}
 
 midPoint connector DSL reference for the operations above:
@@ -92,6 +103,11 @@ midPoint connector DSL reference for the operations above:
 {documentation_context}{previous_attempt}
 Return only the scripts you changed.
 """)
+    )
+
+
+get_connector_fix_system_prompt = build_connector_fix_system_prompt()
+get_connector_fix_user_prompt = build_connector_fix_user_prompt()
 
 # Rendered only when the session has an endpoint surface for this object class. A SQL session
 # has none, and an empty tag block reads to the model as "there are no endpoints".

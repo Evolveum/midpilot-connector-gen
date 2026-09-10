@@ -39,7 +39,10 @@ from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
     build_connid_attribute_mapping_records,
     build_scim_contract_prompt_vars,
+    build_sql_context_prompt_vars,
+    extract_sql_context,
 )
+from src.modules.digester.errors import SqlPhysicalSchemaNotFoundError
 from src.modules.digester.schemas import RelationsResponse
 from src.session.info_metadata import (
     get_session_base_api_url,
@@ -85,6 +88,11 @@ async def generate_native_schema_code(
     }
     if protocol == ApiType.SCIM:
         extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))
+
+    if protocol == ApiType.SQL:
+        if not extract_sql_context(attributes_payload).get("physicalTable"):
+            raise SqlPhysicalSchemaNotFoundError(object_class, stale_payload=True)
+        extra_prompt_vars.update(build_sql_context_prompt_vars(attributes_payload))
 
     code = await generate_groovy(
         records=records,

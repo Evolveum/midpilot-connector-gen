@@ -52,6 +52,7 @@ from src.modules.digester.errors import (
     OperationSurfaceNotFoundError,
     RelationNotFoundError,
     RelationsNotFoundError,
+    SqlPhysicalSchemaNotFoundError,
 )
 from src.modules.digester.schemas import RelationsResponse
 from src.session.info_metadata import resolve_effective_api_type
@@ -266,6 +267,10 @@ async def schedule_native_schema_job(
         raise AttributesNotFoundError(object_class, session_id)
 
     protocol = await resolve_effective_api_type(session_id, api_type)
+    if protocol == ApiType.SQL:
+        sql_context = attrs.get("sqlContext")
+        if not isinstance(sql_context, Mapping) or not isinstance(sql_context.get("physicalTable"), Mapping):
+            raise SqlPhysicalSchemaNotFoundError(object_class, stale_payload=True)
     repair_context = codegen_input.repair_context() if codegen_input is not None else None
     context_payload = codegen_input.context_payload() if codegen_input is not None else {}
     job_input = {
