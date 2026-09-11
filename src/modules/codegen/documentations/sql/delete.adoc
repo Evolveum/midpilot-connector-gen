@@ -29,8 +29,11 @@ Connection failures are wrapped into `ConnectionFailedException`; failed transac
 == Embedded child tables
 
 Rows of detected child/embedded tables are managed by the parent object class (see xref:/connectors/sql-framework/develop/relationships/[]) — embedded object classes themselves do not expose create, update, or delete.
-When the parent row is deleted, the connector only deletes the parent row;
-cleanup of child rows is delegated to the database schema (for example, foreign keys with `ON DELETE CASCADE`).
+When the parent row is deleted, the connector first deletes the owned child-table rows and the
+junction-table rows, and only then deletes the parent row — all in the same transaction. No cleanup
+is delegated to the database schema (for example, foreign keys with `ON DELETE CASCADE`): child rows
+are removed explicitly by the connector. Do not generate a Groovy or YAML cascade-delete
+implementation for these child rows; the framework already handles it.
 
 == Enabling / disabling delete
 

@@ -104,7 +104,7 @@ async def test_generate_native_schema():
         _, kwargs = mock_generate_groovy.call_args
         assert kwargs["system_prompt"] == get_native_schema_system_prompt
         assert kwargs["user_prompt"] == get_native_schema_user_prompt
-        assert set(kwargs["extra_prompt_vars"]) == {"protocol_schema_docs", "connid_attribute_docs"}
+        assert set(kwargs["extra_prompt_vars"]) == {"protocol_schema_docs", "declarative_docs", "connid_attribute_docs"}
 
 
 @pytest.mark.asyncio
@@ -159,6 +159,7 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
     assert kwargs["user_prompt"] == get_sql_native_schema_user_prompt
     assert set(kwargs["extra_prompt_vars"]) == {
         "protocol_schema_docs",
+        "declarative_docs",
         "connid_attribute_docs",
         "sql_physical_table_json",
         "sql_connector_object_class_json",
@@ -306,6 +307,7 @@ def test_native_schema_prompt_renders_with_all_expected_variables(protocol, expe
             "object_class",
             "records_json",
             "protocol_schema_docs",
+            "declarative_docs",
             "connid_attribute_docs",
             "repair_system_suffix",
             "repair_user_suffix",

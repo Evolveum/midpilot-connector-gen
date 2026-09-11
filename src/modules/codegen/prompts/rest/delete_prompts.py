@@ -4,43 +4,48 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
+
 get_delete_system_prompt = (
     textwrap.dedent("""\
-You are an expert in creating connectors for midPoint. Your goal is to prepare a `delete` schema in Groovy. 
+You are an expert in creating connectors for midPoint. Your goal is to prepare a `delete` schema,
+in declarative YAML when the format is sufficient or in Groovy otherwise.
 
 The input data you will receive:
 1. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger attributes from api/v1/digester/{{session_id}}/attributes.
 2. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger endpoints from api/v1/digester/{{session_id}}/endpoints.
 3. A chunk of the original document (e.g., API spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated—such as parameter semantics, data types, required vs optional fields, authentication hints, default values, example requests/responses, and error behavior.
-4. Since the documentations does not fit into one chunk, you will receive Groovy code outputs from previous chunks so that you can complete or edit them.
+4. Since the documentations does not fit into one chunk, you will receive prior output from previous chunks so that you can complete or edit it, in whichever format you chose.
 5. Base API URL (if known) for path normalization is `{base_api_url}`.
 6. Optional user-provided preferred endpoints in JSON are `{preferred_endpoints_json}`.
 
-Prepare a valid Groovy code for delete schema in Groovy based on the following `.adoc` documentations:
+Prepare the delete schema based on the following `.adoc` documentations:
 
 <delete_docs>
 {delete_docs}
 </delete_docs>
 """)
+    + DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
 OUTPUT RULES:
-- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
-- The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly. Never switch to a different class name (e.g., "User").
-- Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the example in <delete_docs>.
+- Delete has the smallest configuration surface of every operation: a bare endpoint method+path
+  (Groovy `endpoint("...")`, or declarative YAML `delete.endpoints: [{{method: DELETE, path: ...}}]`)
+  is normally the entire artifact. Do not add request bodies, response parsing, or filters unless
+  documentation explicitly requires them.
+- The target object class is "{object_class}". In Groovy, keep `objectClass("{object_class}")` exactly; in declarative YAML, keep the `objectClasses.{object_class}` key exactly. Never switch to a different class name (e.g., "User").
+- Treat <extracted_attributes> and <extracted_endpoints> as the primary sources of truth. Prefer them over the example in <delete_docs> or <declarative_docs>.
 - If <preferred_endpoints> are provided, prioritize endpoints from this list whenever they are compatible with `<extracted_endpoints>` and docs.
 - If <preferred_endpoints> conflict with `<extracted_endpoints>` or docs, prefer documented/extracted data and leave a short TODO comment about the mismatch.
-- Endpoint paths used inside `endpoint("...")` MUST come from `<extracted_endpoints>` after normalization. Do not invent or copy path variants that are absent there.
+- Endpoint paths used in an endpoint declaration (`endpoint("...")` in Groovy, or an endpoint's `path` in declarative YAML) MUST come from `<extracted_endpoints>` after normalization. Do not invent or copy path variants that are absent there.
 - If docs show a versioned or absolute path variant (e.g., `/api/v3/users` or `https://host/api/v3/users`) but `<extracted_endpoints>` contains `/users`, you MUST use `/users`.
-- For every `endpoint("...")`, output a path that starts with `/`, contains no scheme/host, and avoids duplicated base prefixes.
+- For every endpoint path, output a path that starts with `/`, contains no scheme/host, and avoids duplicated base prefixes.
 - If `base_api_url` contains a base path prefix (e.g., `/api/v1`), strip that prefix from endpoint paths when it appears in docs.
-- Treat <result> as the current working Groovy code. Extend or minimally edit it; do not discard or rename previously correct parts.
-- Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear.
-- Preserve the outer objectClass and delete blocks if already present in <result>.
-- Return ONLY a valid format of the delete schema in Groovy, including the inline comments as specified. No extra explanation outside the code block.
-- The output format is just an example and may vary slightly based on the various specifications and documentations that will be available to you in the user prompt.
-- No extra commentary.
+- Treat <result> as the current working code in whichever format it is already in. Extend or minimally edit it; do not discard or rename previously correct parts.
+- Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, leave a short TODO comment rather than guessing.
+- Preserve the outer object-class and delete structure if already present in <result>.
+- No extra commentary outside the fenced code block.
 """)
 )
 

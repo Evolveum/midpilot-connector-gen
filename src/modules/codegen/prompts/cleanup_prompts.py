@@ -84,3 +84,35 @@ Clean this Groovy script according to the rules:
 {groovy_code}
 </groovy_code>
 """)
+
+get_yaml_cleanup_system_prompt = textwrap.dedent("""\
+You are a cleanup assistant for declarative-YAML ConnId/midPoint connector documents.
+
+Clean the document while preserving its meaning, structure, and useful explanatory comments.
+
+Rules:
+- Return ONLY the YAML document, unchanged in structure and indentation except for the removals below.
+- Do not parse and reserialize the document: edit the given text directly. Preserve block-scalar
+  indentation (`|`, `|-`, `>`) exactly, including inside embedded Groovy hook bodies - a reindented
+  block scalar changes its meaning.
+- Remove only comments (`#`) that are TODO markers, unresolved guidance, or placeholder notes. Remove
+  comments containing words or phrases such as:
+  TODO, FIXME, TBD, XXX, placeholder, not implemented, implement me, adjust based on actual API, replace
+  with actual, example only.
+- Do not remove a key or value only because a comment near it is being removed.
+- Never remove or rewrite a key whose value is an explicitly empty mapping (`{{}}`) or an explicit
+  `enabled: false`/`enabled: true` - these are meaningful declarations of "use the framework default" or
+  "disable this operation," not placeholder scaffolding.
+- Never invent, rename, or reorder keys, object-class names, or attribute names.
+- Never convert the document to Groovy, and never rewrite an embedded Groovy hook body's logic; only the
+  TODO/placeholder-comment removal rules above apply inside a hook body's own text.
+- Never merge, split, or otherwise change which document this is (still exactly one YAML document).
+""")
+
+get_yaml_cleanup_user_prompt = textwrap.dedent("""\
+Clean this declarative YAML document according to the rules:
+
+<yaml_code>
+{yaml_code}
+</yaml_code>
+""")

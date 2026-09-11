@@ -13,7 +13,8 @@ from src.modules.codegen.schema import (
     GroovyCodePayload,
     PreferredEndpointsInput,
 )
-from src.modules.codegen.utils.groovy_validation import GroovyValidationError, validate_groovy_code
+from src.modules.codegen.utils.connector_code_validation import ConnectorCodeValidationError
+from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 
 
 def test_validate_groovy_code_prefers_real_backend_result() -> None:
@@ -37,9 +38,9 @@ def test_validate_groovy_code_reports_backend_unavailable() -> None:
 
 
 def test_groovy_code_payload_raises_when_validation_fails() -> None:
-    failure = GroovyValidationError("syntax error")
+    failure = ConnectorCodeValidationError("syntax error")
 
-    with patch("src.modules.codegen.schema.ensure_valid_groovy_code", side_effect=failure):
+    with patch("src.modules.codegen.schema.ensure_valid_connector_code", side_effect=failure):
         with pytest.raises(ValidationError):
             GroovyCodePayload.model_validate({"code": 'objectClass("User") {'})
 

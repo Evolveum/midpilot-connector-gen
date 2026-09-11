@@ -4,6 +4,7 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
 from src.modules.codegen.prompts.sql.shared_context_prompts import (
     SQL_NATIVE_OPERATION_DSL_SYSTEM_RULES,
     SQL_SCHEMA_CONTEXT_SYSTEM_RULES,
@@ -13,14 +14,15 @@ from src.modules.codegen.prompts.sql.shared_context_prompts import (
 get_sql_delete_system_prompt = (
     textwrap.dedent("""\
 You are an expert in creating midPoint ConnId database connectors.
-Your goal is to prepare a `delete` schema in Groovy for a SQL/database connector.
+Your goal is to prepare a `delete` schema for a SQL/database connector, in declarative YAML when the
+format is sufficient or in Groovy otherwise.
 
 The input data you will receive:
 1. The columns extracted for {object_class} in the previous step, each carrying its table and column.
 2. A chunk of the original schema or provider documentation.
-3. Groovy output from previous chunks that you may minimally complete or edit.
+3. Prior output from previous chunks that you may minimally complete or edit, in whichever format you chose.
 
-Prepare valid Groovy delete code based on the following generic SQL `.adoc` documentation:
+Prepare the delete schema based on the following generic SQL `.adoc` documentation:
 
 <delete_docs>
 {delete_docs}
@@ -28,26 +30,32 @@ Prepare valid Groovy delete code based on the following generic SQL `.adoc` docu
 """)
     + SQL_SCHEMA_CONTEXT_SYSTEM_RULES
     + SQL_NATIVE_OPERATION_DSL_SYSTEM_RULES
+    + DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
 OUTPUT RULES:
-- <delete_docs> is the authoritative source for Groovy DSL structure. The schema context and the
-  documentation chunk supply target-specific facts only; they must not replace that structure.
-- The output is native SQL DSL, never REST or SCIM DSL. Place the native delete operation directly below
-  the object class:
-  `objectClass("{object_class}") {{ delete {{ sql {{ builtIn {{ enabled true }} }} }} }}`.
-- The target object class is "{object_class}". Keep `objectClass("{object_class}")` exactly.
-- The framework deletes the row identified by the primary key, so declare `enabled true` and do not write
-  statements, predicates or cascade handling into the operation block.
-- Never invent cascade deletes. When <chunk> shows a foreign key whose cascade behavior is not documented,
-  keep the block and add one TODO comment naming the dependency.
+- <delete_docs> is the authoritative source for Groovy DSL structure, and <declarative_docs> for its
+  declarative-YAML equivalent. The schema context and the documentation chunk supply target-specific facts
+  only; they must not replace that structure.
+- The output is native SQL, never REST or SCIM DSL. In Groovy, place the native delete operation directly
+  below the object class: `objectClass("{object_class}") {{ delete {{ sql {{ builtIn {{ enabled true }} }} }} }}`.
+  In declarative YAML, the equivalent is `objectClasses.{object_class}.delete: {{enabled: true}}` - and since
+  delete is enabled by default, an object class needing no delete customization needs no `delete` key at all.
+- The target object class is "{object_class}". In Groovy, keep `objectClass("{object_class}")` exactly; in
+  declarative YAML, keep the `objectClasses.{object_class}` key exactly.
+- The framework deletes the row identified by the primary key. The declarative reference documents no
+  fixed-predicate or cascade-override key for delete, so do not write statements, predicates, or cascade
+  handling into the delete configuration in either format; a requirement beyond `enabled`/`enabled: false`
+  needs a fully custom Groovy operation registration, which this artifact does not cover - add one TODO
+  comment naming the gap instead of inventing keys.
+- Never invent cascade deletes. Related-table (child/junction) row cleanup on delete, when documented, is
+  handled by the framework itself, not by anything written into this operation's configuration.
 - When the schema or the documentation shows a soft-delete column, do not switch the operation to an
-  update; keep the block and add one TODO comment stating that deactivation may be required instead.
-- If no attribute is marked `primaryKey`, keep the block and add one TODO comment stating that the
-  identity column has to be confirmed - never guess it from a column name.
-- Return ONLY valid Groovy code, fenced as a single ```groovy code block```, with no text outside it.
-- No extra commentary.
+  update; add one TODO comment stating that deactivation may be required instead.
+- If no attribute is marked `primaryKey`, add one TODO comment stating that the identity column has to be
+  confirmed - never guess it from a column name.
+- No extra commentary outside the fenced code block.
 """)
 )
 

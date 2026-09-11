@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Mapping, Optional, TypeAlias, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.core.schema import CamelCaseModel
-from src.modules.codegen.utils.groovy_validation import ensure_valid_groovy_code
+from src.modules.codegen.utils.connector_code_validation import ensure_valid_connector_code
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 from src.shared.auth import normalize_auth_type_value
 
@@ -44,6 +44,12 @@ class OperationAssets:
     """
     The prompts and bundled DSL references one operation is generated from.
 
+    ``declarative_docs_path`` is the bundled declarative-YAML reference for this operation's
+    protocol (shared root-level document for REST/SCIM, a dedicated one for SQL). It is
+    injected into every generation call alongside ``docs_path`` so the LLM can choose YAML
+    over Groovy whenever the declarative format is sufficient - see
+    ``src.modules.codegen.prompts.declarative_format_prompts``.
+
     ``connid_docs_path`` is the second reference a native-schema script needs: the
     ConnID mapping lives in the same script as the attribute definitions, and the
     protocol's own schema document does not always explain the built-in ConnID
@@ -53,16 +59,25 @@ class OperationAssets:
     system_prompt: str
     user_prompt: str
     docs_path: str
+    declarative_docs_path: str
     connid_docs_path: str | None = None
 
 
 class GroovyCodePayload(BaseModel):
-    code: str = Field(..., description="Groovy code")
+    """
+    A generated or manually-edited connector artifact: declarative YAML or Groovy.
+
+    Named for the DSL this predates rather than the formats it now accepts - renaming it
+    would ripple into every override/fix/repair endpoint response for no functional gain,
+    since the wire field stays ``code`` in both cases.
+    """
+
+    code: str = Field(..., description="Connector code: declarative YAML or Groovy.")
 
     @field_validator("code")
     @classmethod
     def validate_code(cls, value: str) -> str:
-        return ensure_valid_groovy_code(value)
+        return ensure_valid_connector_code(value)
 
 
 class PreferredEndpointsPayload(BaseModel):
@@ -183,7 +198,7 @@ class MidpointErrorsInput(CamelCaseModel):
 class CodegenRepairContext(MidpointErrorsInput):
     current_script: str | None = Field(
         default=None,
-        description="Current user-edited Groovy script to repair.",
+        description="Current user-edited connector code (declarative YAML or Groovy) to repair.",
     )
 
     @field_validator("current_script")
@@ -240,10 +255,10 @@ class AuthorizationCodegenInput(PreferredAuthorizationsInput, CodegenRepairConte
 
 
 class ConnectorScriptOverride(CamelCaseModel):
-    """A user-edited Groovy script supplied in place of the one stored in the session."""
+    """A user-edited connector script supplied in place of the one stored in the session."""
 
     operation_key: str = Field(..., description="Operation key of the script being replaced, e.g. 'userUpdate'.")
-    code: str = Field(..., description="Groovy code to use instead of the stored script.")
+    code: str = Field(..., description="Connector code (declarative YAML or Groovy) to use instead of the stored one.")
 
     @field_validator("operation_key")
     @classmethod
@@ -292,10 +307,10 @@ class ConnectorFixInput(MidpointErrorsInput):
 
 
 class ConnectorFixScriptUpdate(CamelCaseModel):
-    """One script the model changed. Structured output; not validated as Groovy here."""
+    """One script the model changed. Structured output; not format-validated here."""
 
     operation_key: str = Field(..., description="Operation key of the script you changed, copied verbatim.")
-    code: str = Field(..., description="The complete fixed Groovy script for that operation.")
+    code: str = Field(..., description="The complete fixed connector code (declarative YAML or Groovy).")
     reason: str = Field(..., description="One sentence: what was wrong and what you changed.")
 
 
@@ -303,7 +318,7 @@ class ConnectorFixLLMResponse(CamelCaseModel):
     """
     Structured output of one object-class fix pass.
 
-    Groovy is deliberately not validated by a field validator: ``build_structured_chain``
+    The connector code is deliberately not validated by a field validator: ``build_structured_chain``
     wraps the parser in ``RetryWithErrorOutputParser``, so a validator raising on one
     bad script would re-run the whole (large) call and discard the good scripts too.
     Validation happens per script after parsing.
@@ -330,7 +345,7 @@ class ConnectorFixLLMResponse(CamelCaseModel):
 class ConnectorScript(CamelCaseModel):
     operation_key: str = Field(..., description="Operation key, e.g. 'userUpdate'.")
     session_key: str = Field(..., description="Session data key holding this script.")
-    code: str = Field(..., description="Groovy code after the fix.")
+    code: str = Field(..., description="Connector code (declarative YAML or Groovy) after the fix.")
 
 
 class ConnectorFixChange(CamelCaseModel):

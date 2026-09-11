@@ -30,6 +30,14 @@ Prepare a relation in Groovy code based on the following `.adoc` documentations:
 {relation_docs}
 </relation_docs>
 
+This separate relation artifact must use a Groovy `relationship(){{}}` block, regardless of
+which format the object class's CRUD/schema artifacts use. The reference also documents
+root-level YAML relationships; use Groovy for this task.
+
+<declarative_docs>
+{declarative_docs}
+</declarative_docs>
+
 AUTHORING REQUIREMENTS:
 - Generate code only for the selected relation named `{relation_name}`.
 - Preserve the selected RelationsResponse semantics: map `subjectAttribute` on `subject` to `object`.

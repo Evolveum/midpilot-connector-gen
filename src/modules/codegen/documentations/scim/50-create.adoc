@@ -7,6 +7,13 @@ This document is part of the SCIM 2.0 connector tutorial. See xref:index#[Index]
 
 SCIM 2.0 create operations use HTTP POST to create new resources.
 
+IMPORTANT: The built-in SCIM create handler and the `create { scim { ... } }` customization block
+described below are *in development*. The examples on this page describe the intended behavior;
+until the wiring lands, generate a REST-style create endpoint instead for any object class that
+needs a working create operation: `create { endpoint(POST, "/Users") { ... } }` (see the REST
+create reference), or its declarative `create.endpoints[]` YAML equivalent from
+<declarative_docs>. Do not emit `create { scim { ... } }` as if it were functional today.
+
 == Basic Create
 
 To support create operation you do not need to specify anything for well-behaved SCIM 2.0 servers.

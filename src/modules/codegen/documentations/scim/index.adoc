@@ -28,7 +28,9 @@ The SCIMREST Framework provides built-in support for SCIM 2.0 protocol, handling
 The framework includes:
 
 * *Automatic schema discovery* - SCIM schemas are automatically discovered from the server
-* *SCIM-specific operations* - Native support for SCIM search filters, PATCH/PUT operations
+* *SCIM-specific operations* - built-in search (UID retrieval, list-all, server-side filtering) and
+  update (full PUT after reading the original state) work with no script; SCIM `PATCH` issuance is
+  still in development - see xref:60-update/[Update operations] before relying on it
 * *Attribute mapping* - SCIM path-based attribute resolution
 * *Customizable* - Override default behavior with Groovy DSLs when needed
 

@@ -27,6 +27,7 @@ from src.modules.codegen.selection.authorization import (
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.protocol_selectors import (
     CONNID_ATTRIBUTES_DOCS_PATH,
+    SCIM_REST_DECLARATIVE_DOCS_PATH,
     get_operation_assets,
     get_search_operation_assets,
 )
@@ -84,6 +85,7 @@ async def generate_native_schema_code(
     records = build_complete_attribute_mapping_records(attributes_payload)
     extra_prompt_vars = {
         "protocol_schema_docs": load_required_adoc_text(docs_package, assets.docs_path),
+        "declarative_docs": load_required_adoc_text(docs_package, assets.declarative_docs_path),
         "connid_attribute_docs": load_required_adoc_text(docs_package, assets.connid_docs_path),
     }
     if protocol == ApiType.SCIM:
@@ -129,7 +131,9 @@ async def generate_authorization_code(
         return {"code": build_other_authorization_scaffold(protocol)}
 
     assets = get_operation_assets("authorization", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_package = __package__ + ".documentations"
+    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
+    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
     base_api_url = await get_session_base_api_url(session_id, protocol=protocol)
 
     generator_preferred_authorizations = prepare_preferred_authorizations_for_generation(
@@ -140,6 +144,7 @@ async def generate_authorization_code(
     generator = AuthorizationGenerator(
         preferred_authorizations=generator_preferred_authorizations,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol=protocol,
@@ -210,7 +215,9 @@ async def generate_search_code(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_search_operation_assets(protocol, intent)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_package = __package__ + ".documentations"
+    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
+    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = SearchGenerator(
@@ -218,6 +225,7 @@ async def generate_search_code(
         intent=intent,
         preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.value.upper(),
@@ -258,13 +266,16 @@ async def generate_create_code(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("create", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_package = __package__ + ".documentations"
+    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
+    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = CreateGenerator(
         object_class=object_class,
         preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.value.upper(),
@@ -305,13 +316,16 @@ async def generate_update_code(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("update", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_package = __package__ + ".documentations"
+    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
+    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = UpdateGenerator(
         object_class=object_class,
         preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.value.upper(),
@@ -352,13 +366,16 @@ async def generate_delete_code(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("delete", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_package = __package__ + ".documentations"
+    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
+    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = DeleteGenerator(
         object_class=object_class,
         preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.value.upper(),
@@ -393,7 +410,15 @@ async def generate_relation_code(
     """
     Generate the Groovy `relation {}` block using relevant chunks + docs.
     """
-    relation_docs_text = load_required_adoc_text(__package__ + ".documentations" + ".rest", "50-relationship.adoc")
+    docs_package = __package__ + ".documentations"
+    relation_docs_text = load_required_adoc_text(docs_package + ".rest", "50-relationship.adoc")
+    # Relation wiring is generated the same way regardless of the connector's own protocol
+    # (it always draws on the REST relationship reference, unchanged from before this feature),
+    # so it draws on the shared REST/SCIM declarative reference rather than a per-protocol one.
+    # No declarative form of `relationship(){}` is documented today (see declarative-yaml.adoc's
+    # own capability boundary), so this is context for the model to recognize that gap, not an
+    # instruction to prefer YAML here.
+    declarative_docs_text = load_required_adoc_text(docs_package, SCIM_REST_DECLARATIVE_DOCS_PATH)
 
     relevant_pairs = await _collect_relation_object_class_pairs(relations, session_id)
     if relevant_pairs:
@@ -408,7 +433,7 @@ async def generate_relation_code(
     else:
         logger.warning("[Codegen:Relation] No relevant object-class chunks found for relation %s", relation_name)
 
-    generator = RelationGenerator(docs_text=relation_docs_text)
+    generator = RelationGenerator(docs_text=relation_docs_text, declarative_docs_text=declarative_docs_text)
     code = await generator.generate(
         session_id=session_id,
         relevant_chunk_pairs=relevant_pairs,

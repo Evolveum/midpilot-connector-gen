@@ -22,6 +22,11 @@ Do not include Java classes, imports, packages, test code, WireMock code, or XML
 
 == OAuth2 hook DSL
 
+There is no generic `oauth2` keyword. Use the grant-specific keyword matching the selected method:
+`oauth2ClientCredentials`, `oauth2Password`, `oauth2JwtBearer`, or `oauth2Saml`. Each independently
+accepts the same hook style below. The examples in this file use `oauth2ClientCredentials`; substitute
+the grant-specific keyword that matches the selected authorization when it is a different OAuth2 flavor.
+
 For OAuth2 customizations, use the hook style below. Generate only the hook blocks required by the selected
 authorization and target documentation.
 
@@ -29,7 +34,7 @@ authorization and target documentation.
 ----
 authentication {
     scim {
-        oauth2 { oauth2Context ->
+        oauth2ClientCredentials { oauth2Context ->
             buildTokenRequest { request ->
                 request.formParam("grant_type", "client_credentials")
                 request.formParam("client_id", configuration.clientId)
@@ -53,6 +58,7 @@ Supported OAuth2 hooks:
 * `buildTokenRequest { request -> ... }` customizes the token request using `request.formParam(...)`.
 * `parseTokenResponse { response -> ... }` reads standard or custom token response fields into `oauth2Context`.
 * `applyToken { request -> ... }` decorates outgoing SCIM requests using `request.header(...)` or another documented request mutator.
+* `onResponse { response -> ... }` fires on every response after an authorized request; by default a 401 clears the cached token, so provide this hook only to replace that default.
 
 == Common SCIM patterns
 
@@ -62,7 +68,7 @@ Custom token request parameter:
 ----
 authentication {
     scim {
-        oauth2 { oauth2Context ->
+        oauth2ClientCredentials { oauth2Context ->
             buildTokenRequest { request ->
                 request.formParam("grant_type", "client_credentials")
                 request.formParam("client_id", configuration.clientId)
@@ -79,7 +85,7 @@ Custom token response shape:
 ----
 authentication {
     scim {
-        oauth2 { oauth2Context ->
+        oauth2ClientCredentials { oauth2Context ->
             buildTokenRequest { request ->
                 request.formParam("grant_type", "client_credentials")
             }
@@ -100,7 +106,7 @@ Refresh token flow:
 ----
 authentication {
     scim {
-        oauth2 { oauth2Context ->
+        oauth2ClientCredentials { oauth2Context ->
             validateToken {
                 if (!oauth2Context["access_token"]) {
                     oauth2Context["access_token"] = "mocked-expired-token"

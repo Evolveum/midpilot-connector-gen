@@ -14,9 +14,11 @@ from src.modules.codegen.prompts.scim.shared_context_prompts import (
 _SCIM_NATIVE_SCHEMA_SYSTEM_RULES = (
     SCIM_CONTRACT_CONTEXT_SYSTEM_RULES
     + """
-- The second argument of `connIdAttribute` and the first argument of `attribute(...)` MUST exactly match the
-  native connector attribute name from `name` in <extracted_info>. When `name` and `scimAttribute` differ, use
-  `name`; `scimAttribute` is the SCIM wire path only and belongs inside `scim {{ path ... }}`.
+- The native connector attribute name for every mapping - however your chosen format expresses it
+  (`connIdAttribute(...)`/`attribute(...)` in Groovy, or the `connId`/`attributes` keys in declarative YAML) -
+  MUST exactly match `name` in <extracted_info>. When `name` and `scimAttribute` differ, use `name`;
+  `scimAttribute` is the SCIM wire path only and belongs inside `scim {{ path ... }}` (Groovy) or the
+  attribute's `scim.path` key (declarative YAML).
 - When <connid_object_class> is not empty, use it only as attribute-exposure context. Generate ConnID mapping
   statements exclusively from `name` in <extracted_info>, never from the names in that projection.
 """

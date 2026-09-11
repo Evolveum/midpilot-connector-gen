@@ -99,6 +99,7 @@ def test_scim_crud_input_keeps_contract_views_and_endpoints_separate():
     generator = CreateGenerator(
         object_class="User",
         docs_text="SCIM create docs",
+        declarative_docs_text="SCIM create docs (declarative)",
         system_prompt=get_scim_create_system_prompt,
         user_prompt=get_scim_create_user_prompt,
         protocol_label="SCIM",
@@ -123,6 +124,7 @@ def test_protocol_neutral_crud_input_contains_no_scim_variables():
     generator = CreateGenerator(
         object_class="User",
         docs_text="REST create docs",
+        declarative_docs_text="REST create docs (declarative)",
         system_prompt="REST system prompt",
         user_prompt="{attributes_json}{endpoints_json}",
         protocol_label="REST",
@@ -140,6 +142,7 @@ def test_all_scim_crud_generators_enable_context_only_conndev_generation():
     shared_kwargs = {
         "object_class": "User",
         "docs_text": "SCIM operation docs",
+        "declarative_docs_text": "SCIM operation docs (declarative)",
         "system_prompt": "System prompt",
         "user_prompt": "{chunk}",
         "protocol_label": "scim",
@@ -168,6 +171,7 @@ async def test_scim_crud_runs_context_only_generation_when_selected_input_is_con
     generator = CreateGenerator(
         object_class="User",
         docs_text="SCIM create docs",
+        declarative_docs_text="SCIM create docs (declarative)",
         system_prompt="System prompt",
         user_prompt="{chunk}",
         protocol_label="scim",
@@ -226,7 +230,7 @@ async def test_scim_crud_runs_context_only_generation_when_selected_input_is_con
         ),
         patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.base.validate_groovy_code", return_value=None),
+        patch("src.modules.codegen.core.base.validate_connector_code", return_value=None),
     ):
         result = await generator.generate(
             session_id=uuid4(),
@@ -281,21 +285,26 @@ def test_all_scim_operation_prompts_receive_the_separated_context_contract():
 
 
 def test_scim_crud_prompts_enforce_operation_specific_native_dsl():
+    """
+    Native SCIM create/update never silently becomes REST DSL - it either stays native (the
+    default), or explicitly switches to the documented REST-style endpoint fallback when
+    <create_docs>/<update_docs> flags the native customization block as not yet functional.
+    """
     create_prompt = " ".join(get_scim_create_system_prompt.split())
     update_prompt = " ".join(get_scim_update_system_prompt.split())
     delete_prompt = " ".join(get_scim_delete_system_prompt.split())
 
-    assert "native `create {{ scim {{ ... }} }}`" in create_prompt
+    assert "native SCIM `create {{ scim {{ ... }} }}` customization block" in create_prompt
     assert "do not invent a POST endpoint" in create_prompt
-    assert "Never generate `endpoint(...)` anywhere in SCIM output" in create_prompt
+    assert "Never generate a REST `endpoint(...)` wrapping native SCIM `create`, or vice versa" in create_prompt
 
-    assert "native `update {{ scim {{ put {{ ... }} patch {{ ... }} }} }}`" in update_prompt
-    assert "Never represent PUT or PATCH as REST `endpoint(...)` blocks" in update_prompt
-    assert "Never generate `endpoint(...)` anywhere in SCIM output" in update_prompt
+    assert "native SCIM `update {{ scim {{ put {{ ... }} patch {{ ... }} }} }}`" in update_prompt
+    assert "use the REST-style endpoint customization instead" in update_prompt
+    assert "Never generate a REST `endpoint(...)` wrapping native SCIM `put`/`patch`, or vice versa" in update_prompt
 
-    assert "minimal native `delete {{ }}` block" in delete_prompt
-    assert "do not generate a REST endpoint or request block" in delete_prompt
-    assert "Never generate `endpoint(...)` anywhere in SCIM output" in delete_prompt
+    assert "native delete needs no customization" in delete_prompt
+    assert "do not generate a REST endpoint or request block for standard behavior" in delete_prompt
+    assert "Never generate `endpoint(...)` anywhere in native SCIM output" in delete_prompt
 
 
 def test_scim_search_prompts_enforce_native_scim_dsl_without_rest_endpoint_context():
@@ -305,10 +314,10 @@ def test_scim_search_prompts_enforce_native_scim_dsl_without_rest_endpoint_conte
         get_scim_search_id_system_prompt,
     ]:
         assert "<search_docs> is the authoritative source for Groovy DSL structure" in system_prompt
-        assert "The output is native SCIM DSL, never REST DSL" in system_prompt
+        assert "The output is native SCIM, never REST DSL" in system_prompt
         assert "inside `scim {{ limitations {{ ... }} }}`" in system_prompt
         assert 'objectClass("{object_class}") {{ search {{ scim {{ limitations {{ ... }} }} }} }}' in system_prompt
-        assert "Never generate `endpoint(...)` anywhere in SCIM output" in system_prompt
+        assert "Never generate `endpoint(...)` anywhere in native SCIM output" in system_prompt
         assert "<extracted_endpoints>" not in system_prompt
 
     assert "{endpoints_json}" not in get_scim_search_user_prompt

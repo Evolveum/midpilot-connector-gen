@@ -45,7 +45,10 @@ from src.modules.codegen.schema import (
 )
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, load_connector_artifacts
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
-from src.modules.codegen.utils.groovy_validation import GroovyValidationError, ensure_valid_groovy_code
+from src.modules.codegen.utils.connector_code_validation import (
+    ConnectorCodeValidationError,
+    ensure_valid_connector_code,
+)
 from src.modules.digester.errors import (
     AttributesNotFoundError,
     InvalidRelationsOutputError,
@@ -549,8 +552,8 @@ async def _validate_script_overrides(codegen_input: ConnectorFixInput) -> dict[s
         validated: dict[str, str] = {}
         for override in codegen_input.scripts:
             try:
-                validated[override.operation_key] = ensure_valid_groovy_code(override.code)
-            except GroovyValidationError as exc:
+                validated[override.operation_key] = ensure_valid_connector_code(override.code)
+            except ConnectorCodeValidationError as exc:
                 raise InvalidConnectorScriptOverrideError(override.operation_key, str(exc)) from exc
         return validated
 

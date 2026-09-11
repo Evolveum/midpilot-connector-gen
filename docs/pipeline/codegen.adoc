@@ -53,21 +53,34 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 1. *Context assembly* — for each operation, `selection/` gathers the digester
    outputs (attributes, auth, and endpoints where available) and the chunks
    recorded as relevant for the operation's result key, plus required midPoint
-   connector-development reference material (`selection/docs_loader.py`). SQL
-   CRUD/search generation requires attributes but not endpoints.
+   connector-development reference material (`selection/docs_loader.py`),
+   including the bundled declarative-YAML reference for the resolved protocol
+   (`OperationAssets.declarative_docs_path` in `selection/protocol_selectors.py`
+   — a shared REST/SCIM reference and a separate SQL one). SQL CRUD/search
+   generation requires attributes but not endpoints.
 2. *Protocol-specific prompts* — prompts live under `prompts/`, split by
-   protocol (`rest/`, `scim/`, `sql/`) and operation. The protocol is chosen
+   protocol (`rest/`, `scim/`, `sql/`) and operation. Every operation prompt
+   splices in the shared YAML-vs-Groovy policy
+   (`prompts/declarative_format_prompts.py`): the LLM prefers declarative YAML
+   whenever the bundled reference documents it as sufficient, and falls back to
+   Groovy — or YAML with the documented scripting hooks embedded — only where
+   the reference shows Groovy is required. The protocol is chosen
    by the effective link:../api-type.adoc[apiType]; SCIM additionally injects
    a shared SCIM context so generated code follows the fixed SCIM baseline
    contracts. The connection target is read per protocol: REST and SCIM get the
    base API URL, SQL gets `databaseName` and no URL at all.
 3. *Generation and validation* — the LLM output goes through post-processing
-   and Groovy validation (`utils/groovy_validation.py`,
-   `utils/postprocess.py`). Validation failures feed a *repair* loop
-   (`repair.py`, `prompts/repair_prompts.py`) that asks the LLM to fix the
-   specific problem instead of regenerating blindly.
-4. The final script is persisted in the session under the operation's result
-   key.
+   and format-aware validation (`utils/connector_code_validation.py`, which
+   detects YAML vs. Groovy and uses strict nested YAML models plus the existing
+   Groovy parser for documented script fields; `utils/postprocess.py`). Worker
+   validation runs in a thread without executing the embedded code. New generation
+   sends an empty `<result>` until the first valid artifact is accepted; subsequent
+   chunks receive that artifact. Invalid responses leave the previous result intact.
+   A repair starts with `currentScript` and preserves its format according to the
+   repair instructions (`repair.py`, `prompts/repair_prompts.py`). No extra LLM call
+   is introduced by validation.
+4. The final artifact (declarative YAML or Groovy) is persisted in the session
+   under the operation's result key, unchanged in shape: `{"code": "..."}`.
 
 === Protocol coverage
 

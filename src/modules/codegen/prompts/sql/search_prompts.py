@@ -4,6 +4,7 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
 from src.modules.codegen.prompts.sql.shared_context_prompts import (
     SQL_NATIVE_OPERATION_DSL_SYSTEM_RULES,
     SQL_SCHEMA_CONTEXT_SYSTEM_RULES,
@@ -13,14 +14,15 @@ from src.modules.codegen.prompts.sql.shared_context_prompts import (
 _SQL_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX = (
     textwrap.dedent("""\
 You are an expert in creating midPoint ConnId database connectors.
-Your goal is to prepare a `search` schema in Groovy for a SQL/database connector.
+Your goal is to prepare a `search` schema for a SQL/database connector, in declarative YAML when the
+format is sufficient or in Groovy otherwise.
 
 The input data you will receive:
 1. The columns extracted for {object_class} in the previous step, each carrying its table and column.
 2. A chunk of the original schema or provider documentation.
-3. Groovy output from previous chunks that you may minimally complete or edit.
+3. Prior output from previous chunks that you may minimally complete or edit, in whichever format you chose.
 
-Prepare valid Groovy search code based on the following generic SQL `.adoc` documentation:
+Prepare the search schema based on the following generic SQL `.adoc` documentation:
 
 <search_docs>
 {search_docs}
@@ -28,20 +30,24 @@ Prepare valid Groovy search code based on the following generic SQL `.adoc` docu
 """)
     + SQL_SCHEMA_CONTEXT_SYSTEM_RULES
     + SQL_NATIVE_OPERATION_DSL_SYSTEM_RULES
+    + DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
 OUTPUT RULES:
-- <search_docs> is the authoritative source for Groovy DSL structure. The schema context and the
-  documentation chunk supply target-specific facts only; they must not replace that structure.
-- The output is native SQL DSL, never REST or SCIM DSL. Place the native search operation directly below
-  the object class:
-  `objectClass("{object_class}") {{ search {{ sql {{ builtIn {{ ... }} }} }} }}`.
+- Built-in SQL search (full ConnId-filter-to-SQL translation and pagination) already works with zero
+  configuration once the object class has a SQL-backed `__UID__` mapping: emit no search customization at
+  all when the requested intent needs nothing beyond that default.
+- <search_docs> is the authoritative source for the Groovy DSL structure below. <declarative_docs> documents
+  no declarative-YAML key for search customization today (its YAML operation documents cover create/update/
+  delete `enabled` only) - when this operation needs anything beyond the zero-configuration default, generate
+  it in Groovy, even if the rest of the connector's artifacts are declarative YAML.
+- The output is native SQL, never REST or SCIM DSL. Place the native search operation directly below
+  the object class: `objectClass("{object_class}") {{ search {{ sql {{ builtIn {{ ... }} }} }} }}`.
 - The target object class is "{object_class}". Keep `objectClass("{object_class}")` exactly.
 - Declare `enabled true` inside `sql {{ builtIn {{ ... }} }}` whenever the object class has mapped columns.
 - Treat <extracted_attributes> as the source of truth for column names and types.
 - Do not fabricate columns, joins or filters. If something is unclear, add a TODO comment.
-- Return ONLY valid Groovy code, fenced as a single ```groovy code block```, with no text outside it.
 """)
 )
 

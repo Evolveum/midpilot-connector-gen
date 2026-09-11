@@ -1,0 +1,266 @@
+= Declarative YAML (SCIMREST framework)
+:page-nav-title: Declarative YAML
+
+// Bundled reference for LLM connector generation (REST and SCIM protocols share this framework).
+// Source: scimrest-framework/develop/declarative-yaml.adoc, generic-connectors.adoc,
+//         authentication.adoc, functionality-overview.adoc (as supplied to this application).
+// Imported: 2026-09-11.
+// This is the YAML syntax authority for REST and SCIM connector generation. The protocol-specific
+// operation references (rest/*.adoc, scim/*.adoc) remain the authority on behavior and on when
+// Groovy is required; where the two disagree on a preview/unfinished feature, the caveat in the
+// operation reference wins.
+
+WARNING: The declarative-YAML front end for this framework is itself flagged work-in-progress
+upstream. Treat every example below as current only to the extent the capability-boundary and
+preview sections at the end of this document say it is.
+
+== Connector manifest
+
+Exactly one of `connector.manifest.json`, `connector.manifest.yaml`, `connector.manifest.yml` is
+present on the classpath. It lists script resources; Groovy and YAML entries may be mixed freely,
+and an entry may be temporarily switched off with `disabled: true`:
+
+[source,yaml]
+----
+connector:
+  schema:
+    - script: /schema/user.schema.yaml
+    - script: /schema/customize.groovy
+  authorization:
+    - script: /auth/auth.yaml
+  operation:
+    - script: /handlers/user_ops.groovy
+      disabled: true
+----
+
+If a manifest entry references a `.groovy` resource that is not bundled, the loader falls back to a
+`.yaml`/`.yml` resource with the same base name, so a script can migrate to YAML incrementally
+without changing the manifest.
+
+== Schema documents
+
+A schema document declares one or more object classes under a top-level `objectClasses` map (a
+single file may describe several classes; files naming the same class merge):
+
+[source,yaml]
+----
+objectClasses:
+  User:
+    description: A user account
+    embedded: false
+    connId:
+      UID: id
+      NAME: userName
+    scim:
+      schemaUri: "urn:ietf:params:scim:schemas:core:2.0:User"
+      onlyExplicitlyListed: false
+      extensions:
+        enterprise: "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+    attributes:
+      id:
+        description: Immutable identifier
+        creatable: false
+        updateable: false
+      userName: {}
+      displayName:
+        required: true
+      department:
+        scim:
+          path: "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department"
+    references:
+      manager:
+        objectClass: User
+        role: OBJECT
+relationships:
+  UserOrganizationMembership:
+    subject:
+      class: User
+      attribute:
+        name: organization
+        resolver:
+          resolution: PER_OBJECT
+          search: member eq $value
+    object:
+      class: Organization
+      attribute:
+        name: member
+        resolver:
+          resolution: PER_OBJECT
+          search: organization eq $value
+----
+
+Per-attribute keys (all optional; `attributeName: {}` or a bare `attributeName:` declares the attribute with every
+default): `description`, `required`, `multiValued`, `creatable`, `updateable` (alias `updatable`),
+`readable`, `returnedByDefault`, `emulated`, `complexType`, `json: {name, type, openApiFormat}`,
+`connId: {name, type}` (including `__UID__`/`__NAME__`), `scim: {name, type, path}` (a `path`
+expression such as `name.givenName`, `emails[primary eq true].value`, or a full extension URI). A
+`scim.implementation: {deserialize: |, serialize: |}` block supplies custom value-mapping Groovy for
+one attribute when the standard mapping does not fit - the schema builder deliberately gets no
+runtime context, so such Groovy must stay a plain mapping hook, never a call into application state.
+
+`references.<name>` declares a reference/foreign-key attribute (`objectClass`, `role` subject/object,
+optional `subtype`). Root-level `relationships.<name>` declares an association with `subject`
+and `object` participants. Each participant has `class` and an `attribute` map with `name` and
+optional `resolver: {resolution: PER_OBJECT|BATCH, search: "<attr> eq $value"}` or a Groovy
+`resolver.implementation` hook. `relationships` is never nested under an object class.
+The SCIM `groups`/`members` relationship is mapped automatically.
+
+== Operation documents
+
+`search`, `create`, `update`, `delete` are configured per object class under the same
+`objectClasses` root, alongside or instead of a schema document for that class:
+
+[source,yaml]
+----
+objectClasses:
+  User:
+    create:
+      endpoints:
+        - method: POST
+          path: /users
+          request:
+            contentType: APPLICATION_JSON
+          supportedAttributes: [externalId, displayName, nickName]
+    update:
+      endpoints:
+        - method: PATCH
+          path: /users/{id}
+          request:
+            contentType: APPLICATION_JSON
+        - method: POST
+          path: /user/{name}/activate
+          request:
+            body: EMPTY
+          supportedAttributes:
+            - {name: active, value: true}
+    delete:
+      endpoints:
+        - {method: DELETE, path: "/users/{id}"}
+    search:
+      endpoints:
+        - path: /users/search
+          objectExtractor: |
+            response.body().get("users")
+          pagingSupport: |
+            request.queryParameter("size", paging.pageSize).queryParameter("offset", paging.pageOffset)
+          supportedFilters:
+            - spec: attribute("login").eq().anySingleValue()
+              request: |
+                request.queryParameter("login", value)
+      normalize:
+        toSingleValue: id
+        rewriteUid: |
+          // Preserve the original identifier.
+          return value
+      attributeResolvers:
+        - attribute: team
+          resolutionType: PER_OBJECT
+          implementation: |
+            // Add custom resolution here when needed.
+            return null
+----
+
+`enabled: false` (under `create`/`update`/`delete`) turns an operation off entirely - the smallest
+YAML for "this connector supports no writes for this class" needs no other key. An operation with
+nothing to override needs no key here at all: omitting `create`/`update`/`delete`/`search` leaves
+the framework default in effect.
+
+Endpoint-level keys, shared by `create`/`update`/`delete`/`search`: `method` and `path` (`{name}`
+path-parameter substitution). `method` is optional on every endpoint kind, including search - when
+omitted, the connector uses that operation's conventional HTTP verb (`POST` for create/update/delete,
+`GET` for search); set it explicitly whenever the target API's documented method differs from that
+default (for example a search endpoint that requires `POST` with a filter body). `create`/`update`/
+`delete` endpoints additionally support `request.contentType`, `request.body` (a Groovy expression,
+or `EMPTY` for no body; default serializes creatable/updateable attributes to JSON), and
+`supportedAttributes` - a plain list of attribute names, or entries narrowed further with a fixed
+`{name, value}` or a `{name, transition: {from, to}}` value-conditioned form. Search endpoints
+additionally support `responseFormat` (`JSON_ARRAY`/`JSON_OBJECT`), `objectExtractor`,
+`pagingSupport`, `singleResult`, `emptyFilterSupported`, and `supportedFilters[].spec` (a build-time
+Groovy filter-spec expression) plus `.request` (a Groovy request-mapping hook); `search.custom`
+describes a fully custom search (`implementation`, plus its own `supportedFilters`/
+`emptyFilterSupported`).
+
+Every key whose value is shown above as a bare Groovy expression or block (`objectExtractor`,
+`pagingSupport`, `supportedFilters[].spec`, `supportedFilters[].request`, `request.body`, `scim.implementation.*`,
+authentication `implementation`/hooks, `search.custom.implementation`,
+`search.attributeResolvers[].implementation`, `search.normalize.rewriteUid`, `search.normalize.rewriteName`,
+`search.normalize.restoreUid`, `search.normalize.restoreName`,
+`relationships.<name>.<subject|object>.attribute.resolver.implementation`) is a documented scripting hook: declarative YAML
+removes the manifest/closure boilerplate around it, not the need to write Groovy for that one piece
+of custom logic. `search.normalize.toSingleValue` is an attribute name, not a script. Everything else in this
+document is plain configuration, never Groovy.
+
+== Authentication
+
+A top-level `authentication` document (its own manifest entry, or embedded alongside operation
+documents) configures the same nine methods per protocol namespace (`rest`/`scim`) as the Groovy DSL:
+`basic`, `bearer`, `jwtBearer`, `apiKey`, `oauth2ClientCredentials`, `oauth2Password`,
+`oauth2JwtBearer`, `oauth2Saml`, plus an ordered `preference` list (also accepts `awsSignature` by
+name, though AWS Signature has no dedicated customization block of its own - only its `beforeSign`
+Groovy hook, documented in authentication.adoc). Standard, unmodified behavior of any of these needs
+no `authentication` document at all - it needs only the matching `rest*`/`scim*` configuration
+properties.
+
+[source,yaml]
+----
+authentication:
+  rest:
+    bearer:
+      implementation: |
+        request.header("Authorization", "token " + decrypt(configuration.restTokenValue))
+    oauth2ClientCredentials:
+      parseTokenResponse: |
+        oauth2Context["access_token"] = response.token
+    preference: [apiKey, bearer]
+----
+
+Each method's `implementation` block, and each OAuth2 flavor's `validateToken`/`buildTokenRequest`/
+`parseTokenResponse`/`applyToken`/`onResponse` hooks, are documented Groovy scripting hooks - see
+authentication.adoc for the full hook contract and the built-in default each hook overrides.
+
+== Configuration files independent of format
+
+`configurationOverride.properties` (`<property> = ignore` hides a configuration property from the
+connector form) and `Messages.properties` (display labels/help text) apply identically whether the
+connector's scripts are Groovy or YAML.
+
+== Capability boundary: Groovy is required for
+
+* Any schema attribute value mapping that needs runtime application state - `scim.implementation`
+  gets no runtime context, so such logic must stay a plain Groovy schema script outside this
+  declarative form.
+* `search.custom.implementation`, `search.attributeResolvers[].implementation`,
+  `search.normalize.rewriteUid`, `search.normalize.rewriteName`,
+`search.normalize.restoreUid`, `search.normalize.restoreName`, per-endpoint `objectExtractor`/`pagingSupport`/`supportedFilters[].request`,
+  every `request.body` beyond default serialization, and every authentication `implementation`/hook
+  body - declarative YAML hosts these as scripting hooks, it does not remove the need to write them.
+* AWS Signature's `beforeSign` hook - it has no YAML customization block, only Groovy.
+* Custom relationship resolution beyond the declarative `resolution`/`search` shorthand
+  (`resolver.implementation`).
+* Digest, Hawk and NTLM authentication have configuration properties but are not implemented by the
+  framework at all - neither Groovy nor YAML makes them functional today; treat a selection of one
+  of these three as unsupported.
+
+== Preview / not yet functional - do not generate as working behavior
+
+* SCIM configuration discovery (ConnId `DiscoverConfigurationOp`) is not implemented at all - only
+  SCIM protocol discovery (`/Schemas`, `/ResourceTypes`, `ServiceProviderConfig`) exists.
+* SCIM `PATCH` issuance is in development: the built-in SCIM update strategy performs a full PUT
+  after reading the original state, and native SCIM `create{scim{...}}`/`update{scim{put/patch}}`
+  customization (Groovy or its declarative equivalent) is documented as not-yet-functional in the
+  scim/*.adoc operation references - see those references before generating a native SCIM
+  create/update customization, and prefer the REST-style `endpoint(...)`/`endpoints[]` fallback
+  they describe instead.
+* A `supportedAttributes` entry using only `{name, transition: {from, to}}` (no plain name, no fixed
+  `value`) is accepted by the parser but not enforced yet - it matches no requests. Do not rely on a
+  transition-only entry as the sole gate for a state change.
+* SCIM complex-attribute values are read-only from the ConnId side; writing them is not supported yet.
+* SQL Framework incremental sync (LiveSync) is not available; do not configure midPoint incremental
+  sync for a SQL Framework connector.
+* This whole declarative-YAML front end is flagged work-in-progress upstream.
+
+== Validation
+
+Every YAML document here is exactly one document, with a mapping root, no duplicate keys, and only
+the documented keys and strict value types at every configuration level - an unrecognized key fails validation rather than
+being silently ignored. Object-class and attribute names are always arbitrary.
