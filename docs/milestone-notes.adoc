@@ -17,6 +17,106 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-11 Declarative YAML preferred over Groovy in connector generation
+
+Author: Alexander Brecko
+
+Description: Every codegen generation call (native schema, create, update, delete, search,
+authorization) now lets the LLM choose between declarative YAML and Groovy for the artifact it
+produces, instead of always producing Groovy. YAML is preferred whenever the bundled
+declarative-format reference documents it as sufficient; Groovy is used automatically when the
+requirement cannot be expressed declaratively, or embedded as a scripting hook inside an otherwise
+YAML artifact where the reference documents that hook. The separate relation artifact remains Groovy-only; the shared reference also documents
+root-level YAML relationships.
+
+Two new/replaced bundled reference documents back this decision:
+`src/modules/codegen/documentations/declarative-yaml.adoc` (new, shared by REST and SCIM) and
+`src/modules/codegen/documentations/sql/declarative-yaml.adoc` (replaced - the previous version
+described an outdated, no-longer-accurate YAML shape). A handful of actively incorrect excerpts in
+existing operation/authentication references were also corrected in this change: the SCIM
+create/update/index references now carry the upstream "in development" caveat for native SCIM
+create and PATCH instead of presenting them as working; `sql/delete.adoc` no longer claims
+child-row cleanup is delegated to `ON DELETE CASCADE` (the connector deletes them explicitly); and
+the authorization prompt and its two bundled references no longer instruct the model to emit a
+non-existent generic `oauth2 { }` block (replaced with the real grant-specific keywords
+`oauth2ClientCredentials`/`oauth2Password`/`oauth2JwtBearer`/`oauth2Saml`) - this last fix corrects
+already-broken OAuth2 authorization generation independent of the YAML/Groovy decision. A full,
+lower-severity documentation-accuracy backlog from the source review was intentionally left for a
+follow-up task; it does not affect correctness of what this change generates.
+
+A new shared, format-aware validator
+(`src/modules/codegen/utils/connector_code_validation.py`) replaces the previously Groovy-only
+validators used by generation (`core/base.py`, `core/generate_groovy.py`), the final LLM cleanup
+pass (now dispatches to a YAML-specific or Groovy-specific cleanup prompt), every manual-override
+endpoint (`GroovyCodePayload`), the object-class connector fix, and per-operation repair. It
+detects the artifact's format before validating and never changes what the LLM chose.
+
+The midPoint-facing contract is unchanged: every affected endpoint still returns
+`{"code": "..."}` (and the equivalent request body shape for overrides/fixes); no format field was
+added. `code` may now contain a declarative YAML document instead of Groovy for an object class
+whose requirements are fully covered by it. This is backward compatible in both directions:
+every existing stored Groovy artifact remains valid and is never rewritten by this change, and a
+repair or fix of an existing Groovy artifact keeps it in Groovy unless the reported problem itself
+requires switching representations.
+
+Separately, this change fixes a latent packaging gap: `.adoc` reference files under
+`src/modules/codegen/documentations/` were never included in a built wheel (`uv build --wheel`
+produced zero `.adoc` files before this change), because that directory tree has no `__init__.py`
+and plain `setuptools` package discovery silently skips it. `pyproject.toml` now discovers it as an
+implicit namespace package and bundles every `*.adoc` file. This only matters when the application
+is installed from a built wheel rather than run from the source checkout (the current Docker image
+`COPY`s the source tree directly, so this specific deployment path was not exposed to the gap) -
+but the two new declarative-yaml.adoc files added by this change would otherwise have joined the
+existing files that were silently missing from any wheel-based install.
+
+No database schema change and no development-database recreation are required. Previously
+accepted YAML with invalid nested types, unknown keys, invalid embedded Groovy, or
+`objectClasses.<name>.relationships` is now rejected on manual override, generation and fix.
+Supported midPoint response shapes and error contracts are unchanged.
+
+.Required Upgrade Steps
+. Review existing YAML artifacts before editing or repairing them. Move relationships to the
+root-level `relationships` map with `subject`/`object`, each containing `class` and
+`attribute: {name, resolver}`. Correct errors reported with their YAML path, or regenerate the
+relevant operation with `skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/create?skipCache=true`.
+. Existing valid YAML and Groovy artifacts require no regeneration. To opt into YAML-preferring
+new generation, regenerate the relevant operation with `skipCache=true`.
+. Validate the deployment with `uv run poe qa`. Then generate at least one object class per
+protocol (`rest`, `scim`, `sql`) for a target with no custom search/authentication requirements and
+confirm the resulting `code` is either valid declarative YAML or valid Groovy (both are accepted),
+and that the connector still deploys and functions in midPoint.
+. If building a distributable wheel of this application (`uv build --wheel` or equivalent), rebuild
+it after this change and confirm it contains
+`modules/codegen/documentations/declarative-yaml.adoc` and
+`modules/codegen/documentations/sql/declarative-yaml.adoc` (and every other bundled `.adoc` file) -
+for example `python -m zipfile -l dist/*.whl | grep '\.adoc$'`.
+
+.Rollback Procedure (If Upgrade Fails)
+. Revert the application commit and redeploy the previous snapshot. There is no database migration
+to reverse and no backup to restore.
+. Any object class regenerated as declarative YAML after this upgrade will fail the reverted
+snapshot's Groovy-only validation if it is later repaired, fixed, or manually overridden there.
+Regenerate that operation with `skipCache=true` under the reverted snapshot before repairing it (it
+will be produced as Groovy again), or restore this snapshot first.
+. Every artifact still stored as Groovy is unaffected by the rollback.
+
+.Notes & References
+* Related PR: Not assigned.
+* Docs: `docs/pipeline/codegen.adoc`;
+`src/modules/codegen/documentations/declarative-yaml.adoc`;
+`src/modules/codegen/documentations/sql/declarative-yaml.adoc`.
+* Affected endpoints: every `POST|GET|PUT` endpoint under
+`/api/v1/codegen/{sessionId}/classes/{objectClass}/*` and
+`/api/v1/codegen/{sessionId}/authorization`, plus
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix` - request/response shapes unchanged,
+only the accepted/returned `code` content may now be declarative YAML.
+* Affected session keys: any `{key}Output` whose `code` field holds a codegen artifact - unchanged
+in structure, potentially different in content on regeneration.
+* Affected configs: `pyproject.toml` build configuration (`[tool.setuptools.packages.find]`,
+`[tool.setuptools.package-data]`) - packaging only, no environment variable or runtime
+configuration change.
+
 === 2026-09-09 SQL columns separated from the ConnId projection
 
 Author: Alexander Brecko

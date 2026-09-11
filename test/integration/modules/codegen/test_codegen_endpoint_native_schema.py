@@ -195,3 +195,40 @@ async def test_generate_native_schema_missing_class():
 
     assert exc_info.value.status_code == 404
     assert "No attributes found for nonexistentclass" in exc_info.value.message
+
+
+@pytest.mark.parametrize(
+    "code, expected_status",
+    [
+        ("objectClasses: {User: {attributes: {name: null}}}", 200),
+        ("objectClasses: {User: {search: {endpoints: 42}}}", 422),
+        ('objectClasses: {User: {search: {custom: {implementation: "return ("}}}}', 422),
+    ],
+)
+def test_manual_yaml_override_http_contract(code, expected_status):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.core.db import get_db
+    from src.modules.codegen.routes.native_schema import router
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+    session_id = uuid4()
+    repo = MagicMock()
+    repo.session_exists = AsyncMock(return_value=True)
+    repo.update_session = AsyncMock()
+    with patch("src.modules.codegen.routes.native_schema.SessionRepository", return_value=repo):
+        response = TestClient(app).put(f"/{session_id}/classes/User/native-schema", json={"code": code})
+    assert response.status_code == expected_status
+    if expected_status == 422:
+        assert response.json()["detail"][0]["loc"] == ["body", "code"]
+        repo.update_session.assert_not_awaited()
+    else:
+        assert response.json() == {
+            "message": "Native schema for user overridden successfully",
+            "sessionId": str(session_id),
+            "objectClass": "user",
+        }
+        repo.update_session.assert_awaited_once_with(session_id, {"userNativeSchemaOutput": {"code": code}})

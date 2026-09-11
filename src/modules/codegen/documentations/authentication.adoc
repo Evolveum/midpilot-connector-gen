@@ -9,7 +9,7 @@ the scripting interface in full, and provides examples for common scenarios.
 
 == When is a Groovy script needed?
 
-The connector ships with built-in implementations for six authentication methods. These
+The connector ships with built-in implementations for nine authentication methods. These
 implementations follow the relevant RFC standards precisely. Configuring them requires only
 setting the appropriate properties — no script is needed.
 
@@ -37,13 +37,30 @@ setting the appropriate properties — no script is needed.
 |`OAuth2ClientCredentialsAuthorization`
 |`restOAuth2TokenUrl`, `restOAuth2ClientId`, `restOAuth2ClientSecret`
 
+|OAuth2 Password (RFC 6749 §4.3)
+|`OAuth2PasswordAuthorization`
+|`restOAuth2TokenUrl`, `restOAuth2ClientId`, `restOAuth2Username`, `restOAuth2Password`
+
 |OAuth2 JWT Bearer (RFC 7523)
 |`OAuth2JwtBearerAuthorization`
-|`restOAuth2TokenUrl`, `restOAuth2ClientId`, `restOAuth2PrivateKey`
+|`restOAuth2TokenUrl`, `restOAuth2ClientId`, `restOAuth2PrivateKey`, `restOAuth2Algorithm`, `restOAuth2KeyId`, `restOAuth2Issuer`, `restOAuth2Subject`
+
+|OAuth2 SAML Bearer (RFC 7522)
+|`OAuth2SamlAuthorization`
+|`restOAuth2TokenUrl`, `restOAuth2ClientId`, plus the shared OAuth2 property set (`restOAuth2Algorithm`, `restOAuth2Issuer`, etc.)
+
+|AWS Signature Version 4
+|`AwsSignatureAuthorization`
+|`restAwsAccessKey`, `restAwsSecretKey`, `restAwsSessionToken`, `restAwsRegion`, `restAwsService`
 |===
 
-The same six methods are built-in for SCIM as well (`ScimClientConfiguration` variants with
+The same nine methods are built-in for SCIM as well (`ScimClientConfiguration` variants with
 `scim`-prefixed property names).
+
+NOTE: Digest, Hawk, and NTLM also have configuration properties (`restDigest*`, `restHawk*`,
+`restNtlm*`), but they are **not implemented yet** — configuring them has no effect on requests.
+Never generate a script that claims to authenticate with one of these three; if the user selected
+one of them, treat it as unsupported instead of inventing an implementation.
 
 === When the API deviates from the standard
 
@@ -112,8 +129,15 @@ implemented by your connector configuration:
 |`jwtBearer { }` |`JwtBearerAuthorization`
 |`apiKey { }` |`ApiKeyAuthorization`
 |`oauth2ClientCredentials { }` |`OAuth2ClientCredentialsAuthorization`
+|`oauth2Password { }` |`OAuth2PasswordAuthorization`
 |`oauth2JwtBearer { }` |`OAuth2JwtBearerAuthorization`
+|`oauth2Saml { }` |`OAuth2SamlAuthorization`
+|`awsSignature { }` |`AwsSignatureAuthorization` (only a `beforeSign { }` hook, no `implementation { }` block)
 |===
+
+There is no generic `oauth2 { }` keyword. Each OAuth2 grant has its own independent shortcut block
+(`oauth2ClientCredentials`, `oauth2Password`, `oauth2JwtBearer`, `oauth2Saml`); use the one matching
+the selected method.
 
 === The `implementation { }` block
 
@@ -196,10 +220,11 @@ oauth2ClientCredentials { oauth2Context ->
     buildTokenRequest   { request -> /* ... */ }
     parseTokenResponse  { response -> /* ... */ }
     applyToken          { request -> /* ... */ }
+    onResponse          { response -> /* ... */ }
 }
 ----
 
-Any hook not provided falls back to the built-in behaviour. All four hooks share the same
+Any hook not provided falls back to the built-in behaviour. All five hooks share the same
 `oauth2Context` (`AuthContext`) map:
 
 [cols="1,2",options="header"]
@@ -235,6 +260,11 @@ the hook only needs to extract the token value itself.
 `applyToken { request -> }`::
 Called to attach the token to every outgoing API request. `request` is the `HttpRequestSpecification`.
 Default: adds `Authorization: Bearer <access_token>`.
+
+`onResponse { response -> }`::
+Fires on every response after an authorized request. Default: a 401 response clears the cached
+token so the next request re-fetches one. Providing this hook replaces that default entirely -
+use it to customize 401/re-auth handling instead of only the token-fetch path.
 
 === Using `implementation { }` inside an OAuth2 block
 
@@ -379,19 +409,23 @@ authentication {
         }
 
         // OAuth2 JWT Bearer (RFC 7523):
-        // signs a JWT assertion with RS256 and exchanges it for a token
-        // Note: the built-in always uses RS256. Use buildTokenRequest to change the algorithm.
+        // signs a JWT assertion and exchanges it for a token.
+        // The signing algorithm, key ID, issuer and subject are all configurable - none of them
+        // is hardcoded. iss/sub default to the client ID only when restOAuth2Issuer/Subject are unset.
         oauth2JwtBearer { oauth2Context ->
             buildTokenRequest { request ->
                 def now = java.time.Instant.now().epochSecond
-                def assertion = newJwt()
-                    .claim("iss", configuration.restOAuth2ClientId)
-                    .claim("sub", configuration.restOAuth2ClientId)
+                def jwt = newJwt()
+                    .claim("iss", configuration.restOAuth2Issuer ?: configuration.restOAuth2ClientId)
+                    .claim("sub", configuration.restOAuth2Subject ?: configuration.restOAuth2ClientId)
                     .claim("aud", configuration.restOAuth2TokenUrl)
                     .claim("iat", now)
                     .claim("exp", now + 300)
                     .claim("jti", java.util.UUID.randomUUID().toString())
-                    .sign("RS256", configuration.restOAuth2PrivateKey)
+                if (configuration.restOAuth2KeyId) {
+                    jwt = jwt.header("kid", configuration.restOAuth2KeyId)
+                }
+                def assertion = jwt.sign(configuration.restOAuth2Algorithm, configuration.restOAuth2PrivateKey)
                 request.formParam("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
                 request.formParam("client_id",  configuration.restOAuth2ClientId)
                 request.formParam("assertion",  assertion)

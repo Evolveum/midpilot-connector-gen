@@ -144,8 +144,10 @@ def test_docs_paths_are_deduplicated_across_object_classes():
 
     assert len(paths) == len(set(paths))
     assert "rest/50-create.adoc" in paths
-    # Reached through the native-schema slot: the ConnID mapping shares its script.
-    assert paths.index("rest/25-user-schema.adoc") + 1 == paths.index("connid-attributes.adoc")
+    # Reached through the native-schema slot: the declarative reference and the ConnID mapping
+    # share its script, in that order.
+    assert paths.index("rest/25-user-schema.adoc") + 1 == paths.index("declarative-yaml.adoc")
+    assert paths.index("declarative-yaml.adoc") + 1 == paths.index("connid-attributes.adoc")
 
 
 @pytest.mark.parametrize(
@@ -183,25 +185,31 @@ def test_connid_reference_is_still_resolvable_for_a_persisted_connid_artifact():
 
 
 @pytest.mark.parametrize(
-    ("protocol", "schema_docs_path"),
+    ("protocol", "schema_docs_path", "declarative_docs_path"),
     [
-        (ApiType.REST, "rest/25-user-schema.adoc"),
-        (ApiType.SCIM, "scim/25-schema-customization.adoc"),
-        (ApiType.SQL, "sql/schema-customization.adoc"),
+        (ApiType.REST, "rest/25-user-schema.adoc", "declarative-yaml.adoc"),
+        (ApiType.SCIM, "scim/25-schema-customization.adoc", "declarative-yaml.adoc"),
+        (ApiType.SQL, "sql/schema-customization.adoc", "sql/declarative-yaml.adoc"),
     ],
 )
-def test_fix_docs_include_both_references_for_a_native_schema_artifact(protocol, schema_docs_path):
+def test_fix_docs_include_all_three_references_for_a_native_schema_artifact(
+    protocol, schema_docs_path, declarative_docs_path
+):
     """
     Order is part of the contract.
 
     ``_load_dsl_documentation`` concatenates these in sequence and the fix prompt tells
     the model the protocol's own schema reference outranks the ConnID one on syntax.
     For REST this is also the regression guard: ``rest/25-user-schema.adoc`` carries no
-    ConnID content of its own, so dropping the second document would leave a merged
+    ConnID content of its own, so dropping the third document would leave a merged
     native-schema script with no reference for the mapping it contains.
     """
     slots = [
         ConnectorArtifactSlot(operation_key="userNativeSchema", kind=ArtifactKind.NATIVE_SCHEMA, object_class="user")
     ]
 
-    assert resolve_artifact_docs_paths(slots, protocol) == [schema_docs_path, "connid-attributes.adoc"]
+    assert resolve_artifact_docs_paths(slots, protocol) == [
+        schema_docs_path,
+        declarative_docs_path,
+        "connid-attributes.adoc",
+    ]

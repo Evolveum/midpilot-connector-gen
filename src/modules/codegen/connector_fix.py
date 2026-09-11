@@ -46,7 +46,7 @@ from src.modules.codegen.schema import (
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, resolve_artifact_docs_paths
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.relevant_chunks import collect_connector_relevant_chunks
-from src.modules.codegen.utils.groovy_validation import normalize_groovy_code, validate_groovy_code
+from src.modules.codegen.utils.connector_code_validation import normalize_connector_code, validate_connector_code
 from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
     build_sql_context_prompt_vars,
@@ -288,21 +288,22 @@ async def _validate_proposed_scripts(
             continue
         candidates.append((operation_key, script.code, script.reason))
 
-    # groovy-parser is CPU-bound; validating a full object class inline would stall the loop.
+    # YAML parsing and groovy-parser are both CPU-bound; validating a full object class inline
+    # would stall the loop.
     validation_errors = await asyncio.to_thread(
-        lambda: [validate_groovy_code(code) for _, code, _ in candidates],
+        lambda: [validate_connector_code(code) for _, code, _ in candidates],
     )
 
     accepted: Dict[str, AcceptedScript] = {}
     for (operation_key, code, reason), validation_error in zip(candidates, validation_errors):
         if validation_error is not None:
             rejections.append(
-                ConnectorFixRejection(operation_key=operation_key, reason=f"Invalid Groovy: {validation_error}")
+                ConnectorFixRejection(operation_key=operation_key, reason=f"Invalid code: {validation_error}")
             )
             unusable_count += 1
             continue
-        normalized = normalize_groovy_code(code)
-        if normalized == normalize_groovy_code(by_operation_key[operation_key].code):
+        normalized = normalize_connector_code(code)
+        if normalized == normalize_connector_code(by_operation_key[operation_key].code):
             rejections.append(
                 ConnectorFixRejection(
                     operation_key=operation_key, reason="Proposed script is identical to the stored one."

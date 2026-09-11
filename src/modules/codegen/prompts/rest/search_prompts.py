@@ -4,30 +4,42 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
+
 _SEARCH_SYSTEM_PROMPT_COMMON_PREFIX = (
     textwrap.dedent("""\
-You are an expert in creating connectors (connID and midPoint). Your goal is to prepare a `search` schema in Groovy.
+You are an expert in creating connectors (connID and midPoint). Your goal is to prepare a `search` schema,
+in declarative YAML when the format is sufficient or in Groovy otherwise.
 
 The input data you will receive:
 1. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger attributes from api/v1/digester/{{session_id}}/attributes.
 2. A fragment that was extracted in the previous step LLM from the OpenAPI/Swagger endpoints from api/v1/digester/{{session_id}}/endpoints.
 3. A chunk of the original document (e.g., API spec, model description, or related provider documentations) containing additional details that must be interpreted and incorporated—such as parameter semantics, data types, required vs optional fields, pagination, filtering rules, authentication hints, default values, example requests/responses, and error behavior.
-4. Since the documentation does not fit into one chunk, you will receive Groovy outputs from previous chunks so you can complete or edit them.
+4. Since the documentation does not fit into one chunk, you will receive prior output from previous chunks so you can complete or edit it, in whichever format you chose.
 5. Base API URL (if known) for path normalization is `{base_api_url}`.
 6. Optional user-provided preferred endpoints in JSON are `{preferred_endpoints_json}`.
 
-Prepare valid Groovy search schema code based on the following `.adoc` documentation:
+Prepare the search schema based on the following `.adoc` documentation:
 
 <search_docs>
 {search_docs}
 </search_docs>
 """)
+    + DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
 OUTPUT RULES:
-- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`).
-- The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly.
+- The DSL-specific rules below (`endpoint(...)`, `supportedFilter(...)`, `objectExtractor`, `pagingSupport`,
+  `singleResult`, `emptyFilterSupported`) describe Groovy syntax. When declarative YAML is sufficient, express
+  the same behavior with the matching `search.endpoints[]` keys documented in <declarative_docs>
+  (`path`, `method`, `supportedFilters[].spec`/`.request`, `objectExtractor`, `pagingSupport`, `singleResult`,
+  `emptyFilterSupported`) instead of a Groovy `search {{ }}` block.
+- `method` on a `search.endpoints[]` entry is optional and defaults to `GET`. Set it only when the
+  documented HTTP method for that endpoint is not `GET` (for example a search implemented as `POST`
+  with a filter body); omit it for ordinary `GET` search endpoints.
+- Maintain strict DSL scope: nested statements must stay inside their owning parent block and must not be moved to a higher level (for search, `supportedFilter`, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and request mutations stay inside `endpoint("...") {{ ... }}`). This applies only when you are generating Groovy.
+- The target object class is "{object_class}". In Groovy, keep `objectClass("{object_class}")` exactly; in declarative YAML, keep the `objectClasses.{object_class}` key exactly.
 - Treat <extracted_attributes> and <extracted_endpoints> as primary sources of truth.
 - If <preferred_endpoints> are provided, prioritize compatible endpoints from this list.
 - If <preferred_endpoints> conflict with docs or <extracted_endpoints>, prefer documented/extracted data and add a short TODO comment.
@@ -40,12 +52,12 @@ OUTPUT RULES:
 - Ignore parameters, examples, supported filter lists, and filter payload formats from unrelated endpoints in the same chunk.
 - Do not treat <extracted_attributes> as proof that an attribute can be used in a filter; extracted attributes only constrain names/types after the endpoint's own documentation proves filter support.
 - Never generate `sortingSupport {{ ... }}` blocks and never reference `sorting.*`.
-- Treat <result> as the current working Groovy code. Extend or minimally edit it, but you may replace conflicting parts.
+- Treat <result> as the current working connector artifact. Extend or minimally edit it, but you may replace conflicting parts.
 - Treat concrete code already present in <result> as accumulated evidence from earlier chunks. Preserve existing endpoint blocks, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and executable `supportedFilter(...) {{ ... }}` blocks unless the current chunk gives explicit same-endpoint evidence that they are wrong.
 - A current chunk that omits filters, pagination, extraction details, or an endpoint parameter list is not evidence that previously generated code is unsupported. If the current chunk adds no relevant or contradictory evidence, return <result> unchanged.
 - Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment.
-- Preserve outer objectClass and search blocks when present in <result>.
-- Return ONLY valid Groovy code, no explanation outside code.
+- Preserve the outer object-class and search structure when present in <result>.
+- No extra commentary outside the fenced code block.
 """)
 )
 

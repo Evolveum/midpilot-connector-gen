@@ -60,7 +60,7 @@ async def test_generate_groovy_returns_scaffold_when_validation_fails() -> None:
         patch("src.modules.codegen.core.generate_groovy.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.generate_groovy.append_job_error") as mock_append_job_error,
         patch(
-            "src.modules.codegen.core.generate_groovy.validate_groovy_code",
+            "src.modules.codegen.core.generate_groovy.validate_connector_code",
             return_value="syntax error",
         ),
     ):
@@ -109,7 +109,7 @@ async def test_base_generator_keeps_previous_result_when_chunk_validation_fails(
     with (
         patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.base.validate_groovy_code", side_effect=validation_results),
+        patch("src.modules.codegen.core.base.validate_connector_code", side_effect=validation_results),
     ):
         result = await generator._process_chunks(
             chunks=["chunk-1", "chunk-2"],
@@ -193,7 +193,7 @@ async def test_base_generator_runs_repair_pass_without_documentation_chunks() ->
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=chain),
         patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.base.validate_groovy_code", return_value=None),
+        patch("src.modules.codegen.core.base.validate_connector_code", return_value=None),
         patch.object(
             BaseGroovyGenerator, "_cleanup_generated_code", new_callable=AsyncMock, return_value=repaired_code
         ),
@@ -222,7 +222,7 @@ async def test_base_generator_cleanup_returns_cleaned_code_when_valid() -> None:
     with (
         patch("src.modules.codegen.core.base.get_default_llm"),
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=_DummyChain([cleaned_code])),
-        patch("src.modules.codegen.core.base.validate_groovy_code", return_value=None),
+        patch("src.modules.codegen.core.base.validate_connector_code", return_value=None),
     ):
         result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())
 
@@ -240,7 +240,7 @@ async def test_base_generator_cleanup_keeps_original_when_invalid() -> None:
             "src.modules.codegen.core.base.make_basic_chain",
             return_value=_DummyChain(['objectClass("User") { search { broken']),
         ),
-        patch("src.modules.codegen.core.base.validate_groovy_code", return_value="syntax error"),
+        patch("src.modules.codegen.core.base.validate_connector_code", return_value="syntax error"),
         patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
     ):
         result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())

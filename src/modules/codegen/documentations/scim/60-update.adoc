@@ -5,13 +5,18 @@
 
 This document is part of the SCIM 2.0 connector tutorial. See xref:index#[Index] for other topics.
 
-SCIM 2.0 update operations use either PUT (full replacement) or PATCH (partial update)HTTP methods.
+SCIM 2.0 update operations use either PUT (full replacement) or PATCH (partial update) HTTP methods.
 
-To support create operation you do not need to specify anything for well-behaved SCIM 2.0 servers.
+IMPORTANT: The built-in SCIM update handler issues a *full PUT* only. SCIM `PATCH` is **not
+implemented yet** - no PATCH request is ever sent by the built-in handler, and the `put { }` /
+`patch { }` customization blocks documented below are *not functional yet* (in development). Do
+not rely on them, and do not generate a `patch { }` block as if it worked. For a working custom
+update today, generate a REST-style update endpoint instead: `update { endpoint(PUT, "/Users/{id}")
+{ ... } }` or `update { endpoint(PATCH, "/Users/{id}") { ... } }` (see the REST update reference),
+or the declarative `update.endpoints[]` YAML equivalent from <declarative_docs>.
 
-For the servers which are not well-behaved or have implementation limitations, you may need to customize PUT / PATCH operation or disable unsupported ones.
-
-
+The built-in full-PUT update itself (no customization) does work with no script needed for a
+well-behaved SCIM 2.0 server.
 
 == PUT vs PATCH
 
@@ -46,6 +51,7 @@ Partial update - sends only changed attributes. SCIM PATCH uses operation-based 
 
 [source,groovy]
 ----
+// Preview only - not functional yet (see the IMPORTANT note above)
 objectClass("User") {
     update {
         scim {
@@ -104,6 +110,7 @@ Limitations:
 
 [source,groovy]
 ----
+// Preview only - not functional yet (see the IMPORTANT note above)
 objectClass("User") {
     update {
         scim {

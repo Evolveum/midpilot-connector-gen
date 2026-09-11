@@ -30,6 +30,7 @@ def _sql_search_generator(*, context_only_for_conndev: bool) -> SearchGenerator:
         object_class="m_user",
         intent=SearchIntent.ALL,
         docs_text="Search docs",
+        declarative_docs_text="Search docs (declarative)",
         system_prompt="System {total}",
         user_prompt="{chunk}",
         protocol_label=ApiType.SQL.value,

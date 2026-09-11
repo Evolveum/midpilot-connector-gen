@@ -16,7 +16,7 @@ from src.core.errors import AppError
 
 
 class ConnectorScriptsNotFoundError(AppError):
-    """Raised when an object-class connector fix finds no generated Groovy."""
+    """Raised when an object-class connector fix finds no generated connector code."""
 
     status_code = 404
     code = "connector_scripts_not_found"
@@ -42,13 +42,13 @@ class UnknownConnectorOperationError(AppError):
 
 
 class InvalidConnectorScriptOverrideError(AppError):
-    """Raised when a caller-supplied fix override is not valid Groovy."""
+    """Raised when a caller-supplied fix override is not valid connector code (declarative YAML or Groovy)."""
 
     status_code = 422
     code = "invalid_connector_script_override"
 
     def __init__(self, operation_key: str, reason: str):
-        super().__init__(f"Script override for operation '{operation_key}' is invalid Groovy: {reason}")
+        super().__init__(f"Script override for operation '{operation_key}' is invalid: {reason}")
 
 
 class ConnectorFixContextTooLargeError(AppError):

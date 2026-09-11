@@ -4,6 +4,7 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
 from src.modules.codegen.prompts.scim.shared_context_prompts import (
     SCIM_CONTRACT_CONTEXT_SYSTEM_RULES,
     SCIM_CONTRACT_CONTEXT_USER_SECTION,
@@ -13,15 +14,16 @@ from src.modules.codegen.prompts.scim.shared_context_prompts import (
 _SCIM_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX = (
     textwrap.dedent("""\
 You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs.
-Your goal is to prepare a `search` schema in Groovy for SCIM resources.
+Your goal is to prepare a `search` schema for SCIM resources, in declarative YAML when the format is
+sufficient or in Groovy otherwise.
 
 The input data you will receive:
 1. A fragment that was extracted in the previous step LLM from SCIM attributes for {object_class}.
 2. A chunk of the original provider documentation containing target-specific capabilities and constraints.
-3. Groovy output from previous chunks that you may minimally complete or edit.
+3. Prior output from previous chunks that you may minimally complete or edit, in whichever format you chose.
 4. Separate SCIM schema, resource, connector-object-class, and service-provider capability views.
 
-Prepare valid Groovy search schema code based on the following generic SCIM `.adoc` documentation:
+Prepare the search schema based on the following generic SCIM `.adoc` documentation:
 
 <search_docs>
 {search_docs}
@@ -29,34 +31,43 @@ Prepare valid Groovy search schema code based on the following generic SCIM `.ad
 """)
     + SCIM_CONTRACT_CONTEXT_SYSTEM_RULES
     + SCIM_NATIVE_OPERATION_DSL_SYSTEM_RULES
+    + DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
     + "{repair_system_suffix}"
     + textwrap.dedent("""\
 
 OUTPUT RULES:
-- <search_docs> is the authoritative source for Groovy DSL structure. The provider chunk and extracted SCIM contracts
-  supply target-specific facts only; they must not replace that structure with REST DSL examples.
-- The output is native SCIM DSL, never REST DSL. Follow <search_docs> and place the native search operation directly
-  below the object class:
-  `objectClass("{object_class}") {{ search {{ scim {{ limitations {{ ... }} }} }} }}`.
-- Never generate `endpoint(...)` anywhere in SCIM output. Resource endpoints and URLs in the supplied context are
-  framework-owned metadata and must not be rendered into Groovy.
-- Keep `emptyFilterSupported`, `anyFilterSupported`, and declarative `supportedFilter attribute(...)...` statements
-  inside `scim {{ limitations {{ ... }} }}` exactly as defined by <search_docs>.
+- Built-in SCIM search (UID retrieval, list-all, and filter translation for the standard SCIM operators) already
+  works out of the box: emit no search customization at all unless <chunk> or <declarative_docs> shows a
+  documented limitation narrowing that behavior, or an intent profile below requires more.
+- <search_docs> is the authoritative source for Groovy DSL structure, and <declarative_docs> for its declarative
+  YAML equivalent (documented under `search:` in the operation document). The provider chunk and extracted SCIM
+  contracts supply target-specific facts only; they must not replace that structure with REST DSL examples.
+- The output is native SCIM, never REST DSL. In Groovy, follow <search_docs> and place the native search
+  operation directly below the object class:
+  `objectClass("{object_class}") {{ search {{ scim {{ limitations {{ ... }} }} }} }}`. In declarative YAML, use
+  the equivalent `search:` keys from <declarative_docs>.
+- Never generate `endpoint(...)` anywhere in native SCIM output. Resource endpoints and URLs in the supplied
+  context are framework-owned metadata and must not be rendered into it.
+- Keep `emptyFilterSupported`, `anyFilterSupported`, and declarative `supportedFilter attribute(...)...`
+  statements inside `scim {{ limitations {{ ... }} }}` (Groovy) exactly as defined by <search_docs>; declarative
+  YAML has no documented equivalent key for this SCIM-specific filter narrowing today, so keep it in Groovy even
+  when the rest of the artifact is YAML.
 - Never replace the `scim {{ limitations {{ ... }} }}` block with a REST implementation. Do not generate
   `request {{ ... }}`, `request.queryParameter(...)`,
-  `objectExtractor`, `pagingSupport`, or `singleResult()` for native SCIM search. The SCIM framework handles filter
-  serialization, response extraction, pagination, and single-object semantics.
-- The target object class is "{object_class}". You must keep objectClass("{object_class}") exactly.
+  `objectExtractor`, `pagingSupport`, or `singleResult()` for native SCIM search unless <declarative_docs>/
+  <search_docs> shows a REST-style search fallback is the documented path for this case. The SCIM framework
+  handles filter serialization, response extraction, pagination, and single-object semantics.
+- The target object class is "{object_class}". In Groovy, keep `objectClass("{object_class}")` exactly; in
+  declarative YAML, keep the `objectClasses.{object_class}` key exactly.
 - Treat <extracted_attributes> as the primary source of truth for target attribute names and types.
 - Never generate `sortingSupport {{ ... }}` blocks and never reference `sorting.*`.
 - Express filtering support declaratively with the SCIM `supportedFilter attribute(...)...` DSL when
   `filter.supported` is true in <scim_service_provider_config>. Never generate it when that flag is explicitly false.
   When <scim_service_provider_config> is empty or omits the filter capability, generate filtering only when <chunk>
   explicitly proves it.
-- Treat <result> as current working code and minimally edit or extend it.
+- Treat <result> as current working code, in whichever format it is already in, and minimally edit or extend it.
 - Do not fabricate parameters, attributes, or fields. If unclear, add a TODO comment.
-- Preserve existing correct `objectClass`, `search`, `scim`, and `limitations` blocks in <result> across chunks.
-- Return ONLY valid Groovy code, with no explanation outside the code.
+- Preserve existing correct blocks in <result> across chunks.
 """)
 )
 

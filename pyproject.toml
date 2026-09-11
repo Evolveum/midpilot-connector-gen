@@ -146,3 +146,20 @@ testpaths = ["test"]
 [build-system]
 requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# Bundled reference documentation (src/modules/codegen/documentations/**/*.adoc) is read at
+# runtime via importlib.resources and must ship inside the wheel, not just the source checkout.
+# Without this, packaging silently drops every .adoc file: `uv build --wheel` produced a wheel
+# with zero .adoc resources before this was added.
+#
+# `documentations` and its `rest`/`scim`/`sql` subfolders carry no `__init__.py`, so plain
+# `find_packages()` never discovers them as packages and `package-data` then has nothing to
+# attach the .adoc files to. `namespaces = true` makes setuptools discover them as implicit
+# namespace packages (the same mechanism `importlib.resources.files()` already relies on at
+# runtime), so their data files are picked up too.
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"*" = ["*.adoc"]

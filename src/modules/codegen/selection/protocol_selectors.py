@@ -62,46 +62,96 @@ from src.shared.enums import ApiType
 # Protocol-neutral, hence the documentations root rather than ``rest/``.
 CONNID_ATTRIBUTES_DOCS_PATH = "connid-attributes.adoc"
 
+# The declarative-YAML reference every operation carries alongside its own docs_path, so the
+# LLM can choose YAML over Groovy whenever the declarative format documents enough coverage.
+# REST and SCIM share one framework (SCIMREST) and therefore one manifest/schema/operation YAML
+# shape, bundled once at the documentations root next to CONNID_ATTRIBUTES_DOCS_PATH. SQL is a
+# separate framework with its own YAML shape.
+SCIM_REST_DECLARATIVE_DOCS_PATH = "declarative-yaml.adoc"
+SQL_DECLARATIVE_DOCS_PATH = "sql/declarative-yaml.adoc"
+
 
 PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
     "create": {
-        ApiType.REST: OperationAssets(get_create_system_prompt, get_create_user_prompt, "rest/50-create.adoc"),
-        ApiType.SCIM: OperationAssets(
-            get_scim_create_system_prompt, get_scim_create_user_prompt, "scim/50-create.adoc"
+        ApiType.REST: OperationAssets(
+            get_create_system_prompt,
+            get_create_user_prompt,
+            "rest/50-create.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
-        ApiType.SQL: OperationAssets(get_sql_create_system_prompt, get_sql_create_user_prompt, "sql/create.adoc"),
+        ApiType.SCIM: OperationAssets(
+            get_scim_create_system_prompt,
+            get_scim_create_user_prompt,
+            "scim/50-create.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
+        ),
+        ApiType.SQL: OperationAssets(
+            get_sql_create_system_prompt,
+            get_sql_create_user_prompt,
+            "sql/create.adoc",
+            declarative_docs_path=SQL_DECLARATIVE_DOCS_PATH,
+        ),
     },
     "update": {
-        ApiType.REST: OperationAssets(get_update_system_prompt, get_update_user_prompt, "rest/60-update.adoc"),
-        ApiType.SCIM: OperationAssets(
-            get_scim_update_system_prompt, get_scim_update_user_prompt, "scim/60-update.adoc"
+        ApiType.REST: OperationAssets(
+            get_update_system_prompt,
+            get_update_user_prompt,
+            "rest/60-update.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
-        ApiType.SQL: OperationAssets(get_sql_update_system_prompt, get_sql_update_user_prompt, "sql/update.adoc"),
+        ApiType.SCIM: OperationAssets(
+            get_scim_update_system_prompt,
+            get_scim_update_user_prompt,
+            "scim/60-update.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
+        ),
+        ApiType.SQL: OperationAssets(
+            get_sql_update_system_prompt,
+            get_sql_update_user_prompt,
+            "sql/update.adoc",
+            declarative_docs_path=SQL_DECLARATIVE_DOCS_PATH,
+        ),
     },
     "delete": {
-        ApiType.REST: OperationAssets(get_delete_system_prompt, get_delete_user_prompt, "rest/70-delete.adoc"),
-        ApiType.SCIM: OperationAssets(
-            get_scim_delete_system_prompt, get_scim_delete_user_prompt, "scim/70-delete.adoc"
+        ApiType.REST: OperationAssets(
+            get_delete_system_prompt,
+            get_delete_user_prompt,
+            "rest/70-delete.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
-        ApiType.SQL: OperationAssets(get_sql_delete_system_prompt, get_sql_delete_user_prompt, "sql/delete.adoc"),
+        ApiType.SCIM: OperationAssets(
+            get_scim_delete_system_prompt,
+            get_scim_delete_user_prompt,
+            "scim/70-delete.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
+        ),
+        ApiType.SQL: OperationAssets(
+            get_sql_delete_system_prompt,
+            get_sql_delete_user_prompt,
+            "sql/delete.adoc",
+            declarative_docs_path=SQL_DECLARATIVE_DOCS_PATH,
+        ),
     },
     "native_schema": {
         ApiType.REST: OperationAssets(
             get_native_schema_system_prompt,
             get_native_schema_user_prompt,
             "rest/25-user-schema.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
             connid_docs_path=CONNID_ATTRIBUTES_DOCS_PATH,
         ),
         ApiType.SCIM: OperationAssets(
             get_scim_native_schema_system_prompt,
             get_scim_native_schema_user_prompt,
             "scim/25-schema-customization.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
             connid_docs_path=CONNID_ATTRIBUTES_DOCS_PATH,
         ),
         ApiType.SQL: OperationAssets(
             get_sql_native_schema_system_prompt,
             get_sql_native_schema_user_prompt,
             "sql/schema-customization.adoc",
+            declarative_docs_path=SQL_DECLARATIVE_DOCS_PATH,
             connid_docs_path=CONNID_ATTRIBUTES_DOCS_PATH,
         ),
     },
@@ -111,11 +161,13 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
             get_authorization_system_prompt,
             get_authorization_user_prompt,
             "rest/xx-authorization.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
         ApiType.SCIM: OperationAssets(
             get_authorization_system_prompt,
             get_authorization_user_prompt,
             "scim/xx-authorization.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
     },
 }
@@ -126,16 +178,19 @@ SEARCH_PROMPT_MAP: Mapping[ApiType, Mapping[SearchIntent, OperationAssets]] = {
             get_search_all_system_prompt,
             get_search_user_prompt,
             "rest/40-search-users.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
         SearchIntent.FILTER: OperationAssets(
             get_search_filter_system_prompt,
             get_search_user_prompt,
             "rest/40-search-users.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
         SearchIntent.ID: OperationAssets(
             get_search_id_system_prompt,
             get_search_user_prompt,
             "rest/40-search-users.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
     },
     ApiType.SCIM: {
@@ -143,16 +198,19 @@ SEARCH_PROMPT_MAP: Mapping[ApiType, Mapping[SearchIntent, OperationAssets]] = {
             get_scim_search_all_system_prompt,
             get_scim_search_user_prompt,
             "scim/40-search.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
         SearchIntent.FILTER: OperationAssets(
             get_scim_search_filter_system_prompt,
             get_scim_search_user_prompt,
             "scim/40-search.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
         SearchIntent.ID: OperationAssets(
             get_scim_search_id_system_prompt,
             get_scim_search_user_prompt,
             "scim/40-search.adoc",
+            declarative_docs_path=SCIM_REST_DECLARATIVE_DOCS_PATH,
         ),
     },
     ApiType.SQL: {
@@ -160,16 +218,19 @@ SEARCH_PROMPT_MAP: Mapping[ApiType, Mapping[SearchIntent, OperationAssets]] = {
             get_sql_search_all_system_prompt,
             get_sql_search_user_prompt,
             "sql/search.adoc",
+            declarative_docs_path=SQL_DECLARATIVE_DOCS_PATH,
         ),
         SearchIntent.FILTER: OperationAssets(
             get_sql_search_filter_system_prompt,
             get_sql_search_user_prompt,
             "sql/search.adoc",
+            declarative_docs_path=SQL_DECLARATIVE_DOCS_PATH,
         ),
         SearchIntent.ID: OperationAssets(
             get_sql_search_id_system_prompt,
             get_sql_search_user_prompt,
             "sql/search.adoc",
+            declarative_docs_path=SQL_DECLARATIVE_DOCS_PATH,
         ),
     },
 }
@@ -198,10 +259,11 @@ def resolve_operation_docs_paths(
     """
     Resolve the bundled DSL references for one generated artifact, primary first.
 
-    A native-schema artifact resolves to two documents - the protocol's schema DSL
-    followed by the ConnID mapping reference - because its script carries both. The
-    order is part of the contract: the fix prompt tells the model that the first
-    document is the syntax authority.
+    A native-schema artifact resolves to three documents - the protocol's operation DSL,
+    the declarative-YAML reference, then the ConnID mapping reference - because its script
+    carries both the attribute definitions and the ConnID mapping. The order is part of the
+    contract: the fix prompt tells the model that the first document is the syntax authority
+    and the declarative reference is what makes YAML a valid alternative to it.
 
     Returns an empty tuple when the combination has no bundled reference rather
     than raising, so an object-class caller can carry on with the documents it has.
@@ -226,8 +288,8 @@ def resolve_operation_docs_paths(
         return ()
 
     if assets.connid_docs_path is None:
-        return (assets.docs_path,)
-    return (assets.docs_path, assets.connid_docs_path)
+        return (assets.docs_path, assets.declarative_docs_path)
+    return (assets.docs_path, assets.declarative_docs_path, assets.connid_docs_path)
 
 
 _ARTIFACT_OPERATION_NAMES: Mapping[ArtifactKind, str] = {
