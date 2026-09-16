@@ -32,7 +32,7 @@ def test_get_operation_assets_selects_complete_scim_delete_assets():
     assets = get_operation_assets("delete", ApiType.SCIM)
 
     assert assets.system_prompt == get_scim_delete_system_prompt
-    assert assets.docs_path == "scim/70-delete.adoc"
+    assert assets.docs_path == "scim/delete.adoc"
 
 
 def test_native_schema_assets_keep_rest_and_scim_prompts_separate():

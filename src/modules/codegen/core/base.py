@@ -30,6 +30,7 @@ from src.jobs import (
     update_job_progress,
 )
 from src.jobs.errors import JobClaimLostError
+from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
     get_groovy_cleanup_user_prompt,
@@ -39,7 +40,6 @@ from src.modules.codegen.prompts.cleanup_prompts import (
 from src.modules.codegen.repair import build_repair_prompt_vars, get_repair_initial_result
 from src.modules.codegen.schema import CodegenRepairContext, EndpointsPayload, OperationConfig
 from src.modules.codegen.utils.connector_code_validation import (
-    ConnectorCodeFormat,
     detect_connector_code_format,
     validate_connector_code,
 )
@@ -286,13 +286,13 @@ class BaseGroovyGenerator(ABC):
 
         Format-aware: a YAML artifact is cleaned with YAML-specific rules (preserving block-scalar
         indentation and meaningful empty mappings) rather than the Groovy cleanup prompt, and the
-        result is re-validated in the format it was already detected as - cleanup never changes an
-        artifact's format. Falls back to the original code if cleanup fails or produces invalid output.
+        prompt instructs the model to retain that format. The result passes the shared format-aware
+        validator. Falls back to the original code if cleanup fails or produces invalid output.
         """
         if not code.strip():
             return code
 
-        is_yaml = detect_connector_code_format(code) is ConnectorCodeFormat.YAML
+        is_yaml = await asyncio.to_thread(detect_connector_code_format, code) is ConnectorCodeFormat.YAML
         system_prompt = get_yaml_cleanup_system_prompt if is_yaml else get_groovy_cleanup_system_prompt
         user_prompt = get_yaml_cleanup_user_prompt if is_yaml else get_groovy_cleanup_user_prompt
         prompt_var_name = "yaml_code" if is_yaml else "groovy_code"

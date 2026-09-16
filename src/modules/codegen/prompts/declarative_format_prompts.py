@@ -17,6 +17,21 @@ import textwrap
 
 DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES = textwrap.dedent("""\
 
+DOCUMENTATION AND EVIDENCE:
+- The bundled domain-expert .adoc reference is authoritative for framework syntax, defaults and
+  capability limits. Application documentation and extracted contracts define target-specific
+  names, methods, paths, payloads and requirements; they do not define connector DSL syntax.
+- Examples illustrate syntax. Do not copy their object names, HTTP methods, response envelopes or
+  attribute types unless the target evidence agrees. Explicit capability restrictions in the
+  reference apply to the particular handler, not to every possible implementation of an operation.
+- Generate only the requested operation and object class (or selected relationship/authentication
+  namespace). A search artifact must not redeclare the native schema.
+- Preserve working behavior across chunks. Missing details in a later chunk are not contradictory
+  evidence. If it adds nothing relevant, return the last accepted artifact unchanged.
+- Use only documented keys. Attribute wire types belong in json.type/scim.type/sql.type, and ConnId
+  types in connId.type; reference attributes belong in references, not attributes.<name>.type.
+- Code inside a YAML scripting hook is Groovy: use // comments, not YAML # comments inside its body.
+
 DECLARATIVE YAML VS GROOVY:
 - <declarative_docs> is the authority for what the declarative YAML format can express for this
   connector framework, including its documented scripting hooks (YAML fields whose value is a
@@ -39,8 +54,13 @@ DECLARATIVE YAML VS GROOVY:
   an implementation.
 - An empty <result> means new generation: choose the format using the documentation above,
   preferring YAML. A nonempty <result> is the last accepted artifact: extend or minimally edit
-  it while preserving its existing YAML or Groovy format across chunks. For repairs, follow
-  the repair instructions and preserve the supplied current script's format.
+  it while preserving its existing format unless new requirements cannot be expressed in that
+  format using documented, functional features. If a later chunk requires Groovy-only behavior
+  (e.g. a custom SQL WHERE predicate unavailable in YAML), convert the complete accumulated
+  artifact from YAML to Groovy, preserving all existing behavior and incorporating the new
+  requirement. Never omit a requirement merely to retain YAML, or output only the converted
+  fragment. For repairs, follow the repair instructions, including their rules for when a
+  format switch is necessary.
 - Output exactly one of the two formats, and nothing else:
   - Declarative YAML: return ONLY the YAML document, fenced as a single ```yaml code block```.
   - Groovy: return ONLY the Groovy code, fenced as a single ```groovy code block```.

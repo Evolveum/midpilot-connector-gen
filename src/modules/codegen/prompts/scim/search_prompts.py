@@ -1,151 +1,54 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
-#
 # Licensed under the EUPL-1.2 or later.
 
-import textwrap
-
-from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
+from src.modules.codegen.prompts.operation_prompts import build_operation_system_prompt, build_operation_user_prompt
 from src.modules.codegen.prompts.scim.shared_context_prompts import (
     SCIM_CONTRACT_CONTEXT_SYSTEM_RULES,
     SCIM_CONTRACT_CONTEXT_USER_SECTION,
     SCIM_NATIVE_OPERATION_DSL_SYSTEM_RULES,
 )
 
-_SCIM_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX = (
-    textwrap.dedent("""\
-You are an expert in creating connectors (connID and midPoint) for SCIM 2.0 APIs.
-Your goal is to prepare a `search` schema for SCIM resources, in declarative YAML when the format is
-sufficient or in Groovy otherwise.
-
-The input data you will receive:
-1. A fragment that was extracted in the previous step LLM from SCIM attributes for {object_class}.
-2. A chunk of the original provider documentation containing target-specific capabilities and constraints.
-3. Prior output from previous chunks that you may minimally complete or edit, in whichever format you chose.
-4. Separate SCIM schema, resource, connector-object-class, and service-provider capability views.
-
-Prepare the search schema based on the following generic SCIM `.adoc` documentation:
-
-<search_docs>
-{search_docs}
-</search_docs>
-""")
-    + SCIM_CONTRACT_CONTEXT_SYSTEM_RULES
-    + SCIM_NATIVE_OPERATION_DSL_SYSTEM_RULES
-    + DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
-    + "{repair_system_suffix}"
-    + textwrap.dedent("""\
-
-OUTPUT RULES:
-- Built-in SCIM search (UID retrieval, list-all, and filter translation for the standard SCIM operators) already
-  works out of the box: emit no search customization at all unless <chunk> or <declarative_docs> shows a
-  documented limitation narrowing that behavior, or an intent profile below requires more.
-- <search_docs> is the authoritative source for Groovy DSL structure, and <declarative_docs> for its declarative
-  YAML equivalent (documented under `search:` in the operation document). The provider chunk and extracted SCIM
-  contracts supply target-specific facts only; they must not replace that structure with REST DSL examples.
-- The output is native SCIM, never REST DSL. In Groovy, follow <search_docs> and place the native search
-  operation directly below the object class:
-  `objectClass("{object_class}") {{ search {{ scim {{ limitations {{ ... }} }} }} }}`. In declarative YAML, use
-  the equivalent `search:` keys from <declarative_docs>.
-- Never generate `endpoint(...)` anywhere in native SCIM output. Resource endpoints and URLs in the supplied
-  context are framework-owned metadata and must not be rendered into it.
-- Keep `emptyFilterSupported`, `anyFilterSupported`, and declarative `supportedFilter attribute(...)...`
-  statements inside `scim {{ limitations {{ ... }} }}` (Groovy) exactly as defined by <search_docs>; declarative
-  YAML has no documented equivalent key for this SCIM-specific filter narrowing today, so keep it in Groovy even
-  when the rest of the artifact is YAML.
-- Never replace the `scim {{ limitations {{ ... }} }}` block with a REST implementation. Do not generate
-  `request {{ ... }}`, `request.queryParameter(...)`,
-  `objectExtractor`, `pagingSupport`, or `singleResult()` for native SCIM search unless <declarative_docs>/
-  <search_docs> shows a REST-style search fallback is the documented path for this case. The SCIM framework
-  handles filter serialization, response extraction, pagination, and single-object semantics.
-- The target object class is "{object_class}". In Groovy, keep `objectClass("{object_class}")` exactly; in
-  declarative YAML, keep the `objectClasses.{object_class}` key exactly.
-- Treat <extracted_attributes> as the primary source of truth for target attribute names and types.
-- Never generate `sortingSupport {{ ... }}` blocks and never reference `sorting.*`.
-- Express filtering support declaratively with the SCIM `supportedFilter attribute(...)...` DSL when
-  `filter.supported` is true in <scim_service_provider_config>. Never generate it when that flag is explicitly false.
-  When <scim_service_provider_config> is empty or omits the filter capability, generate filtering only when <chunk>
-  explicitly proves it.
-- Treat <result> as current working code, in whichever format it is already in, and minimally edit or extend it.
-- Do not fabricate parameters, attributes, or fields. If unclear, add a TODO comment.
-- Preserve existing correct blocks in <result> across chunks.
-""")
+_COMMON = build_operation_system_prompt(
+    "search",
+    context_rules=SCIM_CONTRACT_CONTEXT_SYSTEM_RULES + SCIM_NATIVE_OPERATION_DSL_SYSTEM_RULES,
+    rules=r"""
+- Built-in SCIM search provides UID retrieval, list-all and translatable filters. Emit {{}} when
+  the requested behavior needs no customization; a search intent alone is not a server limitation.
+- Respect the supplied ServiceProviderConfig and provider evidence. Do not infer server filtering
+  support from response attributes, or declare a restriction merely because filter.supported is true.
+- When actual server limitations must narrow accepted filters, use the documented Groovy
+  search {{ scim {{ limitations {{ ... }} }} }} block. It has no YAML equivalent: convert the
+  complete artifact to Groovy; never embed a standalone scim block in a YAML artifact.
+- Declaring filter specifications changes acceptance behavior. Preserve list-all explicitly where
+  needed by documented requirements; do not add restrictions just to implement the selected intent.
+- The framework owns ordinary routing, SCIM filter translation, extraction and pagination.
+  For a required deviation, use the documented custom search implementation.
+- Never generate sortingSupport or reference sorting.*; the reference does not document these hooks.
+""",
 )
-
-_SCIM_SEARCH_SYSTEM_PROMPT_ALL_RULES = textwrap.dedent("""\
-
-INTENT PROFILE: `all`
-- Generate ONLY empty-filter / get-all search support.
-- Declare `emptyFilterSupported true` under `scim {{ limitations {{ ... }} }}` when supported.
-- Rely on the native SCIM framework for resource routing and pagination behavior; do not encode them as REST requests.
-- Do not add broad supported filters unless <chunk> requires them for list behavior.
-""")
-
-_SCIM_SEARCH_SYSTEM_PROMPT_FILTER_RULES = textwrap.dedent("""\
-
-INTENT PROFILE: `filter`
-- Generate ONLY documented SCIM filtering capabilities. An explicit `filter.supported: false` disables this intent;
-  `true` enables documented filtering. If the capability contract is empty or omits that flag, filtering is allowed
-  only when <chunk> explicitly documents it.
-- Prefer declarative `supportedFilter attribute(...)...` or `anyFilterSupported true` inside
-  `scim {{ limitations {{ ... }} }}` based on <search_docs>.
-- Do not add get-all behavior unless <chunk> explicitly shows it is part of filtered mode.
-""")
-
-_SCIM_SEARCH_SYSTEM_PROMPT_ID_RULES = textwrap.dedent("""\
-
-INTENT PROFILE: `id`
-- Generate ONLY identifier-based lookup.
-- Declare an exact-match SCIM filter for the documented unique identifier, such as
-  `supportedFilter attribute("id").eq().anySingleValue()`, inside `scim {{ limitations {{ ... }} }}`.
-- Do not generate an item endpoint, `singleResult()`, path-parameter mapping, or a manual SCIM query parameter.
-- Do not add list/get-all logic or non-id filters.
-""")
-
-_SCIM_SEARCH_SYSTEM_PROMPT_COMMON_SUFFIX = textwrap.dedent("""\
-
-- No extra commentary.
-""")
 
 get_scim_search_all_system_prompt = (
-    _SCIM_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX
-    + _SCIM_SEARCH_SYSTEM_PROMPT_ALL_RULES
-    + _SCIM_SEARCH_SYSTEM_PROMPT_COMMON_SUFFIX
+    _COMMON
+    + r"""
+INTENT PROFILE: all
+- Generate only necessary customization for list-all. Standard listing needs no operation script.
+"""
 )
+
 get_scim_search_filter_system_prompt = (
-    _SCIM_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX
-    + _SCIM_SEARCH_SYSTEM_PROMPT_FILTER_RULES
-    + _SCIM_SEARCH_SYSTEM_PROMPT_COMMON_SUFFIX
+    _COMMON
+    + r"""
+INTENT PROFILE: filter
+- Generate only documented filtering customization. An explicit filter.supported: false forbids generating server-side SCIM filtering.
+"""
 )
+
 get_scim_search_id_system_prompt = (
-    _SCIM_SEARCH_SYSTEM_PROMPT_COMMON_PREFIX
-    + _SCIM_SEARCH_SYSTEM_PROMPT_ID_RULES
-    + _SCIM_SEARCH_SYSTEM_PROMPT_COMMON_SUFFIX
+    _COMMON
+    + r"""
+INTENT PROFILE: id
+- Standard retrieval by __UID__ is built in. Do not add id filters, item endpoints or singleResult solely to reproduce it.
+"""
 )
 
-get_scim_search_user_prompt = (
-    textwrap.dedent("""\
-Chunk {idx}/{total} of the SCIM schema:
-Target object class: {object_class}
-Requested search intent: {intent}
-
-Here are the extracted object-class attributes from the SCIM schema:
-
-<extracted_attributes>
-{attributes_json}
-</extracted_attributes>
-""")
-    + SCIM_CONTRACT_CONTEXT_USER_SECTION
-    + "{repair_user_suffix}"
-    + textwrap.dedent("""\
-
-Target-specific provider documentation for this iteration:
-<chunk>
-{chunk}
-</chunk>
-
-Result from previous chunks:
-<result>
-{result}
-</result>
-""")
-)
+get_scim_search_user_prompt = build_operation_user_prompt(SCIM_CONTRACT_CONTEXT_USER_SECTION, intent=True)

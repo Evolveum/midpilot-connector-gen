@@ -180,11 +180,11 @@ async def test_invalid_yaml_candidate_is_rejected_and_the_last_valid_groovy_resu
 @pytest.mark.parametrize(
     ("operation", "protocol", "expected_snippet"),
     [
-        ("create", ApiType.REST, "Connector manifest"),
-        ("create", ApiType.SCIM, "Connector manifest"),
-        ("create", ApiType.SQL, "Connector manifest"),
-        ("update", ApiType.REST, "Connector manifest"),
-        ("delete", ApiType.SCIM, "Connector manifest"),
+        ("create", ApiType.REST, "objectClasses"),
+        ("create", ApiType.SCIM, "objectClasses"),
+        ("create", ApiType.SQL, "objectClasses"),
+        ("update", ApiType.REST, "objectClasses"),
+        ("delete", ApiType.SCIM, "objectClasses"),
         ("native_schema", ApiType.SQL, "objectClasses"),
     ],
 )
@@ -251,6 +251,16 @@ def test_every_search_prompt_carries_the_declarative_format_policy_and_a_docs_sl
     assert "{declarative_docs}" in assets.system_prompt
 
 
+@pytest.mark.parametrize("intent", [SearchIntent.ALL, SearchIntent.FILTER, SearchIntent.ID])
+def test_sql_search_prompt_allows_later_where_requirement_to_switch_complete_artifact(intent):
+    prompt = " ".join(get_search_operation_assets(ApiType.SQL, intent).system_prompt.split())
+
+    assert "custom SQL WHERE predicate unavailable in YAML" in prompt
+    assert "convert the complete accumulated artifact from YAML to Groovy" in prompt
+    assert "preserving all existing behavior and incorporating the new requirement" in prompt
+    assert "preserving its existing YAML or Groovy format across chunks" not in prompt
+
+
 @pytest.mark.parametrize(
     ("operation", "protocol"),
     [
@@ -295,7 +305,7 @@ def test_rendered_generation_prompt_contains_bundled_declarative_reference_verba
     assert "Prefer declarative YAML for this operation" in rendered
     # A snippet unique to the actual bundled file content (not the shared policy fragment),
     # proving the real reference text made it into the rendered prompt.
-    assert "Connector manifest" in rendered
+    assert declarative_docs_text in rendered
 
 
 @pytest.mark.asyncio

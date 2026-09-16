@@ -19,56 +19,34 @@ scalar or sequence rather than a mapping. See test_connector_code_validation.py 
 empirical basis - no real Groovy sample tried there parses to a ``dict``.
 """
 
-from enum import StrEnum
 from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from src.modules.codegen.utils.connector_yaml_schema import ConnectorYamlDocument
+from src.modules.codegen.connector_yaml_schema import ConnectorYamlDocument
+from src.modules.codegen.enums import ConnectorCodeFormat
+from src.modules.codegen.errors import ConnectorCodeValidationError
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
 
 
-class ConnectorCodeFormat(StrEnum):
-    YAML = "yaml"
-    GROOVY = "groovy"
-
-
-class ConnectorCodeValidationError(ValueError):
-    """Raised when a connector artifact (YAML or Groovy) fails validation."""
-
-
 class _RejectDuplicateKeysLoader(yaml.SafeLoader):
-    """A ``SafeLoader`` that rejects a duplicate mapping key instead of silently keeping the last one."""
+    """Keep connector-specific mapping rules isolated from the global SafeLoader."""
 
-
-def _construct_mapping_rejecting_duplicates(
-    loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False
-) -> dict[Any, Any]:
-    mapping: dict[Any, Any] = {}
-    for key_node, value_node in node.value:
-        key = loader.construct_object(key_node, deep=deep)
-        if key in mapping:
-            raise yaml.constructor.ConstructorError(
-                "while constructing a mapping",
-                node.start_mark,
-                f"found duplicate key: {key!r}",
-                key_node.start_mark,
-            )
-        mapping[key] = loader.construct_object(value_node, deep=deep)
-    return mapping
-
-
-_RejectDuplicateKeysLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
-    _construct_mapping_rejecting_duplicates,
-)
-
-
-def normalize_connector_code(code: str) -> str:
-    """Strip Markdown fences and surrounding whitespace, whatever the format."""
-    return strip_markdown_fences(code).strip()
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        mapping: dict[Any, Any] = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in mapping:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"found duplicate key: {key!r}",
+                    key_node.start_mark,
+                )
+            mapping[key] = self.construct_object(value_node, deep=deep)
+        return mapping
 
 
 def _load_single_yaml_document(code: str) -> Any:
@@ -96,7 +74,7 @@ def detect_connector_code_format(code: str) -> ConnectorCodeFormat:
     silently accepting it under the unrelated Groovy grammar instead - Groovy's `label:
     statement` syntax makes a mapping-shaped snippet a surprisingly plausible parse.
     """
-    normalized = normalize_connector_code(code)
+    normalized = strip_markdown_fences(code)
     if not normalized:
         return ConnectorCodeFormat.GROOVY
     try:
@@ -116,7 +94,7 @@ def validate_yaml_connector_code(code: str) -> Optional[str]:
 
     Returns None when valid, otherwise a human-readable error message.
     """
-    normalized = normalize_connector_code(code)
+    normalized = strip_markdown_fences(code)
     if not normalized:
         return "Connector code cannot be empty"
 
@@ -128,6 +106,9 @@ def validate_yaml_connector_code(code: str) -> Optional[str]:
     if not isinstance(document, dict):
         return "Declarative connector YAML must have a mapping (key: value) document root"
 
+    if _has_cyclic_containers(document):
+        return "Declarative connector YAML must not contain cyclic aliases"
+
     try:
         model = ConnectorYamlDocument.model_validate(document)
     except ValidationError as exc:
@@ -135,6 +116,31 @@ def validate_yaml_connector_code(code: str) -> Optional[str]:
         path = ".".join(map(str, error["loc"]))
         return f"{path}: {error['msg']}"
     return _validate_embedded_scripts(model)
+
+
+def _has_cyclic_containers(document: Any) -> bool:
+    """Detect ancestor references while allowing shared, acyclic YAML aliases."""
+    active: set[int] = set()
+    completed: set[int] = set()
+    pending = [(document, False)]
+    while pending:
+        value, exiting = pending.pop()
+        if not isinstance(value, (dict, list)):
+            continue
+        identity = id(value)
+        if exiting:
+            active.remove(identity)
+            completed.add(identity)
+            continue
+        if identity in active:
+            return True
+        if identity in completed:
+            continue
+        active.add(identity)
+        pending.append((value, True))
+        children = value.values() if isinstance(value, dict) else value
+        pending.extend((child, False) for child in children)
+    return False
 
 
 def _validate_embedded_scripts(value: Any, path: str = "") -> Optional[str]:
@@ -183,7 +189,7 @@ def validate_connector_code(code: str) -> Optional[str]:
 
     Returns None when valid, otherwise a human-readable error message.
     """
-    normalized = normalize_connector_code(code)
+    normalized = strip_markdown_fences(code)
     if detect_connector_code_format(normalized) is ConnectorCodeFormat.YAML:
         return validate_yaml_connector_code(normalized)
     return validate_groovy_code(normalized)
@@ -191,7 +197,7 @@ def validate_connector_code(code: str) -> Optional[str]:
 
 def ensure_valid_connector_code(code: str) -> str:
     """Return normalized connector code (YAML or Groovy) or raise with validation details."""
-    normalized = normalize_connector_code(code)
+    normalized = strip_markdown_fences(code)
     error = validate_connector_code(normalized)
     if error is not None:
         raise ConnectorCodeValidationError(error)

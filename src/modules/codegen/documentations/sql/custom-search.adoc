@@ -1,15 +1,7 @@
 = Custom search implementation
-:page-nav-title: Custom search
-:page-display-order: 1260
-:page-upkeep-status: orange
-:page-toc: top
-:page-since: 4.11
-:page-description: How to implement a custom SQL search query in an SQL framework connector with the full query DSL: table, select, from, where, orderBy, and filter value access.
-:page-keywords: custom search, custom SQL query, query builder context, ORDER BY, search handler
 
 If the built-in search is not suitable — for example, you need ORDER BY, computed columns, or a query that spans a multiple tables — you can implement a fully custom SQL query per object class.
 
-include::link-to-intro-preamble.adoc[]
 
 == Declaring a custom query
 

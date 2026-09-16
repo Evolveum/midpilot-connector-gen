@@ -58,8 +58,8 @@ DOCUMENTATION PRECEDENCE:
   block inside `attribute(...)`, a top-level `connIdAttribute("UID", ...)` call, and a YAML `connId: {{name: ...}}`
   key are alternative spellings of the same mapping; only the one your chosen format's documentation shows is
   valid here.
-- If your chosen format's documentation shows no ConnID mapping at all, use the `connIdAttribute("UID", "<native
-  name>")` form from <connid_attribute_docs> (Groovy) or its nearest declarative-YAML equivalent.
+- If the chosen format has no documented mapping syntax, switch to a documented format or leave
+  a TODO naming the missing contract; never guess a nearest YAML equivalent.
 - Never emit more than one form for the same attribute, and never mix forms in one artifact.
 """)
         + protocol_context_rules

@@ -143,10 +143,10 @@ def test_docs_paths_are_deduplicated_across_object_classes():
     paths = resolve_artifact_docs_paths(slots, ApiType.REST)
 
     assert len(paths) == len(set(paths))
-    assert "rest/50-create.adoc" in paths
+    assert "rest/create.adoc" in paths
     # Reached through the native-schema slot: the declarative reference and the ConnID mapping
     # share its script, in that order.
-    assert paths.index("rest/25-user-schema.adoc") + 1 == paths.index("declarative-yaml.adoc")
+    assert paths.index("rest/native-schema.adoc") + 1 == paths.index("declarative-yaml.adoc")
     assert paths.index("declarative-yaml.adoc") + 1 == paths.index("connid-attributes.adoc")
 
 
@@ -187,9 +187,9 @@ def test_connid_reference_is_still_resolvable_for_a_persisted_connid_artifact():
 @pytest.mark.parametrize(
     ("protocol", "schema_docs_path", "declarative_docs_path"),
     [
-        (ApiType.REST, "rest/25-user-schema.adoc", "declarative-yaml.adoc"),
-        (ApiType.SCIM, "scim/25-schema-customization.adoc", "declarative-yaml.adoc"),
-        (ApiType.SQL, "sql/schema-customization.adoc", "sql/declarative-yaml.adoc"),
+        (ApiType.REST, "rest/native-schema.adoc", "declarative-yaml.adoc"),
+        (ApiType.SCIM, "scim/native-schema.adoc", "declarative-yaml.adoc"),
+        (ApiType.SQL, "sql/native-schema.adoc", "sql/declarative-yaml.adoc"),
     ],
 )
 def test_fix_docs_include_all_three_references_for_a_native_schema_artifact(
@@ -200,7 +200,7 @@ def test_fix_docs_include_all_three_references_for_a_native_schema_artifact(
 
     ``_load_dsl_documentation`` concatenates these in sequence and the fix prompt tells
     the model the protocol's own schema reference outranks the ConnID one on syntax.
-    For REST this is also the regression guard: ``rest/25-user-schema.adoc`` carries no
+    For REST this is also the regression guard: ``rest/native-schema.adoc`` carries no
     ConnID content of its own, so dropping the third document would leave a merged
     native-schema script with no reference for the mapping it contains.
     """
@@ -212,4 +212,5 @@ def test_fix_docs_include_all_three_references_for_a_native_schema_artifact(
         schema_docs_path,
         declarative_docs_path,
         "connid-attributes.adoc",
+        *(["scim/complex-attributes.adoc"] if protocol is ApiType.SCIM else []),
     ]

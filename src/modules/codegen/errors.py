@@ -15,6 +15,10 @@ from uuid import UUID
 from src.core.errors import AppError
 
 
+class ConnectorCodeValidationError(ValueError):
+    """Invalid connector code; ValueError lets Pydantic report it as a field error."""
+
+
 class ConnectorScriptsNotFoundError(AppError):
     """Raised when an object-class connector fix finds no generated connector code."""
 

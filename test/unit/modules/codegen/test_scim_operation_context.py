@@ -298,9 +298,10 @@ def test_scim_crud_prompts_enforce_operation_specific_native_dsl():
     assert "do not invent a POST endpoint" in create_prompt
     assert "Never generate a REST `endpoint(...)` wrapping native SCIM `create`, or vice versa" in create_prompt
 
-    assert "native SCIM `update {{ scim {{ put {{ ... }} patch {{ ... }} }} }}`" in update_prompt
-    assert "use the REST-style endpoint customization instead" in update_prompt
-    assert "Never generate a REST `endpoint(...)` wrapping native SCIM `put`/`patch`, or vice versa" in update_prompt
+    assert "Native SCIM update is functional" in update_prompt
+    assert "put and patch are mutually exclusive" in update_prompt
+    assert "no documented YAML equivalent" in update_prompt
+    assert "use the REST-style endpoint customization instead" not in update_prompt
 
     assert "native delete needs no customization" in delete_prompt
     assert "do not generate a REST endpoint or request block for standard behavior" in delete_prompt
@@ -313,11 +314,9 @@ def test_scim_search_prompts_enforce_native_scim_dsl_without_rest_endpoint_conte
         get_scim_search_filter_system_prompt,
         get_scim_search_id_system_prompt,
     ]:
-        assert "<search_docs> is the authoritative source for Groovy DSL structure" in system_prompt
-        assert "The output is native SCIM, never REST DSL" in system_prompt
-        assert "inside `scim {{ limitations {{ ... }} }}`" in system_prompt
-        assert 'objectClass("{object_class}") {{ search {{ scim {{ limitations {{ ... }} }} }} }}' in system_prompt
-        assert "Never generate `endpoint(...)` anywhere in native SCIM output" in system_prompt
+        assert "search {{ scim {{ limitations {{ ... }} }} }}" in system_prompt
+        assert "emit {{}} when" in system_prompt.lower()
+        assert "never embed a standalone scim block in a YAML artifact" in system_prompt
         assert "<extracted_endpoints>" not in system_prompt
 
     assert "{endpoints_json}" not in get_scim_search_user_prompt
@@ -332,7 +331,7 @@ def test_cleanup_prompt_distinguishes_native_scim_from_rest_dsl():
     assert "apply exactly one matching section" in prompt
     assert "Rules from one section must never be applied to another section" in prompt
     assert "generic SCIM DSL is authoritative" in prompt
-    assert "Native SCIM never uses `endpoint(...)`" in prompt
+    assert "documented create fallback may use one" in prompt
     assert "unwrap it and keep `search`, `create`, `update`, or `delete` directly below `objectClass`" in prompt
     assert "REST-only rules" in prompt
 
@@ -344,7 +343,7 @@ def test_scim_filter_prompt_distinguishes_missing_and_explicitly_disabled_capabi
     assert "whole contract is empty" in prompt
     assert "treat filtering support as unknown" in prompt
     assert "provider documentation in <chunk>" in prompt
-    assert "An explicit `filter.supported: false` disables this intent" in prompt
+    assert "explicit filter.supported: false forbids generating server-side SCIM filtering" in prompt
 
 
 def test_scim_operation_prompts_do_not_introduce_an_implicit_id_template_variable():

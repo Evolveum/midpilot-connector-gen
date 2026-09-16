@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -24,10 +25,9 @@ from src.modules.codegen.selection.authorization import (
     is_single_other_authorization,
     prepare_preferred_authorizations_for_generation,
 )
-from src.modules.codegen.selection.docs_loader import load_required_adoc_text
+from src.modules.codegen.selection.docs_loader import load_operation_documentation, load_required_adoc_text
 from src.modules.codegen.selection.protocol_selectors import (
     CONNID_ATTRIBUTES_DOCS_PATH,
-    SCIM_REST_DECLARATIVE_DOCS_PATH,
     get_operation_assets,
     get_search_operation_assets,
 )
@@ -82,11 +82,14 @@ async def generate_native_schema_code(
         raise ValueError(f"Native-schema assets for {protocol.value} are missing their ConnID reference document")
 
     docs_package = __package__ + ".documentations"
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     records = build_complete_attribute_mapping_records(attributes_payload)
     extra_prompt_vars = {
-        "protocol_schema_docs": load_required_adoc_text(docs_package, assets.docs_path),
-        "declarative_docs": load_required_adoc_text(docs_package, assets.declarative_docs_path),
-        "connid_attribute_docs": load_required_adoc_text(docs_package, assets.connid_docs_path),
+        "protocol_schema_docs": docs_text,
+        "declarative_docs": declarative_docs_text,
+        "connid_attribute_docs": await asyncio.to_thread(
+            load_required_adoc_text, docs_package, assets.connid_docs_path
+        ),
     }
     if protocol == ApiType.SCIM:
         extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))
@@ -131,9 +134,7 @@ async def generate_authorization_code(
         return {"code": build_other_authorization_scaffold(protocol)}
 
     assets = get_operation_assets("authorization", protocol)
-    docs_package = __package__ + ".documentations"
-    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
-    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url = await get_session_base_api_url(session_id, protocol=protocol)
 
     generator_preferred_authorizations = prepare_preferred_authorizations_for_generation(
@@ -181,7 +182,9 @@ async def generate_conn_id_code(
     schema script. Kept working for callers that have not migrated; its prompt is
     deliberately frozen.
     """
-    docs_text = load_required_adoc_text(__package__ + ".documentations", CONNID_ATTRIBUTES_DOCS_PATH)
+    docs_text = await asyncio.to_thread(
+        load_required_adoc_text, __package__ + ".documentations", CONNID_ATTRIBUTES_DOCS_PATH
+    )
 
     records = build_connid_attribute_mapping_records(attributes_payload)
 
@@ -215,9 +218,7 @@ async def generate_search_code(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_search_operation_assets(protocol, intent)
-    docs_package = __package__ + ".documentations"
-    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
-    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = SearchGenerator(
@@ -266,9 +267,7 @@ async def generate_create_code(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("create", protocol)
-    docs_package = __package__ + ".documentations"
-    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
-    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = CreateGenerator(
@@ -316,9 +315,7 @@ async def generate_update_code(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("update", protocol)
-    docs_package = __package__ + ".documentations"
-    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
-    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = UpdateGenerator(
@@ -366,9 +363,7 @@ async def generate_delete_code(
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("delete", protocol)
-    docs_package = __package__ + ".documentations"
-    docs_text = load_required_adoc_text(docs_package, assets.docs_path)
-    declarative_docs_text = load_required_adoc_text(docs_package, assets.declarative_docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = DeleteGenerator(
@@ -406,19 +401,13 @@ async def generate_relation_code(
     relation_name: str,
     session_id: UUID,
     job_id: UUID,
+    protocol: ApiType,
 ) -> Dict[str, str]:
     """
-    Generate the Groovy `relation {}` block using relevant chunks + docs.
+    Generate a relationship artifact using the resolved protocol's expert references.
     """
-    docs_package = __package__ + ".documentations"
-    relation_docs_text = load_required_adoc_text(docs_package + ".rest", "50-relationship.adoc")
-    # Relation wiring is generated the same way regardless of the connector's own protocol
-    # (it always draws on the REST relationship reference, unchanged from before this feature),
-    # so it draws on the shared REST/SCIM declarative reference rather than a per-protocol one.
-    # No declarative form of `relationship(){}` is documented today (see declarative-yaml.adoc's
-    # own capability boundary), so this is context for the model to recognize that gap, not an
-    # instruction to prefer YAML here.
-    declarative_docs_text = load_required_adoc_text(docs_package, SCIM_REST_DECLARATIVE_DOCS_PATH)
+    assets = get_operation_assets("relationship", protocol)
+    relation_docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
 
     relevant_pairs = await _collect_relation_object_class_pairs(relations, session_id)
     if relevant_pairs:
@@ -433,7 +422,13 @@ async def generate_relation_code(
     else:
         logger.warning("[Codegen:Relation] No relevant object-class chunks found for relation %s", relation_name)
 
-    generator = RelationGenerator(docs_text=relation_docs_text, declarative_docs_text=declarative_docs_text)
+    generator = RelationGenerator(
+        docs_text=relation_docs_text,
+        declarative_docs_text=declarative_docs_text,
+        system_prompt=assets.system_prompt,
+        user_prompt=assets.user_prompt,
+        extra_prompt_vars={"protocol": protocol.value},
+    )
     code = await generator.generate(
         session_id=session_id,
         relevant_chunk_pairs=relevant_pairs,

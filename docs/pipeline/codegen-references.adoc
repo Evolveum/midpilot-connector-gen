@@ -1,0 +1,28 @@
+= Codegen reference documentation
+
+Codegen reads bundled `.adoc` files from `src/modules/codegen/documentations/`.
+These describe connector framework syntax; target-system documentation supplies
+the application's endpoints, HTTP methods, attributes, and capabilities.
+
+`src/modules/codegen/selection/protocol_selectors.py` maps each operation and
+protocol to its prompts, reference files, and declarative-YAML sections.
+Generation loads the selected sections; connector repair uses the full references.
+
+== Updating references
+
+. Copy or edit the relevant files manually. Upstream documentation lives in
+EvolveumDocs under `docs/connectors/scimrest-framework/develop/` and
+`docs/connectors/sql-framework/develop/`. Bundled filenames may differ; use the
+registry to find the destination. Omit website `:page-*:` metadata and resolve
+or remove includes that point to files outside the bundled references.
+. If filenames or section headings change, update `protocol_selectors.py`.
+Review affected prompts and YAML validation when framework syntax changes.
+. Run the codegen checks from the repository root:
++
+[source,shell]
+----
+uv run poe test test/unit/modules/codegen test/integration/modules/codegen
+----
+. Rebuild and deploy the application, then restart workers to refresh cached
+references. Regenerate affected operations with `skipCache=true` when testing
+the changes, and validate the output in the target connector framework.

@@ -5,6 +5,11 @@
 from enum import StrEnum
 
 
+class ConnectorCodeFormat(StrEnum):
+    YAML = "yaml"
+    GROOVY = "groovy"
+
+
 class SearchIntent(StrEnum):
     ALL = "all"
     FILTER = "filter"
@@ -25,7 +30,7 @@ def build_search_operation_key(object_class: str, intent: SearchIntent | str) ->
 
 class ArtifactKind(StrEnum):
     """
-    The kinds of Groovy artifact a generated connector is made of.
+    The kinds of connector artifact a generated connector is made of.
 
     One kind per codegen result key family. Used to map a stored ``{key}Output``
     back to the operation that produced it, so the object-class fix can pick

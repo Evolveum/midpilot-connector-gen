@@ -33,10 +33,22 @@ class _ValueMapping(_Configuration):
     serialize: str | None = _script()
 
 
+class _AttributePath(_Configuration):
+    type: str
+    value: str
+
+    @field_validator("type")
+    @classmethod
+    def validate_path_type(cls, value: str) -> str:
+        if value.upper() not in {"JSON_PATH", "JSON_POINTER", "SCIM"}:
+            raise ValueError("expected JSON_PATH, JSON_POINTER or SCIM")
+        return value
+
+
 class _ScimAttribute(_Configuration):
     name: str | None = Field(default=None)
     type: str | None = Field(default=None)
-    path: str | None = Field(default=None)
+    path: str | _AttributePath | None = Field(default=None)
     implementation: _ValueMapping | None = Field(default=None)
 
 
@@ -47,10 +59,10 @@ class _ConnIdAttribute(_Configuration):
 
 class _JsonAttribute(_ConnIdAttribute):
     openApiFormat: str | None = Field(default=None)
+    path: str | _AttributePath | None = Field(default=None)
 
 
 class _SqlAttribute(_ConnIdAttribute):
-    column: str | None = Field(default=None)
     notNull: bool | None = Field(default=None)
     unique: bool | None = Field(default=None)
     primaryKey: bool | None = Field(default=None)
@@ -135,7 +147,6 @@ class _WriteEndpoint(_Configuration):
 
 class _SearchEndpoint(_Configuration):
     path: str
-    method: str | None = Field(default=None)
     responseFormat: str | None = Field(default=None)
     objectExtractor: str | None = _script()
     pagingSupport: str | None = _script()
@@ -180,7 +191,6 @@ class _ScimClass(_Configuration):
     schemaUri: str | None = Field(default=None)
     name: str | None = Field(default=None)
     onlyExplicitlyListed: bool | None = Field(default=None)
-    extensions: dict[str, str] | None = Field(default=None)
 
 
 class _SqlClass(_Configuration):

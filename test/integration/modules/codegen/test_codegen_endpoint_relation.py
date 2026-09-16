@@ -12,14 +12,26 @@ import pytest
 from src.jobs import job_input_reference
 from src.modules.codegen.routes.relations import generate_relation_code, get_relation_code_status
 from src.modules.digester.errors import InvalidRelationsOutputError, RelationNotFoundError
-from src.shared.enums import JobStatus
+from src.shared.enums import ApiType, JobStatus
+
+
+@pytest.fixture(autouse=True)
+def _relation_protocol():
+    with patch(
+        "src.modules.codegen.orchestration.resolve_effective_api_type",
+        new_callable=AsyncMock,
+        return_value=ApiType.REST,
+    ) as resolver:
+        yield resolver
 
 
 # RELATION
 @pytest.mark.asyncio
-async def test_generate_relation_code_success():
+@pytest.mark.parametrize("protocol", [ApiType.REST, ApiType.SCIM, ApiType.SQL])
+async def test_generate_relation_code_success(protocol, _relation_protocol):
     """Test successful generation of relation code."""
     mock_repo = MagicMock()
+    _relation_protocol.return_value = protocol
     mock_repo.session_exists = AsyncMock(return_value=True)
     relations_payload = {
         "relations": [
@@ -52,6 +64,8 @@ async def test_generate_relation_code_success():
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "relationsOutput")
         mock_schedule.assert_awaited_once()
         schedule_kwargs = mock_schedule.await_args.kwargs
+        assert schedule_kwargs["input_payload"]["apiType"] == protocol.value
+        assert schedule_kwargs["worker_kwargs"]["protocol"] is protocol
         assert schedule_kwargs["input_payload"]["relationName"] == "user_to_group"
         assert [item["name"] for item in schedule_kwargs["input_payload"]["relations"]["relations"]] == [
             "user_to_group"

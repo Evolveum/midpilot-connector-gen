@@ -46,7 +46,8 @@ from src.modules.codegen.schema import (
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, resolve_artifact_docs_paths
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.relevant_chunks import collect_connector_relevant_chunks
-from src.modules.codegen.utils.connector_code_validation import normalize_connector_code, validate_connector_code
+from src.modules.codegen.utils.connector_code_validation import validate_connector_code
+from src.modules.codegen.utils.postprocess import strip_markdown_fences
 from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
     build_sql_context_prompt_vars,
@@ -302,8 +303,8 @@ async def _validate_proposed_scripts(
             )
             unusable_count += 1
             continue
-        normalized = normalize_connector_code(code)
-        if normalized == normalize_connector_code(by_operation_key[operation_key].code):
+        normalized = strip_markdown_fences(code)
+        if normalized == strip_markdown_fences(by_operation_key[operation_key].code):
             rejections.append(
                 ConnectorFixRejection(
                     operation_key=operation_key, reason="Proposed script is identical to the stored one."

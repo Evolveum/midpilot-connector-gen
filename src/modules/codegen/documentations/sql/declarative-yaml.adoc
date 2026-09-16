@@ -1,64 +1,45 @@
 = Declarative YAML
-:page-nav-title: Declarative YAML
 
-// Bundled reference for LLM connector generation (SQL Framework).
-// Source: sql-framework/develop/declarative-yaml.adoc, schema-customization.adoc, create.adoc,
-//         update.adoc, delete.adoc, search.adoc, custom-search.adoc, relationships.adoc,
-//         related-table-writes.adoc, sync.adoc (as supplied to this application).
-// Imported: 2026-09-11. Replaces the previous version of this file, which described an older,
-// flat single-class `objectClass:`/top-level `sql:`/`attributes:` shape and an outdated claim that
-// operation documents were "Groovy only at present" - both are superseded below.
-//
-// This is the YAML syntax authority for SQL connector generation. The protocol-specific operation
-// references (sql/*.adoc) remain the authority on behavior and on when Groovy is required.
+The SQL Framework supports a declarative YAML form for the connector manifest, schema definitions, and operation handlers, in addition to Groovy scripts.
 
-The SQL Framework supports a declarative YAML form for the connector manifest, schema documents, and
-operation documents, in addition to Groovy scripts.
+YAML documents and Groovy scripts are two front-ends over the *same* builders — a YAML document drives the same live builders the Groovy DSL does, so both forms can be mixed per connector.
 
-== Connector manifest
 
-Exactly one of `connector.manifest.json`, `connector.manifest.yaml`, `connector.manifest.yml` is
-present on the classpath. It lists script resources; Groovy and YAML entries may be mixed freely,
-and an entry may be disabled without removing it:
+IMPORTANT: Use Groovy scripts for anything requiring scripted behavior — custom search queries, `where` predicates, attribute resolvers. YAML covers declarative table/attribute mapping and operation control. This page and xref:schema-customization/[schema customization] describe the same schema customization — the YAML form is a declarative subset of the Groovy DSL.
+
+== YAML connector manifest
+
+The connector manifest may be named `connector.manifest.json`, `connector.manifest.yaml` or `connector.manifest.yml` — exactly one of the three may be present on the classpath of the connector bundle (the bundle JAR together with the JARs in its `lib/` directory; see xref:custom-connector/#option-1-manifest-based-connector-no-java[bundle layout]).
 
 [source,yaml]
 ----
 connector:
-  schema:
+  schema: <1>
     - script: /schema/customize.groovy
     - script: /schema/persons.native.schema.yaml
-  operation:
+  operation: <2>
     - script: /handlers/user_ops.groovy
     - script: /handlers/employee.op.yaml
-      disabled: true
 ----
+<1> List of schema script resources, loaded during initialization. Groovy and YAML schema documents can be mixed.
+<2> List of operation handler script resources. Groovy and YAML operation documents can be mixed.
 
-If a manifest entry references a `.groovy` resource that is not bundled, the loader falls back to a
-`.yaml`/`.yml` resource with the same base name, so a script can migrate to YAML incrementally
-without changing the manifest. An empty or absent `operation` list is a normal, fully working
-configuration: create, update, delete and search all work with zero operation script once the
-object class has a SQL-backed `__UID__` mapping.
+A script entry may carry `disabled: true` — the script is skipped in both real loading and script validation, as if it were not bundled at all.
 
-== Schema documents
+Paths starting with `/` are resolved as classpath resources from the root of the classpath.
 
-A schema document declares one or more object classes under a top-level `objectClasses` map (a
-single file may describe several classes; files naming the same class merge, and YAML schema
-documents bind into the same live schema builder as Groovy ones, merging with auto-discovered
-columns exactly the same way):
+== Native YAML schema documents
+
+A schema document named `*.native.schema.yaml` (or `*.connid.schema.yaml`) is a flat YAML description of object classes under the `objectClasses` root (one entry per object class; a file may describe several classes). Both file names are accepted and loaded identically.
 
 [source,yaml]
 ----
+# /schema/person.native.schema.yaml
 objectClasses:
   Person:
     sql:
       table: app_user
-      schema: public
-    description: Application user
-    embedded: false
-    readOnly: false
-    onlyExplicitlyListed: false
-    connId:
-      UID: user_id
+    readOnly: true
     attributes:
       user_id:
         connId:
@@ -66,22 +47,20 @@ objectClasses:
         sql:
           type: INT
           primaryKey: true
-          autoIncrement: true
       user_name:
         connId:
           name: __NAME__
+        sql:
+          type: VARCHAR(255)
+          notNull: true
       user_email:
         connId:
           name: emailAddress
         sql:
-          notNull: true
-          unique: true
-      loginCount: {}
-    references:
-      manager:
-        objectClass: Person
-        subtype: reportsTo
-        role: SUBJECT
+          type: VARCHAR(255)
+      loginCount:
+        sql:
+          type: INT
 ----
 
 Structure:
@@ -90,85 +69,96 @@ Structure:
 |===
 |Key |Description
 
-|`sql.table` / `sql.schema`
-|Physical table name and optional schema qualifier.
+|`objectClasses.<name>`
+|The ConnId object class name (the counterpart of `objectClass("...") { ... }`)
 
-|`description`
-|Human-readable description of the object class.
-
-|`embedded`
-|Marks the class as an embedded/child object class rather than a standalone one.
+|`description` / `embedded`
+|The corresponding object-class flags (see xref:schema-customization/[])
 
 |`readOnly`
-|Single-key shortcut equivalent to disabling `create`, `update` and `delete` individually for this class.
+|The object class is read-only; create, update, and delete are disabled automatically
 
 |`onlyExplicitlyListed`
-|When true, only the columns declared under `attributes` are exposed; auto-discovered columns not listed here are dropped.
+|Only the explicitly listed attributes are considered (all other discovered columns are ignored)
 
-|`connId`
-|Object-class-level ConnID alias map (equivalent of the Groovy `connIdAttribute(...)` call), e.g. `connId: {UID: user_id}`.
+|`connId` (object-class level)
+|Built-in attribute alias map, e.g. `connId: { UID: user_id }` binds `__UID__` to the `user_id` attribute
 
-|`attributes`
-|Map of `column name -> attribute definition`. Full per-attribute flag set: `description`, `required`, `multiValued`, `creatable`, `updateable` (alias `updatable`), `readable`, `returnedByDefault`, `emulated`, `complexType`; `connId: {name, type}` (including `+++__UID__+++`/`+++__NAME__+++`); `sql: {name/column, type, notNull, unique, primaryKey, autoIncrement}`. An empty map (`{}`) or a bare `attributeName:` declares the attribute without renaming.
+|`sql: { table, schema }`
+|The SQL table name (defaults to the object class name) and optional SQL schema qualifier
 
-|`references`
-|Map of `references.<name>`: `objectClass`, `subtype`, `role` (`SUBJECT`/`OBJECT`) - the YAML equivalent of the Groovy `reference(name) { objectClass(); subtype(); role() }` block, used for many-to-many/junction relationship attributes.
+|`attributes.<name>`
+|One attribute — the regular attribute settings (`description`, `required`, `multiValued`, `creatable`, `updateable`, `readable`, `returnedByDefault`, `emulated`, `complexType`), the `connId: { name, type }` mapping (including the `__UID__` / `__NAME__` built-ins), the inherited `json: { name, type, openApiFormat, path }` block (the `path` is an attribute-path string such as `$.name.first`, default basic JSONPath — or an explicit `{ type: JSON_POINTER, value: /name/first }` mapping), and the `sql` block below. An empty value (`{}`) declares the attribute without renaming.
+
+|`references.<name>`
+|Map of `attribute name → reference attribute definition`, with `objectClass`, `subtype`, `role` (see xref:schema-customization/[reference attributes])
 |===
+
+Attribute-level `sql` keys:
+
+[cols="1,3", options="header"]
+|===
+|Key |Description
+
+|`name`
+|The SQL column when it differs from the attribute name
+
+|`type`
+|The SQL column type (`INT`, `BIGINT`, `SMALLINT`, `TINYINT`, `BOOLEAN`, `VARCHAR(n)`, `NUMBER(p)`, `NUMBER(p, s)`, `VARCHAR2(n)`, `TIMESTAMP(p)`, `INTEGER`, ...)
+
+|`notNull`
+|The column is not nullable
+
+|`unique`
+|The column is unique
+
+|`primaryKey`
+|The column is part of the primary key
+
+|`autoIncrement`
+|The column is auto-incremented
+|===
+
+YAML schema documents bind directly into the same live schema builder as Groovy scripts, so they merge with auto-discovered columns exactly like xref:/connectors/sql-framework/develop/schema-customization/[Groovy customizations] do — including correlation with discovery and the built-in mapping rules.
+
+Yes — Groovy and YAML customizations can target the same table (object class): both are applied to the same builder and are merged. The only limit is that a property set explicitly in *both* forms (or set twice, in any combination of Groovy and YAML) is a conflict and fails at script evaluation — declare each property in exactly one place.
+
+Parsing is strict: a file must contain exactly one document, and unknown keys fail fast.
 
 == Operation documents
 
-`create`, `update`, `delete` are configured per object class under the same `objectClasses` root:
+An operation document covers one or more of `create`, `update`, or `delete` per object class, under the same `objectClasses` root:
 
 [source,yaml]
 ----
+# /handlers/employee.op.yaml
 objectClasses:
   Employee:
     create:
-      enabled: true
-    update:
-      enabled: true
-    delete:
       enabled: false
 ----
 
-`enabled: false` turns the operation off entirely - this is the smallest YAML needed to disable one
-operation while leaving the others on framework defaults. An object class needing no create/update/
-delete customization needs no such key at all: basic create, update and delete all work with zero
-operation script once the class has a SQL-backed `__UID__` mapping, and the framework builds the
-statement from the native schema mapping. When a class has related-table (child/junction) attributes,
-create/update/delete already extend to those child rows in the same transaction as the parent
-operation - see relationships.adoc/related-table-writes.adoc; there is no separate configuration key
-for this, in Groovy or YAML.
+[cols="1,3", options="header"]
+|===
+|Key |Description
 
-`search` has no declarative-YAML operation key today - see the capability boundary below.
+|`create: { enabled }` / `update: { enabled }` / `delete: { enabled }`
+|Enables or disables the operation (e.g. `enabled: false` ≙ `disableCreate()`); `readOnly: true` on the schema disables all three automatically
+|===
 
-== Capability boundary: Groovy is required for
+Search works out of the box for discovered tables; Groovy remains the front-end for scripted search behavior (custom query implementations, `where` predicates — see xref:search/[search] and xref:custom-search/[custom search]).
 
-* Custom search queries (`search { sql { custom { emptyFilterSupported; query { q -> ... } } } }`) -
-  full QueryDSL SELECT/FROM/WHERE/ORDER BY, joins, computed columns. No YAML form exists for this.
-* Refining the built-in search WHERE clause with a fixed extra predicate
-  (`search { sql { builtIn { where { e -> ... } } } }`) - documented only as Groovy.
-* The `additionalColumns() { column("other_col") }` hook for composite-UID extra physical columns.
-* Resource/attribute-level custom mapping rules (`SqlSchemaTranslator.addResourceRule(...)`,
-  `addAttributeRule(...)`) and fully custom operation registration - Java/Groovy extension points
-  below the declarative form entirely.
-* Cross-script helper `def` functions shared between a session's Groovy scripts - a Groovy-only
-  convenience with no YAML analog.
+== Groovy to YAML fallback
 
-== Preview / not yet functional - do not generate as working behavior
+If a manifest entry references a `.groovy` resource that is not bundled, the loader transparently falls back to a `.yaml`/`.yml` resource with the same base name:
 
-* Incremental sync (LiveSync) is not available for SQL Framework connectors - there is no `sync {}`
-  DSL in Groovy or YAML, and the operation is not registered on the connector. Do not configure
-  midPoint incremental sync for a SQL Framework connector; use full sync (search-based) instead.
-* Scripted relationship override: the `relationship {}` function in schema scripts is a stub today.
-  Relationship detection is entirely FK-constraint/naming-convention driven; there is no working
-  scripted override in Groovy or YAML.
-* Filtering through a detected relationship (querying parent rows by a child/junction-table
-  attribute) is not part of the built-in filter translation - only direct parent-object-class
-  attributes are filterable via the built-in search.
+[source,yaml]
+----
+connector:
+  schema:
+    - script: /schema/users.groovy   # resolves to /schema/users.yaml when only the YAML file is bundled
+----
 
-== Validation
+This makes it possible to migrate a script to YAML incrementally without changing the manifest.
 
-Every YAML document here is exactly one document, with a mapping root, no duplicate keys, and only
-the documented keys and strict value types at every configuration level - an unrecognized key fails validation rather than
-being silently ignored. Object-class and attribute (column) names are always arbitrary.
+The granularity of combining the two forms is per script resource, per object class, per attribute, and per operation — the manifest lists `.groovy` and `.yaml` resources side by side, and each is applied to the same builder. The only limit is the one described above: do not declare the same property explicitly in both (a table and attributes in YAML plus a search customization in Groovy is fine; the same table property in both is not).

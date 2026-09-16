@@ -61,6 +61,9 @@ class OperationAssets:
     docs_path: str
     declarative_docs_path: str
     connid_docs_path: str | None = None
+    additional_docs_paths: tuple[str, ...] = ()
+    docs_sections: tuple[str, ...] = ()
+    declarative_sections: tuple[str, ...] = ()
 
 
 class GroovyCodePayload(BaseModel):

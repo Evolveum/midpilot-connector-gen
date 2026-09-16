@@ -17,6 +17,49 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-14 Align codegen with framework references
+
+Author: Alexander Brecko
+
+Description: Codegen references now follow the current EvolveumDocs SCIMREST and SQL
+documentation. Groovy authorization generation uses `authorization { ... }`, while YAML
+retains `authentication`. REST/SCIM relationship generation can produce YAML. SCIM update
+uses the documented native PUT/PATCH strategies, and SQL search preserves default behavior
+or uses Groovy for WHERE/custom queries. YAML validation accepts documented JSON/SCIM path
+mappings and rejects unsupported `scim.extensions`, `sql.column` (use `sql.name`), and
+`search.endpoints[].method`. The last restriction concerns this YAML handler, not the HTTP
+methods an application may require for search; an appropriate documented custom implementation
+is needed for behavior outside it. Existing midPoint response fields and HTTP contracts are unchanged.
+
+Required Upgrade Steps
+
+* Allow pending `codegen.getRelation` jobs to finish before restarting with this snapshot;
+new relationship jobs persist their resolved `apiType` and pass it to the worker.
+* Rebuild and deploy the application package, then restart the workers to load the updated
+bundled references and clear in-memory reference caches. No configuration changes or database
+recreation are required.
+* Review existing YAML that uses the rejected fields. Replace `sql.column` with `sql.name`.
+Use Groovy for SCIM extension declarations. Regenerate a search requiring a different HTTP
+method using documented custom behavior instead of an unsupported YAML endpoint key.
+* Regenerate affected outputs with `skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/id?skipCache=true`.
+Use the operation's existing request body. Stored outputs are not rewritten automatically.
+* Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen`,
+`uv run poe lint`, `uv run poe typecheck`, and `uv run poe importcheck`.
+Validate regenerated artifacts in the target connector framework before using them.
+
+Rollback Procedure (If Upgrade Fails)
+
+* Finish or cancel jobs scheduled by this snapshot before restarting the previous application.
+* Redeploy the previous application package and restart workers. Restore previously retained
+connector scripts through the existing override endpoints if regenerated scripts were installed.
+There is no database migration to roll back; a database backup is not required by this change.
+
+Notes & References
+
+* Docs: `docs/pipeline/codegen-references.adoc`.
+* Affected configs: none. Bundled reference paths are internal package resources.
+
 === 2026-09-11 Declarative YAML preferred over Groovy in connector generation
 
 Author: Alexander Brecko

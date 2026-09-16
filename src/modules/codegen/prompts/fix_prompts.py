@@ -37,11 +37,6 @@ HOW TO WORK:
   because it appears more often or looks more familiar.
 - Only change artifacts that are actually at fault. Every artifact you return replaces the stored
   one, so returning an unchanged artifact is a needless risk.
-- Preserve each artifact's existing format (declarative YAML or Groovy) unless correcting the
-  reported error genuinely requires switching it - for example, the error names a capability that
-  <dsl_documentation> shows only Groovy can express. Never switch format merely for style. When you
-  do write an artifact from scratch because none of the stored ones cover the needed operation,
-  prefer declarative YAML whenever <dsl_documentation> shows it is sufficient.
 
 ATTRIBUTE NAMING (<extracted_info> is the <extracted_attributes> block below):
 - The native connector attribute name for every mapping - however the artifact's format expresses it

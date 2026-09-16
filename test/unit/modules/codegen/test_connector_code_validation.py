@@ -3,10 +3,11 @@
 # Licensed under the EUPL-1.2 or later.
 
 import pytest
+import yaml
 
+from src.modules.codegen.enums import ConnectorCodeFormat
+from src.modules.codegen.errors import ConnectorCodeValidationError
 from src.modules.codegen.utils.connector_code_validation import (
-    ConnectorCodeFormat,
-    ConnectorCodeValidationError,
     detect_connector_code_format,
     ensure_valid_connector_code,
     validate_connector_code,
@@ -107,7 +108,7 @@ def test_validate_yaml_connector_code_accepts_operation_override() -> None:
     assert validate_yaml_connector_code("objectClasses:\n  Employee:\n    create:\n      enabled: false\n") is None
 
 
-def test_validate_yaml_connector_code_accepts_explicit_method_on_search_endpoint() -> None:
+def test_yaml_endpoint_rejects_undocumented_method_key_search_custom_supports_other_methods() -> None:
     code = (
         "objectClasses:\n"
         "  User:\n"
@@ -116,7 +117,10 @@ def test_validate_yaml_connector_code_accepts_explicit_method_on_search_endpoint
         "        - path: /users/search\n"
         "          method: POST\n"
     )
-    assert validate_yaml_connector_code(code) is None
+    error = validate_yaml_connector_code(code)
+    assert error is not None and "method" in error
+    custom = "objectClasses: {User: {search: {custom: {implementation: 'return null'}}}}"
+    assert validate_yaml_connector_code(custom) is None
 
 
 def test_validate_yaml_connector_code_accepts_authentication_document() -> None:
@@ -153,9 +157,42 @@ def test_validate_yaml_connector_code_rejects_duplicate_keys() -> None:
     assert "duplicate" in error.lower()
 
 
+def test_connector_duplicate_key_rules_do_not_modify_safe_loader() -> None:
+    code = "objectClasses: {User: {}, User: {}}"
+    assert validate_yaml_connector_code(code) is not None
+    assert yaml.safe_load(code) == {"objectClasses": {"User": {}}}
+
+
 def test_validate_yaml_connector_code_rejects_multiple_documents() -> None:
     error = validate_yaml_connector_code("objectClasses: {User: {}}\n---\nobjectClasses: {Group: {}}\n")
     assert error is not None
+
+
+@pytest.mark.parametrize(
+    "value, expected_error",
+    [
+        ("&loop [*loop]", "cyclic aliases"),
+        ("&loop {self: *loop}", "cyclic aliases"),
+        ("&loop [{nested: *loop}]", "cyclic aliases"),
+    ],
+)
+def test_validate_connector_code_rejects_cyclic_aliases(value: str, expected_error: str) -> None:
+    code = (
+        "objectClasses: {User: {update: {endpoints: [{path: /users, "
+        "supportedAttributes: [{name: status, value: " + value + "}]}]}}}"
+    )
+    error = validate_connector_code(code)
+    assert error is not None
+    assert expected_error in error
+
+
+def test_validate_connector_code_accepts_shared_acyclic_aliases() -> None:
+    code = (
+        "objectClasses: {User: {update: {endpoints: [{path: /users, "
+        "supportedAttributes: [{name: status, value: &shared [active]}, "
+        "{name: previousStatus, value: *shared}]}]}}}"
+    )
+    assert validate_connector_code(code) is None
 
 
 def test_validate_yaml_connector_code_rejects_non_mapping_root() -> None:
@@ -359,15 +396,28 @@ def test_configuration_strings_are_never_parsed_as_groovy():
     assert validate_connector_code(code) is None
 
 
-def test_bundled_declarative_examples_validate_without_reformatting():
+def test_bundled_declarative_examples_distinguish_supported_documents_and_preview():
     import re
     from pathlib import Path
+
+    import yaml
 
     root = Path("src/modules/codegen/documentations")
     for path in (root / "declarative-yaml.adoc", root / "sql/declarative-yaml.adoc"):
         blocks = re.findall(r"\[source,yaml\]\n----\n(.*?)\n----", path.read_text(), re.DOTALL)
         assert blocks
         for block in blocks:
-            if block.startswith("connector:"):
-                continue  # Manifest packaging is outside the connector artifact contract.
-            assert ensure_valid_connector_code(block) == block.strip(), path
+            if re.search(r"^connector:", block, re.MULTILINE):
+                continue  # Manifest examples contain AsciiDoc callouts, not artifact YAML.
+            document = yaml.safe_load(block)
+            if "attributes" in document:
+                # Explicitly shown as an attribute fragment in the reference.
+                assert validate_yaml_connector_code(yaml.safe_dump({"objectClasses": {"User": document}})) is None
+            elif "extensions:" in block:
+                assert "not bindable in YAML yet" in path.read_text()
+                assert "scim.extensions" in validate_yaml_connector_code(block)
+            elif "# Custom search logic" in block:
+                # The expert example is illustrative: # inside a scalar is not a Groovy comment.
+                assert validate_yaml_connector_code(block) is not None
+            else:
+                assert ensure_valid_connector_code(block) == block.strip(), path

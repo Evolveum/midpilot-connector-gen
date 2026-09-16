@@ -336,21 +336,13 @@ def test_connid_reference_is_resolved_for_every_native_schema_protocol(protocol)
     assert load_required_adoc_text(_DOCUMENTATIONS_PACKAGE, assets.connid_docs_path)
 
 
-def test_sql_native_schema_documentation_never_shows_connid_attribute_calls():
-    """
-    Canary for the single-document decision.
-
-    SQL declares ConnID names as a nested ``connId { name "__UID__" }`` block. The
-    shared ConnID reference shows the ``connIdAttribute(...)`` call instead, and the
-    prompt resolves that conflict by making this document the syntax authority. If
-    ``connIdAttribute`` ever appears here, that rule starts selecting the wrong form.
-    """
-    sql_schema_docs = load_required_adoc_text(
+def test_sql_native_schema_documents_both_supported_connid_mapping_forms():
+    docs = load_required_adoc_text(
         _DOCUMENTATIONS_PACKAGE, get_operation_assets("native_schema", ApiType.SQL).docs_path
     )
-
-    assert "connIdAttribute" not in sql_schema_docs
-    assert 'connId { name "__UID__" }' in sql_schema_docs
+    assert "connIdAttribute(connIdName, attributeName)" in docs
+    assert "equivalent to the attribute-level" in docs
+    assert "connId { name UID }" in docs
 
 
 def test_sql_context_is_typed_and_excluded_from_crud_attribute_records():

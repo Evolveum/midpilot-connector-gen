@@ -11,7 +11,6 @@ from src.modules.codegen.core.base import (
     endpoints_to_records,
 )
 from src.modules.codegen.enums import SearchIntent
-from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, OperationConfig
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
 from src.modules.codegen.utils.prompt_records import (
@@ -243,13 +242,15 @@ class RelationGenerator(BaseGroovyGenerator):
         self,
         docs_text: str,
         declarative_docs_text: str,
+        system_prompt: str,
+        user_prompt: str,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
             operation_name="Relation",
-            system_prompt=get_relation_system_prompt,
-            user_prompt=get_relation_user_prompt,
-            default_scaffold="relation {\n}\n",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            default_scaffold="{}",
             logger_prefix="[Codegen:Relation]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
@@ -277,7 +278,7 @@ class RelationGenerator(BaseGroovyGenerator):
 
 def build_other_authorization_scaffold(protocol: ApiType) -> str:
     return (
-        "authentication {\n"
+        "authorization {\n"
         f"    {protocol.value} {{\n"
         "        other {\n"
         "            implementation {\n"
@@ -320,7 +321,7 @@ def build_authorization_scaffold(
     preferred_authorizations: Optional[list[Dict[str, Any]]] = None,
 ) -> str:
     lines = [
-        "authentication {",
+        "authorization {",
         f"    {protocol.value} {{",
     ]
     lines.extend(f"        // {comment}" for comment in _unsupported_authorization_comments(preferred_authorizations))

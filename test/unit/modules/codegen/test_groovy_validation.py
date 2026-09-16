@@ -7,13 +7,13 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
+from src.modules.codegen.errors import ConnectorCodeValidationError
 from src.modules.codegen.schema import (
     AuthorizationCodegenInput,
     CodegenOperationInput,
     GroovyCodePayload,
     PreferredEndpointsInput,
 )
-from src.modules.codegen.utils.connector_code_validation import ConnectorCodeValidationError
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 
 

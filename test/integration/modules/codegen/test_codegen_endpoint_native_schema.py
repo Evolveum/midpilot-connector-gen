@@ -203,6 +203,11 @@ async def test_generate_native_schema_missing_class():
         ("objectClasses: {User: {attributes: {name: null}}}", 200),
         ("objectClasses: {User: {search: {endpoints: 42}}}", 422),
         ('objectClasses: {User: {search: {custom: {implementation: "return ("}}}}', 422),
+        (
+            "objectClasses: {User: {update: {endpoints: [{path: /users, "
+            "supportedAttributes: [{name: status, value: &loop [*loop]}]}]}}}",
+            422,
+        ),
     ],
 )
 def test_manual_yaml_override_http_contract(code, expected_status):

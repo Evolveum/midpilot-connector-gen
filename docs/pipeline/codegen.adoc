@@ -50,6 +50,9 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 
 == How generation works
 
+See link:codegen-references.adoc[Reference documentation] for the operation/protocol
+registry and manual update instructions.
+
 1. *Context assembly* — for each operation, `selection/` gathers the digester
    outputs (attributes, auth, and endpoints where available) and the chunks
    recorded as relevant for the operation's result key, plus required midPoint
@@ -88,12 +91,12 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 |===
 | Endpoint | `rest` | `scim` | `sql`
 
-| `native-schema` | yes | yes | yes (REST prompt, SQL reference doc)
+| `native-schema` | yes | yes | yes (SQL context and SQL reference)
 | `connid` (deprecated) | yes | yes | yes (protocol-independent)
 | `search/{intent}` | yes | yes | yes
 | `create` / `update` / `delete` | yes | yes | yes
-| `relations/{relationName}` | yes | yes | generic path; usable only when a
-  suitable `relationsOutput` has been supplied or extracted
+| `relations/{relationName}` | YAML or Groovy | YAML or Groovy, respecting automatic SCIM mappings
+| discovery only; scripted relationship overrides are unsupported
 | `authorization` | yes | yes | *not supported*
 |===
 

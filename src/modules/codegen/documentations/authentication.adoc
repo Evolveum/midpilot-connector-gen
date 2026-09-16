@@ -1,697 +1,260 @@
-= Authentication Groovy Script Guide
-:toc: left
-:toclevels: 3
-:sectnums:
-:source-highlighter: rouge
+= Authentication & authorization
 
-This document explains when a Groovy script is needed to configure authentication, describes
-the scripting interface in full, and provides examples for common scenarios.
+The SCIMREST framework authenticates against the target system per *protocol namespace*:
 
-== When is a Groovy script needed?
+* `rest` — the REST API (properties `rest*`, scripts `authorization { rest { ... } }`)
+* `scim` — the SCIM API (properties `scim*`, scripts `authorization { scim { ... } }`)
 
-The connector ships with built-in implementations for nine authentication methods. These
-implementations follow the relevant RFC standards precisely. Configuring them requires only
-setting the appropriate properties — no script is needed.
+The two namespaces are independent: you can authenticate the SCIM API with one method and the REST API with another.
 
-[cols="1,1,2",options="header"]
+This document is part of the SCIMREST connector tutorial. See xref:../index/[] for other topics.
+
+IMPORTANT: SCIM support is enabled only when a `scimBaseUrl` is configured *and* SCIM credentials are present; otherwise the SCIM context is not initialized and the connector works REST-only (with a log entry noting this).
+
+== Supported methods
+
+Nine authentication methods are implemented per protocol namespace:
+
+[cols="1,1,2", options="header"]
 |===
-|Method |Config interface |Key config properties
+|Method |DSL keyword |Mechanism
 
-|HTTP Basic (RFC 7617)
-|`BasicAuthorization`
-|`restUsername`, `restPassword`
+|Basic
+|`basic { ... }`
+|`Authorization: Basic base64(user:pass)`
 
-|Bearer Token (RFC 6750)
-|`BearerTokenAuthorization`
-|`restTokenValue`
+|Bearer token
+|`bearer { ... }`
+|`Authorization: <tokenName> <tokenValue>` (token name defaults to `Bearer`)
 
-|JWT Bearer (RFC 7519/7515)
-|`JwtBearerAuthorization`
-|`restJwtAlgorithm`, `restJwtSecret`, `restJwtTokenName`, `restJwtPayload`, `restJwtLocation`
+|JWT bearer
+|`jwtBearer { ... }`
+|Self-signed JWT (HS/RS/PS/ES families); placed in the `Authorization` header by default or as a query parameter
 
-|API Key
-|`ApiKeyAuthorization`
-|`restApiKey`, `restApiKeyName`, `restApiKeyLocation`
+|API key
+|`apiKey { ... }`
+|Header `<name>: <key>` by default, or a query parameter
 
-|OAuth2 Client Credentials (RFC 6749 §4.4)
-|`OAuth2ClientCredentialsAuthorization`
-|`restOAuth2TokenUrl`, `restOAuth2ClientId`, `restOAuth2ClientSecret`
+|OAuth 2.0 client credentials
+|`oauth2ClientCredentials { ... }`
+|Client credentials grant (RFC 6749 §4.4)
 
-|OAuth2 Password (RFC 6749 §4.3)
-|`OAuth2PasswordAuthorization`
-|`restOAuth2TokenUrl`, `restOAuth2ClientId`, `restOAuth2Username`, `restOAuth2Password`
+|OAuth 2.0 password
+|`oauth2Password { ... }`
+|Resource owner password grant (RFC 6749 §4.3)
 
-|OAuth2 JWT Bearer (RFC 7523)
-|`OAuth2JwtBearerAuthorization`
-|`restOAuth2TokenUrl`, `restOAuth2ClientId`, `restOAuth2PrivateKey`, `restOAuth2Algorithm`, `restOAuth2KeyId`, `restOAuth2Issuer`, `restOAuth2Subject`
+|OAuth 2.0 JWT bearer
+|`oauth2JwtBearer { ... }`
+|Client JWT assertion (RFC 7523)
 
-|OAuth2 SAML Bearer (RFC 7522)
-|`OAuth2SamlAuthorization`
-|`restOAuth2TokenUrl`, `restOAuth2ClientId`, plus the shared OAuth2 property set (`restOAuth2Algorithm`, `restOAuth2Issuer`, etc.)
+|OAuth 2.0 SAML
+|`oauth2Saml { ... }`
+|SAML assertion to the token endpoint
 
+|AWS Signature
+|`awsSignature { ... }`
 |AWS Signature Version 4
-|`AwsSignatureAuthorization`
-|`restAwsAccessKey`, `restAwsSecretKey`, `restAwsSessionToken`, `restAwsRegion`, `restAwsService`
+
 |===
 
-The same nine methods are built-in for SCIM as well (`ScimClientConfiguration` variants with
-`scim`-prefixed property names).
+NOTE: `digest`, `hawk`, and `ntlm` have configuration properties (below) but are **not implemented yet** — configuring them has no effect on requests.
 
-NOTE: Digest, Hawk, and NTLM also have configuration properties (`restDigest*`, `restHawk*`,
-`restNtlm*`), but they are **not implemented yet** — configuring them has no effect on requests.
-Never generate a script that claims to authenticate with one of these three; if the user selected
-one of them, treat it as unsupported instead of inventing an implementation.
+== Configuration properties
 
-=== When the API deviates from the standard
+The generic connectors expose the full property set (see xref:generic-connectors/[shipped connectors] for how a connector hides the parts it does not need). All properties have a `scim*` twin with identical semantics.
 
-Real-world APIs often have specifics that do not match what the RFC mandates. A Groovy script
-lets you override the built-in behavior for that particular API. Common reasons to write a
-script include:
+=== Endpoints and transport
 
-* *Non-standard header prefix* — Forgejo and Gitea accept `token <value>` instead of the
-  RFC 6750 `Bearer <value>` prefix.
-* *Non-standard token field* — the token endpoint returns `token` or a nested `data.token`
-  instead of the standard `access_token` field.
-* *Custom token application* — the API expects the token in a proprietary header such as
-  `X-Auth-Token` or `X-Api-Key` rather than `Authorization`.
-* *Refresh token flow* — the built-in OAuth2 handler does not use refresh tokens; scripts
-  can add this by overriding the token request and validation logic.
-* *Extra parameters or headers* — the token endpoint requires additional form fields
-  (e.g. `tenant`, `audience`, `custom_param`) beyond the standard OAuth2 parameters.
-* *Context-dependent headers* — the API requires a tenant ID or other value extracted from
-  the token response to be sent on every subsequent API request.
-* *Multi-method selection* — the target system accepts more than one auth scheme and the
-  connector should probe and pick the active one automatically.
+[cols="1,1,2", options="header"]
+|===
+|Property |Type |Description
 
-== Script basics
+|`baseAddress`
+|String
+|Base URL of the REST API endpoint (e.g. `https://api.example.com/v1`)
 
-=== File placement
+|`scimBaseUrl`
+|String
+|Base URL of the SCIM endpoint (e.g. `https://api.example.com/scim/v2`)
 
-Place the script in the connector's resource directory:
+|`restTestEndpoint`
+|String
+|Relative path used to verify connectivity on `test()` (e.g. `/health`); not required
 
-----
-src/main/resources/authorization.op.groovy
-----
+|`trustAllCertificates`
+|Boolean
+|Trust all TLS certificates
 
-The connector infrastructure loads it automatically via `builder.loadFromResource()`.
-For testing, a script string can be passed directly to `builder.loadFromString(script)`.
+|`timeoutSeconds`
+|Integer
+|HTTP request timeout in seconds; default `30`
 
-=== Top-level structure
+|===
+
+=== Basic
+
+`restUsername` (String), `restPassword` (GuardedString).
+
+=== Bearer token
+
+`restTokenValue` (GuardedString) — static bearer token; `restTokenName` (String) — prefix placed before the token value in the `Authorization` header (e.g. `Bearer`).
+
+=== JWT bearer
+
+`restJwtTokenName` (String) — the `Authorization` scheme prefix or query-parameter name; `restJwtAlgorithm` (String) — signing algorithm (`HS256/384/512` HMAC, `RS256/384/512` / `PS256/384/512` RSA, `ES256/384/512` ECDSA); `restJwtSecret` (GuardedString) — HMAC secret or PEM-encoded PKCS#8 private key; `restJwtSecretBase64Encoded` (Boolean) — Base64-decode the HMAC secret before signing; `restJwtPayload` (String) — JSON object with additional claims; `restJwtLocation` (String) — `header` (default) or `query`.
+
+=== API key
+
+`restApiKey` (GuardedString) — the key value; `restApiKeyName` (String) — header or query-parameter name (e.g. `X-API-Key`); `restApiKeyLocation` (String) — `header` (default) or `query`.
+
+=== OAuth 2.0 (all four grant types)
+
+[cols="1,1,2", options="header"]
+|===
+|Property |Type |Description
+
+|`restOAuth2TokenUrl`
+|String
+|URL of the authorization server token endpoint
+
+|`restOAuth2ClientId`
+|String
+|Client identifier
+
+|`restOAuth2ClientSecret`
+|GuardedString
+|Client secret (required for client credentials)
+
+|`restOAuth2Scope`
+|String
+|Space-separated list of scopes to request
+
+|`restOAuth2ClientAuthenticationScheme`
+|String
+|How client credentials are sent to the token endpoint: `basic` (default) or `post`
+
+|`restOAuth2Username`
+|String
+|Resource owner username (password grant)
+
+|`restOAuth2Password`
+|GuardedString
+|Resource owner password (password grant)
+
+|`restOAuth2PrivateKey`
+|GuardedString
+|PEM-encoded PKCS#8 private key for the JWT bearer grant (RFC 7523)
+
+|`restOAuth2Issuer`
+|String
+|Issuer identifier used as the `iss` claim in JWT assertions and as the SAML issuer
+
+|`restOAuth2KeyId`
+|String
+|Key ID (`kid`) in the JWT header
+
+|`restOAuth2Algorithm`
+|String
+|JWT signing algorithm for the assertion (e.g. `RS256`, `ES256`)
+
+|`restOAuth2Subject`
+|String
+|Subject (`sub` claim); defaults to the client ID if not set
+|===
+
+OAuth 2.0 behavior fixed by the framework: the token field in the token response is always `access_token` (missing field → error), the `aud` claim of the JWT assertion is the token URL, and `iss` / `sub` default to the client ID.
+
+=== AWS Signature
+
+`restAwsAccessKey` (String), `restAwsSecretKey` (GuardedString), `restAwsSessionToken` (GuardedString) — temporary session token; `restAwsRegion` (String), `restAwsService` (String) — service name used in the signature scope (e.g. `execute-api`, `s3`).
+
+=== Digest, Hawk, NTLM (configuration only, not implemented)
+
+`restDigestUsername`, `restDigestPassword`, `restDigestAutoChallenge`, `restDigestMaxRetries`, `restDigestPreemptiveAuth`, `restDigestAlgorithmPreference`, `restDigestStateCacheEnabled`;
+`restHawkId`, `restHawkKey`, `restHawkAlgorithm` (`sha256` default / `sha512`), `restHawkIncludePayloadHash`, `restHawkOffset`, `restHawkExt`;
+`restNtlmUsername`, `restNtlmPassword`, `restNtlmDomain`, `restNtlmWorkstation`, `restNtlmVersion` (`NTLMv2` default).
+
+== Script customization
+
+Authentication can be customized per method in a Groovy script (bundled via the manifest's `authorization` section, or written inline in a connector class):
 
 [source,groovy]
 ----
-authentication {
+authorization {
     rest {
-        // REST authentication configuration
-    }
-    scim {
-        // SCIM authentication configuration (if the connector also uses SCIM)
-    }
-}
-----
-
-Both `rest { }` and `scim { }` blocks are optional. The `authentication { }` closure is the
-script entry point and is resolved against `AuthenticationCustomizationBuilder`.
-
-== DSL reference
-
-=== Method shortcut blocks
-
-Inside `rest { }` and `scim { }`, use shortcut methods corresponding to the auth interface
-implemented by your connector configuration:
-
-[cols="1,1",options="header"]
-|===
-|Shortcut |Applies to config interface
-
-|`basic { }` |`BasicAuthorization`
-|`bearer { }` |`BearerTokenAuthorization`
-|`jwtBearer { }` |`JwtBearerAuthorization`
-|`apiKey { }` |`ApiKeyAuthorization`
-|`oauth2ClientCredentials { }` |`OAuth2ClientCredentialsAuthorization`
-|`oauth2Password { }` |`OAuth2PasswordAuthorization`
-|`oauth2JwtBearer { }` |`OAuth2JwtBearerAuthorization`
-|`oauth2Saml { }` |`OAuth2SamlAuthorization`
-|`awsSignature { }` |`AwsSignatureAuthorization` (only a `beforeSign { }` hook, no `implementation { }` block)
-|===
-
-There is no generic `oauth2 { }` keyword. Each OAuth2 grant has its own independent shortcut block
-(`oauth2ClientCredentials`, `oauth2Password`, `oauth2JwtBearer`, `oauth2Saml`); use the one matching
-the selected method.
-
-=== The `implementation { }` block
-
-Inside any shortcut block, an `implementation { }` closure provides a complete custom
-implementation. The closure delegate is <<authimplementationcontext,`AuthImplementationContext`>>.
-
-[source,groovy]
-----
-bearer {
-    implementation {
-        // 'request', 'configuration', 'ctx', 'decrypt', etc. are available here
-        request.header("Authorization", "token " + decrypt(configuration.restTokenValue))
-    }
-}
-----
-
-When `implementation { }` is set, it *fully replaces* the built-in handler. If the connector
-configuration implements `BearerTokenAuthorization` and the script provides a
-`bearer { implementation { } }` block, the Groovy closure runs instead of the built-in
-`Authorization: Bearer <value>` logic.
-
-=== Multi-method preference selection
-
-When the target API supports more than one auth method, use `preference` to let the connector
-automatically probe and select the active method at runtime:
-
-[source,groovy]
-----
-rest {
-    preference apiKey, bearer
-}
-----
-
-The connector sends a request to the configured test endpoint with each method in order and
-caches the first one that returns a 2xx–3xx response. The probe runs once and the result is
-cached for the connector lifetime.
-
-The identifiers (`bearer`, `oauth2ClientCredentials`, etc.) are convenience properties defined
-on `RestBuilder` / `ScimBuilder` that return the corresponding configuration interface class.
-
-[#authimplementationcontext]
-== AuthImplementationContext
-
-Every `implementation { }` closure is called with an `AuthImplementationContext` as its delegate.
-All properties and methods are directly available without a prefix:
-
-[cols="1,1,2",options="header"]
-|===
-|Name |Type |Description
-
-|`configuration` |connector config object |Raw connector configuration; access typed fields with Groovy property syntax, e.g. `configuration.restUsername`
-|`request` |`HttpRequestSpecification` |The outgoing request to mutate — add headers, query params, form params
-|`ctx` |`Map<String, Object>` |Persistent state map; survives across calls for the lifetime of the connector instance (shared across all invocations)
-|`decrypt(GuardedString)` |`String` |Decrypts a `GuardedString` configuration field to plain text
-|`newRequest(String url)` |`HttpRequestSpecification` |Creates a new outgoing HTTP request (e.g. to a token endpoint)
-|`newJwt()` |`JwtAssertionBuilder` |Creates a new JWT builder supporting HS*, RS*, PS*, ES* algorithms
-|`execute(HttpRequestSpecification)` |`HttpResponse<String>` |Sends an HTTP request and returns the raw response
-|`parseJson(String)` |dynamic Groovy object |Parses a JSON string; use Groovy property access on the result
-|===
-
-=== HttpRequestSpecification helpers
-
-[source,groovy]
-----
-request.header("X-Custom", "value")          // add/replace a request header
-request.queryParameter("api_key", "value")   // add a query parameter
-request.formParam("grant_type", "password")  // add a form body parameter (POST)
-----
-
-== OAuth2 hooks
-
-The `oauth2ClientCredentials { }` and `oauth2JwtBearer { }` blocks accept optional hook closures
-that selectively override parts of the built-in OAuth2 token lifecycle instead of replacing it
-entirely. The closure is called with `oauth2Context` as its argument and also as its delegate.
-
-[source,groovy]
-----
-oauth2ClientCredentials { oauth2Context ->
-    validateToken       { /* ... */ }
-    buildTokenRequest   { request -> /* ... */ }
-    parseTokenResponse  { response -> /* ... */ }
-    applyToken          { request -> /* ... */ }
-    onResponse          { response -> /* ... */ }
-}
-----
-
-Any hook not provided falls back to the built-in behaviour. All five hooks share the same
-`oauth2Context` (`AuthContext`) map:
-
-[cols="1,2",options="header"]
-|===
-|Key |Description
-
-|`access_token` |The current access token string
-|`expires_in` |Token lifetime in seconds (from the token response)
-|`expires_at` |`java.time.Instant` expiry timestamp (set automatically from `expires_in`)
-|===
-
-You can store additional keys freely (e.g. `refresh_token`, `tenant_id`).
-
-=== Hook signatures
-
-`validateToken { -> boolean }`::
-Called before each request. Return `true` to reuse the cached token; return `false` to fetch a
-new one. Default: returns `false` when `access_token` is absent; returns `true` when
-`expires_at` is absent (no expiry) or is still in the future.
-
-`buildTokenRequest { request -> }`::
-Called to assemble the token endpoint request. `request` is an `HttpRequestSpecification`.
-Default: sends the grant-type-specific form parameters (`grant_type`, `client_id`, etc.).
-When overridden, the hook *replaces* the default form parameters entirely — if you need
-client credentials, add them explicitly.
-
-`parseTokenResponse { response -> }`::
-Called with the parsed JSON response from the token endpoint (Groovy dynamic object). *Must*
-set `oauth2Context["access_token"]`; the framework throws if this key is missing after the hook
-returns. `expires_at` is always derived from `expires_in` in the raw response automatically —
-the hook only needs to extract the token value itself.
-
-`applyToken { request -> }`::
-Called to attach the token to every outgoing API request. `request` is the `HttpRequestSpecification`.
-Default: adds `Authorization: Bearer <access_token>`.
-
-`onResponse { response -> }`::
-Fires on every response after an authorized request. Default: a 401 response clears the cached
-token so the next request re-fetches one. Providing this hook replaces that default entirely -
-use it to customize 401/re-auth handling instead of only the token-fetch path.
-
-=== Using `implementation { }` inside an OAuth2 block
-
-If `implementation { }` is provided inside `oauth2ClientCredentials { }`, it *bypasses all
-OAuth2 token management* entirely and is treated like a plain `implementation` block on
-`bearer{}` or `apiKey{}`. Use this only when the entire token acquisition must be custom:
-
-[source,groovy]
-----
-oauth2ClientCredentials { oauth2Context ->
-    implementation {
-        // full override — no built-in OAuth2 logic runs
-        request.header("Authorization", "MyCustomScheme " + ctx["precomputed_token"])
-    }
-}
-----
-
-== Scenarios
-
-=== No Groovy — Bearer Token (built-in, standard)
-
-Configure only; no script needed:
-
-[source,properties]
-----
-restTokenValue = eyJhbGciOiJSUzI1NiJ9...
-----
-
-The connector sends `Authorization: Bearer <value>` on every request per RFC 6750.
-
-=== No Groovy — API Key (built-in, standard)
-
-[source,properties]
-----
-restApiKey         = sk-live-abc123
-restApiKeyName     = X-API-Key
-restApiKeyLocation = header
-----
-
-To place the key in a query parameter instead:
-
-[source,properties]
-----
-restApiKeyLocation = query
-restApiKeyName     = api_key
-----
-
-=== No Groovy — OAuth2 Client Credentials (built-in, standard)
-
-[source,properties]
-----
-restOAuth2TokenUrl     = https://auth.example.com/oauth/token
-restOAuth2ClientId     = my-client
-restOAuth2ClientSecret = <secret>
-restOAuth2Scope        = read write
-----
-
-Tokens are fetched automatically, cached, and refreshed on expiry.
-
-=== Full built-in implementations as Groovy reference
-
-The following script reproduces exactly what each built-in handler does internally. Use it as
-a starting point when you need to customize only a small part of the standard behavior.
-
-[source,groovy]
-----
-authentication {
-    rest {
-
-        // HTTP Basic (RFC 7617): encodes credentials as Base64(username:password)
-        basic {
-            implementation {
-                def credentials = configuration.restUsername + ":" + decrypt(configuration.restPassword)
-                request.header("Authorization", "Basic " + credentials.bytes.encodeBase64())
-            }
-        }
-
-        // Bearer Token (RFC 6750): sends the static token verbatim
+        // Override the built-in bearer implementation
         bearer {
             implementation {
                 request.header("Authorization", "Bearer " + decrypt(configuration.restTokenValue))
             }
         }
-
-        // JWT Bearer (RFC 7519): builds a signed JWT, places it per restJwtLocation
-        jwtBearer {
-            implementation {
-                def token = newJwt()
-                    .claimsFromJson(configuration.restJwtPayload)
-                    .sign(configuration.restJwtAlgorithm,
-                          decrypt(configuration.restJwtSecret),
-                          configuration.restJwtSecretBase64Encoded)
-                if ("query".equalsIgnoreCase(configuration.restJwtLocation)) {
-                    request.queryParameter(configuration.restJwtTokenName, token)
-                } else {
-                    request.header("Authorization", configuration.restJwtTokenName + " " + token)
-                }
-            }
-        }
-
-        // API Key: sends the key in the configured header or query parameter
-        apiKey {
-            implementation {
-                if ("query".equalsIgnoreCase(configuration.restApiKeyLocation)) {
-                    request.queryParameter(configuration.restApiKeyName, decrypt(configuration.restApiKey))
-                } else {
-                    request.header(configuration.restApiKeyName, decrypt(configuration.restApiKey))
-                }
-            }
-        }
-
-        // OAuth2 Client Credentials (RFC 6749 §4.4):
-        // fetches a token with client_credentials grant, caches it until expiry
-        oauth2ClientCredentials { oauth2Context ->
-            validateToken {
-                def accessToken = oauth2Context["access_token"]
-                if (!accessToken) return false
-                def expiresAt = oauth2Context["expires_at"]
-                expiresAt == null || expiresAt.isAfter(java.time.Instant.now())
-            }
-            buildTokenRequest { request ->
-                if ("basic".equalsIgnoreCase(configuration.restOAuth2ClientAuthenticationScheme)) {
-                    def creds = configuration.restOAuth2ClientId + ":" +
-                                decrypt(configuration.restOAuth2ClientSecret)
-                    request.header("Authorization", "Basic " + creds.bytes.encodeBase64())
-                } else {
-                    request.formParam("client_id",     configuration.restOAuth2ClientId)
-                    request.formParam("client_secret", decrypt(configuration.restOAuth2ClientSecret))
-                }
-                request.formParam("grant_type", "client_credentials")
-                if (configuration.restOAuth2Scope) {
-                    request.formParam("scope", configuration.restOAuth2Scope)
-                }
-            }
-            parseTokenResponse { response ->
-                oauth2Context["access_token"] = response.access_token
-                // expires_at is derived from expires_in automatically by the framework
-            }
-            applyToken { request ->
-                request.header("Authorization", "Bearer " + oauth2Context["access_token"])
-            }
-        }
-
-        // OAuth2 JWT Bearer (RFC 7523):
-        // signs a JWT assertion and exchanges it for a token.
-        // The signing algorithm, key ID, issuer and subject are all configurable - none of them
-        // is hardcoded. iss/sub default to the client ID only when restOAuth2Issuer/Subject are unset.
-        oauth2JwtBearer { oauth2Context ->
-            buildTokenRequest { request ->
-                def now = java.time.Instant.now().epochSecond
-                def jwt = newJwt()
-                    .claim("iss", configuration.restOAuth2Issuer ?: configuration.restOAuth2ClientId)
-                    .claim("sub", configuration.restOAuth2Subject ?: configuration.restOAuth2ClientId)
-                    .claim("aud", configuration.restOAuth2TokenUrl)
-                    .claim("iat", now)
-                    .claim("exp", now + 300)
-                    .claim("jti", java.util.UUID.randomUUID().toString())
-                if (configuration.restOAuth2KeyId) {
-                    jwt = jwt.header("kid", configuration.restOAuth2KeyId)
-                }
-                def assertion = jwt.sign(configuration.restOAuth2Algorithm, configuration.restOAuth2PrivateKey)
-                request.formParam("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
-                request.formParam("client_id",  configuration.restOAuth2ClientId)
-                request.formParam("assertion",  assertion)
-            }
-            parseTokenResponse { response ->
-                oauth2Context["access_token"] = response.access_token
-            }
-            applyToken { request ->
-                request.header("Authorization", "Bearer " + oauth2Context["access_token"])
-            }
-        }
-    }
-}
-----
-
-=== Non-standard header prefix (Forgejo / Gitea)
-
-Forgejo and Gitea require `token <value>` as the Authorization value instead of the RFC 6750
-`Bearer <value>`. Both `bearer` and `apiKey` blocks are overridden because either interface
-may be configured:
-
-[source,groovy]
-----
-// authorization.op.groovy
-authentication {
-    rest {
-        bearer {
-            implementation {
-                request.header("Authorization", "token " + decrypt(configuration.restTokenValue))
-            }
-        }
-        apiKey {
-            implementation {
-                request.header("Authorization", "token " + decrypt(configuration.restTokenValue))
-            }
-        }
-    }
-}
-----
-
-=== Custom JWT claims
-
-When the built-in JWT Bearer handler does not cover all required claims (e.g. the API mandates
-specific `iss`, `sub`, or `aud` values not expressible via `restJwtPayload`):
-
-[source,groovy]
-----
-authentication {
-    rest {
-        jwtBearer {
-            implementation {
-                def jwt = newJwt()
-                    .claim("iss", configuration.restOAuth2ClientId)
-                    .claim("sub", configuration.restUsername)
-                    .claim("aud", "https://api.example.com")
-                    .claim("iat", java.time.Instant.now().epochSecond)
-                    .claim("exp", java.time.Instant.now().plusSeconds(300).epochSecond)
-                    .sign(configuration.restJwtAlgorithm, configuration.restJwtSecret)
-                request.header("Authorization", "Bearer " + jwt)
-            }
-        }
-    }
-}
-----
-
-=== OAuth2 hooks — refresh token flow
-
-The built-in OAuth2 client credentials handler does not support refresh tokens. Hooks can add
-that capability by overriding all four stages:
-
-[source,groovy]
-----
-authentication {
-    rest {
-        oauth2ClientCredentials { oauth2Context ->
-            validateToken {
-                def expiresAt = oauth2Context["expires_at"]
-                expiresAt != null && expiresAt.isAfter(java.time.Instant.now())
-            }
-
-            buildTokenRequest { request ->
-                if (oauth2Context["refresh_token"]) {
-                    request.formParam("grant_type",    "refresh_token")
-                    request.formParam("refresh_token", oauth2Context["refresh_token"])
-                } else {
-                    request.formParam("grant_type",    "client_credentials")
-                    request.formParam("client_id",     configuration.restOAuth2ClientId)
-                    request.formParam("client_secret", decrypt(configuration.restOAuth2ClientSecret))
-                }
-            }
-
-            parseTokenResponse { response ->
-                oauth2Context["access_token"] = response.access_token
-                if (response.refresh_token) {
-                    oauth2Context["refresh_token"] = response.refresh_token
-                }
-            }
-
-            applyToken { request ->
-                request.header("Authorization", "Bearer ${oauth2Context['access_token']}")
-            }
-        }
-    }
-}
-----
-
-=== OAuth2 hooks — non-standard token field
-
-When the token endpoint returns a non-standard field name (e.g. `token` instead of
-`access_token`), override only `parseTokenResponse` — all other hooks use the built-in:
-
-[source,groovy]
-----
-authentication {
-    rest {
-        oauth2ClientCredentials { oauth2Context ->
-            parseTokenResponse { response ->
-                oauth2Context["access_token"] = response.token
-            }
-        }
-    }
-}
-----
-
-=== OAuth2 hooks — nested JSON response
-
-When the token is nested inside the response body (e.g. `data.token`):
-
-[source,groovy]
-----
-authentication {
-    rest {
-        oauth2ClientCredentials { oauth2Context ->
-            parseTokenResponse { response ->
-                oauth2Context["access_token"] = response.data?.token
-            }
-            applyToken { request ->
-                request.header("Authorization", "Bearer ${oauth2Context['access_token']}")
-            }
-        }
-    }
-}
-----
-
-=== OAuth2 hooks — custom token application header
-
-When the API expects the token in a proprietary header instead of `Authorization`:
-
-[source,groovy]
-----
-authentication {
-    rest {
-        oauth2ClientCredentials { oauth2Context ->
-            applyToken { request ->
-                request.header("X-Auth-Token", oauth2Context["access_token"])
-            }
-        }
-    }
-}
-----
-
-=== OAuth2 hooks — context value passed between hooks
-
-A value extracted during `parseTokenResponse` (e.g. a tenant ID returned alongside the token)
-can be stored in `oauth2Context` and used in `applyToken`:
-
-[source,groovy]
-----
-authentication {
-    rest {
-        oauth2ClientCredentials { oauth2Context ->
-            parseTokenResponse { response ->
-                oauth2Context["access_token"] = response.access_token
-                oauth2Context["tenant_id"]    = response.tenant_id
-            }
-
-            applyToken { request ->
-                request.header("Authorization", "Bearer ${oauth2Context['access_token']}")
-                request.header("X-Tenant-Id",  oauth2Context["tenant_id"])
-            }
-        }
-    }
-}
-----
-
-=== Caching state in `ctx`
-
-The `ctx` map persists for the connector instance lifetime. Use it to avoid re-computing or
-re-fetching values on every request:
-
-[source,groovy]
-----
-authentication {
-    rest {
-        apiKey {
-            implementation {
-                if (!ctx["token"]) {
-                    ctx["token"] = decrypt(configuration.restApiKey)
-                }
-                request.header("X-API-Key", ctx["token"])
-            }
-        }
-    }
-}
-----
-
-=== Customizing REST and SCIM independently
-
-When the connector communicates with both a REST API and a SCIM endpoint using different schemes:
-
-[source,groovy]
-----
-authentication {
-    rest {
-        bearer {
-            implementation {
-                request.header("Authorization", "token " + decrypt(configuration.restTokenValue))
-            }
-        }
+        // Prefer bearer over basic when both are configured
+        preference(BearerTokenAuthorization)
     }
     scim {
-        oauth2ClientCredentials { oauth2Context ->
-            applyToken { request ->
-                request.header("X-SCIM-Token", oauth2Context["access_token"])
-            }
+        basic {
+            implementation { /* ... */ }
         }
     }
 }
 ----
 
-=== Multiple method blocks in one script
+* `implementation { ... }` — replaces the built-in behavior of the method. The closure delegate exposes: `configuration()` (the connector configuration), `request()` (the `HttpRequestSpecification` being customized), `ctx()` (a key/value context, `set`/`get`), `decrypt(String)` (decrypts guarded values), `newRequest(url)`, `newJwt(...)`, `execute(spec)` (runs an HTTP request), and `parseJson(...)`.
+* `preference(...)` — the preferred method when several are configured.
 
-Both `bearer` and `apiKey` blocks can coexist in the same script. Only the block matching the
-configuration interface actually implemented by the connector will execute:
+The same customization in YAML (a top-level `authentication` block, in the same file as the operation documents):
 
-[source,groovy]
+[source,yaml]
 ----
-authentication {
-    rest {
-        bearer {
-            implementation {
-                request.header("Authorization", "token " + decrypt(configuration.restTokenValue))
-            }
-        }
-        apiKey {
-            implementation {
-                request.header("Authorization", "token " + decrypt(configuration.restApiKey))
-            }
-        }
-    }
-}
+authentication:
+  rest:
+    bearer:
+      implementation: |
+        request.header("Authorization", "Bearer " + decrypt(configuration.restTokenValue))
+    preference:
+      - bearer
+  scim:
+    basic:
+      implementation: |
+        # ...
 ----
 
-=== Automatic method preference
+See xref:declarative-yaml/[declarative YAML] for the full reference.
 
-When the target server accepts more than one auth scheme, let the connector probe and pick:
+=== OAuth 2.0 hooks
 
-[source,groovy]
-----
-authentication {
-    rest {
-        preference apiKey, bearer
-    }
-}
-----
+The OAuth 2.0 methods accept fine-grained hooks:
 
-The connector sends a test request to `configuration.restTestEndpoint` with each method in
-the listed order. The first method that gets a 2xx–3xx response becomes the active method for
-the lifetime of the connector. SCIM uses `/Schemas` as its probe endpoint.
+[cols="1,2,2", options="header"]
+|===
+|Hook |Argument |Purpose
+
+|`buildTokenRequest { ... }`
+|the token-endpoint request
+|customize the token request
+
+|`parseTokenResponse { ... }`
+|the token response as a map
+|parse non-standard responses (the context must then contain `access_token`)
+
+|`validateToken { ... }`
+|—
+|return `true`/`false` for a cached token
+
+|`applyToken { ... }`
+|the request being authorized
+|attach the token to the request
+
+|`onResponse { ... }`
+|the HTTP response
+|fires on *every* response after an authorized request; by default a 401 clears the cached token — providing a hook replaces that default
+
+|===
+
+=== AWS `beforeSign` hook
+
+`awsSignature { beforeSign { ... } }` — the closure receives the request and can set a custom sign header via `signHeader(name)`; `getRequest()` returns the `HttpRequestSpecification`.
+
+== No credentials
+
+If no authentication method is configured for a namespace, requests in that namespace are sent without authentication headers. The SCIM namespace is disabled entirely unless `scimBaseUrl` and at least one SCIM credential are present (see the note above).

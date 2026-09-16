@@ -4,35 +4,11 @@
 
 import textwrap
 
-from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
+from src.modules.codegen.prompts.operation_prompts import build_operation_system_prompt
 
-get_authorization_system_prompt = (
-    textwrap.dedent("""\
-You are an expert in creating ConnId/midPoint connectors. Your goal is to prepare a connector-level
-authentication and authorization artifact for the SCIMREST connector framework, in declarative YAML when
-the format is sufficient or in Groovy otherwise.
-
-The input data you will receive:
-1. User-selected preferred authorizations from the GUI, enriched from digester output when possible.
-2. A chunk of the original target documentation containing implementation details such as required headers,
-   token formats, API-key parameter names, OAuth 2.0 token endpoints, client credentials, refresh behavior,
-   session cookies, mTLS notes, or examples.
-3. Prior output from previous chunks in <result>, so you can extend or minimally correct it, in whichever
-   format you chose.
-4. Base API URL, if known, for endpoint and token URL normalization.
-5. Target authentication container is `{authentication_container}`.
-
-Prepare the authentication/authorization artifact based on the following guidance and documentation notes:
-
-<authorization_docs>
-{authorization_docs}
-</authorization_docs>
-""")
-    + DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
-    + "{repair_system_suffix}"
-    + textwrap.dedent("""\
-
-OUTPUT RULES:
+get_authorization_system_prompt = build_operation_system_prompt(
+    "authorization",
+    rules=r"""
 - Treat <selected_authorizations> as the exact set requested by the user. Generate only for those methods.
 - Do not infer or generate unselected authentication/authorization alternatives from the documentation chunk.
 - If a selected authorization has `analysisSupport: "unsupported"`, it was selected in midPoint but was not
@@ -41,7 +17,7 @@ OUTPUT RULES:
 - Match the style of the SCIMREST Builder API used by schema/search/create/update/delete artifacts: compact
   top-level builder blocks (Groovy) or the equivalent declarative-YAML keys, nested statements, and minimal
   imperative code.
-- Use the exact authorization root shape: Groovy `authentication {{ {authentication_container} {{ ... }} }}`,
+- Use the exact authorization root shape: Groovy `authorization {{ {authentication_container} {{ ... }} }}`,
   or declarative YAML `authentication: {{ {authentication_container}: {{ ... }} }}`.
 - For REST output, the second-level block/key must be `rest`. For SCIM output, it must be `scim`.
 - There is no generic `oauth2` keyword. Use the grant-specific keyword matching the selected method:
@@ -58,15 +34,15 @@ OUTPUT RULES:
   NTLM have configuration properties but are not implemented by the framework - never generate a script or
   YAML block claiming to authenticate with them; treat a selection of one of these three as unsupported instead.
 - Generate connector-level code, not objectClass CRUD/search code.
-- Prefer existing `configuration.*` properties when examples or extracted notes imply built-in connector configuration such as `configuration.clientId`, `configuration.clientSecret`, token endpoint, username, password, API key, tenant, certificate alias, or cookie name.
+- Prefer existing `configuration.*` properties when examples or extracted notes imply built-in connector configuration using the exact namespace-specific properties from <authorization_docs>, such as configuration.restOAuth2ClientId or configuration.scimOAuth2ClientId. Never invent configuration.clientId or configuration.clientSecret.
 - Implement request decoration for the selected method: `request.header(...)`, `request.formParam(...)`, documented query parameters, cookies, OAuth token exchange hooks, or mTLS setup as supported by the documentation.
 - If the documentation does not provide enough detail for an executable implementation, keep a small valid scaffold with TODO comments for the missing values instead of inventing provider-specific behavior.
 - Treat <result> as persistent accumulated code in whichever format it is already in. Extend or minimally edit it; do not discard already correct blocks just because the current chunk is silent.
-- Keep endpoint paths connector-relative when token/login endpoints are configured: no scheme/host and no duplicated base path prefix.
+- Token endpoints may use a separate authorization server. Preserve their documented absolute URL; never strip its host or apply the resource API base-path normalization to it.
 - No extra commentary outside the fenced code block.
-""")
-)
 
+""",
+)
 
 get_authorization_user_prompt = (
     textwrap.dedent("""\
