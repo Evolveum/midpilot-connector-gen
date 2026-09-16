@@ -74,11 +74,12 @@ async def test_sql_generation_runs_context_only_pass_when_session_is_conndev_onl
 
 
 @pytest.mark.asyncio
-async def test_generation_without_context_only_pass_falls_back_to_empty_scaffold():
+async def test_generation_without_context_only_pass_returns_empty():
     """Guards the contrast: the pass is what keeps a conndev-only session from producing nothing."""
-    code = await _generate_from_conndev_only_session(_sql_search_generator(context_only_for_conndev=False))
+    with patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock):
+        code = await _generate_from_conndev_only_session(_sql_search_generator(context_only_for_conndev=False))
 
-    assert code == "search {\n}\n"
+    assert code == ""
 
 
 @pytest.mark.asyncio

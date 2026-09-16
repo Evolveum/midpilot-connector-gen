@@ -53,7 +53,7 @@ class _RecordingChain(_DummyChain):
 
 
 @pytest.mark.asyncio
-async def test_generate_groovy_returns_scaffold_when_validation_fails() -> None:
+async def test_generate_groovy_returns_empty_when_validation_fails() -> None:
     with (
         patch("src.modules.codegen.core.generate_groovy.get_default_llm"),
         patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=_DummyChain(["bad code"])),
@@ -73,8 +73,8 @@ async def test_generate_groovy_returns_scaffold_when_validation_fails() -> None:
             logger_prefix="NativeSchema",
         )
 
-    assert result == 'objectClass("User") {}'
-    mock_append_job_error.assert_called_once()
+    assert result == ""
+    assert mock_append_job_error.await_count == 2
 
 
 @dataclass
@@ -247,3 +247,108 @@ async def test_base_generator_cleanup_keeps_original_when_invalid() -> None:
 
     assert result == original_code
     mock_append_job_error.assert_called_once()
+
+
+EMPTY_RESPONSES = ["", "  \n\t", "```yaml\n  \n```", "```groovy\n```", "```\n```"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", EMPTY_RESPONSES)
+@pytest.mark.parametrize("repair", [False, True])
+async def test_single_pass_empty_output(response, repair):
+    from src.modules.codegen.repair import NO_CODE_GENERATED, NO_REPAIR_GENERATED
+
+    context = CodegenRepairContext(current_script="broken(", midpoint_errors=["syntax"]) if repair else None
+    chain = _RecordingChain([response])
+    with (
+        patch("src.modules.codegen.core.generate_groovy.get_default_llm"),
+        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=chain),
+        patch("src.modules.codegen.core.generate_groovy.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.generate_groovy.append_job_error", new_callable=AsyncMock) as errors,
+    ):
+        job_id = uuid4()
+        result = await generate_groovy([], "User", "system", "user", job_id, repair_context=context)
+    assert result == ("broken(" if repair else "")
+    assert len(chain.calls) == 1
+    errors.assert_awaited_once_with(job_id, NO_REPAIR_GENERATED if repair else NO_CODE_GENERATED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("responses", [["", "{}"], ["{}", "```yaml\n```"], EMPTY_RESPONSES, []])
+@pytest.mark.parametrize("repair", [False, True])
+async def test_chunk_sequences_preserve_accepted_code_and_progress(responses, repair):
+    from src.modules.codegen.repair import NO_CODE_GENERATED, NO_REPAIR_GENERATED
+
+    generator = _DummyGenerator()
+    context = CodegenRepairContext(current_script="broken(", midpoint_errors=["syntax"]) if repair else None
+    actual_responses = responses or ([""] if repair else [])
+    chain = _RecordingChain(actual_responses)
+    job_id = uuid4()
+    with (
+        patch.object(generator, "_build_chunks", return_value=(["doc"] * len(responses), [], {}, [])),
+        patch.object(generator, "_initialize_progress", new_callable=AsyncMock),
+        patch.object(generator, "_build_llm_chain", return_value=chain),
+        patch.object(
+            generator, "_cleanup_generated_code", new_callable=AsyncMock, side_effect=lambda **kw: kw["code"]
+        ) as cleanup,
+        patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
+        patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock) as progress,
+    ):
+        result = await generator.generate(job_id=job_id, repair_context=context)
+    assert len(chain.calls) == len(actual_responses)
+    assert progress.await_count == len(actual_responses)
+    if "{}" in responses:
+        if responses[0] == "{}":
+            assert chain.calls[1][0][0]["result"] == "{}"
+        assert result == "{}"
+        errors.assert_not_awaited()
+        cleanup.assert_awaited_once()
+    else:
+        assert result == ("broken(" if repair else "")
+        errors.assert_awaited_once_with(job_id, NO_REPAIR_GENERATED if repair else NO_CODE_GENERATED)
+        cleanup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", EMPTY_RESPONSES)
+async def test_empty_cleanup_preserves_artifact(response):
+    with (
+        patch("src.modules.codegen.core.base.get_default_llm"),
+        patch("src.modules.codegen.core.base.make_basic_chain", return_value=_DummyChain([response])),
+        patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
+    ):
+        assert await _DummyGenerator()._cleanup_generated_code("{}", uuid4()) == "{}"
+    errors.assert_not_awaited()
+
+
+@pytest.mark.parametrize("response", EMPTY_RESPONSES)
+def test_empty_override_rejected(response):
+    from pydantic import ValidationError
+
+    from src.modules.codegen.schema import GroovyCodePayload
+    from src.modules.codegen.utils.connector_code_validation import validate_connector_code
+
+    assert validate_connector_code(response) == "Connector code cannot be empty"
+    with pytest.raises(ValidationError, match="Connector code cannot be empty"):
+        GroovyCodePayload(code=response)
+
+
+@pytest.mark.asyncio
+async def test_invalid_then_empty_retains_validation_error_and_outcome():
+    from src.modules.codegen.repair import NO_CODE_GENERATED
+
+    generator = _DummyGenerator()
+    job_id = uuid4()
+    chain = _RecordingChain(["objectClasses: {User: {search: {endpoints: 42}}}", "```yaml\n```"])
+    with (
+        patch.object(generator, "_build_chunks", return_value=(["a", "b"], [], {}, [])),
+        patch.object(generator, "_initialize_progress", new_callable=AsyncMock),
+        patch.object(generator, "_build_llm_chain", return_value=chain),
+        patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
+    ):
+        assert await generator.generate(job_id=job_id) == ""
+    assert errors.await_count == 2
+    assert "Invalid output after chunk 1/2" in errors.await_args_list[0].args[1]
+    assert errors.await_args_list[1].args == (job_id, NO_CODE_GENERATED)
+    assert chain.calls[1][0][0]["result"] == ""

@@ -17,6 +17,54 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-16 Report connector generation without accepted code
+
+Author: OpenAI Codex
+
+Description: Fresh connector generation now returns `result: {"code": ""}` when
+no code is accepted, including empty model responses and runs without usable
+documentation. Previously these paths returned synthetic scaffolds. The existing
+`errors` array includes exactly one outcome message: "No connector code was generated.
+Review the application documentation for this operation and retry with skipCache=true."
+Validation errors remain visible alongside this message. Jobs still finish normally;
+provider outages retain their existing failure behavior. Response fields, types, HTTP
+statuses, and job statuses are unchanged. Cached codegen results retain their stored
+diagnostics. A fresh empty result may replace the session's previous generated result;
+a repair without accepted replacement preserves the supplied artifact and reports that
+no repair was generated. Valid framework defaults such as YAML `{}` remain successful.
+
+Required Upgrade Steps
+. Update consumers to inspect `result.code` and `errors` after a finished job. Do not
+install an empty artifact; display the diagnostic and review the operation documentation.
+. From the updated checkout, run `docker compose build` followed by
+`docker compose up -d` to rebuild and recreate the application services. For local
+source execution, stop the running backend and restart it with `uv run poe start`;
+restart any separately managed consumers with `uv run python -m src.jobs.runtime`.
+No database recreation, migration, configuration edits, or data backup are required.
+. Existing cached scaffolds are not rewritten. Regenerate affected results with the
+existing request body and `skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/id?skipCache=true`.
+. Validate with `uv run poe test test/unit/modules/codegen test/integration/modules/codegen test/unit/jobs/test_cache_control.py`,
+`uv run poe lint`, `uv run poe typecheck`, and `uv run poe importcheck`.
+
+Rollback Procedure (If Upgrade Fails)
+. Finish or cancel jobs created by this snapshot. From the previous snapshot checkout,
+run `docker compose build` and `docker compose up -d`. For local source execution,
+stop the updated backend and restart the previous snapshot with `uv run poe start`;
+restart separately managed consumers with `uv run python -m src.jobs.runtime`.
+. Regenerate affected empty cached outputs using the same operation request with
+`skipCache=true`. Restore retained connector scripts through the existing override
+endpoints where needed. No database downgrade or backup restoration is required.
+. Run the codegen tests above against the restored version and verify the operation's
+status response and generated artifact before installing it.
+
+Notes & References
+* Related PR: not yet assigned; this entry ships with the implementation.
+* Docs: `docs/pipeline/codegen-references.adoc`.
+* Implementation: `src/modules/codegen/core/base.py`,
+`src/modules/codegen/core/generate_groovy.py`, and `src/jobs/cache.py`.
+* Affected configs: none.
+
 === 2026-09-14 Align codegen with framework references
 
 Author: Alexander Brecko

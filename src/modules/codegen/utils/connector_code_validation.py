@@ -190,6 +190,8 @@ def validate_connector_code(code: str) -> Optional[str]:
     Returns None when valid, otherwise a human-readable error message.
     """
     normalized = strip_markdown_fences(code)
+    if not normalized:
+        return "Connector code cannot be empty"
     if detect_connector_code_format(normalized) is ConnectorCodeFormat.YAML:
         return validate_yaml_connector_code(normalized)
     return validate_groovy_code(normalized)
