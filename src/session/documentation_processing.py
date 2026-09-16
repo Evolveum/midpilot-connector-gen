@@ -84,7 +84,6 @@ async def _build_conndev_chunk_output(chunk_text: str, filename: str, session_id
         num_endpoints=0,
         tags=tags,
         category="spec_json",
-        different_app_name=False,
         num_defined_object_classes=1,
     )
 
