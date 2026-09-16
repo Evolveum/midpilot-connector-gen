@@ -16,7 +16,11 @@ _COMMON = build_operation_system_prompt(
   the UID. All three intents use those defaults; emit {{}} when no customization is needed.
 - If target evidence requires a fixed WHERE predicate or custom query, generate the complete artifact
   in Groovy using <search_docs>. The SQL YAML reference has no scripted search keys.
-- Keep the requested object class name exactly {object_class}; never invent columns or join conditions.
+- Keep the requested object class name exactly {object_class}; never invent columns, join
+  conditions, or SqlCustomQueryBuilderContext methods beyond the documented table, column (with
+  eq/ne/asc/desc), select, from, where, orderBy, value, sqlValue, and filter. There is no raw JDBC
+  or HTTP client documented for a custom query; if a requirement needs something that builder
+  cannot express, say so with a TODO instead of inventing a method.
 - Use explicit eq/ne calls or the documented query API to build predicates; Groovy == is not SQL equality.
 """,
 )

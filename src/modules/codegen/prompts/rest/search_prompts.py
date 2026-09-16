@@ -19,11 +19,24 @@ _COMMON = build_operation_system_prompt(
 - Treat <result> as the current working connector artifact. Extend or minimally edit it, but you may replace conflicting parts.
 - Treat concrete code already present in <result> as accumulated evidence from earlier chunks. Preserve existing endpoint blocks, `objectExtractor`, `pagingSupport`, `singleResult`, `emptyFilterSupported`, and executable `supportedFilter(...) {{ ... }}` blocks unless the current chunk gives explicit same-endpoint evidence that they are wrong.
 - A current chunk that omits filters, pagination, extraction details, or an endpoint parameter list is not evidence that previously generated code is unsupported. If the current chunk adds no relevant or contradictory evidence, return <result> unchanged.
-- Do not fabricate endpoints, parameters, attributes, or fields. If documentation is unclear, add a TODO comment.
+- Do not fabricate endpoints, parameters, attributes, fields, or DSL objects/methods (for example a
+  generic HTTP client or request builder not documented for the hook you are writing). If
+  documentation is unclear, add a TODO comment.
 - Preserve the outer object-class and search structure when present in <result>.
 - No extra commentary outside the fenced code block.
 
 - Use search.endpoints for the documented endpoint handler. For a method/body it cannot express, use the documented search.custom.implementation hook (YAML) or custom Groovy search. Do not add an undocumented search.endpoints[].method or request.body key.
+- Before accepting an endpoint's `emptyFilterSupported true` as satisfying a list-all/all-instances
+  search intent, verify from that endpoint's own documented behavior that it returns the complete
+  object-class population, not a caller-scoped, parent-scoped, or single-page subset. A narrower
+  endpoint does not satisfy that intent by itself; compose it with a broader enumeration using the
+  search.custom composition pattern instead of presenting the narrower endpoint alone as complete.
+- There is no raw HTTP client, request builder, or similar object documented for
+  search.custom.implementation. The only way to reach another endpoint or object class from inside
+  it is composing an already-implemented object class: `objectClass(name).search()`,
+  `search(filter)`, `search(filter, resultHandler)`, plus `filter()`, `resultHandler()`,
+  `operationOptions()`, `definition()`, and `attributeFilter(protocolName)`. Never invent a
+  different API inside that hook.
 """,
 )
 

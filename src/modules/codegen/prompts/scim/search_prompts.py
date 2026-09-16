@@ -23,6 +23,16 @@ _COMMON = build_operation_system_prompt(
   needed by documented requirements; do not add restrictions just to implement the selected intent.
 - The framework owns ordinary routing, SCIM filter translation, extraction and pagination.
   For a required deviation, use the documented custom search implementation.
+- Before treating built-in list-all, or a custom search's `emptyFilterSupported true`, as
+  complete, confirm from the target evidence that the SCIM resource endpoint itself returns the
+  full object-class population rather than a caller-scoped or parent-scoped subset; a narrower
+  resource needs the composition pattern below instead of a list-all declaration.
+- There is no raw HTTP client or request builder documented for the custom search implementation
+  block. The only way to reach another endpoint or object class from inside it is composing an
+  already-implemented object class - the same `objectClass(name).search()`/`search(filter)`/
+  `search(filter, resultHandler)`, `filter()`, `resultHandler()`, `operationOptions()`,
+  `definition()`, and `attributeFilter(protocolName)` API documented for REST custom search. Never
+  invent a different API inside that hook.
 - Never generate sortingSupport or reference sorting.*; the reference does not document these hooks.
 """,
 )

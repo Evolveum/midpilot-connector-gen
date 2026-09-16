@@ -30,6 +30,12 @@ DOCUMENTATION AND EVIDENCE:
   evidence. If it adds nothing relevant, return the last accepted artifact unchanged.
 - Use only documented keys. Attribute wire types belong in json.type/scim.type/sql.type, and ConnId
   types in connId.type; reference attributes belong in references, not attributes.<name>.type.
+- The same only-documented rule applies to objects and methods inside a Groovy scripting hook or a
+  full Groovy script, not only to YAML keys: call only what the bundled reference documents for
+  that hook or operation (for example the objects and methods it lists for a custom-implementation
+  block). Never invent a client, request builder, query, or other API surface the reference does
+  not document for that context; if the documented surface cannot express the requirement, say so
+  with one TODO comment instead of guessing an API.
 - Code inside a YAML scripting hook is Groovy: use // comments, not YAML # comments inside its body.
 
 DECLARATIVE YAML VS GROOVY:
@@ -43,6 +49,15 @@ DECLARATIVE YAML VS GROOVY:
   that documented declarative YAML cannot express; when <declarative_docs> shows a documented
   scripting hook, write that one part as the hook's embedded Groovy inside otherwise-declarative
   YAML rather than abandoning YAML for a full Groovy script.
+- A documented scripting hook's value is one Groovy expression or block scoped to a single
+  endpoint, request, or field - it cannot declare a helper function or loop over another object
+  class's results. If satisfying the requirement needs iterating over multiple objects,
+  coordinating more than one HTTP call or object-class lookup, or a locally-defined helper
+  function, no single hook value (for example `objectExtractor`, `pagingSupport`, or a
+  `supportedFilters[].request`) can express it. Use the operation's documented full
+  custom-implementation block where the reference documents one, or a complete Groovy script for
+  the whole operation otherwise - even though this means leaving pure declarative YAML. This
+  applies to every operation (search, create, update, delete), not only search.
 - If the framework already provides everything needed by default, return the smallest YAML that
   is still a complete, valid document for this operation - do not add a handler, endpoint, or
   script merely to have one. An explicitly empty block (e.g. `{{}}`) is a normal, complete result

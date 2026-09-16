@@ -17,6 +17,82 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-16 Tighten codegen prompts against fabricated APIs and undersized search scope
+
+Author: Alexander Brecko
+
+Description: Codegen system prompts now state two additional constraints the model must apply
+when choosing between declarative YAML and Groovy, and when writing Groovy inside any scripting
+hook or custom-implementation block, for every operation (search, create, update, delete) across
+REST, SCIM and SQL: (1) a single scripting-hook value (for example `objectExtractor`,
+`pagingSupport`, a `supportedFilters[].request`, or a SCIM `scim.limitations` filter mapping)
+cannot express a loop over another object class's results, a coordinated multi-call sequence, or a
+locally-defined helper function - that logic must go into the operation's documented full
+custom-implementation block, or a complete Groovy script, instead; and (2) the model must call only
+the objects/methods a bundled reference documents for the hook or custom-implementation context it
+is writing, and must never invent an API surface (most concretely, a generic HTTP client or request
+builder) undocumented for that context. The REST and SCIM search prompts additionally require
+verifying, before declaring or accepting `emptyFilterSupported true`, that the chosen endpoint's own
+documented behavior returns the complete object-class population rather than a caller-, parent-, or
+page-scoped subset; a narrower endpoint must be composed with a broader enumeration via the
+already-documented `objectClass(name).search()`/`search(filter)`/`search(filter, resultHandler)`
+custom-search composition pattern instead of being presented as a complete list-all search. The SQL
+search prompt separately names the exact `SqlCustomQueryBuilderContext` methods the model may call
+and forbids inventing others, or a raw JDBC/HTTP client. This refines the two prompt-policy entries
+from 2026-09-11 ("Declarative YAML preferred over Groovy in connector generation") and 2026-09-14
+("Align codegen with framework references") within the same milestone. It changes no schema
+(`endpoints` and `custom` already coexist under `search` in `connector_yaml_schema.py`), no API
+contract, no configuration, and no part of the LLM call mechanism (generation remains plain-text
+with post-hoc syntax/schema validation only; no new semantic/API-fabrication detector was added to
+the validator). Only prompt text changed, in
+`src/modules/codegen/prompts/declarative_format_prompts.py`,
+`src/modules/codegen/prompts/rest/search_prompts.py`,
+`src/modules/codegen/prompts/scim/search_prompts.py`, and
+`src/modules/codegen/prompts/sql/search_prompts.py`. Every previously generated/stored connector
+artifact remains valid and is not rewritten by this change; it affects only the prompt text used
+for a new generation or an explicit regeneration.
+
+Required Upgrade Steps
+
+. No configuration, environment-variable, or database change is required; this is a
+prompt-text-only change with no schema/API/config break.
+. Rebuild and redeploy to pick up the updated prompt modules: `docker compose build` followed by
+`docker compose up -d`, or for local execution stop and restart the backend with
+`uv run poe start` and any separately managed workers with `uv run python -m src.jobs.runtime`.
+. No action is required for already-generated connectors; stored results are not rewritten. If an
+object class's search was affected by either reported failure mode (a hallucinated HTTP client
+inside `search.custom.implementation`, or a caller/parent-scoped endpoint wrongly declared
+`emptyFilterSupported: true`), regenerate it with `skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/all?skipCache=true`, and review the
+result before installing it.
+. Validate with `uv run poe test test/unit/modules/codegen`, `uv run poe lint`,
+`uv run poe typecheck`, and `uv run poe importcheck`.
+
+Rollback Procedure (If Upgrade Fails)
+
+. Finish or cancel jobs scheduled by this snapshot, then redeploy the previous application
+package (`docker compose build` and `docker compose up -d` from the previous checkout, or restart
+the previous local backend/workers).
+. No database downgrade or backup restoration is required; there is no data migration to roll
+back.
+. If a regeneration performed under this change needs to be reverted, regenerate with
+`skipCache=true` against the restored snapshot; the previous prompt wording resumes automatically
+once the previous snapshot is running.
+
+Notes & References
+* Related PR: not yet assigned; this entry ships with the implementation.
+* Docs: none new; clarifies existing `src/modules/codegen/documentations/rest/custom-search.adoc`,
+`src/modules/codegen/documentations/scim/search.adoc`, and
+`src/modules/codegen/documentations/sql/custom-search.adoc`, which already fully document the
+referenced APIs.
+* Implementation: `src/modules/codegen/prompts/declarative_format_prompts.py`,
+`src/modules/codegen/prompts/rest/search_prompts.py`,
+`src/modules/codegen/prompts/scim/search_prompts.py`,
+`src/modules/codegen/prompts/sql/search_prompts.py`.
+* Affected configs: none.
+* Related milestone entries: 2026-09-11 "Declarative YAML preferred over Groovy in connector
+generation"; 2026-09-14 "Align codegen with framework references".
+
 === 2026-09-16 Remove application-mismatch chunk filtering
 
 Author: Alexander Brecko
