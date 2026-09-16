@@ -80,6 +80,45 @@ async def test_untouched_scripts_are_returned_byte_identical_and_not_persisted()
 
 
 @pytest.mark.asyncio
+async def test_valid_yaml_fix_is_accepted_and_persisted():
+    """A fix may switch a broken Groovy script to declarative YAML - the validator is format-aware."""
+    fixed_yaml = "objectClasses:\n  user:\n    update:\n      enabled: true\n"
+    result, store, errors = await _run(
+        _llm(fixedScripts=[{"operationKey": "userUpdate", "code": fixed_yaml, "reason": "switched to YAML"}])
+    )
+
+    by_key = {script.operation_key: script.code for script in result.scripts}
+    assert by_key["userUpdate"] == fixed_yaml.strip()
+    assert [change.operation_key for change in result.changed_operations] == ["userUpdate"]
+    assert result.rejected_scripts == []
+    store.assert_awaited_once()
+    assert set(store.await_args.args[1]) == {"userUpdateOutput"}
+    errors.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalid_yaml_fix_is_dropped_and_the_stored_script_kept():
+    """Malformed declarative YAML is rejected the same way malformed Groovy is."""
+    invalid_yaml = "objectClasses:\n  user: {}\n  user: {}\n"  # duplicate key
+    result, store, errors = await _run(
+        _llm(
+            fixedScripts=[
+                {"operationKey": "userCreate", "code": FIXED_UPDATE, "reason": "unrelated valid fix"},
+                {"operationKey": "userUpdate", "code": invalid_yaml, "reason": "broken"},
+            ]
+        )
+    )
+
+    by_key = {script.operation_key: script.code for script in result.scripts}
+    assert by_key["userUpdate"] == UPDATE_CODE
+    assert by_key["userCreate"] == FIXED_UPDATE
+    assert [r.operation_key for r in result.rejected_scripts] == ["userUpdate"]
+    store.assert_awaited_once()
+    assert set(store.await_args.args[1]) == {"userCreateOutput"}
+    errors.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_invalid_groovy_is_dropped_and_the_stored_script_kept():
     result, store, errors = await _run(
         _llm(
@@ -157,3 +196,30 @@ async def test_a_failed_llm_pass_fails_instead_of_returning_unchanged_scripts():
         await _run(ConnectorFixPassFailedError())
 
     assert exc_info.value.status_code == 502
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_yaml",
+    [
+        'objectClasses: {user: {update: {enabled: "false"}}}',
+        'objectClasses: {user: {search: {custom: {implementation: "return ("}}}}',
+    ],
+)
+async def test_invalid_nested_yaml_fix_keeps_existing_yaml(invalid_yaml):
+    scripts = _scripts()
+    original = "objectClasses: {user: {update: {}}}"
+    scripts[1]["code"] = original
+    result, store, errors = await _run(
+        _llm(
+            fixedScripts=[
+                {"operationKey": "userCreate", "code": FIXED_UPDATE, "reason": "valid fix"},
+                {"operationKey": "userUpdate", "code": invalid_yaml, "reason": "invalid fix"},
+            ]
+        ),
+        scripts=scripts,
+    )
+    assert {script.operation_key: script.code for script in result.scripts}["userUpdate"] == original
+    assert set(store.await_args.args[1]) == {"userCreateOutput"}
+    assert result.rejected_scripts[0].operation_key == "userUpdate"
+    errors.assert_awaited()

@@ -1,19 +1,12 @@
 = SCIM Schema customization
-:page-nav-title: Schema customization
-:page-upkeep-status: orange
-:page-toc: top
-
-This document is part of the SCIM 2.0 connector tutorial. See xref:index#[Index] for other topics.
 
 While the framework provides automatic schema discovery, you often need to customize it for your specific use case.
+
+This document is part of the SCIM 2.0 connector tutorial. See xref:/connectors/scimrest-framework/[] for other topics.
 
 == Schema customization blocks
 
 Schema customization is defined in Groovy scripts using the `objectClass()` and `attribute()` builders with SCIM-specific blocks.
-
-The first argument of `attribute()` is the *native connector attribute name* - the name the application's own
-documentation uses. The `scim { path ... }` block carries the SCIM wire path. The two are often identical, but when
-the application documents a different name, the native name wins and the wire path stays inside the `scim` block.
 
 [source,groovy]
 ----
@@ -25,14 +18,6 @@ objectClass("User") {
     attribute("givenName") {
         scim {
             path attribute("name").child("givenName")
-        }
-    }
-
-    // Native name and SCIM wire attribute differ: the application documents the field as "Username",
-    // while the SCIM API exposes it as "userName".
-    attribute("Username") {
-        scim {
-            path attribute("userName")
         }
     }
 }
@@ -97,42 +82,70 @@ attribute("primaryEmail") {
 
 This maps the `value` field from the email object where `primary` is `true`.
 
+== Attribute naming: native name vs SCIM path
+
+An attribute is identified by its *native* (connector) name, and its `scim { path ... }` (or `scim { name ... }`) describes where the value lives on the SCIM wire:
+
+[source,groovy]
+----
+// Native attribute name "Username" mapped to the SCIM path "userName"
+attribute("Username") {
+    scim {
+        name "userName"
+    }
+}
+----
+
+This is also how you merge a discovered SCIM schema with a ConnId-native naming convention — the SCIM `userName` path can be exposed under the native name `Username`, and the ConnId mapping then refers to the native name (`connIdAttribute("NAME", "Username")`).
+
 == ConnId attribute mapping
 
-Map native connector attributes to ConnId built-in attributes:
+Map SCIM attributes to ConnId built-in attributes:
 
 [source,groovy]
 ----
 objectClass("User") {
     connIdAttribute("UID", "id")
-    connIdAttribute("NAME", "Username")
+    connIdAttribute("NAME", "userName")
 }
 ----
 
-The ConnId framework requires `UID` and `NAME` attributes. The second argument is the *native connector attribute
-name*, never the SCIM wire attribute. In the example above the application documents the login field as `Username`
-and the SCIM API exposes it as `userName`, so the ConnId mapping uses `Username` and the wire name appears only in
-that attribute's `scim { path ... }` block.
-
-The mapping belongs in this schema script, alongside the attribute definitions of the same object class. Every
-script of the object class must use the identical native name for the same attribute; the connector merges them
-and rejects a mismatch.
+The ConnId framework requires `UID` and `NAME` attributes. Discovery already maps them by default (UID ← `id`, NAME ← `userName` on User / `displayName` on Group — see xref:schema-discovery/[built-in mappings]); use `connIdAttribute` to override the mapping when the server deviates.
 
 == SCIM-specific schema blocks
 
 The `scim` block supports:
 
+[cols="1,2,2", options="header"]
 |===
 |Block |Description |Example
-|`extension(name, uri)` |Define SCIM schema extension |`extension("enterprise", "urn:...")`
-|`path(path)` |Specify SCIM attribute path |`path attribute("name").child("familyName")`
-|`name(name)` |Override SCIM attribute name |`name "displayName"`
-|`onlyExplicitlyListed()` |Only include explicitly listed attributes |`onlyExplicitlyListed()`
+
+|`extension(name, uri)`
+|Define SCIM schema extension
+|`extension("enterprise", "urn:...")`
+
+|`path(path)`
+|Specify SCIM attribute path
+|`path attribute("name").child("familyName")`
+
+|`name(name)`
+|Override the SCIM attribute name on the wire
+|`name "displayName"`
+
+|`onlyExplicitlyListed()`
+|Only include explicitly listed attributes
+|`onlyExplicitlyListed()`
+
+|`implementation { deserialize { ... } serialize { ... } }`
+|Custom value mapping for the attribute (e.g. reference values — see xref:relationship-support/[])
+|—
 |===
+
+The path grammar (attribute names, `child(...)`, `valueFilter(...)`, extension URIs) is the SCIM attribute path format — see xref:complex-attributes/[SCIM paths] for the full reference.
 
 == Complete example
 
-[source,groovy,highlight=9,20,23,26,29,32]
+[source,groovy,highlight=14,17,20,23,26]
 ----
 objectClass("User") {
     scim {
@@ -140,13 +153,7 @@ objectClass("User") {
     }
 
     connIdAttribute("UID", "id")
-    connIdAttribute("NAME", "Username")
-
-    attribute("Username") {
-        scim {
-            path attribute("userName")
-        }
-    }
+    connIdAttribute("NAME", "userName")
 
     attribute("givenName") {
         scim {
@@ -173,3 +180,5 @@ objectClass("User") {
     }
 }
 ----
+
+Complex attributes (embedded objects such as `emails` or `addresses`) are exposed as embedded object classes — see xref:complex-attributes/[complex and binary attributes].

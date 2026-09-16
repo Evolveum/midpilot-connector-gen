@@ -126,7 +126,7 @@ async def test_generate_authorization_code_returns_static_scaffold_for_other_aut
 
     assert result == {
         "code": (
-            "authentication {\n"
+            "authorization {\n"
             "    rest {\n"
             "        other {\n"
             "            implementation {\n"
@@ -205,7 +205,7 @@ def test_authorization_scaffold_includes_comments_for_unsupported_midpoint_autho
     )
 
     assert code == (
-        "authentication {\n"
+        "authorization {\n"
         "    rest {\n"
         "        // HTTP JWT Bearer Token Authorization (jwtBearer) was selected in midPoint, but it was not "
         "identified in the analyzed application documentation.\n"
@@ -217,7 +217,7 @@ def test_authorization_scaffold_includes_comments_for_unsupported_midpoint_autho
 
 def test_other_authorization_scaffold_remains_unchanged():
     assert build_other_authorization_scaffold(ApiType.REST) == (
-        "authentication {\n"
+        "authorization {\n"
         "    rest {\n"
         "        other {\n"
         "            implementation {\n"

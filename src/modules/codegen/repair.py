@@ -33,3 +33,10 @@ def get_repair_initial_result(
     if repair_context is not None and repair_context.current_script:
         return repair_context.current_script
     return fallback_result
+
+
+NO_CODE_GENERATED = (
+    "No connector code was generated. Review the application documentation for this operation "
+    "and retry with skipCache=true."
+)
+NO_REPAIR_GENERATED = "No connector repair was generated. The supplied code has been preserved."

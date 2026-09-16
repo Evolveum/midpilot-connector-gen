@@ -10,7 +10,7 @@ import pytest
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 
 _REST_DOCS_PACKAGE = "src.modules.codegen.documentations.rest"
-_EXISTING_DOC = "50-relationship.adoc"
+_EXISTING_DOC = "relationship.adoc"
 
 
 @pytest.fixture(autouse=True)
