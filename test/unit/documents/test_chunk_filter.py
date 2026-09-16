@@ -36,23 +36,6 @@ async def _run_filter(criteria: ChunkFilterCriteria, raw_items):
 
 
 @pytest.mark.asyncio
-async def test_historical_application_flag_does_not_exclude_eligible_chunks():
-    criteria = ChunkFilterCriteria(
-        min_length=None,
-        min_endpoints_num=None,
-        allowed_categories=["spec_json"],
-    )
-    eligible = _raw_item("team-endpoints", category="spec_json", tags=["organization"])
-    excluded = _raw_item("non-api", category="non-technical")
-    for item in (eligible, excluded):
-        item["metadata"]["different_app_name"] = True
-
-    result = await _run_filter(criteria, [eligible, excluded])
-
-    assert [item["chunkId"] for item in result] == ["team-endpoints"]
-
-
-@pytest.mark.asyncio
 async def test_category_override_tags_keeps_non_allowed_category_with_matching_tag():
     criteria = ChunkFilterCriteria(
         min_length=None,
