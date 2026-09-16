@@ -83,7 +83,6 @@ async def test_process_documentation_worker_updates_progress_per_chunk_and_persi
             num_endpoints=0,
             tags=["docs"],
             category="other",
-            different_app_name=False,
         )
 
     with (

@@ -17,9 +17,66 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-16 Remove application-mismatch chunk filtering
+
+Author: Alexander Brecko
+
+Description: Documentation processing no longer generates `different_app_name`,
+and chunk selection no longer supports `allow_different_app_name` or rejects
+chunks using previously stored application-mismatch flags. This removes an
+obsolete LLM classification that could discard valid API documentation, including
+uploads processed without a known application name. New chunk metadata omits
+the field. Existing metadata and imported/exported metadata remain untouched;
+historical values have no effect on selection. Other selection criteria still
+apply. Supported midPoint-facing response envelopes and HTTP statuses are unchanged.
+
+Required Upgrade Steps
+
+. Remove any custom dependency on `different_app_name` in generated chunk
+metadata and any internal caller argument named `allow_different_app_name`.
+There are no replacement fields or configuration settings.
+. Rebuild and restart container deployments with `docker compose build` and
+`docker compose up -d`. For local execution, stop the backend and restart it
+with `uv run poe start`; restart separately managed workers with
+`uv run python -m src.jobs.runtime`.
+. No database recreation, migration, backup, or documentation re-upload is
+required. To refresh an affected REST class, repeat
+`POST /api/v1/digester/{sessionId}/classes/{objectClass}/endpoints?apiType=rest&skipCache=true`
+and, where affected,
+`POST /api/v1/digester/{sessionId}/classes/{objectClass}/attributes?apiType=rest&skipCache=true`.
+After those jobs finish, regenerate affected codegen operations using the
+refreshed extraction results in the request body: for CRUD, use
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/{operation}?skipCache=true`,
+where `operation` is `create`, `update`, or `delete`. Existing cached results
+are not rewritten.
+. Validate with `uv run poe test test/unit/documents test/unit/session test/integration/modules/digester/test_digester_endpoint_documentation.py test/integration/modules/digester/test_digester_endpoint_endpoints.py`,
+`uv run poe lint`, `uv run poe stylecheck`, `uv run poe typecheck`, and
+`uv run poe importcheck`. Endpoint completeness still depends on the remaining
+selection and extraction rules; retaining a chunk does not guarantee extraction.
+
+Rollback Procedure (If Upgrade Fails)
+. Finish or cancel jobs started by the updated snapshot. From the previous
+snapshot, run `docker compose build` and `docker compose up -d`, or stop local
+processes and restart the previous backend with `uv run poe start` and separately
+managed workers with `uv run python -m src.jobs.runtime`.
+. No database downgrade or backup restoration is necessary. The previous
+filter treats metadata without the flag as eligible under this criterion.
+To regenerate the previous classification for a document processed after this
+change, submit its original file to
+`POST /api/v1/session/{sessionId}/documentation/{documentationId}?skipCache=true`.
+. Repeat affected extraction and generation requests with `skipCache=true` and
+run the validation commands above against the restored snapshot.
+
+Notes & References
+* Related PR: not yet assigned; this entry ships with the implementation.
+* Docs: `docs/pipeline/digester.adoc`.
+* Implementation: `src/documents/processing/`, `src/documents/filtering/`,
+and `src/session/documentation_processing.py`.
+* Affected configs: none. Application name and version remain prompt inputs.
+
 === 2026-09-16 Report connector generation without accepted code
 
-Author: OpenAI Codex
+Author: Alexander Brecko
 
 Description: Fresh connector generation now returns `result: {"code": ""}` when
 no code is accepted, including empty model responses and runs without usable
@@ -34,6 +91,7 @@ a repair without accepted replacement preserves the supplied artifact and report
 no repair was generated. Valid framework defaults such as YAML `{}` remain successful.
 
 Required Upgrade Steps
+
 . Update consumers to inspect `result.code` and `errors` after a finished job. Do not
 install an empty artifact; display the diagnostic and review the operation documentation.
 . From the updated checkout, run `docker compose build` followed by

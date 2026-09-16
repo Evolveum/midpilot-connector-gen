@@ -34,9 +34,6 @@ class LlmChunkOutput(BaseModel):
         description='List of tags that could describe the content in the chunk, for example: ["endpoints", "authorization"]'
     )
     category: str = Field(description="Type of the content in the chunk")
-    different_app_name: bool = Field(
-        description="Indicates if the chunk mentions a different application name than expected"
-    )
     num_defined_object_classes: Optional[int] = Field(
         default=None, description="The number of defined object classes mentioned in the chunk, if any"
     )
