@@ -353,9 +353,10 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
     )
     assert attributes["Username"]["scimAttribute"] == "userName"
     assert attributes["Username"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
-    assert "Slack Profile Id" in attributes
+    assert "slackProfileId" in attributes
+    assert "Slack Profile Id" not in attributes
     assert (
-        attributes["Slack Profile Id"]["scimAttribute"] == "urn:scim:schemas:extension:slack:profile:2.0:User:profileId"
+        attributes["slackProfileId"]["scimAttribute"] == "urn:scim:schemas:extension:slack:profile:2.0:User:profileId"
     )
     assert attributes["Emails"]["type"] == "UserEmails"
     assert attributes["Emails"]["format"] == "embedded"
@@ -424,13 +425,13 @@ async def test_extract_scim_embedded_attributes_match_indexed_documented_paths_t
         )
 
     attributes = result["result"]["attributes"]
-    assert set(attributes) == {"Primary Email", "Work Email Display", "type", "primary"}
-    assert attributes["Primary Email"]["description"] == "Target primary email maps to the first SCIM email value."
-    assert attributes["Primary Email"]["scimAttribute"] == "emails.value"
-    assert attributes["Primary Email"]["mandatory"] is True
-    assert attributes["Primary Email"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
-    assert attributes["Work Email Display"]["scimAttribute"] == "emails.display"
-    assert attributes["Work Email Display"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
+    assert set(attributes) == {"primaryEmail", "workEmailDisplay", "type", "primary"}
+    assert attributes["primaryEmail"]["description"] == "Target primary email maps to the first SCIM email value."
+    assert attributes["primaryEmail"]["scimAttribute"] == "emails.value"
+    assert attributes["primaryEmail"]["mandatory"] is True
+    assert attributes["primaryEmail"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
+    assert attributes["workEmailDisplay"]["scimAttribute"] == "emails.display"
+    assert attributes["workEmailDisplay"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
     assert "value" not in attributes
     assert "display" not in attributes
     mock_invoke.assert_awaited_once()
@@ -494,7 +495,7 @@ async def test_extract_scim_embedded_attributes_discards_unmatched_documented_ma
 
     attributes = result["result"]["attributes"]
     assert set(attributes) == {
-        "Formatted name",
+        "formattedName",
         "familyName",
         "givenName",
         "middleName",
@@ -502,10 +503,11 @@ async def test_extract_scim_embedded_attributes_discards_unmatched_documented_ma
         "honorificSuffix",
     }
     assert (
-        attributes["Formatted name"]["description"] == "Target display name maps to the SCIM formatted name component."
+        attributes["formattedName"]["description"] == "Target display name maps to the SCIM formatted name component."
     )
-    assert attributes["Formatted name"]["scimAttribute"] == "name.formatted"
-    assert attributes["Formatted name"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
+    assert attributes["formattedName"]["scimAttribute"] == "name.formatted"
+    assert attributes["formattedName"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
+    assert "Formatted name" not in attributes
     assert "Username" not in attributes
     assert "userName" not in attributes
     mock_invoke.assert_awaited_once()

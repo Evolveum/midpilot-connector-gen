@@ -19,7 +19,10 @@ from uuid import UUID
 from src.core.llm import build_structured_chain
 from src.documents.normalize import canonicalize_scim_path, normalize_scim_path_for_lookup
 from src.jobs import increment_processed_documents, update_job_progress
-from src.modules.digester.entities.attribute_filters import normalize_readability_flags
+from src.modules.digester.entities.attribute_filters import (
+    normalize_attribute_name_casing,
+    normalize_readability_flags,
+)
 from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extraction.llm_execution import invoke_chunk_chain, parse_structured_result
 from src.modules.digester.extractors.rest.attributes import extract_attributes as extract_documented_attributes
@@ -507,6 +510,7 @@ async def extract_scim_attributes(
         baseline_references,
     )
     all_relevant_chunks = _merge_documentation_references(relevant_chunks, baseline_references)
+    merged_custom_with_references = normalize_attribute_name_casing(merged_custom_with_references, object_class)
 
     logger.info(
         "[Digester:Attributes] Completed for %s. Total attributes: %d (schema baseline: %d, documented mappings: %d)",
