@@ -130,7 +130,7 @@ async def test_get_native_schema_status_found():
     fake_status = MagicMock(
         jobId=ANY,
         status=JobStatus.finished,
-        result={"code": "mocked groovy code"},
+        result={"format": "GROOVY", "code": "mocked groovy code"},
         progress={"stage": "queued"},
         errors=None,
     )
@@ -150,7 +150,7 @@ async def test_get_native_schema_status_found():
         response = await get_native_schema_status(session_id, "User", job_id, db=MagicMock())
 
         assert response.status == JobStatus.finished
-        assert response.result == {"code": "mocked groovy code"}
+        assert response.result == {"format": "GROOVY", "code": "mocked groovy code"}
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_job_repo.get_job_for_session.assert_awaited_once_with(job_id, session_id)
         mock_builder.assert_awaited_once_with(job_id)
@@ -177,7 +177,7 @@ async def test_override_native_schema_success():
         assert response["objectClass"] == "user"
         mock_repo.update_session.assert_awaited_once_with(
             session_id,
-            {"userNativeSchemaOutput": {"code": 'objectClass("User") {}'}},
+            {"userNativeSchemaOutput": {"format": "GROOVY", "code": 'objectClass("User") {}'}},
         )
 
 
@@ -240,7 +240,9 @@ def test_manual_yaml_override_http_contract(code, expected_status):
             "sessionId": str(session_id),
             "objectClass": "user",
         }
-        repo.update_session.assert_awaited_once_with(session_id, {"userNativeSchemaOutput": {"code": code}})
+        repo.update_session.assert_awaited_once_with(
+            session_id, {"userNativeSchemaOutput": {"format": "YAML", "code": code}}
+        )
 
 
 @pytest.mark.parametrize("kind", ["stage", "multi_doc"])
@@ -261,12 +263,12 @@ def test_finished_empty_codegen_status_http_contract(kind):
         return_value={
             "jobId": job_id,
             "status": "finished",
-            "result": {"code": ""},
+            "result": {"format": None, "code": ""},
             "errors": [NO_CODE_GENERATED],
         },
     ):
         response = TestClient(app).get("/status", params={"job_id": str(job_id)})
     assert response.status_code == 200
     assert response.json()["status"] == "finished"
-    assert response.json()["result"] == {"code": ""}
+    assert response.json()["result"] == {"format": None, "code": ""}
     assert response.json()["errors"] == [NO_CODE_GENERATED]

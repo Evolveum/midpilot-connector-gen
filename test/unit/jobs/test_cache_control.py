@@ -173,15 +173,15 @@ async def test_unexpected_cache_reuse_failure_does_not_trigger_expensive_worker(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("code", ["", "{}"])
-async def test_codegen_cache_preserves_result_and_diagnostics(code):
+@pytest.mark.parametrize(("code", "code_format"), [("", None), ("{}", "YAML"), ("search {}", "GROOVY")])
+async def test_codegen_cache_preserves_result_and_diagnostics(code, code_format):
     from src.modules.codegen.repair import NO_CODE_GENERATED
 
     diagnostics = [NO_CODE_GENERATED] if not code else ["A chunk failed validation"]
     latest_job = SimpleNamespace(
         job_id=uuid4(),
         session_id=uuid4(),
-        result={"code": code},
+        result={"format": code_format, "code": code},
         errors=diagnostics,
         created_at=datetime.now(),
     )
@@ -202,7 +202,7 @@ async def test_codegen_cache_preserves_result_and_diagnostics(code):
             input_payload={},
             run_normal_worker=worker,
         )
-    assert result == {"code": code}
+    assert result == {"format": code_format, "code": code}
     assert result is not latest_job.result
     errors.assert_awaited_once_with(job_id, diagnostics[0])
     worker.assert_not_awaited()

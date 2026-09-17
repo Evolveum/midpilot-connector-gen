@@ -3,7 +3,7 @@
 
 link:index.adoc[← Pipeline overview] | link:../index.adoc[Documentation index]
 
-Codegen generates the Groovy code of the midPoint connector, one operation at
+Codegen generates declarative YAML or Groovy code for the midPoint connector, one operation at
 a time, from the API model extracted by the link:digester.adoc[digester] plus
 the relevant documentation chunks.
 
@@ -11,7 +11,7 @@ Module: `src/modules/codegen/`
 
 == Endpoints
 
-All paths are prefixed with `/api/codegen` and follow the
+All paths are prefixed with `/api/v1/codegen` and follow the
 link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 `PUT` overwrite the stored code manually).
 
@@ -82,8 +82,51 @@ registry and manual update instructions.
    A repair starts with `currentScript` and preserves its format according to the
    repair instructions (`repair.py`, `prompts/repair_prompts.py`). No extra LLM call
    is introduced by validation.
-4. The final artifact (declarative YAML or Groovy) is persisted in the session
-   under the operation's result key, unchanged in shape: `{"code": "..."}`.
+4. The final artifact is persisted in the session under the operation's result
+   key as `{"format": "YAML", "code": "..."}` or
+   `{"format": "GROOVY", "code": "..."}`. Format detection uses the final accepted
+   code without an additional LLM call. YAML containing embedded Groovy remains
+   `YAML`, because the whole artifact must be loaded as YAML.
+
+=== Code result contract
+
+All code-generation status endpoints retain the existing job envelope, including
+`jobId`, `status`, `progress`, `errors`, and `result`. For a finished generation,
+the `result` payload contains:
+
+[source,json]
+----
+{
+  "format": "YAML",
+  "code": "objectClasses: {user: {create: {enabled: true}}}"
+}
+----
+
+`format` is always present: `YAML` or `GROOVY` for code, and JSON `null` when no
+code was accepted. The `code` field remains a string. For an empty generation,
+`result` is `{"format": null, "code": ""}` and the existing `errors` array explains
+the outcome. YAML `{}` is a nonempty valid artifact and has format `YAML`.
+
+This contract covers authorization, native schema, deprecated ConnID, every search
+intent, create, update, delete, and relations. Single-operation repairs report the
+format of the returned code, including the original artifact if no repair was accepted.
+
+Object-class fix results retain their existing fields. Each item in `result.scripts`
+includes its own format, for example:
+
+[source,json]
+----
+{
+  "operationKey": "userUpdate",
+  "sessionKey": "userUpdateOutput",
+  "format": "GROOVY",
+  "code": "objectClass(\"user\") { update {} }"
+}
+----
+
+Unchanged scripts also include their format. Manual override requests still accept
+`{"code": "..."}`; the server determines and stores the format alongside the validated
+code. Override acknowledgements and generation enqueue responses are unchanged.
 
 === Protocol coverage
 

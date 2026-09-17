@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, TypeAlias, Union
+from typing import Any, Dict, List, Mapping, Optional, TypeAlias, TypedDict, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.core.schema import CamelCaseModel
+from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.utils.connector_code_validation import ensure_valid_connector_code
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 from src.shared.auth import normalize_auth_type_value
@@ -64,6 +65,13 @@ class OperationAssets:
     additional_docs_paths: tuple[str, ...] = ()
     docs_sections: tuple[str, ...] = ()
     declarative_sections: tuple[str, ...] = ()
+
+
+class ConnectorCodeOutput(TypedDict):
+    """Final connector artifact persisted and returned as a job result."""
+
+    format: ConnectorCodeFormat | None
+    code: str
 
 
 class GroovyCodePayload(BaseModel):
@@ -348,6 +356,7 @@ class ConnectorFixLLMResponse(CamelCaseModel):
 class ConnectorScript(CamelCaseModel):
     operation_key: str = Field(..., description="Operation key, e.g. 'userUpdate'.")
     session_key: str = Field(..., description="Session data key holding this script.")
+    format: ConnectorCodeFormat | None = Field(..., description="Format of the returned code; null for empty code.")
     code: str = Field(..., description="Connector code (declarative YAML or Groovy) after the fix.")
 
 

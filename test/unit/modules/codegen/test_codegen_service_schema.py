@@ -153,7 +153,7 @@ async def test_generate_native_schema_uses_sql_docs_for_sql_api_type():
             protocol=ApiType.SQL,
         )
 
-    assert result == {"code": "mocked sql schema code"}
+    assert result == {"format": "GROOVY", "code": "mocked sql schema code"}
     _, kwargs = mock_generate_groovy.call_args
     assert kwargs["system_prompt"] == get_sql_native_schema_system_prompt
     assert kwargs["user_prompt"] == get_sql_native_schema_user_prompt

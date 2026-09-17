@@ -41,11 +41,11 @@ from src.modules.codegen.schema import (
     ConnectorFixResult,
     ConnectorScript,
     EndpointsPayload,
-    GroovyCodePayload,
 )
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, resolve_artifact_docs_paths
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.relevant_chunks import collect_connector_relevant_chunks
+from src.modules.codegen.utils.code_output import build_connector_code_output
 from src.modules.codegen.utils.connector_code_validation import validate_connector_code
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
 from src.modules.codegen.utils.prompt_records import (
@@ -208,13 +208,16 @@ async def fix_connector_code(
             escalation_failure_detail,
         )
 
+    final_outputs = {
+        artifact.operation_key: await build_connector_code_output(
+            accepted[artifact.operation_key].code if artifact.operation_key in accepted else artifact.code
+        )
+        for artifact in artifacts
+    }
     if accepted:
         await store_fixed_connector_scripts(
             session_id,
-            {
-                by_operation_key[key].session_key: GroovyCodePayload.model_construct(code=accepted_script.code)
-                for key, accepted_script in accepted.items()
-            },
+            {by_operation_key[key].session_key: final_outputs[key] for key in accepted},
             job_id=job_id,
         )
     else:
@@ -225,7 +228,7 @@ async def fix_connector_code(
             ConnectorScript(
                 operation_key=artifact.operation_key,
                 session_key=artifact.session_key,
-                code=(accepted[artifact.operation_key].code if artifact.operation_key in accepted else artifact.code),
+                **final_outputs[artifact.operation_key],
             )
             for artifact in artifacts
         ],
