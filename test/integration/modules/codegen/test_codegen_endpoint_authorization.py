@@ -195,6 +195,8 @@ async def test_override_authorization_success():
         )
 
     mock_repo.session_exists.assert_awaited_once_with(session_id)
-    mock_repo.update_session.assert_awaited_once_with(session_id, {"authorizationOutput": code.model_dump()})
+    mock_repo.update_session.assert_awaited_once_with(
+        session_id, {"authorizationOutput": {"format": "GROOVY", "code": code.code}}
+    )
     assert response["message"].startswith("Authorization code overridden successfully")
     assert response["sessionId"] == session_id

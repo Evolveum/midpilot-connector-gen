@@ -19,7 +19,13 @@ from src.modules.codegen.core.operations import (
 )
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
-from src.modules.codegen.schema import AttributesPayload, AuthPayload, CodegenRepairContext, EndpointsPayload
+from src.modules.codegen.schema import (
+    AttributesPayload,
+    AuthPayload,
+    CodegenRepairContext,
+    ConnectorCodeOutput,
+    EndpointsPayload,
+)
 from src.modules.codegen.selection.authorization import (
     enrich_preferred_authorizations,
     is_single_other_authorization,
@@ -36,6 +42,7 @@ from src.modules.codegen.selection.relevant_chunks import (
     _collect_relation_object_class_pairs,
     _collect_relevant_chunks,
 )
+from src.modules.codegen.utils.code_output import build_connector_code_output
 from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
     build_connid_attribute_mapping_records,
@@ -68,7 +75,7 @@ async def generate_native_schema_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate Groovy for the native schema, including the object class's ConnID mapping.
 
@@ -109,7 +116,7 @@ async def generate_native_schema_code(
         job_id=job_id,
         repair_context=repair_context,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_authorization_code(
@@ -120,7 +127,7 @@ async def generate_authorization_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate connector-level Groovy for authentication/authorization configuration.
     """
@@ -131,7 +138,7 @@ async def generate_authorization_code(
             "[Codegen:Authorization:%s] Returning static scaffold for custom 'other' authorization",
             protocol.value,
         )
-        return {"code": build_other_authorization_scaffold(protocol)}
+        return await build_connector_code_output(build_other_authorization_scaffold(protocol))
 
     assets = get_operation_assets("authorization", protocol)
     docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
@@ -165,7 +172,7 @@ async def generate_authorization_code(
         repair_context=repair_context,
         auth_payload=auth_payload,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_conn_id_code(
@@ -174,7 +181,7 @@ async def generate_conn_id_code(
     *,
     job_id: UUID,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate Groovy for ConnID attribute mapping from attributes.
 
@@ -198,7 +205,7 @@ async def generate_conn_id_code(
         job_id=job_id,
         repair_context=repair_context,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_search_code(
@@ -212,7 +219,7 @@ async def generate_search_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate the Groovy `search {}` block using relevant chunks + docs.
     Uses the protocol-specific prompts and documentation for the resolved api_type.
@@ -248,7 +255,7 @@ async def generate_search_code(
         attributes=attributes,
         endpoints=endpoints,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_create_code(
@@ -261,7 +268,7 @@ async def generate_create_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate the Groovy `create {}` block using relevant chunks + docs.
     Uses the protocol-specific prompts and documentation for the resolved api_type.
@@ -296,7 +303,7 @@ async def generate_create_code(
         attributes=attributes,
         endpoints=endpoints,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_update_code(
@@ -309,7 +316,7 @@ async def generate_update_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate the Groovy `update {}` block using relevant chunks + docs.
     Uses the protocol-specific prompts and documentation for the resolved api_type.
@@ -344,7 +351,7 @@ async def generate_update_code(
         attributes=attributes,
         endpoints=endpoints,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_delete_code(
@@ -357,7 +364,7 @@ async def generate_delete_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate the Groovy `delete {}` block using relevant chunks + docs.
     Uses the protocol-specific prompts and documentation for the resolved api_type.
@@ -392,7 +399,7 @@ async def generate_delete_code(
         attributes=attributes,
         endpoints=endpoints,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_relation_code(
@@ -402,7 +409,7 @@ async def generate_relation_code(
     session_id: UUID,
     job_id: UUID,
     protocol: ApiType,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate a relationship artifact using the resolved protocol's expert references.
     """
@@ -436,4 +443,4 @@ async def generate_relation_code(
         relations=relations,
         relation_name=relation_name,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)

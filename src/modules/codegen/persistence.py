@@ -6,7 +6,7 @@
 Session persistence for manual codegen overrides.
 
 Thin write-through helpers used by the override (PUT) endpoints to store
-user-provided Groovy code into the session, keyed by operation. Kept separate
+user-provided connector code into the session, keyed by operation. Kept separate
 from job orchestration: these only persist, they neither schedule nor run work.
 """
 
@@ -19,7 +19,8 @@ from src.core.job_execution import get_current_execution
 from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
-from src.modules.codegen.schema import GroovyCodePayload
+from src.modules.codegen.schema import ConnectorCodeOutput, GroovyCodePayload
+from src.modules.codegen.utils.code_output import build_connector_code_output
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ async def store_authorization_override(
     session_id: UUID,
     code: GroovyCodePayload,
 ) -> None:
-    await repo.update_session(session_id, {"authorizationOutput": code.model_dump()})
+    await repo.update_session(session_id, {"authorizationOutput": await build_connector_code_output(code.code)})
 
 
 async def store_object_class_output_override(
@@ -39,7 +40,9 @@ async def store_object_class_output_override(
     operation_name: str,
     code: GroovyCodePayload,
 ) -> None:
-    await repo.update_session(session_id, {f"{object_class}{operation_name}Output": code.model_dump()})
+    await repo.update_session(
+        session_id, {f"{object_class}{operation_name}Output": await build_connector_code_output(code.code)}
+    )
 
 
 async def store_search_override(
@@ -50,7 +53,7 @@ async def store_search_override(
     code: GroovyCodePayload,
 ) -> None:
     operation_key = build_search_operation_key(object_class, intent)
-    await repo.update_session(session_id, {f"{operation_key}Output": code.model_dump()})
+    await repo.update_session(session_id, {f"{operation_key}Output": await build_connector_code_output(code.code)})
 
 
 async def store_relation_override(
@@ -59,12 +62,12 @@ async def store_relation_override(
     relation_name: str,
     code: GroovyCodePayload,
 ) -> None:
-    await repo.update_session(session_id, {f"{relation_name}CodeOutput": code.model_dump()})
+    await repo.update_session(session_id, {f"{relation_name}CodeOutput": await build_connector_code_output(code.code)})
 
 
 async def store_fixed_connector_scripts(
     session_id: UUID,
-    updates: Mapping[str, GroovyCodePayload],
+    updates: Mapping[str, ConnectorCodeOutput],
     *,
     job_id: UUID,
 ) -> None:
@@ -94,9 +97,7 @@ async def store_fixed_connector_scripts(
                 worker_id=execution.worker_id,
                 execution_token=execution.execution_token,
             )
-        await SessionRepository(db).update_session(
-            session_id, {key: payload.model_dump() for key, payload in updates.items()}
-        )
+        await SessionRepository(db).update_session(session_id, dict(updates))
         await db.commit()
 
     logger.info("[Codegen:Fix] Persisted %d repaired connector script(s)", len(updates))

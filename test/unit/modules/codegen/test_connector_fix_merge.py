@@ -74,9 +74,11 @@ async def test_untouched_scripts_are_returned_byte_identical_and_not_persisted()
     assert serialized["changedOperations"] == [{"operationKey": "userUpdate", "reason": "wrong method"}]
     assert serialized["scripts"][0]["operationKey"] == "userCreate"
     assert serialized["scripts"][0]["sessionKey"] == "userCreateOutput"
+    assert [script["format"] for script in serialized["scripts"]] == ["GROOVY", "GROOVY"]
 
     store.assert_awaited_once()
     assert set(store.await_args.args[1]) == {"userUpdateOutput"}
+    assert store.await_args.args[1]["userUpdateOutput"] == {"format": "GROOVY", "code": FIXED_UPDATE}
 
 
 @pytest.mark.asyncio
@@ -89,11 +91,16 @@ async def test_valid_yaml_fix_is_accepted_and_persisted():
 
     by_key = {script.operation_key: script.code for script in result.scripts}
     assert by_key["userUpdate"] == fixed_yaml.strip()
+    assert {script.operation_key: script.format for script in result.scripts} == {
+        "userCreate": "GROOVY",
+        "userUpdate": "YAML",
+    }
     assert [change.operation_key for change in result.changed_operations] == ["userUpdate"]
     assert result.rejected_scripts == []
     store.assert_awaited_once()
     assert set(store.await_args.args[1]) == {"userUpdateOutput"}
     errors.assert_not_awaited()
+    assert store.await_args.args[1]["userUpdateOutput"] == {"format": "YAML", "code": fixed_yaml.strip()}
 
 
 @pytest.mark.asyncio
@@ -111,6 +118,7 @@ async def test_invalid_yaml_fix_is_dropped_and_the_stored_script_kept():
 
     by_key = {script.operation_key: script.code for script in result.scripts}
     assert by_key["userUpdate"] == UPDATE_CODE
+    assert next(script for script in result.scripts if script.operation_key == "userUpdate").format == "GROOVY"
     assert by_key["userCreate"] == FIXED_UPDATE
     assert [r.operation_key for r in result.rejected_scripts] == ["userUpdate"]
     store.assert_awaited_once()
@@ -220,6 +228,7 @@ async def test_invalid_nested_yaml_fix_keeps_existing_yaml(invalid_yaml):
         scripts=scripts,
     )
     assert {script.operation_key: script.code for script in result.scripts}["userUpdate"] == original
+    assert next(script for script in result.scripts if script.operation_key == "userUpdate").format == "YAML"
     assert set(store.await_args.args[1]) == {"userCreateOutput"}
     assert result.rejected_scripts[0].operation_key == "userUpdate"
     errors.assert_awaited()

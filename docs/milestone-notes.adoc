@@ -17,6 +17,74 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-17 Report YAML or Groovy format with connector code
+
+Author: Alexander Brecko
+
+Description: Every newly generated connector artifact now includes `format` alongside
+`code`: `{"format": "YAML", "code": "..."}` or
+`{"format": "GROOVY", "code": "..."}`. Empty generation results contain
+`{"format": null, "code": ""}`. The existing job envelope remains unchanged;
+consumers read `result.format` and `result.code`. Object-class fixes include `format`
+on each entry in `result.scripts`, including unchanged scripts. Manual overrides
+still accept code-only requests and persist the server-detected format. YAML with
+embedded Groovy is classified as YAML. This changes the result contract consumed by
+midPoint and the JSON payloads stored for codegen jobs and session outputs.
+
+Required Upgrade Steps
+. Update the midPoint consumer to accept `YAML`, `GROOVY`, or JSON `null` in
+`result.format`, and to read the format separately for each `result.scripts` entry
+in object-class fixes. Keep handling the existing job status and errors. Do not
+install an empty code string. Manual override request bodies remain `{"code": "..."}`.
+. Finish outstanding codegen jobs and stop the old backend and any separately
+managed workers before deploying the new snapshot. In the application PostgreSQL
+database, invalidate reusable codegen results with:
++
+[source,sql]
+----
+UPDATE jobs SET normalized_input_hash = NULL WHERE job_type LIKE 'codegen.%';
+----
++
+This is a cache invalidation, not a database schema migration. No database recreation,
+configuration edit, or backup is required: no code or job history is deleted.
+. From the updated checkout, run `docker compose build` followed by
+`docker compose up -d`. For local source execution, restart the backend with
+`uv run poe start` and separately managed workers with `uv run python -m src.jobs.runtime`.
+. Regenerate retained development outputs using their existing request bodies with
+`skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/id?skipCache=true`.
+Poll the new job IDs. Historical job results are not rewritten and can still lack
+`format`; polling an old object-class fix result reports `Corrupted result payload`
+because its script entries do not satisfy the new result schema. Re-submit retained
+manual edits through their existing `PUT` override
+endpoints to populate format metadata. To refresh a retained object-class fix result,
+submit its request again to `POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix`
+and poll the new job ID.
+. Validate with `uv run poe test test/unit/modules/codegen test/integration/modules/codegen test/unit/jobs/test_cache_control.py`,
+`uv run poe lint`, `uv run poe stylecheck`, `uv run poe typecheck`, and
+`uv run poe importcheck`. Verify that a new finished result contains both fields
+and that an empty result retains explicit `"format": null`.
+
+Rollback Procedure (If Upgrade Fails)
+. Finish outstanding jobs and stop the updated backend and separately managed
+workers. Restore the previous backend snapshot and matching midPoint consumer.
+. Run the cache-invalidation SQL above again so the previous snapshot does not
+reuse results with the new contract. Regenerate affected outputs and re-submit
+retained manual overrides after restart. No database downgrade or backup restore
+is required; historical results retain the shape produced by their original snapshot.
+. From the previous checkout, run `docker compose build` followed by
+`docker compose up -d`, or restart local execution with `uv run poe start` and
+separately managed workers with `uv run python -m src.jobs.runtime`.
+. Run the codegen tests above against the restored snapshot and verify that a
+new job returns the previous `result.code` contract before installing its artifact.
+
+Notes & References
+* Related PR: not yet assigned; this entry ships with the implementation.
+* Docs: `docs/pipeline/codegen.adoc`, section "Code result contract".
+* Implementation: `src/modules/codegen/utils/code_output.py` and the codegen
+generation, fix, and persistence boundaries.
+* Affected configs: none. The existing cache behavior is unchanged.
+
 === 2026-09-16 Tighten codegen prompts against fabricated APIs and undersized search scope
 
 Author: Alexander Brecko

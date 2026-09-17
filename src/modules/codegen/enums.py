@@ -6,8 +6,8 @@ from enum import StrEnum
 
 
 class ConnectorCodeFormat(StrEnum):
-    YAML = "yaml"
-    GROOVY = "groovy"
+    YAML = "YAML"
+    GROOVY = "GROOVY"
 
 
 class SearchIntent(StrEnum):
