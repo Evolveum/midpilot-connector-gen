@@ -160,7 +160,7 @@ def test_build_attribute_mapping_records_uses_prompt_shape_and_sorting():
             "updateable": True,
             "creatable": True,
             "readable": False,
-            "multivalue": True,
+            "multiValued": True,
             "returnedByDefault": False,
         },
         {
@@ -172,7 +172,7 @@ def test_build_attribute_mapping_records_uses_prompt_shape_and_sorting():
             "updateable": False,
             "creatable": False,
             "readable": True,
-            "multivalue": False,
+            "multiValued": False,
             "returnedByDefault": True,
         },
     ]

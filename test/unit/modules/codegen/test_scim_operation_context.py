@@ -315,7 +315,8 @@ def test_scim_search_prompts_enforce_native_scim_dsl_without_rest_endpoint_conte
         get_scim_search_id_system_prompt,
     ]:
         assert "search {{ scim {{ limitations {{ ... }} }} }}" in system_prompt
-        assert "emit {{}} when" in system_prompt.lower()
+        assert "objectClasses: {{ {object_class}: {{ search: {{}} }} }}" in system_prompt
+        assert "never a bare `{{}}`, which names" in system_prompt.lower()
         assert "never embed a standalone scim block in a YAML artifact" in system_prompt
         assert "<extracted_endpoints>" not in system_prompt
 

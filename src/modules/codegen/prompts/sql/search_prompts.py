@@ -13,7 +13,9 @@ _COMMON = build_operation_system_prompt(
     context_rules=SQL_SCHEMA_CONTEXT_SYSTEM_RULES + SQL_NATIVE_OPERATION_DSL_SYSTEM_RULES,
     rules=r"""
 - Built-in SQL search already translates filters and handles pagination once the native schema maps
-  the UID. All three intents use those defaults; emit {{}} when no customization is needed.
+  the UID. All three intents use those defaults; when no customization is needed, emit the smallest
+  complete document that still names the object class - `objectClasses: {{ {object_class}: {{}} }}`
+  - never a bare `{{}}`, which names no object class at all.
 - If target evidence requires a fixed WHERE predicate or custom query, generate the complete artifact
   in Groovy using <search_docs>. The SQL YAML reference has no scripted search keys.
 - Keep the requested object class name exactly {object_class}; never invent columns, join

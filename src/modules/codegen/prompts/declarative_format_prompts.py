@@ -61,7 +61,9 @@ DECLARATIVE YAML VS GROOVY:
 - If the framework already provides everything needed by default, return the smallest YAML that
   is still a complete, valid document for this operation - do not add a handler, endpoint, or
   script merely to have one. An explicitly empty block (e.g. `{{}}`) is a normal, complete result
-  when nothing needs overriding.
+  when nothing needs overriding. When the operation is scoped to an object class, keep that scope
+  in the empty result too (e.g. `objectClasses: {{ <the target class>: {{}} }}`) rather than a bare
+  `{{}}` naming no object class at all - see the operation rules below for the exact shape.
 - Never emit a feature <declarative_docs> marks as preview, in development, not yet functional, or
   not enforced as if it were working behavior. Do not use it, comment around it, or silently
   substitute Groovy for the same not-yet-supported behavior; if the requirement cannot be met by

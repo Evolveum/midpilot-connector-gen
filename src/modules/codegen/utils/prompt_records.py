@@ -79,7 +79,7 @@ def _build_attribute_mapping_records(
             "updateable": bool(data.get("updatable", data.get("updateable", False))),
             "creatable": bool(data.get("creatable", False)),
             "readable": bool(data.get("readable", True)),
-            "multivalue": bool(data.get("multivalue", False)),
+            "multiValued": bool(data.get("multivalue", False)),
             "returnedByDefault": bool(data.get("returnedByDefault", True)),
         }
         for optional_key in optional_fields:

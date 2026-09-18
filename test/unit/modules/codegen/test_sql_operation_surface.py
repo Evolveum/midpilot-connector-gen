@@ -123,7 +123,9 @@ def test_sql_search_prompts_require_the_native_sql_block(intent: SearchIntent):
     assets = get_search_operation_assets(ApiType.SQL, intent)
 
     assert "builtIn.where" in assets.system_prompt
-    assert "emit {{}} when no customization is needed" in assets.system_prompt.replace("\n", " ")
+    flattened_system_prompt = assets.system_prompt.replace("\n", " ")
+    assert "objectClasses: {{ {object_class}: {{}} }}" in flattened_system_prompt
+    assert "never a bare `{{}}`, which names no object class at all" in flattened_system_prompt
     assert "endpoint(...)" in assets.system_prompt
     assert "<extracted_attributes>" in assets.user_prompt
     # The table listing is gone; nothing may ask for it back.

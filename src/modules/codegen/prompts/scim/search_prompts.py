@@ -12,8 +12,13 @@ _COMMON = build_operation_system_prompt(
     "search",
     context_rules=SCIM_CONTRACT_CONTEXT_SYSTEM_RULES + SCIM_NATIVE_OPERATION_DSL_SYSTEM_RULES,
     rules=r"""
-- Built-in SCIM search provides UID retrieval, list-all and translatable filters. Emit {{}} when
-  the requested behavior needs no customization; a search intent alone is not a server limitation.
+- The target object class is "{object_class}". In Groovy, keep `objectClass("{object_class}")`
+  exactly; in declarative YAML, keep the `objectClasses.{object_class}` key exactly.
+- Built-in SCIM search provides UID retrieval, list-all and translatable filters. When the
+  requested behavior needs no customization, emit the smallest complete document that still names
+  the object class and the search operation - `objectClasses: {{ {object_class}: {{ search: {{}} }} }}`
+  - never a bare `{{}}`, which names no object class at all. A search intent alone is not a server
+  limitation.
 - Respect the supplied ServiceProviderConfig and provider evidence. Do not infer server filtering
   support from response attributes, or declare a restriction merely because filter.supported is true.
 - When actual server limitations must narrow accepted filters, use the documented Groovy
