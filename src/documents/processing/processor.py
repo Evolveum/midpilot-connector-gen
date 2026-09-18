@@ -43,7 +43,6 @@ def build_chunk_metadata(
         "num_endpoints": data.num_endpoints,
         "tags": data.tags,
         "category": data.category,
-        "different_app_name": data.different_app_name,
     }
     if content_type is not None:
         metadata["content_type"] = content_type

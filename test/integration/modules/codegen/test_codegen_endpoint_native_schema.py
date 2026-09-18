@@ -130,7 +130,7 @@ async def test_get_native_schema_status_found():
     fake_status = MagicMock(
         jobId=ANY,
         status=JobStatus.finished,
-        result={"code": "mocked groovy code"},
+        result={"format": "GROOVY", "code": "mocked groovy code"},
         progress={"stage": "queued"},
         errors=None,
     )
@@ -150,7 +150,7 @@ async def test_get_native_schema_status_found():
         response = await get_native_schema_status(session_id, "User", job_id, db=MagicMock())
 
         assert response.status == JobStatus.finished
-        assert response.result == {"code": "mocked groovy code"}
+        assert response.result == {"format": "GROOVY", "code": "mocked groovy code"}
         mock_repo.session_exists.assert_awaited_once_with(session_id)
         mock_job_repo.get_job_for_session.assert_awaited_once_with(job_id, session_id)
         mock_builder.assert_awaited_once_with(job_id)
@@ -177,7 +177,7 @@ async def test_override_native_schema_success():
         assert response["objectClass"] == "user"
         mock_repo.update_session.assert_awaited_once_with(
             session_id,
-            {"userNativeSchemaOutput": {"code": 'objectClass("User") {}'}},
+            {"userNativeSchemaOutput": {"format": "GROOVY", "code": 'objectClass("User") {}'}},
         )
 
 
@@ -195,3 +195,80 @@ async def test_generate_native_schema_missing_class():
 
     assert exc_info.value.status_code == 404
     assert "No attributes found for nonexistentclass" in exc_info.value.message
+
+
+@pytest.mark.parametrize(
+    "code, expected_status",
+    [
+        ("", 422),
+        ("  \n\t", 422),
+        ("```yaml\n```", 422),
+        ("```groovy\n```", 422),
+        ("objectClasses: {User: {attributes: {name: null}}}", 200),
+        ("objectClasses: {User: {search: {endpoints: 42}}}", 422),
+        ('objectClasses: {User: {search: {custom: {implementation: "return ("}}}}', 422),
+        (
+            "objectClasses: {User: {update: {endpoints: [{path: /users, "
+            "supportedAttributes: [{name: status, value: &loop [*loop]}]}]}}}",
+            422,
+        ),
+    ],
+)
+def test_manual_yaml_override_http_contract(code, expected_status):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.core.db import get_db
+    from src.modules.codegen.routes.native_schema import router
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+    session_id = uuid4()
+    repo = MagicMock()
+    repo.session_exists = AsyncMock(return_value=True)
+    repo.update_session = AsyncMock()
+    with patch("src.modules.codegen.routes.native_schema.SessionRepository", return_value=repo):
+        response = TestClient(app).put(f"/{session_id}/classes/User/native-schema", json={"code": code})
+    assert response.status_code == expected_status
+    if expected_status == 422:
+        assert response.json()["detail"][0]["loc"] == ["body", "code"]
+        repo.update_session.assert_not_awaited()
+    else:
+        assert response.json() == {
+            "message": "Native schema for user overridden successfully",
+            "sessionId": str(session_id),
+            "objectClass": "user",
+        }
+        repo.update_session.assert_awaited_once_with(
+            session_id, {"userNativeSchemaOutput": {"format": "YAML", "code": code}}
+        )
+
+
+@pytest.mark.parametrize("kind", ["stage", "multi_doc"])
+def test_finished_empty_codegen_status_http_contract(kind):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.api.responses import build_multi_doc_status_response, build_stage_status_response
+    from src.modules.codegen.repair import NO_CODE_GENERATED
+
+    app = FastAPI()
+    builder = build_stage_status_response if kind == "stage" else build_multi_doc_status_response
+    app.get("/status")(builder)
+    job_id = uuid4()
+    with patch(
+        "src.api.responses.get_job_status",
+        new_callable=AsyncMock,
+        return_value={
+            "jobId": job_id,
+            "status": "finished",
+            "result": {"format": None, "code": ""},
+            "errors": [NO_CODE_GENERATED],
+        },
+    ):
+        response = TestClient(app).get("/status", params={"job_id": str(job_id)})
+    assert response.status_code == 200
+    assert response.json()["status"] == "finished"
+    assert response.json()["result"] == {"format": None, "code": ""}
+    assert response.json()["errors"] == [NO_CODE_GENERATED]

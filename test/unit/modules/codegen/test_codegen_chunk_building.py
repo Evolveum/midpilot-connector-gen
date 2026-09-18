@@ -9,6 +9,7 @@ def _generator() -> CreateGenerator:
     return CreateGenerator(
         object_class="User",
         docs_text="Create docs",
+        declarative_docs_text="Create docs (declarative)",
         system_prompt="System {total}",
         user_prompt="{chunk}",
         protocol_label="SCIM",

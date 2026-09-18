@@ -13,6 +13,7 @@ must not touch the session repository or the job scheduler.
 import asyncio
 import json
 import logging
+import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 from uuid import UUID
 
@@ -37,7 +38,7 @@ from src.modules.codegen.prompts.sql.fix_prompts import (
     get_sql_connector_fix_system_prompt,
     get_sql_connector_fix_user_prompt,
 )
-from src.modules.codegen.schema import ConnectorFixLLMResponse
+from src.modules.codegen.schema import ConnectorFixLLMResponse, ScriptTagBlock
 from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,38 @@ def render_script_bundle(artifact_payloads: Sequence[Dict[str, Any]]) -> str:
             attributes.append(f'intent="{payload["intent"]}"')
         blocks.append(f"<script {' '.join(attributes)}>\n{payload['code']}\n</script>")
     return "\n\n".join(blocks)
+
+
+_SCRIPT_TAG_PATTERN = re.compile(r"<script\s+([^>]*)>\n?(.*?)\n?</script>", re.DOTALL)
+_SCRIPT_TAG_ATTRIBUTE_PATTERN = re.compile(r'(\w+)="([^"]*)"')
+
+
+def extract_script_tag_blocks(code: str) -> List[ScriptTagBlock]:
+    """
+    Recover ``<script>`` blocks the model echoed back from :func:`render_script_bundle`'s
+    input tags instead of returning bare code for the one operation it was asked to fix.
+
+    The fix prompt asks for bare code, but the model does not always comply, and when it
+    does not it can quote more than one block - e.g. by copying several unmodified inputs
+    alongside the one it actually changed. Returns one block per well-formed
+    ``<script operationKey="..." ...>`` tag found, in document order; an empty list means
+    ``code`` carries no such wrapper and must be used exactly as given.
+    """
+    blocks: List[ScriptTagBlock] = []
+    for match in _SCRIPT_TAG_PATTERN.finditer(code):
+        attributes = dict(_SCRIPT_TAG_ATTRIBUTE_PATTERN.findall(match.group(1)))
+        operation_key = attributes.get("operationKey")
+        if not operation_key:
+            continue
+        blocks.append(
+            ScriptTagBlock(
+                operation_key=operation_key,
+                kind=attributes.get("kind"),
+                object_class=attributes.get("objectClass"),
+                code=match.group(2),
+            )
+        )
+    return blocks
 
 
 def render_previous_attempt(response: ConnectorFixLLMResponse) -> str:

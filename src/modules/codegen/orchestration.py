@@ -32,6 +32,7 @@ from src.documents.relevance import hydrate_auth_sequences_from_relevance
 from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
 from src.modules.codegen import connector_fix, generation
 from src.modules.codegen.errors import (
+    ConnectorCodeValidationError,
     ConnectorFixContextTooLargeError,
     ConnectorScriptsNotFoundError,
     InvalidConnectorScriptOverrideError,
@@ -45,7 +46,9 @@ from src.modules.codegen.schema import (
 )
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, load_connector_artifacts
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
-from src.modules.codegen.utils.groovy_validation import GroovyValidationError, ensure_valid_groovy_code
+from src.modules.codegen.utils.connector_code_validation import (
+    ensure_valid_connector_code,
+)
 from src.modules.digester.errors import (
     AttributesNotFoundError,
     InvalidRelationsOutputError,
@@ -391,6 +394,7 @@ async def schedule_relation_job(
     if selected_relation is None:
         raise RelationNotFoundError(relation_name, session_id)
 
+    protocol = await resolve_effective_api_type(session_id, None)
     selected_relations_model = RelationsResponse(relations=[selected_relation])
     relations_payload = selected_relations_model.model_dump(by_alias=True, mode="json")
 
@@ -400,6 +404,7 @@ async def schedule_relation_job(
         input_payload={
             "relations": relations_payload,
             "relationName": relation_name,
+            "apiType": protocol.value,
             "sessionId": session_id,
             "skipCache": skip_cache,
         },
@@ -407,6 +412,7 @@ async def schedule_relation_job(
         worker_kwargs={
             "relations": job_input_reference("relations"),
             "relation_name": relation_name,
+            "protocol": protocol,
             "session_id": session_id,
         },
         initial_stage="preparing",
@@ -549,8 +555,8 @@ async def _validate_script_overrides(codegen_input: ConnectorFixInput) -> dict[s
         validated: dict[str, str] = {}
         for override in codegen_input.scripts:
             try:
-                validated[override.operation_key] = ensure_valid_groovy_code(override.code)
-            except GroovyValidationError as exc:
+                validated[override.operation_key] = ensure_valid_connector_code(override.code)
+            except ConnectorCodeValidationError as exc:
                 raise InvalidConnectorScriptOverrideError(override.operation_key, str(exc)) from exc
         return validated
 

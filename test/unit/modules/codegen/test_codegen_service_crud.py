@@ -105,7 +105,7 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
             protocol=ApiType.SQL,
         )
 
-    assert result == {"code": "mocked sql create code"}
+    assert result == {"format": "GROOVY", "code": "mocked sql create code"}
     mock_get_connection_target.assert_awaited_once_with(session_id, protocol=ApiType.SQL)
     _, kwargs = mock_create_generator_class.call_args
     assert kwargs["system_prompt"] == get_sql_create_system_prompt

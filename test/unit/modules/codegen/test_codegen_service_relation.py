@@ -11,10 +11,12 @@ import pytest
 
 from src.modules.codegen import generation
 from src.modules.digester.schemas import RelationsResponse
+from src.shared.enums import ApiType
 
 
 @pytest.mark.asyncio
-async def test_generate_relation():
+@pytest.mark.parametrize("protocol", [ApiType.REST, ApiType.SCIM, ApiType.SQL])
+async def test_generate_relation(protocol):
     """Test generating relation code."""
     test_relations_payload = {
         "relations": [
@@ -76,6 +78,7 @@ async def test_generate_relation():
             relation_name="project_to_membership",
             session_id=uuid4(),
             job_id=uuid4(),
+            protocol=protocol,
         )
 
         assert isinstance(result, dict)
@@ -84,6 +87,14 @@ async def test_generate_relation():
 
         # Verify generator was instantiated and generate method was called
         mock_relation_generator_class.assert_called_once()
+        config = mock_relation_generator_class.call_args.kwargs
+        assert config["extra_prompt_vars"]["protocol"] == protocol.value
+        expected_reference = {
+            ApiType.REST: "The relationship concept",
+            ApiType.SCIM: "SCIM",
+            ApiType.SQL: "Multitable support",
+        }[protocol]
+        assert expected_reference in config["docs_text"]
         mock_generator_instance.generate.assert_called_once()
         generate_kwargs = mock_generator_instance.generate.await_args.kwargs
         assert generate_kwargs["relation_name"] == "project_to_membership"

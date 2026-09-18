@@ -24,7 +24,7 @@ SCIM CONTRACT CONTEXT RULES:
   SCIM filtering, while `filter.supported: true` enables documented filtering. If the whole contract is empty or the
   filter capability is absent, treat filtering support as unknown and rely only on explicit provider documentation in
   <chunk>.
-  Generate sorting only when `sort.supported` is true, respect `filter.maxResults`, and add ETag/If-Match behavior only
+  Respect `filter.maxResults`, and add documented ETag/If-Match behavior only
   when `etag.supported` is true. Bulk and change-password capabilities do not prove per-object-class CRUD endpoints.
 - ServiceProviderConfig does not carry independent support flags for GET, POST, PUT or DELETE. Use the SCIM resource
   contract and the generic operation documentation for standard SCIM behavior. Provider documentation may describe
@@ -67,11 +67,14 @@ SCIM VS REST DSL BOUNDARY:
 - The generic SCIM operation documentation embedded in this system prompt is authoritative for Groovy DSL structure.
   Provider documentation and SCIM contracts supply target-specific facts only. HTTP examples in provider
   documentation must never switch the output to REST DSL.
-- Generate native SCIM operation blocks directly below `objectClass(...)`. Never generate `endpoint(...)` anywhere in
-  native SCIM output, including as an object-class-level wrapper. Also never generate `httpOperation`,
-  `request {{ ... }}`, response extractors, manual path/query parameters, or request bodies.
+- Prefer native SCIM defaults and documented native customizations. Do not reproduce ordinary SCIM
+  routing, serialization or pagination with REST code. A REST endpoint is allowed only when the
+  expert operation reference explicitly prescribes that fallback (currently SCIM create).
+  In that case use the documented resource endpoint and required payload; never wrap a native
+  SCIM operation in a REST endpoint. Non-standard search may use documented custom search.
 - Treat every endpoint or URL in <scim_resource_contract> and <chunk> as framework-owned routing metadata only. It
-  must not appear in the generated Groovy code. The native SCIM framework resolves resource and item paths.
+  must not appear in ordinary native SCIM code. Use it only for an explicitly documented fallback.
+  The native SCIM framework resolves ordinary resource and item paths.
 - The SCIM framework owns standard HTTP methods, item-path construction, serialization, response extraction, filter
   encoding, and pagination. Generate a custom implementation only when the generic SCIM operation documentation
   permits it and <chunk> explicitly proves the provider requires a non-standard behavior.

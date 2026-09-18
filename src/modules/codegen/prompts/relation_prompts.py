@@ -1,81 +1,44 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
-#
 # Licensed under the EUPL-1.2 or later.
 
-import textwrap
+from src.modules.codegen.prompts.operation_prompts import build_operation_system_prompt
 
-get_relation_system_prompt = textwrap.dedent("""\
-You are an expert in creating connectors for midPoint. Your goal is to prepare a relation in Groovy code. 
+get_relation_system_prompt = build_operation_system_prompt(
+    "relation",
+    rules=r"""
+- Target protocol: {protocol}. Generate only the selected relationship named {relation_name}.
+- Preserve the selected relation's subject, object, subjectAttribute and objectAttribute. Do not
+  invent participants or infer a different relationship from endpoint examples.
+- One bidirectional association is one relationship containing both participants. Merge duplicate
+  descriptions of the same association rather than create multiple blocks.
+- For REST and SCIM, prefer the documented root-level relationships YAML map when sufficient.
+  If an attribute is already resolved automatically (for example standard SCIM groups/members),
+  preserve framework defaults rather than install a duplicate resolver.
+- A required scripted resolver may use the documented YAML implementation hook. Otherwise use a
+  complete Groovy relationship("...") block. Never emit a non-existent relation {{ ... }} DSL.
+- For SQL, relationships are detected from foreign-key metadata and conventions. Scripted
+  relationship overrides are unsupported. Do not fabricate a relationship block or a join API.
+  If discovery suffices, emit {{}}. If the selected relationship needs an unsupported override,
+  emit {{}} with a concise YAML TODO identifying the unmet requirement.
+- The separate relationship artifact defines the association only. Required search implementations
+  belong in the corresponding object-class search artifacts; identify any missing support with a TODO.
+""",
+)
 
-The input data you will receive:
-1) The requested relation name from the codegen route.
-
-2) A JSON payload selected from a previous digester `RelationsResponse`.
-   - The payload contains exactly one relation record whose `name` matches the requested relation name.
-   - The record includes fields like `subject`, `subjectAttribute`, `object`, `objectAttribute`,
-     `name`, `displayName`, `shortDescription`.
-
-3) An OpenAPI/Swagger documentation chunk sequence selected from the subject/object object classes.
-   - The chunks come from `relevantDocumentations` of the selected relation's `subject` and `object` classes.
-   - Use them to clarify attribute names, references, and terminology.
-   - Add inline comments that point to the evidence (e.g., `$ref`, `<Object>Id(s)`, etc.), if helpful.
-   - Extract other relevant information from the documentation for relation purpose.
-   - DO NOT infer relationships from endpoints/examples unless they corroborate the selected relation.
-
-4) Result of previous iteration of LLM call.
-
-Prepare a relation in Groovy code based on the following `.adoc` documentations:
-
-<relation_docs>
-{relation_docs}
-</relation_docs>
-
-AUTHORING REQUIREMENTS:
-- Generate code only for the selected relation named `{relation_name}`.
-- Preserve the selected RelationsResponse semantics: map `subjectAttribute` on `subject` to `object`.
-- Treat duplicate wording for the same subject/object/reference as one relationship. For example,
-  `user has membership`, `user membership`, and `user to membership` all mean one `user -> membership`
-  relationship; generate one Groovy `relationship` block and merge the available subject/object attributes into it.
-- A bidirectional relation is represented by one `relationship` block containing both `subject` and `object` sides.
-  Do not create a second block just because the source mentions both navigation directions.
-- Prefer concise, deterministic code. Add short inline comments only when they clarify decisions or cite evidence.
-
-OUTPUT POLICY:
-- Always return the full, final Groovy `relation` block for the current iteration (do not return diffs).
-- If a chunk adds no useful information, keep the previous best result unchanged.
-- No prose before or after the code. Only the Groovy block.
-
-
-OUTPUT RULES:
-- Return ONLY Groovy `relation` block based on documentation. No extra commentary.
-- The example is illustrative; adapt to the format defined in the reference documentation.
-- Do not introduce classes/attributes absent from the selected relation payload.
-""")
-
-
-get_relation_user_prompt = textwrap.dedent("""\
-Requested relation name:
-
+get_relation_user_prompt = """
+Requested relationship:
 <relation_name>
 {relation_name}
 </relation_name>
-
-Selected extracted relation:
-
 <extracted_relations>
 {relation_json}
 </extracted_relations>
-
-
-Text from documentation:
-
-<docs>
+Target-system documentation for this iteration:
+<chunk>
 {chunk}
-</docs>
-
-Previous best result:
-
+</chunk>
+Last accepted artifact:
 <result>
 {result}
 </result>
-""")
+"""
