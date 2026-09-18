@@ -108,17 +108,15 @@ def test_validate_yaml_connector_code_accepts_operation_override() -> None:
     assert validate_yaml_connector_code("objectClasses:\n  Employee:\n    create:\n      enabled: false\n") is None
 
 
-def test_yaml_endpoint_rejects_undocumented_method_key_search_custom_supports_other_methods() -> None:
+def test_yaml_search_endpoint_accepts_a_stated_method_search_custom_supports_other_methods() -> None:
+    """
+    Search endpoints are always GET; stating a method explicitly (even a redundant GET) is
+    accepted rather than rejected as an unknown key, mirroring ``_WriteEndpoint.method``.
+    """
     code = (
-        "objectClasses:\n"
-        "  User:\n"
-        "    search:\n"
-        "      endpoints:\n"
-        "        - path: /users/search\n"
-        "          method: POST\n"
+        "objectClasses:\n  User:\n    search:\n      endpoints:\n        - path: /users/search\n          method: GET\n"
     )
-    error = validate_yaml_connector_code(code)
-    assert error is not None and "method" in error
+    assert validate_yaml_connector_code(code) is None
     custom = "objectClasses: {User: {search: {custom: {implementation: 'return null'}}}}"
     assert validate_yaml_connector_code(custom) is None
 

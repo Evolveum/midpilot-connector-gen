@@ -25,7 +25,7 @@ from src.core.errors import LLMUnavailableError
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.jobs import append_job_error, report_job_error, update_job_progress
 from src.modules.codegen.core.base import ChunkProcessor, endpoints_to_records
-from src.modules.codegen.core.fix_connector import run_connector_fix_pass
+from src.modules.codegen.core.fix_connector import extract_script_tag_blocks, run_connector_fix_pass
 from src.modules.codegen.errors import (
     ConnectorFixContextTooLargeError,
     ConnectorFixEscalationFailedError,
@@ -39,8 +39,10 @@ from src.modules.codegen.schema import (
     ConnectorFixLLMResponse,
     ConnectorFixRejection,
     ConnectorFixResult,
+    ConnectorFixScriptUpdate,
     ConnectorScript,
     EndpointsPayload,
+    ScriptTagBlock,
 )
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, resolve_artifact_docs_paths
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
@@ -269,7 +271,10 @@ async def _validate_proposed_scripts(
     Keep the proposed scripts that are usable; report the rest.
 
     One unusable script must not sink the others, and an operation key the
-    connector does not have never becomes a new session row.
+    connector does not have never becomes a new session row. A ``fixed_scripts``
+    entry whose ``code`` echoes one or more input ``<script>`` tags (see
+    ``render_script_bundle``) is expanded into one candidate per tag first, each
+    validated against the operation its own tag names - see ``_resolve_proposed_blocks``.
 
     :return: (accepted by resolved operation key, rejections, count of *unusable*
         proposals - a proposal identical to the stored script is reported but is
@@ -280,17 +285,23 @@ async def _validate_proposed_scripts(
     unusable_count = 0
 
     for script in response.fixed_scripts:
-        operation_key = _resolve_operation_key(script.operation_key, by_operation_key)
-        if operation_key is None:
-            rejections.append(
-                ConnectorFixRejection(
-                    operation_key=script.operation_key,
-                    reason="No such operation in this connector.",
+        for block in _resolve_proposed_blocks(script):
+            operation_key = _resolve_operation_key(block.operation_key, by_operation_key)
+            if operation_key is None:
+                rejections.append(
+                    ConnectorFixRejection(
+                        operation_key=block.operation_key,
+                        reason="No such operation in this connector.",
+                    )
                 )
-            )
-            unusable_count += 1
-            continue
-        candidates.append((operation_key, script.code, script.reason))
+                unusable_count += 1
+                continue
+            mismatch = _describe_tag_mismatch(block, by_operation_key[operation_key])
+            if mismatch is not None:
+                rejections.append(ConnectorFixRejection(operation_key=operation_key, reason=mismatch))
+                unusable_count += 1
+                continue
+            candidates.append((operation_key, block.code, script.reason))
 
     # YAML parsing and groovy-parser are both CPU-bound; validating a full object class inline
     # would stall the loop.
@@ -326,6 +337,36 @@ async def _validate_proposed_scripts(
         )
 
     return accepted, rejections, unusable_count
+
+
+def _resolve_proposed_blocks(script: ConnectorFixScriptUpdate) -> List[ScriptTagBlock]:
+    """
+    One block per ``<script>`` tag ``script.code`` echoes back from the input bundle, or
+    the script's own code untouched when it echoes no tag - the expected, well-behaved case.
+    """
+    blocks = extract_script_tag_blocks(script.code)
+    if blocks:
+        return blocks
+    return [ScriptTagBlock(operation_key=script.operation_key, kind=None, object_class=None, code=script.code)]
+
+
+def _describe_tag_mismatch(block: ScriptTagBlock, artifact: ConnectorArtifact) -> str | None:
+    """None when the block's own tag attributes, if any, agree with the resolved artifact."""
+    if block.kind is not None and block.kind != artifact.kind.value:
+        return (
+            f"<script> tag kind '{block.kind}' does not match operation {artifact.operation_key}'s "
+            f"artifact kind '{artifact.kind.value}'."
+        )
+    if (
+        block.object_class is not None
+        and artifact.object_class is not None
+        and block.object_class != artifact.object_class
+    ):
+        return (
+            f"<script> tag objectClass '{block.object_class}' does not match operation "
+            f"{artifact.operation_key}'s object class '{artifact.object_class}'."
+        )
+    return None
 
 
 def _resolve_operation_key(proposed: str, by_operation_key: Mapping[str, ConnectorArtifact]) -> str | None:

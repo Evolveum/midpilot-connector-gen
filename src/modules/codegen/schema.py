@@ -325,6 +325,16 @@ class ConnectorFixScriptUpdate(CamelCaseModel):
     reason: str = Field(..., description="One sentence: what was wrong and what you changed.")
 
 
+@dataclass(frozen=True)
+class ScriptTagBlock:
+    """One ``<script>`` block recovered from a proposed fix, tag attributes included."""
+
+    operation_key: str
+    kind: Optional[str]
+    object_class: Optional[str]
+    code: str
+
+
 class ConnectorFixLLMResponse(CamelCaseModel):
     """
     Structured output of one object-class fix pass.

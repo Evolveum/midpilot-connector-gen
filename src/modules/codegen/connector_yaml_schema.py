@@ -147,6 +147,7 @@ class _WriteEndpoint(_Configuration):
 
 class _SearchEndpoint(_Configuration):
     path: str
+    method: str | None = Field(default=None)
     responseFormat: str | None = Field(default=None)
     objectExtractor: str | None = _script()
     pagingSupport: str | None = _script()
