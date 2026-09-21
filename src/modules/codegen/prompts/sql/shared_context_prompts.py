@@ -80,17 +80,18 @@ SQL_NATIVE_OPERATION_DSL_SYSTEM_RULES = textwrap.dedent("""\
 SQL VS REST DSL BOUNDARY:
 - The generic SQL operation documentation embedded in this system prompt is authoritative for Groovy DSL
   structure. The extracted attributes and the provider documentation supply target-specific facts only.
-- Generate native SQL operation blocks directly below `objectClass(...)`, each holding a `sql {{ ... }}`
-  block. Never generate `endpoint(...)`, `httpOperation`, `request {{ ... }}`, response extractors, query
+- For a required customization, follow the exact operation hierarchy in the expert reference.
+  Generic create/update/delete enablement is directly under the operation; search customization
+  uses search.sql.builtIn or search.sql.custom in Groovy. Never generate `endpoint(...)`, `httpOperation`, `request {{ ... }}`, response extractors, query
   parameters, request bodies, or any other REST or SCIM construct.
 - The table binding is framework-owned metadata declared by the native schema. Table names must never be
   rendered as a path, an endpoint, or a hand-written SQL statement in the operation block.
-- The framework owns statement construction, identity resolution from the primary key, type conversion and
-  result mapping. Declare capabilities; do not implement them.
-- Inside `sql {{ builtIn {{ ... }} }}` only these keys are valid: `enabled`, `emptyFilterSupported` and
-  `anyFilterSupported`. Never invent other keys, and never nest anything else inside `builtIn`.
-- `attributeResolver {{ ... }}` and `custom {{ ... }}` blocks follow the same shape as REST and SCIM. Generate
-  them only when <chunk> or <extracted_attributes> proves the built-in behavior is insufficient.
+- The framework owns ordinary statement construction, identity, conversion and result mapping.
+  Preserve these defaults unless target evidence requires a documented customization.
+- A builtIn.where closure is supported for an additional fixed SQL predicate. Use its documented
+  eq/ne API or e.add(...); do not restrict builtIn to enablement/filter flags.
+- SQL custom search has its own query API. Never assume it has the same shape as REST or SCIM.
+  When a later chunk requires WHERE or a custom query, convert the complete YAML artifact to Groovy.
 - Treat <result> as current working code. Preserve already-correct native SQL blocks across chunks and edit
   them minimally; never rewrite them as REST endpoints.
 """)

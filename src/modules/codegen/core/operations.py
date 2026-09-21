@@ -11,7 +11,6 @@ from src.modules.codegen.core.base import (
     endpoints_to_records,
 )
 from src.modules.codegen.enums import SearchIntent
-from src.modules.codegen.prompts.relation_prompts import get_relation_system_prompt, get_relation_user_prompt
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, OperationConfig
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
 from src.modules.codegen.utils.prompt_records import (
@@ -48,6 +47,7 @@ class SearchGenerator(BaseGroovyGenerator):
         intent: SearchIntent,
         preferred_endpoints: Optional[list[Dict[str, Any]]] = None,
         docs_text: str,
+        declarative_docs_text: str,
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
@@ -69,6 +69,7 @@ class SearchGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["intent"] = intent
         config.extra_prompt_vars["search_docs"] = docs_text
+        config.extra_prompt_vars["declarative_docs"] = declarative_docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
         config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
@@ -96,6 +97,7 @@ class CreateGenerator(BaseGroovyGenerator):
         object_class: str,
         preferred_endpoints: Optional[list[Dict[str, Any]]] = None,
         docs_text: str,
+        declarative_docs_text: str,
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
@@ -116,6 +118,7 @@ class CreateGenerator(BaseGroovyGenerator):
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["create_docs"] = docs_text
+        config.extra_prompt_vars["declarative_docs"] = declarative_docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
         config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
@@ -143,6 +146,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         object_class: str,
         preferred_endpoints: Optional[list[Dict[str, Any]]] = None,
         docs_text: str,
+        declarative_docs_text: str,
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
@@ -163,6 +167,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["update_docs"] = docs_text
+        config.extra_prompt_vars["declarative_docs"] = declarative_docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
         config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
@@ -190,6 +195,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         object_class: str,
         preferred_endpoints: Optional[list[Dict[str, Any]]] = None,
         docs_text: str,
+        declarative_docs_text: str,
         system_prompt: str,
         user_prompt: str,
         protocol_label: str,
@@ -210,6 +216,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         )
         config.extra_prompt_vars["object_class"] = object_class
         config.extra_prompt_vars["delete_docs"] = docs_text
+        config.extra_prompt_vars["declarative_docs"] = declarative_docs_text
         config.extra_prompt_vars["base_api_url"] = base_api_url
         config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
@@ -231,16 +238,24 @@ class DeleteGenerator(BaseGroovyGenerator):
 
 
 class RelationGenerator(BaseGroovyGenerator):
-    def __init__(self, docs_text: str, extra_prompt_vars: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        docs_text: str,
+        declarative_docs_text: str,
+        system_prompt: str,
+        user_prompt: str,
+        extra_prompt_vars: Optional[Dict[str, Any]] = None,
+    ):
         config = OperationConfig(
             operation_name="Relation",
-            system_prompt=get_relation_system_prompt,
-            user_prompt=get_relation_user_prompt,
-            default_scaffold="relation {\n}\n",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            default_scaffold="{}",
             logger_prefix="[Codegen:Relation]",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["relation_docs"] = docs_text
+        config.extra_prompt_vars["declarative_docs"] = declarative_docs_text
         super().__init__(config)
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
@@ -263,7 +278,7 @@ class RelationGenerator(BaseGroovyGenerator):
 
 def build_other_authorization_scaffold(protocol: ApiType) -> str:
     return (
-        "authentication {\n"
+        "authorization {\n"
         f"    {protocol.value} {{\n"
         "        other {\n"
         "            implementation {\n"
@@ -306,7 +321,7 @@ def build_authorization_scaffold(
     preferred_authorizations: Optional[list[Dict[str, Any]]] = None,
 ) -> str:
     lines = [
-        "authentication {",
+        "authorization {",
         f"    {protocol.value} {{",
     ]
     lines.extend(f"        // {comment}" for comment in _unsupported_authorization_comments(preferred_authorizations))
@@ -325,6 +340,7 @@ class AuthorizationGenerator(BaseGroovyGenerator):
         *,
         preferred_authorizations: Optional[list[Dict[str, Any]]] = None,
         docs_text: str,
+        declarative_docs_text: str,
         system_prompt: str,
         user_prompt: str,
         protocol: ApiType,
@@ -342,6 +358,7 @@ class AuthorizationGenerator(BaseGroovyGenerator):
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["authorization_docs"] = docs_text
+        config.extra_prompt_vars["declarative_docs"] = declarative_docs_text
         config.extra_prompt_vars["authentication_container"] = authentication_container
         config.extra_prompt_vars["base_api_url"] = base_api_url
         config.extra_prompt_vars["preferred_authorizations_json"] = json.dumps(

@@ -13,7 +13,6 @@ def test_llm_chunk_output_normalizes_nullish_num_endpoints_to_zero() -> None:
             "num_endpoints": None,
             "tags": ["REST"],
             "category": "spec_json",
-            "different_app_name": False,
             "num_defined_object_classes": None,
         }
     )
@@ -28,7 +27,6 @@ def test_llm_chunk_output_normalizes_string_null_num_endpoints_to_zero() -> None
             "num_endpoints": "null",
             "tags": ["REST"],
             "category": "spec_json",
-            "different_app_name": False,
             "num_defined_object_classes": None,
         }
     )

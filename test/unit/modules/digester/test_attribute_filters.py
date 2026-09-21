@@ -5,7 +5,9 @@
 from src.modules.digester.entities.attribute_filters import (
     filter_ignored_attributes,
     ignore_attribute_name,
+    normalize_attribute_name_casing,
     normalize_readability_flags,
+    to_lower_camel_case,
 )
 from src.modules.digester.schemas import AttributeProcessingInfo
 
@@ -44,3 +46,38 @@ def test_normalize_readability_flags():
     assert processed["id"]["returnedByDefault"] is True
     assert processed["password"]["returnedByDefault"] is False
     assert processed["token"]["returnedByDefault"] is False
+
+
+def test_to_lower_camel_case():
+    assert to_lower_camel_case("Cost Center") == "costCenter"
+    assert to_lower_camel_case("cost-center") == "costCenter"
+    assert to_lower_camel_case("created_at") == "created_at"
+    assert to_lower_camel_case("userName") == "userName"
+    assert to_lower_camel_case("Username") == "Username"
+    assert to_lower_camel_case("id") == "id"
+    assert to_lower_camel_case("  ") == ""
+
+
+def test_normalize_attribute_name_casing():
+    attributes = {
+        "Cost Center": {"type": "string"},
+        "userName": {"type": "string"},
+    }
+
+    normalized = normalize_attribute_name_casing(attributes, "User")
+
+    assert normalized == {
+        "costCenter": {"type": "string"},
+        "userName": {"type": "string"},
+    }
+
+
+def test_normalize_attribute_name_casing_keeps_first_on_collision():
+    attributes = {
+        "Cost Center": {"source": "first"},
+        "cost-center": {"source": "second"},
+    }
+
+    normalized = normalize_attribute_name_casing(attributes, "User")
+
+    assert normalized == {"costCenter": {"source": "first"}}

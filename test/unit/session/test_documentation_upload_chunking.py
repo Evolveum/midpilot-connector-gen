@@ -83,7 +83,6 @@ def test_processed_chunk_metadata_uses_token_count_name():
         num_endpoints=0,
         tags=["SQL"],
         category="reference_other",
-        different_app_name=False,
     )
     metadata = build_chunk_metadata(
         chunk_number=0,
@@ -93,10 +92,15 @@ def test_processed_chunk_metadata_uses_token_count_name():
         filename="schema.sql",
     )
 
-    assert metadata["token_count"] == 42
-    assert metadata["character_count"] == 17
-    assert metadata["chunk_number"] == 0
-    assert "length" not in metadata
+    assert metadata == {
+        "chunk_number": 0,
+        "token_count": 42,
+        "character_count": 17,
+        "num_endpoints": 0,
+        "tags": ["SQL"],
+        "category": "reference_other",
+        "filename": "schema.sql",
+    }
 
 
 @pytest.mark.asyncio

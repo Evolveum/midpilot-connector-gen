@@ -179,7 +179,12 @@ async def reuse_or_run(
                     top_level_doc_refs_snake_case=True,
                 )
 
-            if "discovery" in job_type or "codegen" in job_type:
+            if job_type.startswith("codegen."):
+                for message in latest_job.errors or []:
+                    await lifecycle.append_job_error(job_id, message)
+                return reused_output
+
+            if "discovery" in job_type:
                 return copy.deepcopy(latest_job.result)
 
             logger.warning(

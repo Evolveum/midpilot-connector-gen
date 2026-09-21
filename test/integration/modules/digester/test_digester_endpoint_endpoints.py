@@ -177,6 +177,11 @@ async def test_get_class_endpoints_status_found():
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
+        patch(
+            "src.modules.digester.results.hydrate_endpoints_with_relevance",
+            new_callable=AsyncMock,
+            side_effect=lambda _db, _session_id, _result_key, payload: payload,
+        ),
     ):
         session_id = uuid4()
         response = await get_class_endpoints_status(

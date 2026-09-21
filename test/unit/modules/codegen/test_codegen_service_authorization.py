@@ -83,7 +83,7 @@ async def test_generate_authorization_code_uses_preferred_authorizations_and_aut
             protocol=ApiType.REST,
         )
 
-    assert result == {"code": "mocked authorization code"}
+    assert result == {"format": "GROOVY", "code": "mocked authorization code"}
     mock_generator_class.assert_called_once()
     _, generator_kwargs = mock_generator_class.call_args
     assert generator_kwargs["preferred_authorizations"] == enriched_preferred_authorizations
@@ -125,8 +125,9 @@ async def test_generate_authorization_code_returns_static_scaffold_for_other_aut
         )
 
     assert result == {
+        "format": "GROOVY",
         "code": (
-            "authentication {\n"
+            "authorization {\n"
             "    rest {\n"
             "        other {\n"
             "            implementation {\n"
@@ -135,7 +136,7 @@ async def test_generate_authorization_code_returns_static_scaffold_for_other_aut
             "        }\n"
             "    }\n"
             "}\n"
-        )
+        ),
     }
     mock_generator_class.assert_not_called()
     mock_relevant_chunk_repository.assert_not_called()
@@ -184,7 +185,7 @@ async def test_generate_authorization_code_marks_unmatched_midpoint_authorizatio
             protocol=ApiType.REST,
         )
 
-    assert result == {"code": "mocked authorization code"}
+    assert result == {"format": "GROOVY", "code": "mocked authorization code"}
     _, generator_kwargs = mock_generator_class.call_args
     assert generator_kwargs["preferred_authorizations"][0][ANALYSIS_SUPPORT_FIELD] == ANALYSIS_SUPPORT_UNSUPPORTED
 
@@ -205,7 +206,7 @@ def test_authorization_scaffold_includes_comments_for_unsupported_midpoint_autho
     )
 
     assert code == (
-        "authentication {\n"
+        "authorization {\n"
         "    rest {\n"
         "        // HTTP JWT Bearer Token Authorization (jwtBearer) was selected in midPoint, but it was not "
         "identified in the analyzed application documentation.\n"
@@ -217,7 +218,7 @@ def test_authorization_scaffold_includes_comments_for_unsupported_midpoint_autho
 
 def test_other_authorization_scaffold_remains_unchanged():
     assert build_other_authorization_scaffold(ApiType.REST) == (
-        "authentication {\n"
+        "authorization {\n"
         "    rest {\n"
         "        other {\n"
         "            implementation {\n"

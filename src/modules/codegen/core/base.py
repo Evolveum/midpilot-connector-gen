@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
 import logging
 import sys
 from abc import ABC, abstractmethod
@@ -29,13 +30,24 @@ from src.jobs import (
     update_job_progress,
 )
 from src.jobs.errors import JobClaimLostError
+from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
     get_groovy_cleanup_user_prompt,
+    get_yaml_cleanup_system_prompt,
+    get_yaml_cleanup_user_prompt,
 )
-from src.modules.codegen.repair import build_repair_prompt_vars, get_repair_initial_result
+from src.modules.codegen.repair import (
+    NO_CODE_GENERATED,
+    NO_REPAIR_GENERATED,
+    build_repair_prompt_vars,
+    get_repair_initial_result,
+)
 from src.modules.codegen.schema import CodegenRepairContext, EndpointsPayload, OperationConfig
-from src.modules.codegen.utils.groovy_validation import validate_groovy_code
+from src.modules.codegen.utils.connector_code_validation import (
+    detect_connector_code_format,
+    validate_connector_code,
+)
 from src.modules.codegen.utils.postprocess import coerce_llm_text, strip_markdown_fences
 from src.modules.codegen.utils.prompt_records import strip_relevant_documentation_refs
 from src.modules.digester.schemas import EndpointResponse
@@ -152,7 +164,7 @@ class ChunkProcessor:
 
 class BaseGroovyGenerator(ABC):
     """
-    Base class for Groovy code generation with common chunk processing logic.
+    Base class for connector code generation with common chunk processing logic.
 
     This class implements the Template Method pattern, allowing subclasses
     to customize specific parts while reusing the core generation logic.
@@ -233,8 +245,9 @@ class BaseGroovyGenerator(ABC):
             logger.info("%s Repair mode has no chunks; running single repair pass", self.config.logger_prefix)
 
         if not chunks:
-            logger.warning("%s No chunks to process", self.config.logger_prefix)
-            return self.config.default_scaffold
+            logger.warning("[Codegen:Generation] No chunks to process")
+            await append_job_error(job_id, NO_CODE_GENERATED)
+            return ""
 
         # Step 2: Initialize progress
         await self._initialize_progress(job_id, chunks, chunk_ids_included)
@@ -245,8 +258,7 @@ class BaseGroovyGenerator(ABC):
         chain = self._build_llm_chain(len(chunks))
 
         # Step 4: Process chunks iteratively
-        fallback_result = self.get_initial_result(**operation_specific_kwargs)
-        initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result=fallback_result)
+        initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result="")
         result = await self._process_chunks(
             chunks=chunks,
             provenance_chunk_ids=provenance_chunk_ids,
@@ -259,17 +271,18 @@ class BaseGroovyGenerator(ABC):
         )
 
         if not result:
-            logger.warning("%s No code produced; returning default scaffold", self.config.logger_prefix)
-            return self.config.default_scaffold
+            await append_job_error(job_id, NO_REPAIR_GENERATED if repair_context else NO_CODE_GENERATED)
+            return initial_result
 
         result = await self._cleanup_generated_code(code=result, job_id=job_id)
 
-        validation_error = validate_groovy_code(result)
+        validation_error = await asyncio.to_thread(validate_connector_code, result)
         if validation_error is not None:
-            error_message = f"{self.config.logger_prefix} Final generated Groovy is invalid: {validation_error}"
-            logger.warning(error_message)
+            error_message = f"{self.config.logger_prefix} Final generated code is invalid: {validation_error}"
+            logger.warning("[Codegen:Generation] Final generated code is invalid: %s", validation_error)
             await append_job_error(job_id, error_message)
-            return fallback_result
+            await append_job_error(job_id, NO_REPAIR_GENERATED if repair_context else NO_CODE_GENERATED)
+            return initial_result
 
         return strip_markdown_fences(result)
 
@@ -277,20 +290,26 @@ class BaseGroovyGenerator(ABC):
         """
         Run one final LLM cleanup pass to remove TODO/comment-only scaffolding.
 
-        Falls back to original code if cleanup fails or produces invalid Groovy.
+        Format-aware: a YAML artifact is cleaned with YAML-specific rules (preserving block-scalar
+        indentation and meaningful empty mappings) rather than the Groovy cleanup prompt, and the
+        prompt instructs the model to retain that format. The result passes the shared format-aware
+        validator. Falls back to the original code if cleanup fails or produces invalid output.
         """
         if not code.strip():
             return code
 
+        is_yaml = await asyncio.to_thread(detect_connector_code_format, code) is ConnectorCodeFormat.YAML
+        system_prompt = get_yaml_cleanup_system_prompt if is_yaml else get_groovy_cleanup_system_prompt
+        user_prompt = get_yaml_cleanup_user_prompt if is_yaml else get_groovy_cleanup_user_prompt
+        prompt_var_name = "yaml_code" if is_yaml else "groovy_code"
+
         try:
             logger.info("%s Running final cleanup LLM pass", self.config.logger_prefix)
             llm = get_default_llm()
-            prompt = ChatPromptTemplate.from_messages(
-                [("system", get_groovy_cleanup_system_prompt), ("human", get_groovy_cleanup_user_prompt)]
-            )
+            prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", user_prompt)])
             chain = make_basic_chain(prompt, llm, StrOutputParser())
             response = await chain.ainvoke(
-                {"groovy_code": code},
+                {prompt_var_name: code},
                 config=RunnableConfig(
                     callbacks=[langfuse_handler],
                     run_name=f"{self.config.logger_prefix.strip('[]')}:Cleanup",
@@ -303,9 +322,9 @@ class BaseGroovyGenerator(ABC):
                 )
                 return code
 
-            validation_error = validate_groovy_code(candidate)
+            validation_error = await asyncio.to_thread(validate_connector_code, candidate)
             if validation_error is not None:
-                error_message = f"{self.config.logger_prefix} Cleanup pass produced invalid Groovy: {validation_error}"
+                error_message = f"{self.config.logger_prefix} Cleanup pass produced invalid output: {validation_error}"
                 logger.warning(error_message)
                 await append_job_error(job_id, error_message)
                 return code
@@ -428,8 +447,13 @@ class BaseGroovyGenerator(ABC):
         job_id: UUID,
         initial_result: str,
     ) -> str:
-        """Process chunks iteratively with LLM."""
-        result = initial_result
+        """Return accepted model output, or empty when no chunk contributes code.
+
+        Supplied repair code remains prompt context until a replacement is accepted.
+        Keeping it separate lets the caller preserve it without running cleanup when
+        the model produces no replacement.
+        """
+        result = ""
         total_chunks = len(chunks)
         current_chunk_id: Optional[str] = None
         current_group_chunks_remaining: int = 0
@@ -458,7 +482,7 @@ class BaseGroovyGenerator(ABC):
                     logger.info("%s LLM call %d/%d", self.config.logger_prefix, idx, total_chunks)
 
                 # Invoke LLM
-                prompt_vars = {"idx": idx, "chunk": chunk, "result": result}
+                prompt_vars = {"idx": idx, "chunk": chunk, "result": result or initial_result}
                 prompt_vars.update(input_data)
 
                 response = await retry_on_transient_llm_error(
@@ -474,16 +498,15 @@ class BaseGroovyGenerator(ABC):
                     logger_prefix=f"{self.config.logger_prefix} ",
                     context=f"chunk {idx}/{total_chunks}",
                 )
-                code = coerce_llm_text(response).strip()
+                candidate = strip_markdown_fences(coerce_llm_text(response))
 
-                if code:
-                    candidate = strip_markdown_fences(code)
-                    validation_error = validate_groovy_code(candidate)
+                if candidate:
+                    validation_error = await asyncio.to_thread(validate_connector_code, candidate)
                     if validation_error is None:
                         result = candidate
                     else:
                         error_message = (
-                            f"{self.config.logger_prefix} Invalid Groovy after chunk {idx}/{total_chunks}: "
+                            f"{self.config.logger_prefix} Invalid output after chunk {idx}/{total_chunks}: "
                             f"{validation_error}"
                         )
                         logger.warning(error_message)

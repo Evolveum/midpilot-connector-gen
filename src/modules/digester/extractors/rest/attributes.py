@@ -20,6 +20,7 @@ from src.jobs import (
 from src.modules.digester.aggregation.merges import merge_attribute_candidates
 from src.modules.digester.entities.attribute_filters import (
     filter_ignored_attributes,
+    normalize_attribute_name_casing,
     normalize_readability_flags,
 )
 from src.modules.digester.entities.object_classes import build_attribute_result
@@ -692,6 +693,7 @@ async def extract_attributes(
                 seen_chunk_ids.add(chk["chunk_id"])
 
     normalized_attributes = normalize_readability_flags(consolidated_attributes.model_dump()["attributes"])
+    normalized_attributes = normalize_attribute_name_casing(normalized_attributes, object_class)
 
     await update_job_progress(job_id, stage=JobStage.schema_ready, message="Attribute extraction complete")
 
