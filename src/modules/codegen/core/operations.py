@@ -13,6 +13,7 @@ from src.modules.codegen.core.base import (
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, OperationConfig
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
+from src.modules.codegen.utils.operation_defaults import normalize_operation_defaults
 from src.modules.codegen.utils.prompt_records import (
     build_attribute_context_records,
     build_scim_contract_prompt_vars,
@@ -39,7 +40,24 @@ def _prepare_operation_input_data(
     return input_data
 
 
-class SearchGenerator(BaseGroovyGenerator):
+class _OperationGenerator(BaseGroovyGenerator):
+    """Apply the native SQL/SCIM defaults contract to CRUD candidates and cleanup."""
+
+    def __init__(self, config: OperationConfig, protocol_label: str):
+        super().__init__(config)
+        self.protocol = ApiType(protocol_label.lower())
+
+    def normalize_generated_code(self, code: str) -> str:
+        if self.protocol not in {ApiType.SQL, ApiType.SCIM}:
+            return code
+        return normalize_operation_defaults(
+            code,
+            object_class=self.config.extra_prompt_vars["object_class"],
+            operation=self.config.operation_name.lower(),
+        )
+
+
+class SearchGenerator(_OperationGenerator):
     def __init__(
         self,
         *,
@@ -73,7 +91,7 @@ class SearchGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["base_api_url"] = base_api_url
         config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
-        super().__init__(config)
+        super().__init__(config, protocol_label)
         self.object_class = object_class
         self.include_scim_context = include_scim_context
 
@@ -90,7 +108,7 @@ class SearchGenerator(BaseGroovyGenerator):
         return f'objectClass("{self.object_class}") {{\n    search {{\n    }}\n}}\n'
 
 
-class CreateGenerator(BaseGroovyGenerator):
+class CreateGenerator(_OperationGenerator):
     def __init__(
         self,
         *,
@@ -122,7 +140,7 @@ class CreateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["base_api_url"] = base_api_url
         config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
-        super().__init__(config)
+        super().__init__(config, protocol_label)
         self.object_class = object_class
         self.include_scim_context = include_scim_context
 
@@ -139,7 +157,7 @@ class CreateGenerator(BaseGroovyGenerator):
         return f'objectClass("{self.object_class}") {{\n    create {{\n    }}\n}}\n'
 
 
-class UpdateGenerator(BaseGroovyGenerator):
+class UpdateGenerator(_OperationGenerator):
     def __init__(
         self,
         *,
@@ -171,7 +189,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["base_api_url"] = base_api_url
         config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
-        super().__init__(config)
+        super().__init__(config, protocol_label)
         self.object_class = object_class
         self.include_scim_context = include_scim_context
 
@@ -188,7 +206,7 @@ class UpdateGenerator(BaseGroovyGenerator):
         return f'objectClass("{self.object_class}") {{\n    update {{\n    }}\n}}\n'
 
 
-class DeleteGenerator(BaseGroovyGenerator):
+class DeleteGenerator(_OperationGenerator):
     def __init__(
         self,
         *,
@@ -220,7 +238,7 @@ class DeleteGenerator(BaseGroovyGenerator):
         config.extra_prompt_vars["base_api_url"] = base_api_url
         config.extra_prompt_vars["database_name"] = database_name
         config.extra_prompt_vars["preferred_endpoints_json"] = json.dumps(preferred_endpoints or [], ensure_ascii=False)
-        super().__init__(config)
+        super().__init__(config, protocol_label)
         self.object_class = object_class
         self.include_scim_context = include_scim_context
 

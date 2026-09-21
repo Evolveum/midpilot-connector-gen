@@ -4,6 +4,8 @@
 
 import textwrap
 
+from src.modules.codegen.prompts.declarative_format_prompts import NATIVE_OPERATION_DEFAULTS_SYSTEM_RULES
+
 SCIM_CONTRACT_CONTEXT_SYSTEM_RULES = textwrap.dedent("""\
 
 SCIM CONTRACT CONTEXT RULES:
@@ -82,3 +84,5 @@ SCIM VS REST DSL BOUNDARY:
   or extend them; never rewrite them as REST endpoints. If <result> contains an `endpoint(...)` wrapper around native
   SCIM operations, remove the wrapper and keep those operations directly below `objectClass(...)`.
 """)
+
+SCIM_NATIVE_OPERATION_DSL_SYSTEM_RULES += NATIVE_OPERATION_DEFAULTS_SYSTEM_RULES

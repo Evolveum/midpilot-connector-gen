@@ -20,6 +20,7 @@ Common rules:
 - Do not remove executable code only because it is near a TODO comment.
 - Remove code that is only placeholder guidance or unresolved TODO scaffolding.
 - Preserve a TODO that identifies an unmet requirement, unsupported capability, or missing evidence.
+- Preserve "No changes needed. Use framework defaults." comments and their object-class/operation scope.
 - Keep meaningful empty operation blocks: they can select framework defaults.
 
 DSL classification and isolation:
@@ -101,6 +102,7 @@ Rules:
   TODO, FIXME, TBD, XXX, placeholder, not implemented, implement me, adjust based on actual API, replace
   with actual, example only.
 - Preserve TODO comments identifying unmet requirements, unsupported capabilities or missing evidence.
+- Preserve "No changes needed. Use framework defaults." comments and their object-class/operation scope.
 - Do not remove a key or value only because a comment near it is being removed.
 - Never remove or rewrite a key whose value is an explicitly empty mapping (`{{}}`) or an explicit
   `enabled: false`/`enabled: true` - these are meaningful declarations of "use the framework default" or

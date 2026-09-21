@@ -43,6 +43,8 @@ def client():
     ("code", "code_format"),
     [
         ("{}", "YAML"),
+        ("# No changes needed. Use framework defaults.\nobjectClasses: {user: {create: {}}}", "YAML"),
+        ('objectClass("user") { create { // No changes needed. Use framework defaults.\n} }', "GROOVY"),
         ('objectClass("user") {}', "GROOVY"),
         ("objectClasses: {user: {search: {custom: {implementation: 'return []'}}}}", "YAML"),
         ("", None),

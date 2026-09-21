@@ -192,6 +192,10 @@ class BaseGroovyGenerator(ABC):
         """
         pass
 
+    def normalize_generated_code(self, code: str) -> str:
+        """Normalize a model candidate before validation; preserve artifacts by default."""
+        return code
+
     async def generate(
         self,
         *,
@@ -315,7 +319,9 @@ class BaseGroovyGenerator(ABC):
                     run_name=f"{self.config.logger_prefix.strip('[]')}:Cleanup",
                 ),
             )
-            candidate = strip_markdown_fences(coerce_llm_text(response).strip())
+            candidate = await asyncio.to_thread(
+                self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response).strip())
+            )
             if not candidate:
                 logger.warning(
                     "%s Cleanup pass returned empty output; keeping previous code", self.config.logger_prefix
@@ -498,7 +504,9 @@ class BaseGroovyGenerator(ABC):
                     logger_prefix=f"{self.config.logger_prefix} ",
                     context=f"chunk {idx}/{total_chunks}",
                 )
-                candidate = strip_markdown_fences(coerce_llm_text(response))
+                candidate = await asyncio.to_thread(
+                    self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response))
+                )
 
                 if candidate:
                     validation_error = await asyncio.to_thread(validate_connector_code, candidate)

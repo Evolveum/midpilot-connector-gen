@@ -86,3 +86,17 @@ DECLARATIVE YAML VS GROOVY:
 {declarative_docs}
 </declarative_docs>
 """)
+
+NATIVE_OPERATION_DEFAULTS_SYSTEM_RULES = textwrap.dedent("""\
+
+NATIVE OPERATION DEFAULT OUTPUT:
+- For SQL and SCIM search/create/update/delete only, when defaults fully satisfy the request,
+  always include the exact explanatory comment "No changes needed. Use framework defaults."
+  Return a scoped YAML document with `objectClasses.<target class>.<operation>: {{}}` and a
+  YAML # comment, or preserve Groovy as `objectClass("<target class>") {{ <operation> {{
+  // No changes needed. Use framework defaults.
+  }} }}`. Do not return a bare `{{}}`, a `code:` wrapper, or commentary outside the artifact.
+  This presentation rule takes precedence over examples omitting the operation key. Do not
+  add handlers, endpoints or executable no-op scripts. Missing evidence, unsupported behavior,
+  and generation failures do not mean defaults suffice; preserve their explicit TODO/error.
+""")

@@ -107,6 +107,34 @@ code was accepted. The `code` field remains a string. For an empty generation,
 `result` is `{"format": null, "code": ""}` and the existing `errors` array explains
 the outcome. YAML `{}` is a nonempty valid artifact and has format `YAML`.
 
+For SQL and SCIM CRUD/search generation, recognized empty default artifacts are
+normalized before validation, including after cleanup. The result names the target
+object class and operation and explains that the framework defaults apply:
+
+[source,yaml]
+----
+# No changes needed. Use framework defaults.
+objectClasses:
+  "user":
+    create: {}
+----
+
+An equivalent empty Groovy artifact keeps Groovy format:
+
+[source,groovy]
+----
+objectClass("user") {
+    create {
+        // No changes needed. Use framework defaults.
+    }
+}
+----
+
+This adds no executable handler or extra LLM call. Customizations and comments about
+unmet requirements remain intact. Missing model output still follows the failure
+contract above; it is never converted into a successful defaults result. Stored
+artifacts and manual overrides are not rewritten.
+
 This contract covers authorization, native schema, deprecated ConnID, every search
 intent, create, update, delete, and relations. Single-operation repairs report the
 format of the returned code, including the original artifact if no repair was accepted.

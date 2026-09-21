@@ -14,6 +14,8 @@ create/update/delete/search prompt families stay consistent.
 
 import textwrap
 
+from src.modules.codegen.prompts.declarative_format_prompts import NATIVE_OPERATION_DEFAULTS_SYSTEM_RULES
+
 SQL_PHYSICAL_PROJECTION_SYSTEM_RULES = textwrap.dedent("""\
 
 SQL PHYSICAL SCHEMA VS CONNID PROJECTION:
@@ -95,3 +97,5 @@ SQL VS REST DSL BOUNDARY:
 - Treat <result> as current working code. Preserve already-correct native SQL blocks across chunks and edit
   them minimally; never rewrite them as REST endpoints.
 """)
+
+SQL_NATIVE_OPERATION_DSL_SYSTEM_RULES += NATIVE_OPERATION_DEFAULTS_SYSTEM_RULES
