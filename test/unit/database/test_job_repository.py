@@ -37,7 +37,7 @@ async def test_reusable_job_query_is_scoped_to_session_or_matching_owner() -> No
     assert "jobs.session_id = %(session_id_1)s::UUID OR" in sql
     assert "sessions_2.session_id = %(session_id_2)s::UUID" in sql
     # NULL owner must match NULL owner, so ownerless sessions form one tenant.
-    assert "sessions_1.api_key_id IS NOT DISTINCT FROM" in sql
+    assert "sessions_1.owner_key_hash IS NOT DISTINCT FROM" in sql
     assert list(compiled.params.values()).count(requesting_session_id) == 2
 
 

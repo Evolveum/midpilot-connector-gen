@@ -22,7 +22,7 @@ class SessionOwner:
     """Existence + ownership snapshot of a session used for access checks."""
 
     session_id: UUID
-    api_key_id: Optional[UUID]
+    owner_key_hash: Optional[str]
 
 
 class SessionRepository:
@@ -36,30 +36,29 @@ class SessionRepository:
         """
         self.db = db
 
-    async def create_session(self, api_key_id: Optional[UUID] = None) -> UUID:
+    async def create_session(self, owner_key_hash: Optional[str] = None) -> UUID:
         """
         Create a new session and return its unique ID.
 
-        :param api_key_id: Owning API key, or None for an ownerless session
-            (accessible only with the master key when auth is enforced)
+        :param owner_key_hash: SHA-256 fingerprint of the owning API key, or None for development
         :return: Session ID (UUID)
         """
-        session = Session(api_key_id=api_key_id)
+        session = Session(owner_key_hash=owner_key_hash)
         self.db.add(session)
         await self.db.flush()
         logger.info("Created new session: %s", session.session_id)
         return session.session_id
 
-    async def create_session_with_id(self, session_id: UUID, api_key_id: Optional[UUID] = None) -> UUID:
+    async def create_session_with_id(self, session_id: UUID, owner_key_hash: Optional[str] = None) -> UUID:
         """
         Create a new session with a provided ID.
         If the session already exists, raises ValueError.
 
         :param session_id: The UUID to use for the session
-        :param api_key_id: Owning API key, or None for an ownerless session
+        :param owner_key_hash: SHA-256 fingerprint of the owning API key, or None for development
         :return: Session ID
         """
-        session = Session(session_id=session_id, api_key_id=api_key_id)
+        session = Session(session_id=session_id, owner_key_hash=owner_key_hash)
         self.db.add(session)
         await self.db.flush()
         logger.info("Created new session with provided ID: %s", session_id)
@@ -319,15 +318,15 @@ class SessionRepository:
         Fetch existence and ownership of a session in a single query.
 
         :param session_id: The session ID to look up
-        :return: SessionOwner (api_key_id is None for ownerless sessions),
+        :return: SessionOwner (owner_key_hash is None for ownerless sessions),
             or None if the session does not exist
         """
-        query = select(Session.session_id, Session.api_key_id).where(Session.session_id == session_id)
+        query = select(Session.session_id, Session.owner_key_hash).where(Session.session_id == session_id)
         result = await self.db.execute(query)
         row = result.one_or_none()
         if row is None:
             return None
-        return SessionOwner(session_id=row.session_id, api_key_id=row.api_key_id)
+        return SessionOwner(session_id=row.session_id, owner_key_hash=row.owner_key_hash)
 
     async def session_exists(self, session_id: UUID) -> bool:
         """

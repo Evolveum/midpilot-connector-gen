@@ -2,302 +2,201 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""API key authentication and session ownership behavior, exercised through the app.
+"""Backend contracts for gateway identity and session isolation (no live gateway)."""
 
-DB access is stubbed: ``get_db`` is overridden and the repositories used by the
-auth dependency and routers are patched, so these tests cover the HTTP contract
-(status codes, error codes, masking) rather than persistence.
-"""
-
-from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
+from pydantic import ValidationError
 
-from src.app import api
-from src.auth.keys import generate_api_key, hash_api_key
-from src.auth.router import revoke_api_key
+from src.app import create_api
+from src.auth.dependencies import API_KEY_HEADER_NAME, authenticate_request
+from src.auth.keys import hash_api_key
 from src.config import config
+from src.config.auth import AuthMode, AuthSettings
 from src.core.db import get_db
 from src.database.repositories.session_repository import SessionOwner
 
-MASTER_KEY = "unit-test-master-key"
+KEY_A = "gravitee-key-a"
+KEY_B = "gravitee-key-b"
+HEADERS_A = {API_KEY_HEADER_NAME: KEY_A}
+HEADERS_B = {API_KEY_HEADER_NAME: KEY_B}
 
 
 @pytest.fixture()
-def client():
+def gateway_api(monkeypatch):
+    monkeypatch.setattr(config.auth, "mode", AuthMode.prod)
+    app = create_api()
     db = MagicMock()
-    db.commit = AsyncMock()
-    api.dependency_overrides[get_db] = lambda: db
-    try:
-        yield TestClient(api)
-    finally:
-        api.dependency_overrides.pop(get_db, None)
-
-
-def _override_auth(monkeypatch, *, api_key_required: bool, master_api_key: SecretStr | None) -> None:
-    monkeypatch.setattr(config.auth, "api_key_required", api_key_required)
-    monkeypatch.setattr(config.auth, "master_api_key", master_api_key)
-
-
-@pytest.fixture()
-def disabled_auth(monkeypatch):
-    """Auth fully off. Pinned explicitly so a configured .env cannot change the mode."""
-    _override_auth(monkeypatch, api_key_required=False, master_api_key=None)
-
-
-@pytest.fixture()
-def enforced_auth(monkeypatch):
-    _override_auth(monkeypatch, api_key_required=True, master_api_key=SecretStr(MASTER_KEY))
-
-
-@pytest.fixture()
-def master_key_only(monkeypatch):
-    """Auth disabled but master key configured (pre-provisioning scenario)."""
-    _override_auth(monkeypatch, api_key_required=False, master_api_key=SecretStr(MASTER_KEY))
-
-
-def _api_key_record(api_key_id=None, name="test key", revoked_at=None):
-    generated = generate_api_key()
-    return SimpleNamespace(
-        api_key_id=api_key_id or uuid4(),
-        name=name,
-        key_prefix=generated.prefix,
-        key_hash=generated.hash,
-        created_at=datetime.now(timezone.utc),
-        revoked_at=revoked_at,
-    )
-
-
-def _patch_auth_repos(active_record=None, session_owner=None):
-    """Patch the repositories used by the auth dependency."""
-    api_key_repo = MagicMock()
-    api_key_repo.get_active_key_by_hash = AsyncMock(return_value=active_record)
-    session_repo = MagicMock()
-    session_repo.get_session_owner = AsyncMock(return_value=session_owner)
-    return (
-        patch("src.auth.dependencies.ApiKeyRepository", return_value=api_key_repo),
-        patch("src.session.ownership.SessionRepository", return_value=session_repo),
-    )
-
-
-# --- Disabled mode (default) ---
-
-
-def test_disabled_mode_allows_requests_without_key(client, disabled_auth):
+    app.dependency_overrides[get_db] = lambda: db
     session_id = uuid4()
-    with patch("src.session.routes.sessions.ensure_session_exists", AsyncMock()):
-        response = client.head(f"/api/v1/session/{session_id}")
-
-    assert response.status_code == 204
-
-
-def test_management_unavailable_without_configured_master_key(client, disabled_auth):
-    response = client.get("/api/v1/apiKeys")
-
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "master_key_required"
-
-
-def test_management_works_in_disabled_mode_with_master_key(client, master_key_only):
-    api_key_repo = MagicMock()
-    api_key_repo.list_api_keys = AsyncMock(return_value=[])
-    with patch("src.auth.router.ApiKeyRepository", return_value=api_key_repo):
-        response = client.get("/api/v1/apiKeys", headers={"X-API-Key": MASTER_KEY})
-
-    assert response.status_code == 200
-    assert response.json() == {"apiKeys": [], "total": 0}
-
-
-# --- Enforced mode: authentication ---
-
-
-def test_missing_key_is_rejected(client, enforced_auth):
-    response = client.get(f"/api/v1/session/{uuid4()}")
-
-    assert response.status_code == 401
-    assert response.json()["error"]["code"] == "missing_api_key"
-
-
-def test_unknown_key_is_rejected(client, enforced_auth):
-    repo_patches = _patch_auth_repos(active_record=None)
-    with repo_patches[0], repo_patches[1]:
-        response = client.get(f"/api/v1/session/{uuid4()}", headers={"X-API-Key": "mpcg_unknown"})
-
-    assert response.status_code == 401
-    assert response.json()["error"]["code"] == "invalid_api_key"
-
-
-def test_master_key_is_accepted(client, enforced_auth):
-    with patch("src.session.routes.sessions.ensure_session_exists", AsyncMock()):
-        response = client.head(f"/api/v1/session/{uuid4()}", headers={"X-API-Key": MASTER_KEY})
-
-    assert response.status_code == 204
-
-
-# --- Enforced mode: session ownership ---
-
-
-def _get_session_with_key(client, session_owner):
-    """GET an existing session using a valid non-master key; returns the response."""
-    key_id = uuid4()
-    record = _api_key_record(api_key_id=key_id)
-    owner = SessionOwner(session_id=uuid4(), api_key_id=session_owner(key_id))
-    repo_patches = _patch_auth_repos(active_record=record, session_owner=owner)
-    session_repo = MagicMock()
-    session_repo.get_session = AsyncMock(
+    repo = MagicMock()
+    repo.get_session_owner = AsyncMock(return_value=SessionOwner(session_id, hash_api_key(KEY_A)))
+    repo.create_session = AsyncMock(return_value=session_id)
+    repo.create_session_with_id = AsyncMock(return_value=session_id)
+    repo.session_exists = AsyncMock(return_value=False)
+    repo.get_session = AsyncMock(
         return_value={
-            "sessionId": str(owner.session_id),
+            "sessionId": str(session_id),
             "createdAt": "2026-01-01T00:00:00Z",
             "updatedAt": "2026-01-01T00:00:00Z",
             "data": {},
         }
     )
     with (
-        repo_patches[0],
-        repo_patches[1],
-        patch("src.session.routes.sessions.SessionRepository", return_value=session_repo),
+        patch("src.session.ownership.SessionRepository", return_value=repo),
+        patch("src.session.routes.sessions.SessionRepository", return_value=repo),
     ):
-        return client.get(f"/api/v1/session/{owner.session_id}", headers={"X-API-Key": "mpcg_valid"})
+        yield TestClient(app), repo, session_id
 
 
-def test_own_session_is_accessible(client, enforced_auth):
-    response = _get_session_with_key(client, session_owner=lambda key_id: key_id)
-
-    assert response.status_code == 200
-
-
-def test_foreign_session_is_masked_as_not_found(client, enforced_auth):
-    response = _get_session_with_key(client, session_owner=lambda key_id: uuid4())
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "session_not_found"
+def test_default_requires_gateway_and_unknown_mode_fails():
+    assert AuthSettings().mode is AuthMode.prod
+    assert AuthSettings.model_validate({"mode": "dev"}).mode is AuthMode.dev
+    assert AuthSettings.model_validate({"mode": "prod"}).mode is AuthMode.prod
+    for mode in ("unknown", "gravitee", "development"):
+        with pytest.raises(ValidationError):
+            AuthSettings.model_validate({"mode": mode})
 
 
-def test_ownerless_session_is_master_only(client, enforced_auth):
-    response = _get_session_with_key(client, session_owner=lambda key_id: None)
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "session_not_found"
-
-
-def test_nonexistent_session_passes_ownership_gate(client, enforced_auth):
-    """The gate must not decide for nonexistent sessions - handlers own that 404."""
-    record = _api_key_record()
-    repo_patches = _patch_auth_repos(active_record=record, session_owner=None)
-    with (
-        repo_patches[0],
-        repo_patches[1],
-        patch("src.session.routes.sessions.ensure_session_exists", AsyncMock()),
-    ):
-        response = client.head(f"/api/v1/session/{uuid4()}", headers={"X-API-Key": "mpcg_valid"})
-
-    assert response.status_code == 204
+@pytest.mark.parametrize("headers", [{}, {"X-API-Key": KEY_A}])
+def test_missing_gateway_header_is_rejected(gateway_api, headers):
+    client, repo, _ = gateway_api
+    response = client.post("/api/v1/session", headers=headers)
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "missing_api_key"
+    repo.create_session.assert_not_awaited()
 
 
-def test_created_session_records_owning_key(client, enforced_auth):
-    key_id = uuid4()
-    record = _api_key_record(api_key_id=key_id)
-    repo_patches = _patch_auth_repos(active_record=record)
-    session_repo = MagicMock()
-    session_repo.create_session = AsyncMock(return_value=uuid4())
-    with (
-        repo_patches[0],
-        repo_patches[1],
-        patch("src.session.routes.sessions.SessionRepository", return_value=session_repo),
-    ):
-        response = client.post("/api/v1/session", headers={"X-API-Key": "mpcg_valid"})
-
-    assert response.status_code == 201
-    session_repo.create_session.assert_awaited_once_with(api_key_id=key_id)
+@pytest.mark.parametrize("value", ["", " ", "key other", "key,other", " key", "key\tother"])
+def test_malformed_gateway_header_is_rejected_without_echoing_secret(gateway_api, value):
+    client, repo, _ = gateway_api
+    response = client.post("/api/v1/session", headers={API_KEY_HEADER_NAME: value})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_api_key"
+    repo.create_session.assert_not_awaited()
 
 
-# --- Management endpoints ---
+@pytest.mark.parametrize("second", [KEY_A, KEY_B])
+def test_duplicate_gateway_headers_are_rejected(gateway_api, second):
+    client, repo, _ = gateway_api
+    response = client.post(
+        "/api/v1/session", headers=[(API_KEY_HEADER_NAME, KEY_A), (API_KEY_HEADER_NAME.lower(), second)]
+    )
+    assert response.status_code == 401
+    repo.create_session.assert_not_awaited()
 
 
-def test_create_api_key_returns_full_value_once(client, enforced_auth):
-    api_key_repo = MagicMock()
-
-    async def _create(name, key_prefix, key_hash):
-        record = _api_key_record(name=name)
-        record.key_prefix = key_prefix
-        record.key_hash = key_hash
-        return record
-
-    api_key_repo.create_api_key = AsyncMock(side_effect=_create)
-    with patch("src.auth.router.ApiKeyRepository", return_value=api_key_repo):
-        response = client.post("/api/v1/apiKeys", json={"name": "midPilot prod"}, headers={"X-API-Key": MASTER_KEY})
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["name"] == "midPilot prod"
-    assert body["apiKey"].startswith("mpcg_")
-    assert body["keyPrefix"] == body["apiKey"][:10]
-    # the stored hash must match the returned value
-    stored = api_key_repo.create_api_key.await_args.kwargs
-    assert stored["key_hash"] == hash_api_key(body["apiKey"])
-
-
-def test_list_api_keys_never_exposes_values(client, enforced_auth):
-    record = _api_key_record()
-    api_key_repo = MagicMock()
-    api_key_repo.list_api_keys = AsyncMock(return_value=[record])
-    with patch("src.auth.router.ApiKeyRepository", return_value=api_key_repo):
-        response = client.get("/api/v1/apiKeys", headers={"X-API-Key": MASTER_KEY})
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["total"] == 1
-    assert set(body["apiKeys"][0]) == {"apiKeyId", "name", "keyPrefix", "createdAt", "revokedAt"}
-
-
-def test_management_rejects_non_master_key(client, enforced_auth):
-    record = _api_key_record()
-    repo_patches = _patch_auth_repos(active_record=record)
-    with repo_patches[0], repo_patches[1]:
-        response = client.get("/api/v1/apiKeys", headers={"X-API-Key": "mpcg_valid"})
-
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "master_key_required"
-
-
-def test_revoke_unknown_api_key_returns_not_found(client, enforced_auth):
-    api_key_repo = MagicMock()
-    api_key_repo.revoke_api_key = AsyncMock(return_value=None)
-    with patch("src.auth.router.ApiKeyRepository", return_value=api_key_repo):
-        response = client.delete(f"/api/v1/apiKeys/{uuid4()}", headers={"X-API-Key": MASTER_KEY})
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "api_key_not_found"
-
-
-def test_revoke_api_key_returns_revocation_time(client, enforced_auth):
-    record = _api_key_record(revoked_at=datetime.now(timezone.utc))
-    api_key_repo = MagicMock()
-    api_key_repo.revoke_api_key = AsyncMock(return_value=record)
-    with patch("src.auth.router.ApiKeyRepository", return_value=api_key_repo):
-        response = client.delete(f"/api/v1/apiKeys/{record.api_key_id}", headers={"X-API-Key": MASTER_KEY})
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["apiKeyId"] == str(record.api_key_id)
-    assert body["revokedAt"] is not None
+def test_query_parameter_does_not_supply_identity(gateway_api):
+    client, _, _ = gateway_api
+    assert client.post("/api/v1/session", params={"api-key": KEY_A}).status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_revoke_api_key_commits_before_returning_success() -> None:
-    record = _api_key_record(revoked_at=datetime.now(timezone.utc))
-    api_key_repo = MagicMock()
-    api_key_repo.revoke_api_key = AsyncMock(return_value=record)
-    db = MagicMock()
-    db.commit = AsyncMock()
+async def test_identity_resolution_needs_no_database_and_retains_no_raw_key(monkeypatch):
+    monkeypatch.setattr(config.auth, "mode", AuthMode.prod)
+    request = Request({"type": "http", "headers": [(b"x-gravitee-api-key", KEY_A.encode())]})
+    context = await authenticate_request(request, KEY_A)
+    assert context.owner_key_hash == hash_api_key(KEY_A)
+    assert request.state.auth is context
+    assert KEY_A not in repr(context)
 
-    with patch("src.auth.router.ApiKeyRepository", return_value=api_key_repo):
-        response = await revoke_api_key(record.api_key_id, db)
 
-    db.commit.assert_awaited_once_with()
-    assert response.api_key_id == record.api_key_id
+def test_create_session_persists_fingerprint_and_preserves_response(gateway_api):
+    client, repo, session_id = gateway_api
+    response = client.post("/api/v1/session", headers=HEADERS_A)
+    assert response.status_code == 201
+    assert response.json() == {
+        "sessionId": str(session_id),
+        "message": "Session created successfully. Use this session_id in subsequent requests.",
+    }
+    repo.create_session.assert_awaited_once_with(owner_key_hash=hash_api_key(KEY_A))
+    assert KEY_A not in response.text
+
+
+def test_create_with_id_persists_fingerprint(gateway_api):
+    client, repo, session_id = gateway_api
+    repo.get_session_owner.return_value = None
+    response = client.post(f"/api/v1/session/{session_id}", headers=HEADERS_A)
+    assert response.status_code == 201
+    repo.create_session_with_id.assert_awaited_once_with(session_id, owner_key_hash=hash_api_key(KEY_A))
+
+
+def test_owner_can_read_session_and_legacy_header_cannot_change_owner(gateway_api):
+    client, repo, session_id = gateway_api
+    response = client.get(f"/api/v1/session/{session_id}", headers={**HEADERS_A, "X-API-Key": KEY_B})
+    assert response.status_code == 200
+    assert response.json() == {
+        "sessionId": str(session_id),
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-01-01T00:00:00Z",
+        "message": "Session returned successfully.",
+    }
+    repo.get_session.assert_awaited_once_with(session_id)
+
+
+@pytest.mark.parametrize("owner", [hash_api_key(KEY_B), None])
+def test_foreign_or_development_session_is_hidden(gateway_api, owner, caplog):
+    client, repo, session_id = gateway_api
+    repo.get_session_owner.return_value = SessionOwner(session_id, owner)
+    response = client.get(f"/api/v1/session/{session_id}", headers=HEADERS_A)
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "session_not_found"
+    repo.get_session.assert_not_awaited()
+    assert KEY_A not in caplog.text
+    assert hash_api_key(KEY_A) not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/session/{session_id}"),
+        ("GET", "/session/{session_id}/jobs"),
+        ("HEAD", "/session/{session_id}"),
+        ("GET", "/digester/{session_id}/classes/GROUP/documentation"),
+    ],
+)
+def test_foreign_key_is_blocked_across_session_routes(gateway_api, method, path):
+    client, repo, session_id = gateway_api
+    response = client.request(method, "/api/v1" + path.format(session_id=session_id), headers=HEADERS_B)
+    assert response.status_code == 404
+    repo.create_session_with_id.assert_not_awaited()
+
+
+def test_nonexistent_session_reaches_handler(gateway_api):
+    client, repo, session_id = gateway_api
+    repo.get_session_owner.return_value = None
+    repo.get_session.return_value = None
+    response = client.get(f"/api/v1/session/{session_id}", headers=HEADERS_A)
+    assert response.status_code == 404
+    repo.get_session.assert_awaited_once_with(session_id)
+
+
+def test_development_is_explicit_and_creates_ownerless_sessions(gateway_api, monkeypatch):
+    client, repo, session_id = gateway_api
+    monkeypatch.setattr(config.auth, "mode", AuthMode.dev)
+    assert client.post("/api/v1/session").status_code == 201
+    assert client.post("/api/v1/session", headers=HEADERS_A).status_code == 201
+    assert all(call.kwargs == {"owner_key_hash": None} for call in repo.create_session.await_args_list)
+    assert client.get(f"/api/v1/session/{session_id}").status_code == 200
+    repo.get_session_owner.assert_not_awaited()
+
+
+def test_key_management_routes_and_schemas_are_removed(gateway_api):
+    client, _, _ = gateway_api
+    for method, path in [("POST", "/apiKeys"), ("GET", "/apiKeys"), ("DELETE", f"/apiKeys/{uuid4()}")]:
+        assert client.request(method, "/api/v1" + path, headers=HEADERS_A).status_code == 404
+    schema = client.app.openapi()
+    assert not any("apiKeys" in path for path in schema["paths"])
+    assert not any(name.startswith("ApiKey") for name in schema["components"]["schemas"])
+    assert schema["components"]["securitySchemes"]["APIKeyHeader"]["name"] == API_KEY_HEADER_NAME
+
+
+def test_health_remains_public(gateway_api):
+    client, _, _ = gateway_api
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"message": "OK"}

@@ -54,23 +54,28 @@ cp .env-example .env
 cp .env.test-example .env.test
 ```
 
-### API key authentication
+### Authentication and session isolation
 
-The service supports two operating modes controlled by `.env`:
+Gravitee issues and validates API keys. The backend has no key-management
+endpoints, local key registry, or master key.
 
-- `AUTH__API_KEY_REQUIRED=false` (default) - no authentication, for development.
-- `AUTH__API_KEY_REQUIRED=true` - every request must send a valid key in the
-  `X-API-Key` header. `AUTH__MASTER_API_KEY` must be configured in this mode.
+- `AUTH__MODE=prod` (default): require one `X-Gravitee-Api-Key` header
+  validated and forwarded by Gravitee. Restrict backend access to the gateway;
+  the backend does not verify issuance, expiration or revocation itself.
+- `AUTH__MODE=dev`: explicitly bypass authentication and ownership checks
+  for local development. Supplied keys are ignored and new sessions are ownerless.
+  Never use this mode for a shared or public deployment.
 
-The master key accesses all sessions and is the only key allowed to manage API
-keys via the `/api/v1/apiKeys` endpoints (issue with `POST`, list with `GET`,
-revoke with `DELETE /{apiKeyId}`). The full key value is returned only once, in
-the issue response - only its SHA-256 hash is stored.
+Sessions and reusable job results are isolated by the SHA-256 fingerprint of
+that exact API key. The raw key is not persisted. A new/rotated key cannot access
+an old key's sessions. Ownerless development sessions are inaccessible through
+Gravitee mode. Supported session and pipeline response bodies are unchanged.
 
-Each session is owned by the API key that created it and is accessible only
-with that key (or the master key). Sessions without an owner (created while
-auth was disabled, or by the master key) are accessible only with the master
-key.
+See [Gravitee setup and local verification](docs/gravitee-authentication.adoc)
+for gateway requirements, consumer commands, and deployment checks. Upgrading
+from local API keys requires removing the obsolete key table and session-owner
+column; follow
+[the milestone upgrade instructions](docs/milestone-notes.adoc).
 
 ## Running with Docker
 

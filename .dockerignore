@@ -3,7 +3,8 @@
 # Licensed under the EUPL-1.2 or later.
 
 # Ignore environment variable files
-.env
+.env*
+**/.env*
 *.env
 
 # Ignore Python virtual environments
@@ -21,3 +22,12 @@ dist/
 # Ignore git files
 .git/
 .gitignore
+
+# Local tooling and credentials are not runtime assets.
+.idea/
+*.pem
+*.key
+*.p12
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
