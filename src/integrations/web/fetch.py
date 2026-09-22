@@ -13,9 +13,10 @@ from crawl4ai import (  # type: ignore
     DefaultMarkdownGenerator,
     PruningContentFilter,
 )
-from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig  # type: ignore
+from crawl4ai.async_configs import CrawlerRunConfig  # type: ignore
 
 from src.config import config
+from src.integrations.web.browser import build_browser_config
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
     md_generator = DefaultMarkdownGenerator(
         content_filter=prune_filter, options={"ignore_images": True, "skip_internal_links": True}
     )
-    browser_config = BrowserConfig(verbose=config.scrape_and_process.crawl4ai_verbose)
+    browser_config = build_browser_config(verbose=config.scrape_and_process.crawl4ai_verbose)
     run_config = CrawlerRunConfig(
         check_robots_txt=True,
         wait_until="networkidle",
@@ -154,7 +155,7 @@ async def get_content_type(url: str) -> str:
             "(KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36"
         ),
     }
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(trust_env=True) as session:
         try:
             response = await session.head(
                 url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=10)
@@ -184,7 +185,7 @@ async def fetch_data_documentation(url: str) -> tuple[str, str] | None:
     Fetch the content of a data documentation (e.g., JSON, YAML).
     """
     try:
-        async with aiohttp.ClientSession() as http_session:
+        async with aiohttp.ClientSession(trust_env=True) as http_session:
             async with http_session.get(url) as response:
                 if response.status == 200:
                     content_type = response.headers.get("Content-Type", "")
