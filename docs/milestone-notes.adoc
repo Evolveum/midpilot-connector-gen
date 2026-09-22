@@ -17,6 +17,106 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-22 Delegate API keys to Gravitee and isolate sessions by fingerprint
+
+Author: Alexander Brecko
+
+Description: Gravitee now issues and validates API keys. The local key registry,
+master-key bypass and `/api/v1/apiKeys` management endpoints are removed.
+`AUTH__MODE=prod` (the default) requires `X-Gravitee-Api-Key` forwarded by a
+trusted gateway. `AUTH__MODE=dev` explicitly bypasses key and ownership
+checks. The previous `AUTH__API_KEY_REQUIRED`, `AUTH__MASTER_API_KEY` and
+`X-API-Key` settings/header no longer select an authentication mode or identity.
+
+Sessions store `owner_key_hash` instead of the `api_key_id` foreign key; job
+result reuse is scoped to that same fingerprint. Rotation creates a new owner,
+and ownerless development sessions are inaccessible in Gravitee mode. Supported
+midPoint session/pipeline success response shapes and ownership-denial 404
+semantics remain unchanged. Gateway-generated authentication errors must be
+verified with consumers. No data-preserving migration/backfill is provided:
+pre-production revisions 006 and 008 were replaced. Existing development databases
+need the explicit schema cleanup below; full database recreation is not required.
+Old keys and ownership links are discarded. Existing sessions become ownerless
+and inaccessible in `prod`, while sessions, jobs and documentation are retained.
+New sessions are isolated by their gateway key. The mode values are strictly
+`dev` and `prod`; intermediate `development` and `gravitee` values are rejected.
+
+Required Upgrade Steps
+. Stop the API and all workers. For the repository Compose deployment, run
+`docker compose stop midpilot-connector-gen`. Stop any separately launched
+`uv run python server.py` process as well.
+. No backup is required for disposable development data. If retaining old data
+for rollback is desired, before cleanup run
+`docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > /tmp/midpilot-before-gravitee.dump`
+and retain the previous source/image revision and configuration. Do not restore
+this old-schema dump into the updated application.
+. Configure and deploy a Gravitee API Key plan with key propagation using
+`X-Gravitee-Api-Key`. Remove Keyless access, disable query credentials, and
+ensure only the gateway can reach backend API routes. See
+`docs/gravitee-authentication.adoc`. Local direct access is only for isolated
+developer testing; it is not a secure hosted deployment.
+. Replace the old auth settings in `.env` and deployment secrets/config with
+`AUTH__MODE=prod`, or `AUTH__MODE=dev` for explicit local bypass.
+Remove `AUTH__API_KEY_REQUIRED` and `AUTH__MASTER_API_KEY`. Replace consumer
+`X-API-Key` headers with `X-Gravitee-Api-Key` and use Gravitee-issued keys.
+. For an existing revision-009 database that still has `api_keys` and
+`sessions.api_key_id`, run this one-time cleanup with all API/workers stopped.
+This intentionally discards only the old key registry and ownership links:
++
+[source,shell]
+----
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+LOCK TABLE sessions, api_keys IN ACCESS EXCLUSIVE MODE;
+ALTER TABLE sessions ADD COLUMN owner_key_hash VARCHAR(64);
+ALTER TABLE sessions ADD CONSTRAINT check_session_owner_key_hash_hex
+  CHECK (owner_key_hash ~ '^[0-9a-f]{64}$');
+CREATE INDEX idx_sessions_owner_key_hash ON sessions (owner_key_hash);
+ALTER TABLE sessions DROP COLUMN api_key_id;
+DROP TABLE api_keys;
+COMMIT;
+SQL
+uv run alembic current
+----
++
+For externally managed PostgreSQL, have its owner execute the same SQL in the
+application database. Do not rerun this cleanup if `owner_key_hash` is already
+present and `api_keys` is absent. No backfill, key transfer or backward-compatible
+read path exists. The Alembic revision remains `009`. Fresh empty databases use
+`uv run alembic upgrade head` instead; no cleanup is needed there. Old databases
+at earlier revisions must first be upgraded with the previous application revision.
+. Rebuild/restart with `docker compose up -d --build midpilot-connector-gen`,
+or start the host process with `uv run python server.py`. Verify `/health` and
+follow the two-key curl tests in `docs/gravitee-authentication.adoc`: own-session
+200, foreign-session 404, creation 201, and gateway rejection of missing/invalid/
+revoked credentials. Confirm direct backend access is blocked in hosted setups.
+
+Rollback Procedure (If Upgrade Fails)
+. Stop the updated API and all workers. Restore the previous application
+source/image revision and its old authentication configuration.
+. Recreate the application database with
+`docker compose exec -T db sh -c 'dropdb --force -U "$POSTGRES_USER" "$POSTGRES_DB"'`
+and `docker compose exec -T db sh -c 'createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'`.
+This rollback deletes current data; use the pre-upgrade dump to recover its
+snapshot. If a pre-upgrade dump exists, restore it with
+`docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exit-on-error' < /tmp/midpilot-before-gravitee.dump`.
+Otherwise run `uv run alembic upgrade head` from the previous source revision;
+previous sessions cannot be recovered without a backup.
+. Restart the previous API/workers. Restore the previous consumer routing and
+`X-API-Key` credentials, verify `/health`, and verify own/foreign-session access.
+Reissue local keys if no backup was restored. Do not run the rewritten downgrade
+chain against an old-schema database.
+
+Notes & References
+* Related PR: Not assigned.
+* Docs: `docs/gravitee-authentication.adoc`; `README.md` authentication section.
+* Affected configs: `AUTH__MODE`; removed `AUTH__API_KEY_REQUIRED` and
+`AUTH__MASTER_API_KEY`; Gravitee key propagation and backend network access.
+* Affected schema: `sessions.owner_key_hash`, removal of `api_keys` and
+`sessions.api_key_id`; rewritten pre-production revisions 006 and 008.
+
+
 === 2026-09-17 Report YAML or Groovy format with connector code
 
 Author: Alexander Brecko

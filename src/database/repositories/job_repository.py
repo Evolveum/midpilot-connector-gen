@@ -162,21 +162,21 @@ class JobRepository:
         :param date_since: Earliest acceptable job creation time
         :param requesting_session_id: Session requesting reuse. Sessions reuse
             jobs from other sessions with the same API-key owner. Ownerless
-            sessions (``api_key_id`` NULL) form a single tenant and reuse each
-            other's jobs; when ``AUTH__API_KEY_REQUIRED`` is off every session
+            sessions (``owner_key_hash`` NULL) form a single tenant and reuse each
+            other's jobs; when ``AUTH__MODE=dev`` every new session
             is ownerless, so this yields deployment-wide reuse.
         :return: Job model or None
         """
         candidate_session = aliased(Session)
         requesting_session = aliased(Session)
         requesting_owner_id = (
-            select(requesting_session.api_key_id)
+            select(requesting_session.owner_key_hash)
             .where(requesting_session.session_id == requesting_session_id)
             .scalar_subquery()
         )
         tenant_scope = or_(
             Job.session_id == requesting_session_id,
-            candidate_session.api_key_id.is_not_distinct_from(requesting_owner_id),
+            candidate_session.owner_key_hash.is_not_distinct_from(requesting_owner_id),
         )
         query = (
             select(Job)

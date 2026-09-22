@@ -60,7 +60,7 @@ async def protocol_store():
                 yield db
 
         async def authenticate(request: Request):
-            request.state.auth = AuthContext(AuthMode.master)
+            request.state.auth = AuthContext(AuthMode.dev)
 
         app = create_api()
         app.dependency_overrides[get_db] = database

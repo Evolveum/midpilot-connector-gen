@@ -293,7 +293,7 @@ def test_attribute_status_http_serializes_sql_context_only_for_sql(protocol, res
     )
 
     async def authenticate(request: Request):
-        request.state.auth = AuthContext(AuthMode.disabled)
+        request.state.auth = AuthContext(AuthMode.dev)
 
     app = create_api()
     app.dependency_overrides[authenticate_request] = authenticate

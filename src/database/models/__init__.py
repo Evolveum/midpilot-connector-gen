@@ -2,7 +2,6 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.database.models.api_key import ApiKey
 from src.database.models.base import Base
 from src.database.models.document import Document
 from src.database.models.documentation_chunk import DocumentationChunk
@@ -14,7 +13,6 @@ from src.database.models.session import Session
 from src.database.models.session_data import SessionData
 
 __all__ = [
-    "ApiKey",
     "Base",
     "Session",
     "Job",

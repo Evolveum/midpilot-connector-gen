@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 async def enforce_session_ownership(request: Request, db: AsyncSession = DbSession) -> None:
     """Reject access to a session owned by a different API key.
 
-    A foreign or ownerless session is masked as 404 (anti-enumeration); the
-    real reason is logged with the key ID. A nonexistent session passes
+    A foreign or ownerless session is masked as 404 (anti-enumeration); a
+    nonexistent session passes
     through so handlers can decide between 404 and creation
     (``POST /session/{session_id}``).
     """
@@ -37,7 +37,7 @@ async def enforce_session_ownership(request: Request, db: AsyncSession = DbSessi
     if context is None:
         raise RuntimeError("AuthContext missing on request state; authenticate_request must run before this check")
 
-    if context.mode is not AuthMode.api_key:
+    if context.mode is not AuthMode.prod:
         return
 
     raw_session_id = request.path_params.get("session_id")
@@ -54,11 +54,6 @@ async def enforce_session_ownership(request: Request, db: AsyncSession = DbSessi
     if owner is None:
         return
 
-    if not context.can_access_session(owner.api_key_id):
-        logger.warning(
-            "API key %s denied access to session %s (owner: %s); responding 404",
-            context.api_key_id,
-            session_id,
-            owner.api_key_id or "none",
-        )
+    if not context.can_access_session(owner.owner_key_hash):
+        logger.warning("[Session:Ownership] Denied access to a foreign or ownerless session; responding 404")
         raise SessionNotFoundError(session_id)

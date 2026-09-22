@@ -24,11 +24,11 @@ from src.core.db import get_db
 
 @pytest.fixture()
 def documentation_api():
-    owner_id = uuid4()
+    owner_id = "a" * 64
     session_id = uuid4()
     repo = MagicMock()
     repo.session_exists = AsyncMock(return_value=True)
-    repo.get_session_owner = AsyncMock(return_value=SimpleNamespace(api_key_id=owner_id))
+    repo.get_session_owner = AsyncMock(return_value=SimpleNamespace(owner_key_hash=owner_id))
     outputs = {
         "objectClassesOutput": {"objectClasses": [{"name": "GROUP"}]},
         "groupEndpointsOutput": {
@@ -44,7 +44,7 @@ def documentation_api():
     doc_repo.get_relevant_documentation_items = AsyncMock(return_value=[])
 
     async def authenticate(request: Request):
-        request.state.auth = AuthContext(AuthMode.api_key, owner_id)
+        request.state.auth = AuthContext(AuthMode.prod, owner_id)
 
     app = create_api()
     app.dependency_overrides[authenticate_request] = authenticate
@@ -174,7 +174,7 @@ def test_missing_selection_returns_404(documentation_api, missing):
 
 def test_other_owners_session_is_hidden(documentation_api):
     api = documentation_api
-    api.repo.get_session_owner.return_value = SimpleNamespace(api_key_id=uuid4())
+    api.repo.get_session_owner.return_value = SimpleNamespace(owner_key_hash="b" * 64)
     assert api.client.get(api.url).status_code == 404
     api.repo.get_session_data.assert_not_awaited()
     api.doc_repo.get_relevant_documentation_items.assert_not_awaited()

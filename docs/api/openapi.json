@@ -5,129 +5,6 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/api/v1/apiKeys": {
-      "get": {
-        "tags": [
-          "API Keys"
-        ],
-        "summary": "List API keys",
-        "description": "List all API key records (active and revoked), without key values.",
-        "operationId": "list_api_keys_api_v1_apiKeys_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiKeyListResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "API Keys"
-        ],
-        "summary": "Issue a new API key",
-        "description": "Generate and persist a new API key. The full key value is returned only in\nthis response and cannot be retrieved again - only its hash is stored.",
-        "operationId": "create_api_key_api_v1_apiKeys_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApiKeyCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiKeyCreateResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ]
-      }
-    },
-    "/api/v1/apiKeys/{api_key_id}": {
-      "delete": {
-        "tags": [
-          "API Keys"
-        ],
-        "summary": "Revoke an API key",
-        "description": "Revoke an API key (soft delete). The key stops authenticating immediately;\nthe record is kept for auditing. Sessions owned by the key become\naccessible only with the master key. Idempotent for already revoked keys.",
-        "operationId": "revoke_api_key_api_v1_apiKeys__api_key_id__delete",
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "api_key_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "API key ID",
-              "title": "Api Key Id"
-            },
-            "description": "API key ID"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiKeyRevokeResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/session/{session_id}": {
       "get": {
         "tags": [
@@ -1932,7 +1809,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobStatusMultiDocResponse"
+                  "$ref": "#/components/schemas/AttributeJobStatusResponse"
                 }
               }
             }
@@ -5151,175 +5028,6 @@
   },
   "components": {
     "schemas": {
-      "ApiKeyCreateRequest": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name",
-            "description": "Descriptive name for the API key"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "ApiKeyCreateRequest"
-      },
-      "ApiKeyCreateResponse": {
-        "properties": {
-          "apiKeyId": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Apikeyid",
-            "description": "Unique identifier of the API key record"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Descriptive name of the API key"
-          },
-          "keyPrefix": {
-            "type": "string",
-            "title": "Keyprefix",
-            "description": "First characters of the key value, for identification"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Createdat",
-            "description": "When the key was issued"
-          },
-          "revokedAt": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revokedat",
-            "description": "When the key was revoked; null if active"
-          },
-          "apiKey": {
-            "type": "string",
-            "title": "Apikey",
-            "description": "Full API key value. Shown only once - it cannot be retrieved again."
-          },
-          "message": {
-            "type": "string",
-            "title": "Message"
-          }
-        },
-        "type": "object",
-        "required": [
-          "apiKeyId",
-          "name",
-          "keyPrefix",
-          "createdAt",
-          "apiKey",
-          "message"
-        ],
-        "title": "ApiKeyCreateResponse"
-      },
-      "ApiKeyInfo": {
-        "properties": {
-          "apiKeyId": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Apikeyid",
-            "description": "Unique identifier of the API key record"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Descriptive name of the API key"
-          },
-          "keyPrefix": {
-            "type": "string",
-            "title": "Keyprefix",
-            "description": "First characters of the key value, for identification"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Createdat",
-            "description": "When the key was issued"
-          },
-          "revokedAt": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revokedat",
-            "description": "When the key was revoked; null if active"
-          }
-        },
-        "type": "object",
-        "required": [
-          "apiKeyId",
-          "name",
-          "keyPrefix",
-          "createdAt"
-        ],
-        "title": "ApiKeyInfo",
-        "description": "Public representation of an API key record. Never contains the key value."
-      },
-      "ApiKeyListResponse": {
-        "properties": {
-          "apiKeys": {
-            "items": {
-              "$ref": "#/components/schemas/ApiKeyInfo"
-            },
-            "type": "array",
-            "title": "Apikeys"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total",
-            "description": "Total number of API key records"
-          }
-        },
-        "type": "object",
-        "required": [
-          "apiKeys",
-          "total"
-        ],
-        "title": "ApiKeyListResponse"
-      },
-      "ApiKeyRevokeResponse": {
-        "properties": {
-          "apiKeyId": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Apikeyid"
-          },
-          "revokedAt": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Revokedat"
-          },
-          "message": {
-            "type": "string",
-            "title": "Message"
-          }
-        },
-        "type": "object",
-        "required": [
-          "apiKeyId",
-          "revokedAt",
-          "message"
-        ],
-        "title": "ApiKeyRevokeResponse"
-      },
       "ApiType": {
         "type": "string",
         "enum": [
@@ -5328,6 +5036,660 @@
           "sql"
         ],
         "title": "ApiType"
+      },
+      "AttributeInfoRest": {
+        "properties": {
+          "relevantDocumentations": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Relevantdocumentations",
+            "description": "List of chunks that contain evidence for this entity. Each entry is serialized as 'docId' and 'chunkId' UUID strings. This field is populated automatically by the system and should NOT be filled by the LLM."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Short description of attribute copied from documentation. Property description from the schema; null if not provided."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type",
+            "description": "Type as declared in the documentation (prefer OpenAPI). For simple attributes, use one of: 'string' (includes binaries encoded as base64), 'number', 'integer', or 'boolean'. For complex attributes, use the object class name. Put additional type details in 'format' (e.g., 'email', 'binary', 'double', 'embedded', 'reference'). If a complex attribute is relevant, ensure the referenced object class is included in extracted object classes. Use null if unknown."
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format",
+            "description": "Format of the type with additional detail. For simple attributes, use an OpenAPI format registry value (e.g., 'email', 'uri', 'int64', 'date-time'). For complex attributes, use one of: 'embedded' or 'reference'. Use 'embedded' for object classes directly embedded in JSON/XML. Use 'reference' for a reference to another full object class (embedded=false), even if the full object appears embedded in the payload. Use null if unknown."
+          },
+          "mandatory": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mandatory",
+            "description": "Is attribute required? True if the attribute is required; otherwise false. Use null if unknown."
+          },
+          "updatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatable",
+            "description": "Can be attribute modified? False if readOnly=true; otherwise true. Use null if unknown."
+          },
+          "creatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creatable",
+            "description": "Can attribute be used during create operation? False if readOnly=true; otherwise true (do not infer from endpoints). Use null if unknown."
+          },
+          "readable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readable",
+            "description": "Is attribute readable? False if writeOnly=true; otherwise true. Use null if unknown."
+          },
+          "multivalue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multivalue",
+            "description": "Is attribute multivalue? True if the property's type is 'array'; otherwise false. Use null if unknown."
+          },
+          "returnedByDefault": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returnedbydefault",
+            "description": "Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should.True if the attribute is returned by default without additional calls; set false when it requires extra expansion or separate endpoint fetches. Use null if unknown."
+          },
+          "relevant_sequences": {
+            "items": {
+              "$ref": "#/components/schemas/DocSequenceItem"
+            },
+            "type": "array",
+            "title": "Relevant Sequences",
+            "description": "List of relevant document sequences that support the presence of this attribute. "
+          }
+        },
+        "type": "object",
+        "required": [
+          "relevant_sequences"
+        ],
+        "title": "AttributeInfoRest"
+      },
+      "AttributeInfoScim": {
+        "properties": {
+          "relevantDocumentations": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Relevantdocumentations",
+            "description": "List of chunks that contain evidence for this entity. Each entry is serialized as 'docId' and 'chunkId' UUID strings. This field is populated automatically by the system and should NOT be filled by the LLM."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Short description of attribute copied from documentation. Property description from the schema; null if not provided."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type",
+            "description": "Type as declared in the documentation (prefer OpenAPI). For simple attributes, use one of: 'string' (includes binaries encoded as base64), 'number', 'integer', or 'boolean'. For complex attributes, use the object class name. Put additional type details in 'format' (e.g., 'email', 'binary', 'double', 'embedded', 'reference'). If a complex attribute is relevant, ensure the referenced object class is included in extracted object classes. Use null if unknown."
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format",
+            "description": "Format of the type with additional detail. For simple attributes, use an OpenAPI format registry value (e.g., 'email', 'uri', 'int64', 'date-time'). For complex attributes, use one of: 'embedded' or 'reference'. Use 'embedded' for object classes directly embedded in JSON/XML. Use 'reference' for a reference to another full object class (embedded=false), even if the full object appears embedded in the payload. Use null if unknown."
+          },
+          "mandatory": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mandatory",
+            "description": "Is attribute required? True if the attribute is required; otherwise false. Use null if unknown."
+          },
+          "updatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatable",
+            "description": "Can be attribute modified? False if readOnly=true; otherwise true. Use null if unknown."
+          },
+          "creatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creatable",
+            "description": "Can attribute be used during create operation? False if readOnly=true; otherwise true (do not infer from endpoints). Use null if unknown."
+          },
+          "readable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readable",
+            "description": "Is attribute readable? False if writeOnly=true; otherwise true. Use null if unknown."
+          },
+          "multivalue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multivalue",
+            "description": "Is attribute multivalue? True if the property's type is 'array'; otherwise false. Use null if unknown."
+          },
+          "returnedByDefault": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returnedbydefault",
+            "description": "Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should.True if the attribute is returned by default without additional calls; set false when it requires extra expansion or separate endpoint fetches. Use null if unknown."
+          },
+          "scimAttribute": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scimattribute",
+            "description": "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute (e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
+          }
+        },
+        "type": "object",
+        "title": "AttributeInfoScim",
+        "description": "Attribute metadata for an object class property as described in OpenAPI/JSON Schema."
+      },
+      "AttributeInfoSql": {
+        "properties": {
+          "relevantDocumentations": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Relevantdocumentations",
+            "description": "List of chunks that contain evidence for this entity. Each entry is serialized as 'docId' and 'chunkId' UUID strings. This field is populated automatically by the system and should NOT be filled by the LLM."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Short description of attribute copied from documentation. Property description from the schema; null if not provided."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type",
+            "description": "Type as declared in the documentation (prefer OpenAPI). For simple attributes, use one of: 'string' (includes binaries encoded as base64), 'number', 'integer', or 'boolean'. For complex attributes, use the object class name. Put additional type details in 'format' (e.g., 'email', 'binary', 'double', 'embedded', 'reference'). If a complex attribute is relevant, ensure the referenced object class is included in extracted object classes. Use null if unknown."
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format",
+            "description": "Format of the type with additional detail. For simple attributes, use an OpenAPI format registry value (e.g., 'email', 'uri', 'int64', 'date-time'). For complex attributes, use one of: 'embedded' or 'reference'. Use 'embedded' for object classes directly embedded in JSON/XML. Use 'reference' for a reference to another full object class (embedded=false), even if the full object appears embedded in the payload. Use null if unknown."
+          },
+          "mandatory": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mandatory",
+            "description": "Is attribute required? True if the attribute is required; otherwise false. Use null if unknown."
+          },
+          "updatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatable",
+            "description": "Can be attribute modified? False if readOnly=true; otherwise true. Use null if unknown."
+          },
+          "creatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creatable",
+            "description": "Can attribute be used during create operation? False if readOnly=true; otherwise true (do not infer from endpoints). Use null if unknown."
+          },
+          "readable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readable",
+            "description": "Is attribute readable? False if writeOnly=true; otherwise true. Use null if unknown."
+          },
+          "multivalue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multivalue",
+            "description": "Is attribute multivalue? True if the property's type is 'array'; otherwise false. Use null if unknown."
+          },
+          "returnedByDefault": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returnedbydefault",
+            "description": "Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should.True if the attribute is returned by default without additional calls; set false when it requires extra expansion or separate endpoint fetches. Use null if unknown."
+          },
+          "databaseCatalog": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databasecatalog",
+            "description": "Database catalog containing the physical table when supplied by the source."
+          },
+          "databaseSchema": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databaseschema",
+            "description": "Database schema containing the physical table when supplied by the source."
+          },
+          "table": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Table",
+            "description": "Physical database table containing the attribute."
+          },
+          "column": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Column",
+            "description": "Physical database column mapped to the attribute."
+          },
+          "primaryKey": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primarykey",
+            "description": "Whether the column belongs to the table primary key."
+          },
+          "foreignKey": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SqlForeignKey"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Physical foreign-key target declared for the column."
+          },
+          "databaseType": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databasetype",
+            "description": "Native SQL/JDBC type name supplied by the database schema source."
+          },
+          "nullable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nullable",
+            "description": "Whether the physical database column accepts NULL."
+          },
+          "unique": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unique",
+            "description": "Whether the physical database column has a uniqueness constraint."
+          },
+          "generated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated",
+            "description": "Whether the physical database column is generated by the database."
+          },
+          "defaultValue": {
+            "title": "Defaultvalue",
+            "description": "Physical database default supplied by the schema source."
+          }
+        },
+        "type": "object",
+        "required": [
+          "table",
+          "column"
+        ],
+        "title": "AttributeInfoSql",
+        "description": "Attribute metadata with its physical database binding."
+      },
+      "AttributeJobStatusResponse": {
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Jobid",
+            "description": "Job identifier"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus",
+            "description": "Current status of the job"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat",
+            "description": "Job creation time (ISO 8601)"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat",
+            "description": "Job start time (ISO 8601)"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat",
+            "description": "Last update time (ISO 8601)"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AttributeResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Extracted attributes and protocol-specific context when the job is finished."
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors",
+            "description": "Structured list of error lines/messages for pretty presentation. Each list item is a single error line. Backward-compatible with 'error' string."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MultiDocProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Multi-document progress (documents + current document chunk progress)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "jobId",
+          "status"
+        ],
+        "title": "AttributeJobStatusResponse",
+        "description": "Attribute status response with its finished result exposed in OpenAPI."
+      },
+      "AttributeResponse": {
+        "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AttributeInfoSql"
+                },
+                {
+                  "$ref": "#/components/schemas/AttributeInfoScim"
+                },
+                {
+                  "$ref": "#/components/schemas/AttributeInfoRest"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Attributes",
+            "description": "Map of attribute name to its normalized metadata (AttributeInfo)."
+          },
+          "scimContext": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Scimcontext",
+            "description": "Class-specific SCIM schema, resource and ConnId projection used by SCIM code generation. Empty for non-SCIM object classes."
+          },
+          "sqlContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SqlContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Physical SQL table identity and optional Conndev ConnId projection. Absent for non-SQL object classes."
+          }
+        },
+        "type": "object",
+        "title": "AttributeResponse",
+        "description": "Attribute map for a specific object class where each key is the property name.\nReturn an empty map when the object class has no properties in the fragment."
       },
       "AuthorizationCodegenInput": {
         "properties": {
@@ -5349,7 +5711,7 @@
               }
             ],
             "title": "Currentscript",
-            "description": "Current user-edited Groovy script to repair."
+            "description": "Current user-edited connector code (declarative YAML or Groovy) to repair."
           },
           "preferredAuthorizations": {
             "items": {
@@ -5574,7 +5936,7 @@
               }
             ],
             "title": "Currentscript",
-            "description": "Current user-edited Groovy script to repair."
+            "description": "Current user-edited connector code (declarative YAML or Groovy) to repair."
           },
           "preferredEndpoints": {
             "items": {
@@ -5608,7 +5970,7 @@
               }
             ],
             "title": "Currentscript",
-            "description": "Current user-edited Groovy script to repair."
+            "description": "Current user-edited connector code (declarative YAML or Groovy) to repair."
           }
         },
         "type": "object",
@@ -5739,7 +6101,7 @@
           "code": {
             "type": "string",
             "title": "Code",
-            "description": "Groovy code to use instead of the stored script."
+            "description": "Connector code (declarative YAML or Groovy) to use instead of the stored one."
           }
         },
         "type": "object",
@@ -5748,7 +6110,7 @@
           "code"
         ],
         "title": "ConnectorScriptOverride",
-        "description": "A user-edited Groovy script supplied in place of the one stored in the session."
+        "description": "A user-edited connector script supplied in place of the one stored in the session."
       },
       "DetectionSource": {
         "type": "string",
@@ -5760,6 +6122,33 @@
         ],
         "title": "DetectionSource",
         "description": "Where a protocol confirmation came from.\n\nShared provenance for the per-protocol availability advisories (which signals confirmed a\nprotocol). Declaration order is the order sources are reported in. Python StrEnums cannot be\nextended with extra members via subclassing, so this single enum carries every source and\n``SCIM_CLOUD`` is a SCIM-only member (no other protocol has a dedicated registry signal)."
+      },
+      "DocSequenceItem": {
+        "properties": {
+          "chunkId": {
+            "type": "string",
+            "title": "Chunkid",
+            "description": "Unique identifier for the document chunk."
+          },
+          "startSequence": {
+            "type": "string",
+            "title": "Startsequence",
+            "description": "Unique token / word sequence that identifies the start of the relevant chunk."
+          },
+          "endSequence": {
+            "type": "string",
+            "title": "Endsequence",
+            "description": "Unique token / word sequence that identifies the end of the relevant chunk."
+          }
+        },
+        "type": "object",
+        "required": [
+          "chunkId",
+          "startSequence",
+          "endSequence"
+        ],
+        "title": "DocSequenceItem",
+        "description": "Represents a sequence from a chunk relevant to the extracted information."
       },
       "Documentation": {
         "properties": {
@@ -5914,14 +6303,15 @@
           "code": {
             "type": "string",
             "title": "Code",
-            "description": "Groovy code"
+            "description": "Connector code: declarative YAML or Groovy."
           }
         },
         "type": "object",
         "required": [
           "code"
         ],
-        "title": "GroovyCodePayload"
+        "title": "GroovyCodePayload",
+        "description": "A generated or manually-edited connector artifact: declarative YAML or Groovy.\n\nNamed for the DSL this predates rather than the formats it now accepts - renaming it\nwould ripple into every override/fix/repair endpoint response for no functional gain,\nsince the wire field stays ``code`` in both cases."
       },
       "HTTPValidationError": {
         "properties": {
@@ -6846,6 +7236,216 @@
         "title": "SqlAvailabilityInfo",
         "description": "SQL-specific connectivity info: the target database/schema name.\n\nAlways present on the final payload (empty when the integration is not SQL)."
       },
+      "SqlConnectorAttribute": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "connIdType": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connidtype"
+          },
+          "column": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column",
+            "description": "Explicit SQL path from Conndev; never inferred from the attribute name."
+          },
+          "mandatory": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mandatory"
+          },
+          "creatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creatable"
+          },
+          "updatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatable"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "SqlConnectorAttribute",
+        "description": "One desired ConnId projection attribute from a Conndev export."
+      },
+      "SqlConnectorObjectClass": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "attributes": {
+            "items": {
+              "$ref": "#/components/schemas/SqlConnectorAttribute"
+            },
+            "type": "array",
+            "title": "Attributes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "SqlConnectorObjectClass",
+        "description": "Desired ConnId-facing object-class projection from Conndev."
+      },
+      "SqlContext": {
+        "properties": {
+          "physicalTable": {
+            "$ref": "#/components/schemas/SqlPhysicalTable"
+          },
+          "connectorObjectClass": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SqlConnectorObjectClass"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "physicalTable"
+        ],
+        "title": "SqlContext",
+        "description": "Class-specific physical SQL identity and separate ConnId projection."
+      },
+      "SqlForeignKey": {
+        "properties": {
+          "constraintName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Constraintname",
+            "description": "Database constraint name when the source provides it."
+          },
+          "referencedTable": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Referencedtable",
+            "description": "Referenced physical database table."
+          },
+          "referencedColumn": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Referencedcolumn",
+            "description": "Referenced physical database column."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "referencedTable",
+          "referencedColumn"
+        ],
+        "title": "SqlForeignKey",
+        "description": "Physical target of a SQL foreign-key column."
+      },
+      "SqlPhysicalTable": {
+        "properties": {
+          "databaseCatalog": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databasecatalog"
+          },
+          "databaseSchema": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databaseschema"
+          },
+          "table": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Table"
+          },
+          "tableType": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tabletype"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "table"
+        ],
+        "title": "SqlPhysicalTable",
+        "description": "Identity of the physical table that supplied SQL attributes."
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -6890,9 +7490,9 @@
     "securitySchemes": {
       "APIKeyHeader": {
         "type": "apiKey",
-        "description": "API key issued by this service (or the master key).",
+        "description": "API key validated and forwarded by Gravitee; backend access must be restricted to the gateway.",
         "in": "header",
-        "name": "X-API-Key"
+        "name": "X-Gravitee-Api-Key"
       }
     }
   }
