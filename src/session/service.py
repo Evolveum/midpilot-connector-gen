@@ -141,20 +141,12 @@ async def delete_documentation_document(
     doc_repo: DocumentationRepository, session_id: UUID, documentation_id: UUID
 ) -> int:
     """
-    Delete all chunks for ``documentation_id``, detaching related job ids first.
+    Delete one document and its chunks, preserving all other documents' job links.
 
     Returns the number of removed chunks. Raises ``DocumentationItemNotFoundError``
     when no chunks exist for the document.
     """
     doc_items_with_doc_id = await doc_repo.get_documentation_items_by_doc_id(session_id, documentation_id)
-    source = doc_items_with_doc_id[0].get("source") if doc_items_with_doc_id else ""
-    if not source:
-        logger.warning(
-            "Could not determine source for documentation with doc_id %s in session %s", documentation_id, session_id
-        )
-    else:
-        await doc_repo.remove_job_ids_from_documentation_items(session_id, source)
-
     if not doc_items_with_doc_id:
         raise DocumentationItemNotFoundError(documentation_id, session_id)
 

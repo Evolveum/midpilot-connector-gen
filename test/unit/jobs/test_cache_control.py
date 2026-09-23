@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.documents.errors import DocumentationUploadSupersededError
 from src.jobs.cache import reuse_or_run
 from src.jobs.errors import JobClaimLostError
 from src.modules.discovery.schema import CandidateLinksInput
@@ -95,9 +96,11 @@ async def test_cache_lookup_is_scoped_by_requesting_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lost_claim_during_cache_reuse_never_runs_full_worker_again() -> None:
+@pytest.mark.parametrize("superseded", [False, True])
+async def test_lost_ownership_during_cache_reuse_never_runs_full_worker_again(superseded) -> None:
     session_id = uuid4()
     job_id = uuid4()
+    error = DocumentationUploadSupersededError() if superseded else JobClaimLostError(job_id)
     latest_job = SimpleNamespace(
         job_id=uuid4(),
         session_id=uuid4(),
@@ -116,7 +119,6 @@ async def test_lost_claim_during_cache_reuse_never_runs_full_worker_again() -> N
             }
         ]
     )
-    doc_repo.create_documentation_item = AsyncMock(side_effect=JobClaimLostError(job_id))
     db = MagicMock()
     db.commit = AsyncMock()
     run_normal_worker = AsyncMock(return_value={"should": "not run"})
@@ -126,8 +128,13 @@ async def test_lost_claim_during_cache_reuse_never_runs_full_worker_again() -> N
         patch("src.jobs.cache.JobRepository", return_value=job_repo),
         patch("src.jobs.cache.DocumentationRepository", return_value=doc_repo),
         patch("src.jobs.cache.lifecycle.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.jobs.cache.publish_uploaded_documentation",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ),
     ):
-        with pytest.raises(JobClaimLostError):
+        with pytest.raises(type(error)):
             await reuse_or_run(
                 job_type="documentation.processUpload",
                 job_id=job_id,
@@ -205,4 +212,57 @@ async def test_codegen_cache_preserves_result_and_diagnostics(code, code_format)
     assert result == {"format": code_format, "code": code}
     assert result is not latest_job.result
     errors.assert_awaited_once_with(job_id, diagnostics[0])
+    worker.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cached_upload_publishes_complete_document_and_updates_result_identity():
+    source_doc_id, target_doc_id, job_id, session_id = (uuid4() for _ in range(4))
+    latest_job = SimpleNamespace(
+        job_id=uuid4(),
+        session_id=uuid4(),
+        created_at=datetime.now(),
+        result={
+            "chunks_processed": 2,
+            "doc_id": str(source_doc_id),
+            "filename": "old.md",
+            "content_type": "text/markdown",
+        },
+    )
+    job_repo = MagicMock()
+    job_repo.get_job_by_input = AsyncMock(return_value=latest_job)
+    items = [
+        {
+            "content": f"chunk-{i}",
+            "summary": "summary",
+            "metadata": {"chunk_number": i, "filename": "old.md", "parser": "text"},
+        }
+        for i in range(2)
+    ]
+    doc_repo = MagicMock()
+    doc_repo.get_documentation_items_by_session_and_job = AsyncMock(return_value=items)
+    worker = AsyncMock()
+    with (
+        patch("src.jobs.cache.async_session_maker", return_value=_AsyncSessionContext(MagicMock())),
+        patch("src.jobs.cache.JobRepository", return_value=job_repo),
+        patch("src.jobs.cache.DocumentationRepository", return_value=doc_repo),
+        patch("src.jobs.cache.lifecycle.update_job_progress", new_callable=AsyncMock),
+        patch("src.jobs.cache.publish_uploaded_documentation", new_callable=AsyncMock) as publish,
+    ):
+        result = await reuse_or_run(
+            job_type="documentation.processUpload",
+            job_id=job_id,
+            session_id=session_id,
+            input_payload={"doc_id": str(target_doc_id), "filename": "new.md"},
+            run_normal_worker=worker,
+        )
+    publish.assert_awaited_once_with(
+        session_id=session_id,
+        doc_id=target_doc_id,
+        job_id=job_id,
+        filename="new.md",
+        chunks=[{**item, "metadata": {**item["metadata"], "filename": "new.md"}} for item in items],
+    )
+    assert result == {**latest_job.result, "doc_id": str(target_doc_id), "filename": "new.md"}
+    assert latest_job.result["doc_id"] == str(source_doc_id)
     worker.assert_not_awaited()

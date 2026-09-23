@@ -6,10 +6,10 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TypedDict
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, case, delete, func, or_, select, text, update
+from sqlalchemy import Select, case, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 from sqlalchemy.orm import contains_eager
@@ -18,12 +18,19 @@ from src.core.errors import ExecutionOwnershipLostError
 from src.core.job_execution import get_current_execution
 from src.database.models import Document, DocumentationChunk, RelevantChunk
 from src.database.repositories.job_repository import JobRepository
+from src.database.repositories.session_repository import SessionRepository
 from src.shared.content_types import CONNDEV_CONTENT_TYPES
 
 logger = logging.getLogger(__name__)
 
 _DOCUMENT_METADATA_KEYS = ("content_type", "filename")
 _CHUNK_NUMBER_KEY = "chunk_number"
+
+
+class DocumentationChunkWrite(TypedDict):
+    content: str
+    summary: str | None
+    metadata: dict[str, Any]
 
 
 class DocumentationWriteBatch:
@@ -63,6 +70,53 @@ class DocumentationRepository:
         self.db = db
         self._fenced_transaction: AsyncSessionTransaction | None = None
         self._fenced_execution: tuple[UUID, str, UUID] | None = None
+
+    async def has_document(self, session_id: UUID, doc_id: UUID) -> bool:
+        query = select(Document.doc_id).where(Document.session_id == session_id, Document.doc_id == doc_id)
+        return (await self.db.execute(query)).scalar_one_or_none() is not None
+
+    async def replace_uploaded_documentation(
+        self,
+        *,
+        session_id: UUID,
+        doc_id: UUID,
+        job_id: UUID,
+        filename: str,
+        chunks: Sequence[DocumentationChunkWrite],
+    ) -> bool:
+        """Replace one complete upload in the caller's transaction, without intermediate commits.
+
+        The execution fence prevents writes from an expired claim. The session and
+        pointer locks serialize publication with scheduling a newer upload. Readers
+        keep seeing the previous document until the caller commits this transaction.
+        """
+        if not chunks:
+            raise ValueError("Cannot publish an upload without documentation chunks")
+        await self._assert_current_execution(job_id)
+        session_repo = SessionRepository(self.db)
+        if not await session_repo.lock_session(session_id):
+            return False
+        if not await session_repo.is_current_job_pointer(
+            session_id=session_id,
+            pointer_key=f"documentation.processUpload_{doc_id}_job_id",
+            job_id=job_id,
+            lock=True,
+        ):
+            return False
+
+        await self.remove_documentation_items_by_doc_id(session_id, doc_id)
+        for chunk in chunks:
+            await self.create_documentation_item(
+                session_id=session_id,
+                source="upload",
+                content=chunk["content"],
+                doc_id=doc_id,
+                original_job_id=job_id,
+                url=f"upload://{filename}",
+                summary=chunk["summary"],
+                metadata=chunk["metadata"],
+            )
+        return True
 
     async def _assert_current_execution(self, job_id: UUID) -> None:
         execution = get_current_execution()
@@ -634,39 +688,6 @@ class DocumentationRepository:
         await self.db.flush()
         logger.info("Updated documentation chunk with chunk_id: %s", chunk_id)
         return True
-
-    async def remove_job_ids_from_documentation_items(self, session_id: UUID, doc_source: str) -> int:
-        """
-        Remove job IDs from documentation chunks of a specific source for a session.
-
-        :param session_id: Session ID
-        :param doc_source: Source type to filter chunks ('scraper' or 'upload')
-        :return: Number of chunks updated
-        """
-        documents_of_source = (
-            select(Document.doc_id)
-            .where(Document.session_id == session_id, Document.source == doc_source)
-            .scalar_subquery()
-        )
-        result = await self.db.execute(
-            update(DocumentationChunk)
-            .where(
-                DocumentationChunk.session_id == session_id,
-                DocumentationChunk.doc_id.in_(documents_of_source),
-                DocumentationChunk.scrape_job_ids != text("'[]'::jsonb"),
-            )
-            .values(scrape_job_ids=[])
-        )
-
-        count = int(getattr(result, "rowcount", 0) or 0)
-        await self.db.flush()
-        logger.info(
-            "Removed job IDs from %s documentation chunks for session %s and source %s",
-            count,
-            session_id,
-            doc_source,
-        )
-        return count
 
     async def remove_documentation_items_by_doc_id(self, session_id: UUID, doc_id: UUID) -> int:
         """

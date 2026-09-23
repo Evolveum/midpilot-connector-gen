@@ -18,6 +18,7 @@ from fastapi import HTTPException, UploadFile, status
 from pypdf import PdfReader
 
 from src.config import config
+from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.chunking import count_tokens, split_single_item_schema, split_text_with_token_overlap
 from src.jobs import binary_artifact_reference, schedule_coroutine_job
@@ -466,5 +467,13 @@ async def queue_documentation_upload_job(
     )
 
     job_key = f"documentation.processUpload_{doc_id}_job_id"
+    if await DocumentationRepository(repo.db).has_document(session_id, doc_id) or await repo.get_session_data(
+        session_id, job_key
+    ):
+        logger.warning(
+            "[Session:Upload] Another upload uses document ID %s; the existing content will be deleted and replaced "
+            "only after this upload succeeds. If processing fails, the existing content will be preserved.",
+            doc_id,
+        )
     await repo.update_session(session_id, {job_key: str(job_id)})
     return job_id

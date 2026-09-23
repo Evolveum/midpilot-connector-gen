@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import logging
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -24,6 +25,9 @@ class _FakeSessionRepository:
     def __init__(self) -> None:
         self.db = object()
         self.updated_session_payloads: list[tuple[object, dict[str, str]]] = []
+
+    async def get_session_data(self, session_id: object, key: str) -> None:
+        return None
 
     async def update_session(self, session_id: object, data: dict[str, str]) -> None:
         self.updated_session_payloads.append((session_id, data))
@@ -104,7 +108,11 @@ def test_processed_chunk_metadata_uses_token_count_name():
 
 
 @pytest.mark.asyncio
-async def test_queue_documentation_upload_job_schedules_raw_upload_without_storing_bytes_in_input():
+@pytest.mark.parametrize("document_exists", [False, True])
+async def test_queue_documentation_upload_job_schedules_raw_upload_without_storing_bytes_in_input(
+    document_exists, caplog
+):
+    caplog.set_level(logging.WARNING)
     session_id = uuid4()
     doc_id = uuid4()
     job_id = uuid4()
@@ -120,10 +128,14 @@ async def test_queue_documentation_upload_job_schedules_raw_upload_without_stori
     )
     repo = _FakeSessionRepository()
 
-    with patch(
-        "src.session.documentation_upload.schedule_coroutine_job",
-        new_callable=AsyncMock,
-    ) as mock_schedule:
+    with (
+        patch("src.session.documentation_upload.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch(
+            "src.session.documentation_upload.DocumentationRepository.has_document",
+            new_callable=AsyncMock,
+            return_value=document_exists,
+        ),
+    ):
         mock_schedule.return_value = job_id
 
         returned_job_id = await queue_documentation_upload_job(
@@ -153,3 +165,10 @@ async def test_queue_documentation_upload_job_schedules_raw_upload_without_stori
     assert repo.updated_session_payloads == [
         (session_id, {f"documentation.processUpload_{doc_id}_job_id": str(job_id)})
     ]
+
+    if document_exists:
+        assert f"Another upload uses document ID {doc_id}" in caplog.text
+        assert "deleted and replaced only after this upload succeeds" in caplog.text
+        assert "If processing fails, the existing content will be preserved" in caplog.text
+    else:
+        assert "Another upload uses document ID" not in caplog.text
