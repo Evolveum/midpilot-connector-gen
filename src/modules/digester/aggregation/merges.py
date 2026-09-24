@@ -16,15 +16,11 @@ from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
 from src.modules.digester.enums import EndpointMethod, EndpointType
 from src.modules.digester.extraction.llm_execution import invoke_llm
-from src.modules.digester.extraction.sequences import extract_sequence
 from src.modules.digester.schemas import (
     ApiTypeResponse,
     AttributeDedupResponse,
     AttributeProcessingInfo,
     BaseAPIEndpoint,
-    DiscoveryAttribute,
-    DocProcessingSequenceItem,
-    DocSequenceItem,
     ExtendedObjectClass,
     ExtractedEndpointInfo,
     InfoMetadata,
@@ -33,6 +29,7 @@ from src.modules.digester.schemas import (
     RestAvailabilityInfo,
     ScimAvailabilityInfo,
     SqlAvailabilityInfo,
+    ValidatedAttributeCandidate,
 )
 from src.shared.enums import ApiType, JobStage
 
@@ -113,7 +110,7 @@ def merge_object_classes(
 
 async def merge_attribute_candidates(
     object_class: str,
-    attribute_objects: List[DiscoveryAttribute] | List[AttributeProcessingInfo],
+    attribute_objects: List[ValidatedAttributeCandidate] | List[AttributeProcessingInfo],
     job_id: UUID,
     build_dedup_chain: Callable[[], Any],
     chunk_id_doc_id_map: Optional[Dict[str, str]] = None,
@@ -125,7 +122,7 @@ async def merge_attribute_candidates(
 
     Args:
     - object_class: Name of the object class these attributes belong to
-    - attribute_objects: List of DiscoveryAttribute or AttributeProcessingInfo objects extracted from different chunks
+    - attribute_objects: List of ValidatedAttributeCandidate or AttributeProcessingInfo objects extracted from different chunks
     - job_id: UUID of current job
     - dedup_chain: Callable that takes a dict with object_class and attributes_list (JSON string) and returns an AttributeDedupResponse with duplicates and to_be_deleted lists
 
@@ -172,55 +169,18 @@ async def merge_attribute_candidates(
             if doc not in target.relevant_documentations:
                 target.relevant_documentations.append(doc)
 
-    async def _to_processing_info(attr: DiscoveryAttribute | AttributeProcessingInfo) -> AttributeProcessingInfo | None:
+    def _to_processing_info(attr: ValidatedAttributeCandidate | AttributeProcessingInfo) -> AttributeProcessingInfo:
         if isinstance(attr, AttributeProcessingInfo):
             return attr
 
-        relevant_sequences: List[DocProcessingSequenceItem] = []
-        for raw_seq in attr.relevant_sequences:
-            seq = DocSequenceItem.model_validate(raw_seq.model_dump(by_alias=True))
-            sequence_text = getattr(raw_seq, "text", None)
-            if not isinstance(sequence_text, str):
-                sequence_text = await extract_sequence(
-                    seq.chunk_id,
-                    seq.start_sequence,
-                    seq.end_sequence,
-                    enable_marker_blending=True,
-                    logger_prefix="[Digester:Attributes:Merge] ",
-                )
-
-            relevant_sequences.append(
-                DocProcessingSequenceItem(
-                    chunk_id=seq.chunk_id,
-                    start_sequence=seq.start_sequence,
-                    end_sequence=seq.end_sequence,
-                    text=sequence_text,
-                )
-            )
-
-        if relevant_sequences:
-            first_chunk_id = relevant_sequences[0].chunk_id
-            first_doc_id = (chunk_id_doc_id_map.get(first_chunk_id) or "unknown") if chunk_id_doc_id_map else "unknown"
-
-            return AttributeProcessingInfo(
-                name=attr.name,
-                type=getattr(attr, "type", None),
-                format=getattr(attr, "format", None),
-                description=attr.description,
-                mandatory=None,
-                updatable=None,
-                creatable=None,
-                readable=None,
-                multivalue=None,
-                returnedByDefault=None,
-                relevant_sequences=relevant_sequences,
-                relevant_documentations=[
-                    {"chunk_id": first_chunk_id, "doc_id": first_doc_id},
-                ],
-            )
-        else:
-            logger.warning("[Digester:Attributes] Attribute %s has no relevant sequences; deleting", attr.name)
-            return None
+        first_chunk_id = attr.relevant_sequences[0].chunk_id
+        first_doc_id = (chunk_id_doc_id_map.get(first_chunk_id) or "unknown") if chunk_id_doc_id_map else "unknown"
+        return AttributeProcessingInfo(
+            name=attr.name,
+            description=attr.description,
+            relevant_sequences=[sequence.model_copy() for sequence in attr.relevant_sequences],
+            relevant_documentations=[{"chunk_id": first_chunk_id, "doc_id": first_doc_id}],
+        )
 
     if not attribute_objects:
         return []
@@ -240,11 +200,7 @@ async def merge_attribute_candidates(
         if not key:
             continue
 
-        item = await _to_processing_info(attr)
-
-        if item is None:
-            logger.warning("[Digester:Attributes] Skipping attribute with empty name after processing: %s", attr)
-            continue
+        item = _to_processing_info(attr)
 
         if key not in seen:
             seen[key] = item

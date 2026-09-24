@@ -7,7 +7,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_multi_doc_status_response
@@ -16,6 +16,7 @@ from src.database.repositories.session_repository import SessionRepository
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.codegen.orchestration import schedule_relation_job
 from src.modules.codegen.persistence import store_relation_override
+from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 
@@ -86,7 +87,7 @@ async def get_relation_code_status(
 async def override_relation_code(
     session_id: UUID = Path(..., description="Session ID"),
     relation_name: str = Path(..., description="Relation name"),
-    relation_code: GroovyCodePayload = Body(..., description="Relation code as JSON"),
+    relation_code: GroovyCodePayload = Depends(validated_connector_code),
     db: AsyncSession = DbSession,
 ):
     """

@@ -5,63 +5,18 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
-from src.config import config
-from src.session.documentation_processing import (
-    _persist_processed_documentation_batch,
-    process_documentation_worker,
-)
+from src.session.documentation_processing import process_documentation_worker
 from src.session.documentation_upload import RawUploadedDocumentation, UploadedDocumentation
-from src.session.schema import ProcessedDocumentationChunk
-
-
-class _AsyncSessionContext:
-    def __init__(self, db):
-        self.db = db
-
-    async def __aenter__(self):
-        return self.db
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
 
 
 @pytest.mark.asyncio
-async def test_upload_persistence_uses_configured_transaction_batch_size(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db = MagicMock()
-    db.commit = AsyncMock()
-    repository = MagicMock()
-    repository.create_documentation_item = AsyncMock(return_value=uuid4())
-    chunks = [
-        ProcessedDocumentationChunk(index=index, text=f"chunk-{index}", summary="summary", metadata={})
-        for index in range(3)
-    ]
-    monkeypatch.setattr(config.jobs, "documentation_write_batch_size", 2)
-
-    with (
-        patch("src.session.documentation_processing.async_session_maker", return_value=_AsyncSessionContext(db)),
-        patch("src.session.documentation_processing.DocumentationRepository", return_value=repository),
-    ):
-        await _persist_processed_documentation_batch(
-            session_id=uuid4(),
-            doc_id=uuid4(),
-            job_id=uuid4(),
-            filename="docs.md",
-            chunks=chunks,
-        )
-
-    assert repository.create_documentation_item.await_count == 3
-    assert db.commit.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_process_documentation_worker_updates_progress_per_chunk_and_persists_in_chunk_order():
+@pytest.mark.parametrize("fail_last_chunk", [False, True])
+async def test_process_documentation_worker_publishes_only_complete_document_in_chunk_order(fail_last_chunk):
     raw_upload = RawUploadedDocumentation(
         data=b"raw",
         filename="docs.md",
@@ -78,6 +33,9 @@ async def test_process_documentation_worker_updates_progress_per_chunk_and_persi
     async def fake_llm_processed_chunk(prompts: tuple[str, str]) -> SimpleNamespace:
         if prompts[1] == "first":
             await asyncio.sleep(0.01)
+        elif fail_last_chunk:
+            await asyncio.sleep(0.02)
+            raise RuntimeError("LLM failed")
         return SimpleNamespace(
             summary=f"summary {prompts[1]}",
             num_endpoints=0,
@@ -99,13 +57,27 @@ async def test_process_documentation_worker_updates_progress_per_chunk_and_persi
             "src.session.documentation_processing.increment_processed_documents", new_callable=AsyncMock
         ) as mock_increment,
         patch(
-            "src.session.documentation_processing._persist_processed_documentation_chunk",
+            "src.session.documentation_processing.publish_uploaded_documentation",
             new_callable=AsyncMock,
         ) as mock_persist,
     ):
         mock_parse.return_value = uploaded
         mock_chunk.return_value = [("first", 1), ("second", 1)]
         mock_prompt.side_effect = lambda chunk, filename, app, app_version: ("system", chunk)
+
+        if fail_last_chunk:
+            with pytest.raises(RuntimeError, match="LLM failed"):
+                await process_documentation_worker(
+                    session_id=uuid4(),
+                    raw_upload=raw_upload,
+                    doc_id=uuid4(),
+                    app="Example",
+                    app_version="1.0",
+                    job_id=uuid4(),
+                )
+            mock_increment.assert_awaited_once()
+            mock_persist.assert_not_awaited()
+            return
 
         result = await process_documentation_worker(
             session_id=uuid4(),
@@ -124,8 +96,8 @@ async def test_process_documentation_worker_updates_progress_per_chunk_and_persi
         kwargs.get("total_processing") == 2 and kwargs.get("processing_completed") == 0 for kwargs in progress_kwargs
     )
 
-    persisted_indexes = [call.kwargs["chunk"].index for call in mock_persist.await_args_list]
-    assert persisted_indexes == [0, 1]
+    mock_persist.assert_awaited_once()
+    assert [chunk["content"] for chunk in mock_persist.await_args.kwargs["chunks"]] == ["first", "second"]
 
 
 @pytest.mark.asyncio
@@ -191,7 +163,7 @@ async def test_process_documentation_worker_skips_llm_and_labels_conndev_protoco
         patch("src.session.documentation_processing.update_job_progress", new_callable=AsyncMock),
         patch("src.session.documentation_processing.increment_processed_documents", new_callable=AsyncMock),
         patch(
-            "src.session.documentation_processing._persist_processed_documentation_chunk",
+            "src.session.documentation_processing.publish_uploaded_documentation",
             new_callable=AsyncMock,
         ) as persist_chunk,
     ):
@@ -206,10 +178,10 @@ async def test_process_documentation_worker_skips_llm_and_labels_conndev_protoco
 
     assert result["chunks_processed"] == 1
     process_with_llm.assert_not_awaited()
-    persisted = persist_chunk.await_args.kwargs["chunk"]
-    assert persisted.summary == f"midPoint connector-development {expected_protocol} export: {filename}"
-    assert persisted.metadata["category"] == "spec_json"
-    assert persisted.metadata["tags"] == [expected_protocol.lower(), "schema", "conndev"]
+    persisted = persist_chunk.await_args.kwargs["chunks"][0]
+    assert persisted["summary"] == f"midPoint connector-development {expected_protocol} export: {filename}"
+    assert persisted["metadata"]["category"] == "spec_json"
+    assert persisted["metadata"]["tags"] == [expected_protocol.lower(), "schema", "conndev"]
 
 
 @pytest.mark.asyncio
@@ -251,7 +223,7 @@ async def test_process_documentation_worker_labels_unbound_conndev_class_with_se
         patch("src.session.documentation_processing.update_job_progress", new_callable=AsyncMock),
         patch("src.session.documentation_processing.increment_processed_documents", new_callable=AsyncMock),
         patch(
-            "src.session.documentation_processing._persist_processed_documentation_chunk",
+            "src.session.documentation_processing.publish_uploaded_documentation",
             new_callable=AsyncMock,
         ) as persist_chunk,
     ):
@@ -266,9 +238,9 @@ async def test_process_documentation_worker_labels_unbound_conndev_class_with_se
 
     process_with_llm.assert_not_awaited()
     session_api_types.assert_awaited_once()
-    persisted = persist_chunk.await_args.kwargs["chunk"]
-    assert persisted.summary == f"midPoint connector-development SCIM export: {filename}"
-    assert persisted.metadata["tags"] == ["scim", "schema", "conndev"]
+    persisted = persist_chunk.await_args.kwargs["chunks"][0]
+    assert persisted["summary"] == f"midPoint connector-development SCIM export: {filename}"
+    assert persisted["metadata"]["tags"] == ["scim", "schema", "conndev"]
 
 
 @pytest.mark.asyncio
@@ -304,7 +276,7 @@ async def test_process_documentation_worker_does_not_look_up_session_protocol_fo
         patch("src.session.documentation_processing.update_job_progress", new_callable=AsyncMock),
         patch("src.session.documentation_processing.increment_processed_documents", new_callable=AsyncMock),
         patch(
-            "src.session.documentation_processing._persist_processed_documentation_chunk",
+            "src.session.documentation_processing.publish_uploaded_documentation",
             new_callable=AsyncMock,
         ),
     ):

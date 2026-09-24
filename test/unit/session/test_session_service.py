@@ -77,31 +77,28 @@ async def test_get_documentation_document_raises_when_absent():
 
 
 @pytest.mark.asyncio
-async def test_delete_documentation_document_detaches_jobs_and_returns_count():
+async def test_delete_documentation_document_returns_deleted_chunk_count():
     session_id = uuid4()
     doc_id = uuid4()
     doc_repo = MagicMock()
     doc_repo.get_documentation_items_by_doc_id = AsyncMock(return_value=[{"source": "upload"}])
-    doc_repo.remove_job_ids_from_documentation_items = AsyncMock()
     doc_repo.remove_documentation_items_by_doc_id = AsyncMock(return_value=3)
 
     deleted = await service.delete_documentation_document(doc_repo, session_id, doc_id)
 
     assert deleted == 3
-    doc_repo.remove_job_ids_from_documentation_items.assert_awaited_once_with(session_id, "upload")
+    doc_repo.get_documentation_items_by_doc_id.assert_awaited_once_with(session_id, doc_id)
     doc_repo.remove_documentation_items_by_doc_id.assert_awaited_once_with(session_id, doc_id)
 
 
 @pytest.mark.asyncio
-async def test_delete_documentation_document_raises_when_absent_and_skips_job_detach():
+async def test_delete_documentation_document_raises_when_absent_and_skips_deletion():
     session_id = uuid4()
     doc_repo = MagicMock()
     doc_repo.get_documentation_items_by_doc_id = AsyncMock(return_value=[])
-    doc_repo.remove_job_ids_from_documentation_items = AsyncMock()
     doc_repo.remove_documentation_items_by_doc_id = AsyncMock()
 
     with pytest.raises(DocumentationItemNotFoundError):
         await service.delete_documentation_document(doc_repo, session_id, uuid4())
 
-    doc_repo.remove_job_ids_from_documentation_items.assert_not_awaited()
     doc_repo.remove_documentation_items_by_doc_id.assert_not_awaited()

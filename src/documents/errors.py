@@ -9,6 +9,18 @@ from uuid import UUID
 from src.core.errors import AppError
 
 
+class DocumentationUploadSupersededError(AppError):
+    """A completed upload no longer owns the document's publication pointer."""
+
+    status_code = 409
+    code = "documentation_upload_superseded"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Upload was superseded by a newer upload or its session was removed; no document was replaced."
+        )
+
+
 class NoDocumentationStoredError(AppError):
     """Raised when an operation needs documentation but none has been stored yet.
 

@@ -232,6 +232,8 @@ async def upload_documentation_by_id(
     Process uploaded documentation file using LLM.
     Creates a job and queues it for processing - returns immediately with job_id.
     Each chunk becomes a separate DocumentationItem with source='upload' and the provided documentation_id as doc_id.
+    Reusing an ID replaces that document only after all new chunks are processed successfully.
+    Failed processing preserves the existing document. Only the latest queued upload for this ID may publish.
     Application name and version are loaded from session's discoveryInput or scrapeInput.
     """
     return await _queue_documentation_upload(

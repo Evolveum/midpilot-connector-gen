@@ -47,6 +47,14 @@ link:pipeline/scrape.adoc[scrape stage], or by direct upload:
 | `PUT /api/session/{sessionId}/documentation`
 | Replace *all* documentation in the session with one uploaded file.
 
+| `POST /api/session/{sessionId}/documentation/{docId}`
+| Upload a file under an explicit document ID. Reusing an ID logs a warning:
+  the previous content will be deleted and replaced only when the new upload
+  has been fully processed and its database transaction commits. Processing
+  or publication failure preserves the previous content. Cached uploads use
+  the same replacement rule. Only the latest queued upload for that ID may
+  publish; superseded uploads fail without modifying the document.
+
 | `PUT /api/session/{sessionId}/documentation/{docId}`
 | Import already-processed documentation (chunks as JSON) — no LLM involved.
 
@@ -59,6 +67,12 @@ link:pipeline/scrape.adoc[scrape stage], or by direct upload:
 | `DELETE .../documentation`, `DELETE .../documentation/{docId}`
 | Remove documentation.
 |===
+
+During replacement, GET and HEAD continue to expose the existing document.
+Use the upload job status to track the pending replacement. Old chunk IDs and
+their stored relevance references are removed when the replacement commits;
+rerun extraction when the new document must be used for connector generation.
+New chunks are published together rather than exposed as partial uploads.
 
 SQL inputs can be uploaded directly as `.sql`/SQL media types, as a JSON table
 list (prefer `application/sql+json` so schema-preserving chunking is selected),

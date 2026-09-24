@@ -17,8 +17,10 @@ from uuid import UUID, uuid4
 
 from src.config import config
 from src.core.db import async_session_maker
-from src.database.repositories.documentation_repository import DocumentationRepository, DocumentationWriteBatch
+from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import JobRepository
+from src.documents.errors import DocumentationUploadSupersededError
+from src.documents.processing.persistence import publish_uploaded_documentation
 from src.documents.relevance import (
     build_chunk_ref_remap as _build_chunk_ref_remap,
 )
@@ -55,10 +57,8 @@ async def reuse_or_run(
     ``run_normal_worker`` is awaited and its result returned.
     """
     logger.info(
-        "[%s] Job %s (session %s): skipCache is false, checking for previous job output",
+        "[Jobs:Cache] %s: skipCache is false, checking for previous job output",
         job_type,
-        str(job_id),
-        str(session_id),
     )
 
     created_at_limits = (
@@ -76,86 +76,77 @@ async def reuse_or_run(
 
     if not (latest_job and latest_job.result):
         logger.info(
-            "[%s] Job %s: No previous finished job found with same input since %s",
+            "[Jobs:Cache] %s: No previous finished job found with same input since %s",
             job_type,
-            str(job_id),
             created_at_limits.isoformat(),
         )
         return await run_normal_worker()
 
     try:
-        async with async_session_maker() as db:
-            doc_repo = DocumentationRepository(db)
-            await lifecycle.update_job_progress(
-                job_id,
-                stage=JobStage.processing,
-                message=f"Reused output from job {latest_job.job_id}",
-            )
-            logger.info(
-                "[%s] Job %s: Reusing output from job %s created at %s",
-                job_type,
-                str(job_id),
-                str(latest_job.job_id),
-                latest_job.created_at.isoformat(),
-            )
-            reused_output: Dict[str, Any] = copy.deepcopy(latest_job.result)
-            current_doc_items: List[Dict[str, Any]] = input_payload.get("documentationItems", [])
+        await lifecycle.update_job_progress(
+            job_id,
+            stage=JobStage.processing,
+            message=f"Reused output from job {latest_job.job_id}",
+        )
+        logger.info(
+            "[Jobs:Cache] %s: Reusing output from source job %s created at %s",
+            job_type,
+            latest_job.job_id,
+            latest_job.created_at.isoformat(),
+        )
+        reused_output: Dict[str, Any] = copy.deepcopy(latest_job.result)
+        current_doc_items: List[Dict[str, Any]] = input_payload.get("documentationItems", [])
 
-            if job_type == "documentation.processUpload":
-                previous_session_id: UUID = latest_job.session_id
-                latest_job_doc_items: List[Dict[str, Any]] = await doc_repo.get_documentation_items_by_session_and_job(
+        if job_type == "documentation.processUpload":
+            previous_session_id: UUID = latest_job.session_id
+            # Release the read connection before publication acquires its own
+            # transaction, so concurrent cache hits cannot exhaust the pool.
+            async with async_session_maker() as db:
+                latest_job_doc_items = await DocumentationRepository(db).get_documentation_items_by_session_and_job(
                     previous_session_id, latest_job.job_id
                 )
-                if not latest_job_doc_items:
-                    logger.warning(
-                        "[%s] Job %s: Previous job %s has no documentation items associated, cannot reuse processed documentation for current job %s",
-                        job_type,
-                        str(job_id),
-                        str(latest_job.job_id),
-                        str(job_id),
-                    )
-                    raise _CacheReuseUnavailable
-
-                await lifecycle.update_job_progress(
-                    job_id,
-                    stage=JobStage.processing_chunks,
-                    message=(
-                        f"Reusing {len(latest_job_doc_items)} processed documentation chunks "
-                        f"from job {latest_job.job_id}"
-                    ),
-                    total_processing=len(latest_job_doc_items),
-                    processing_completed=0,
+            if not latest_job_doc_items:
+                logger.warning(
+                    "[Jobs:Cache] %s: Source job %s has no documentation items associated, cannot reuse processed documentation",
+                    job_type,
+                    latest_job.job_id,
                 )
-                write_batch = DocumentationWriteBatch(db, config.jobs.documentation_write_batch_size)
-                reused_doc_id = UUID(input_payload["doc_id"]) if input_payload.get("doc_id") else uuid4()
-                for item in latest_job_doc_items:
-                    await doc_repo.create_documentation_item(
-                        session_id=session_id,
-                        source="upload",
-                        content=item["content"],
-                        original_job_id=job_id,
-                        doc_id=reused_doc_id,
-                        url=f"upload://{input_payload.get('filename', 'unknown')}",
-                        summary=item["summary"],
-                        metadata={
-                            "filename": input_payload.get("filename", "unknown"),
-                            "chunk_number": item["metadata"].get("chunk_number"),
-                            "token_count": item["metadata"].get("token_count"),
-                            "num_endpoints": item["metadata"].get("num_endpoints"),
-                            "tags": item["metadata"].get("tags"),
-                            "category": item["metadata"].get("category"),
-                            "content_type": item["metadata"].get("content_type"),
-                            "character_count": item["metadata"].get("character_count"),
-                        },
-                    )
-                    await write_batch.record_write()
-                await write_batch.commit_pending()
-                await lifecycle.update_job_progress(
-                    job_id,
-                    processing_completed=len(latest_job_doc_items),
-                )
-                return reused_output
+                raise _CacheReuseUnavailable
 
+            await lifecycle.update_job_progress(
+                job_id,
+                stage=JobStage.processing_chunks,
+                message=(
+                    f"Reusing {len(latest_job_doc_items)} processed documentation chunks from job {latest_job.job_id}"
+                ),
+                total_processing=len(latest_job_doc_items),
+                processing_completed=0,
+            )
+            reused_doc_id = UUID(input_payload["doc_id"]) if input_payload.get("doc_id") else uuid4()
+            filename = input_payload.get("filename", "unknown")
+            await publish_uploaded_documentation(
+                session_id=session_id,
+                doc_id=reused_doc_id,
+                job_id=job_id,
+                filename=filename,
+                chunks=[
+                    {
+                        "content": item["content"],
+                        "summary": item["summary"],
+                        "metadata": {**item["metadata"], "filename": filename},
+                    }
+                    for item in latest_job_doc_items
+                ],
+            )
+            reused_output.update(doc_id=str(reused_doc_id), filename=filename)
+            await lifecycle.update_job_progress(
+                job_id,
+                processing_completed=len(latest_job_doc_items),
+            )
+            return reused_output
+
+        async with async_session_maker() as db:
+            doc_repo = DocumentationRepository(db)
             if job_type.startswith("digester.") or "relevantDocumentations" in reused_output:
                 previous_doc_items = await doc_repo.get_documentation_items_by_session(latest_job.session_id)
                 if not current_doc_items:
@@ -167,10 +158,9 @@ async def reuse_or_run(
                 )
                 if not chunk_ref_remap:
                     logger.warning(
-                        "[%s] Job %s: Unable to build documentation chunk remap from job %s, cached relevance references may be empty in reused output",
+                        "[Jobs:Cache] %s: Unable to build documentation chunk remap from source job %s, cached relevance references may be empty in reused output",
                         job_type,
-                        str(job_id),
-                        str(latest_job.job_id),
+                        latest_job.job_id,
                     )
 
                 return _remap_reused_output_relevance(
@@ -188,30 +178,26 @@ async def reuse_or_run(
                 return copy.deepcopy(latest_job.result)
 
             logger.warning(
-                "[%s] Job %s: Previous job %s has no relevant chunks in result, cannot reuse chunks for current job %s",
+                "[Jobs:Cache] %s: Source job %s has no relevant chunks in result, cannot reuse chunks",
                 job_type,
-                str(job_id),
-                str(latest_job.job_id),
-                str(job_id),
+                latest_job.job_id,
             )
             raise _CacheReuseUnavailable
 
     except _CacheReuseUnavailable as exc:
         logger.warning(
-            "[%s] Job %s: Previous job %s cannot be reused (%s), running fresh worker",
+            "[Jobs:Cache] %s: Source job %s cannot be reused (%s), running fresh worker",
             job_type,
-            str(job_id),
-            str(latest_job.job_id),
-            str(exc),
+            latest_job.job_id,
+            exc,
         )
         return await run_normal_worker()
-    except JobClaimLostError:
+    except (JobClaimLostError, DocumentationUploadSupersededError):
         raise
     except Exception:
         logger.exception(
-            "[%s] Job %s: Unexpected failure while reusing output from job %s",
+            "[Jobs:Cache] %s: Unexpected failure while reusing output from source job %s",
             job_type,
-            str(job_id),
-            str(latest_job.job_id),
+            latest_job.job_id,
         )
         raise

@@ -65,5 +65,5 @@ class JobStatusIterationResponse(BaseJobStatusResponse):
 
 class JobStatusMultiDocResponse(BaseJobStatusResponse):
     progress: Optional[MultiDocProgress] = Field(
-        default=None, description="Multi-document progress (documents + current document chunk progress)"
+        default=None, description="Progress stage, message, and document counters."
     )
