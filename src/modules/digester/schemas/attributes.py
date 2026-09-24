@@ -139,6 +139,17 @@ class DiscoveryAttribute(AttributeBase):
     )
 
 
+class ValidatedAttributeCandidate(AttributeBase):
+    """Discovered attribute supported by sequences verified against a known chunk."""
+
+    model_config = {"extra": "forbid"}
+
+    relevant_sequences: List[DocProcessingSequenceItem] = Field(
+        min_length=1,
+        description="Verified evidence with its source chunk, matched markers, and extracted text.",
+    )
+
+
 class AttributeDiscoveryResponse(BaseModel):
     """
     Container for extracted attributes of an object class in discovery phase.

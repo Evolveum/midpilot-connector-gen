@@ -11,9 +11,8 @@ from src.modules.digester.aggregation.merges import merge_attribute_candidates
 from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.schemas import (
     AttributeInfoRest,
-    DiscoveryAttribute,
     DocProcessingSequenceItem,
-    DocSequenceMarker,
+    ValidatedAttributeCandidate,
 )
 from src.shared.enums import ApiType
 
@@ -23,27 +22,21 @@ from src.shared.enums import ApiType
 async def test_merge_attribute_candidates_reuses_validated_sequence_text(mock_digester_update_job_progress):
     chunk_id = str(uuid4())
     doc_id = str(uuid4())
-    attribute = DiscoveryAttribute(
+    attribute = ValidatedAttributeCandidate(
         name="email",
         description="User email address",
         relevant_sequences=[
-            DocSequenceMarker(
+            DocProcessingSequenceItem(
+                chunk_id=chunk_id,
                 start_sequence="email",
                 end_sequence="string",
+                text="email is a string identifier for the user",
             )
         ],
     )
-    attribute.relevant_sequences = [
-        DocProcessingSequenceItem(
-            chunk_id=chunk_id,
-            start_sequence="email",
-            end_sequence="string",
-            text="email is a string identifier for the user",
-        )
-    ]
 
     with patch(
-        "src.modules.digester.aggregation.merges.extract_sequence",
+        "src.modules.digester.extraction.sequences.extract_sequence",
         new_callable=AsyncMock,
     ) as mock_extract_sequence:
         result = await merge_attribute_candidates(
