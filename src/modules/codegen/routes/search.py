@@ -7,7 +7,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_multi_doc_status_response
@@ -19,6 +19,7 @@ from src.modules.codegen import generation
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.orchestration import schedule_operation_job
 from src.modules.codegen.persistence import store_search_override
+from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import CodegenOperationInput, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
@@ -113,7 +114,7 @@ async def override_search(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     intent: SearchIntent = Path(..., description="Intent"),
-    search_code: GroovyCodePayload = Body(..., description="Search code as JSON"),
+    search_code: GroovyCodePayload = Depends(validated_connector_code),
     db: AsyncSession = DbSession,
 ):
     """

@@ -3027,8 +3027,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Authorization code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -3284,8 +3284,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Native schema code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -3526,8 +3526,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "ConnID code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -3813,8 +3813,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Search code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -4070,8 +4070,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Create code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -4327,8 +4327,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Update code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -4584,8 +4584,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Delete code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -4806,8 +4806,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Relation code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -5638,7 +5638,7 @@
                 "type": "null"
               }
             ],
-            "description": "Multi-document progress (documents + current document chunk progress)"
+            "description": "Progress stage, message, and document counters."
           }
         },
         "type": "object",
@@ -6064,6 +6064,21 @@
         "title": "ConnectivityEndpointResponse",
         "description": "Ranked list of endpoints for testing connectivity between midPoint connector generator and the target application.\nEmpty list when no suitable endpoint is documented. First endpoint is the most suitable."
       },
+      "ConnectorCodeInput": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Connector code: declarative YAML or Groovy."
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "ConnectorCodeInput",
+        "description": "User-supplied connector code: declarative YAML or Groovy."
+      },
       "ConnectorFixInput": {
         "properties": {
           "midpointErrors": {
@@ -6297,21 +6312,6 @@
         ],
         "title": "GenerationIntent",
         "description": "Business-domain lens object-class detection is judged through.\n\nDoes not change which documentation is read or how extraction runs mechanically; it\nchanges what counts as a primary object class when object-class detection assigns\nconfidence and ranks results (see\n``src/modules/digester/prompts/object_class_intents.py``). ``MANAGEMENT_ITSM``\ntreats both domains as primary. ``MANAGEMENT`` is the default when a caller does\nnot specify an intent."
-      },
-      "GroovyCodePayload": {
-        "properties": {
-          "code": {
-            "type": "string",
-            "title": "Code",
-            "description": "Connector code: declarative YAML or Groovy."
-          }
-        },
-        "type": "object",
-        "required": [
-          "code"
-        ],
-        "title": "GroovyCodePayload",
-        "description": "A generated or manually-edited connector artifact: declarative YAML or Groovy.\n\nNamed for the DSL this predates rather than the formats it now accepts - renaming it\nwould ripple into every override/fix/repair endpoint response for no functional gain,\nsince the wire field stays ``code`` in both cases."
       },
       "HTTPValidationError": {
         "properties": {
@@ -6651,7 +6651,7 @@
                 "type": "null"
               }
             ],
-            "description": "Multi-document progress (documents + current document chunk progress)"
+            "description": "Progress stage, message, and document counters."
           }
         },
         "type": "object",

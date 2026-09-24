@@ -7,7 +7,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_multi_doc_status_response
@@ -18,6 +18,7 @@ from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.codegen import generation
 from src.modules.codegen.orchestration import schedule_operation_job
 from src.modules.codegen.persistence import store_object_class_output_override
+from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import CodegenOperationInput, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
@@ -106,7 +107,7 @@ async def get_create_status(
 async def override_create(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    create_code: GroovyCodePayload = Body(..., description="Create code as JSON"),
+    create_code: GroovyCodePayload = Depends(validated_connector_code),
     db: AsyncSession = DbSession,
 ):
     """
@@ -205,7 +206,7 @@ async def get_update_status(
 async def override_update(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    update_code: GroovyCodePayload = Body(..., description="Update code as JSON"),
+    update_code: GroovyCodePayload = Depends(validated_connector_code),
     db: AsyncSession = DbSession,
 ):
     """
@@ -304,7 +305,7 @@ async def get_delete_status(
 async def override_delete(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    delete_code: GroovyCodePayload = Body(..., description="Delete code as JSON"),
+    delete_code: GroovyCodePayload = Depends(validated_connector_code),
     db: AsyncSession = DbSession,
 ):
     """

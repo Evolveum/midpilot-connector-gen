@@ -74,7 +74,15 @@ class ConnectorCodeOutput(TypedDict):
     code: str
 
 
-class GroovyCodePayload(BaseModel):
+class ConnectorCodeInput(BaseModel):
+    """User-supplied connector code: declarative YAML or Groovy."""
+
+    # Validate only the body shape here; parse the code in a worker thread.
+
+    code: str = Field(..., description="Connector code: declarative YAML or Groovy.")
+
+
+class GroovyCodePayload(ConnectorCodeInput):
     """
     A generated or manually-edited connector artifact: declarative YAML or Groovy.
 
@@ -82,8 +90,6 @@ class GroovyCodePayload(BaseModel):
     would ripple into every override/fix/repair endpoint response for no functional gain,
     since the wire field stays ``code`` in both cases.
     """
-
-    code: str = Field(..., description="Connector code: declarative YAML or Groovy.")
 
     @field_validator("code")
     @classmethod

@@ -7,7 +7,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Path, Query
+from fastapi import APIRouter, Body, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_multi_doc_status_response
@@ -16,6 +16,7 @@ from src.database.repositories.session_repository import SessionRepository
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.codegen.orchestration import schedule_authorization_job
 from src.modules.codegen.persistence import store_authorization_override
+from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import AuthorizationCodegenInput, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
@@ -91,7 +92,7 @@ async def get_authorization_status(
 )
 async def override_authorization(
     session_id: UUID = Path(..., description="Session ID"),
-    authorization_code: GroovyCodePayload = Body(..., description="Authorization code as JSON"),
+    authorization_code: GroovyCodePayload = Depends(validated_connector_code),
     db: AsyncSession = DbSession,
 ):
     """

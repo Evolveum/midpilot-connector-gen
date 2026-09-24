@@ -7,7 +7,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_stage_status_response
@@ -17,6 +17,7 @@ from src.documents.normalize import normalize_object_class_name
 from src.jobs.schema import JobCreateResponse, JobStatusStageResponse
 from src.modules.codegen.orchestration import schedule_native_schema_job
 from src.modules.codegen.persistence import store_object_class_output_override
+from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import CodegenRepairContext, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
@@ -99,7 +100,7 @@ async def get_native_schema_status(
 async def override_native_schema(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    native_schema: GroovyCodePayload = Body(..., description="Native schema code as JSON"),
+    native_schema: GroovyCodePayload = Depends(validated_connector_code),
     db: AsyncSession = DbSession,
 ):
     """
