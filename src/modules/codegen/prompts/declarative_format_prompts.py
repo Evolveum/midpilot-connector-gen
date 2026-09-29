@@ -49,15 +49,11 @@ DECLARATIVE YAML VS GROOVY:
   that documented declarative YAML cannot express; when <declarative_docs> shows a documented
   scripting hook, write that one part as the hook's embedded Groovy inside otherwise-declarative
   YAML rather than abandoning YAML for a full Groovy script.
-- A documented scripting hook's value is one Groovy expression or block scoped to a single
-  endpoint, request, or field - it cannot declare a helper function or loop over another object
-  class's results. If satisfying the requirement needs iterating over multiple objects,
-  coordinating more than one HTTP call or object-class lookup, or a locally-defined helper
-  function, no single hook value (for example `objectExtractor`, `pagingSupport`, or a
-  `supportedFilters[].request`) can express it. Use the operation's documented full
-  custom-implementation block where the reference documents one, or a complete Groovy script for
-  the whole operation otherwise - even though this means leaving pure declarative YAML. This
-  applies to every operation (search, create, update, delete), not only search.
+- Hook capabilities depend on the documented context. Extraction, paging and filter-request hooks
+  must stay focused on their endpoint task; do not put cross-object searches into them. Use the
+  documented search.custom.implementation block for object-class search composition, and authentication
+  implementation hooks for documented token exchanges. Both can remain embedded Groovy inside YAML.
+  A full Groovy artifact does not grant access to an otherwise undocumented runtime API.
 - If the framework already provides everything needed by default, return the smallest YAML that
   is still a complete, valid document for this operation - do not add a handler, endpoint, or
   script merely to have one. An explicitly empty block (e.g. `{{}}`) is a normal, complete result

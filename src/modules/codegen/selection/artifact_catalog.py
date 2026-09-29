@@ -28,7 +28,7 @@ from uuid import UUID
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.modules.codegen.enums import ArtifactKind, SearchIntent, build_search_operation_key
-from src.modules.codegen.selection.protocol_selectors import resolve_operation_docs_paths
+from src.modules.codegen.selection.protocol_selectors import resolve_operation_docs_sections
 from src.modules.digester.errors import ObjectClassesNotFoundError, ObjectClassNotFoundError
 from src.shared.enums import ApiType
 
@@ -179,20 +179,19 @@ async def load_connector_artifacts(
     return artifacts
 
 
-def resolve_artifact_docs_paths(
+def resolve_artifact_docs_sections(
     artifacts: Sequence[ConnectorArtifactSlot],
     protocol: ApiType,
-) -> List[str]:
+) -> dict[str, tuple[str, ...]]:
     """
     Collect the bundled DSL references for a set of artifacts, deduplicated.
 
     An artifact with no bundled reference is logged and skipped, never silently
     dropped: ``authorization`` on ``sql`` has no prompt family at all.
     """
-    paths: List[str] = []
-    seen: set[str] = set()
+    references: dict[str, tuple[str, ...]] = {}
     for artifact in artifacts:
-        docs_paths = resolve_operation_docs_paths(artifact.kind, protocol, intent=artifact.intent)
+        docs_paths = resolve_operation_docs_sections(artifact.kind, protocol, intent=artifact.intent)
         if not docs_paths:
             logger.info(
                 "[Codegen:Artifacts] No bundled DSL reference for %s on protocol %s",
@@ -200,12 +199,19 @@ def resolve_artifact_docs_paths(
                 protocol.value,
             )
             continue
-        for docs_path in docs_paths:
-            if docs_path in seen:
-                continue
-            seen.add(docs_path)
-            paths.append(docs_path)
-    return paths
+        for docs_path, sections in docs_paths.items():
+            if docs_path not in references:
+                references[docs_path] = sections
+            elif not sections or not references[docs_path]:
+                references[docs_path] = ()  # A full-document requirement takes precedence.
+            else:
+                references[docs_path] = tuple(dict.fromkeys((*references[docs_path], *sections)))
+    return references
+
+
+def resolve_artifact_docs_paths(artifacts: Sequence[ConnectorArtifactSlot], protocol: ApiType) -> List[str]:
+    """List each selected reference once, preserving first-use order."""
+    return list(resolve_artifact_docs_sections(artifacts, protocol))
 
 
 def _extract_object_class_names(payload: Any) -> List[str]:

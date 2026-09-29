@@ -43,7 +43,13 @@ ATTRIBUTE NAMING:
 
 CONNID MAPPING:
 - The same artifact must also map the object class's ConnID attributes. Map UID, and map NAME when a
-  user-friendly identifier exists. These are the only two built-ins the framework supports today.
+  user-friendly identifier exists. Only UID and NAME are supported by the object-class alias helper.
+  Other built-ins may use the documented per-attribute connId.name mapping when target semantics match.
+  Honor their required value types: boolean for enable/lock flags, epoch-millisecond long for built-in
+  activation dates, and GuardedString for passwords. If the chosen format cannot express the required
+  type or conversion, use a documented Groovy mapping or leave a TODO; never substitute a plain string.
+  UID exclusion from the final ConnId SPI schema does not mean omitting the native UID mapping: the
+  connector framework owns that conversion. Do not emit low-level SPI implementation code.
 - Commented-out lines in the examples illustrate unsupported features. Never emit them, commented or otherwise.
 - If no attribute is a credible unique identifier, emit no ConnID mapping rather than guessing one.
 

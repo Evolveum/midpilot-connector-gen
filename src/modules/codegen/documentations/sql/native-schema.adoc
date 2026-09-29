@@ -1,7 +1,8 @@
 = SQL schema customization
 
-After discovery, you can customize the schema with Groovy schema scripts (or declarative YAML — see xref:/connectors/sql-framework/develop/declarative-yaml/[]).
+After discovery, you can customize the schema with Groovy schema scripts (or declarative YAML — see xref:declarative-yaml.adoc[]).
 This is the reference for the schema script DSL.
+
 
 
 == The objectClass block
@@ -31,34 +32,29 @@ objectClasses:
       schema: hr
 ----
 
-[cols="1,2", options="header"]
-|===
-|Keyword |Description
+`sql { ... }`::
+  SQL mapping block: `table(String)` sets the SQL table name, `schema(String)` sets the SQL schema qualifier. Default table name is the object class name.
 
-|`sql { ... }`
-|SQL mapping block: `table(String)` sets the SQL table name, `schema(String)` sets the SQL schema qualifier. Default table name is the object class name.
+`table("...")`::
+  Convenience shortcut for `sql { table "..." }`.
 
-|`table("...")`
-|Convenience shortcut for `sql { table "..." }`.
+`schema("...")` / `locator("...")` / `namespace("...")`::
+  Convenience shortcuts to set the SQL schema / table name.
 
-|`schema("...")` / `locator("...")` / `namespace("...")`
-|Convenience shortcuts to set the SQL schema / table name.
+`onlyExplicitlyListed(true)`::
+  When `true`, only columns with an explicit `attribute {}` definition become ConnId attributes; all other discovered columns of the table are excluded. Default is `false` (all discovered columns are included).
 
-|`onlyExplicitlyListed(true)`
-|When `true`, only columns with an explicit `attribute {}` definition become ConnId attributes; all other discovered columns of the table are excluded. Default is `false` (all discovered columns are included).
+`readOnly(true)`::
+  Marks the object class read-only (`creatable/updatable/removable = false`) and disables write handlers. Used for views and tables you want to expose without write operations.
 
-|`readOnly(true)`
-|Marks the object class read-only (`creatable/updatable/removable = false`) and disables write handlers. Used for views and tables you want to expose without write operations.
+`description(String)`::
+  Description of the object class (shown in schema tools).
 
-|`description(String)`
-|Description of the object class (shown in schema tools).
+`embedded(true)`::
+  Marks the object class as embedded (its data lives inside the parent object; no standalone operations).
 
-|`embedded(true)`
-|Marks the object class as embedded (its data lives inside the parent object; no standalone operations).
-
-|`connIdAttribute(connIdName, attributeName)`
-|Maps a built-in ConnId attribute to a named attribute of this object class. Only `UID` and `NAME` are supported; equivalent to the attribute-level `connId { name UID }` mapping.
-|===
+`connIdAttribute(connIdName, attributeName)`::
+  Maps a built-in ConnId attribute to a named attribute of this object class. Only `UID` and `NAME` are supported; equivalent to the attribute-level `connId { name UID }` mapping.
 
 === Reference attributes
 
@@ -76,20 +72,14 @@ objectClass("User") {
 }
 ----
 
-[cols="1,2", options="header"]
-|===
-|Method |Description
+`objectClass(String)`::
+  The referenced object class name.
 
-|`objectClass(String)`
-|The referenced object class name.
+`subtype(String)`::
+  The reference subtype (grouping of related references).
 
-|`subtype(String)`
-|The reference subtype (grouping of related references).
-
-|`role(String)` / `role(SUBJECT)` / `role(OBJECT)`
-|The role of this object class in the reference (`subject` or `object`).
-
-|===
+`role(String)` / `role(SUBJECT)` / `role(OBJECT)`::
+  The role of this object class in the reference (`subject` or `object`).
 
 All regular attribute keys (below) are available inside a `reference` block as well.
 
@@ -143,35 +133,29 @@ objectClass("FlatView") {
 }
 ----
 
-[cols="1,2", options="header"]
-|===
-|Method |Description
+`table(String)`::
+  The table/view to join (required); must resolve to exactly one detected table/view.
 
-|`table(String)`
-|The table/view to join (required); must resolve to exactly one detected table/view.
+`schema(String)`::
+  The SQL schema qualifier of the joined table (defaults to the root table's schema). Cross-schema joins require an explicit `on`.
 
-|`schema(String)`
-|The SQL schema qualifier of the joined table (defaults to the root table's schema). Cross-schema joins require an explicit `on`.
+`prefixAttributes(String)`::
+  Prefix for the exposed attribute names: joined column `phone_number` becomes `work_phone_number` (default: no prefix).
 
-|`prefixAttributes(String)`
-|Prefix for the exposed attribute names: joined column `phone_number` becomes `work_phone_number` (default: no prefix).
+`skipAttributes(String...)`::
+  Joined columns that are not exposed as attributes (validated against the detected columns).
 
-|`skipAttributes(String...)`
-|Joined columns that are not exposed as attributes (validated against the detected columns).
+`on { ... }`::
+  Explicit join condition: `left().column("a").eq(right().column("b"))`; multiple equalities are combined with AND and must compare a left (root) and a right (joined) column.
 
-|`on { ... }`
-|Explicit join condition: `left().column("a").eq(right().column("b"))`; multiple equalities are combined with AND and must compare a left (root) and a right (joined) column.
-
-|`where { ... }`
-|Restriction on the joined table (the same `eq`/`ne` calls as the search xref:search/[`where` block]). It is appended to the ON clause, so root rows without a matching joined row are kept (with `null` joined values).
-
-|===
+`where { ... }`::
+  Restriction on the joined table (the same `eq`/`ne` calls as the search xref:search.adoc[`where` block]). It is appended to the ON clause, so root rows without a matching joined row are kept (with `null` joined values).
 
 Behavior:
 
 * All non-skipped columns of the joined table are exposed automatically as `prefix + column` attributes, with types inferred from the column metadata. Because the join is a LEFT JOIN, joined attributes are never `required` — a root row without a matching joined row reads them as `null`.
 * Each join must match at most one row per root UID. The framework validates this before delivering any result; a multi-row match fails the search with `ConnectorException` ("Joined object <name> has multiple matching rows for one UID; joins must be single-valued").
-* Filtering on joined attributes is part of the built-in filter translation (see xref:search/[]).
+* Filtering on joined attributes is part of the built-in filter translation (see xref:search.adoc[]).
 * Paging is stable: when joins are present, results are ordered by the root UID.
 * The root table must be detected and must have a mapped UID; duplicate or reserved joined attribute names (for example `UID`/`NAME` or a collision with a root column) are rejected when the schema is built.
 * A joined object may be rooted at a table that would otherwise be detected as a child or junction table — the explicit object class wins.
@@ -182,34 +166,29 @@ Each `attribute(name)` call defines (or refines) an attribute. The attribute nam
 
 The following ConnId-side flags can be set directly on the attribute (they override the built-in mapping rules):
 
-[cols="1,2", options="header"]
-|===
-|Method |Description
+`readable(Boolean)`::
+  Whether the attribute is readable (returned on read/search).
 
-|`readable(Boolean)`
-|Whether the attribute is readable (returned on read/search).
+`required(Boolean)`::
+  Whether the attribute is required (from column nullability by default).
 
-|`required(Boolean)`
-|Whether the attribute is required (from column nullability by default).
+`creatable(Boolean)`::
+  Whether the attribute can appear in create requests (auto-increment/PK columns default to `false`).
 
-|`creatable(Boolean)`
-|Whether the attribute can appear in create requests (auto-increment/PK columns default to `false`).
+`updatable(Boolean)` / `updateable(Boolean)`::
+  Whether the attribute can appear in update deltas (the `updateable` spelling is accepted as an alias).
 
-|`updatable(Boolean)` / `updateable(Boolean)`
-|Whether the attribute can appear in update deltas (the `updateable` spelling is accepted as an alias).
+`multiValued(Boolean)`::
+  Whether the attribute holds multiple values.
 
-|`multiValued(Boolean)`
-|Whether the attribute holds multiple values.
+`emulated(Boolean)`::
+  Marks the attribute as emulated (its value is computed/derived, e.g. `__NAME__` derived from `__UID__`).
 
-|`emulated(Boolean)`
-|Marks the attribute as emulated (its value is computed/derived, e.g. `__NAME__` derived from `__UID__`).
+`description(String)`::
+  Description of the attribute (shown in schema tools).
 
-|`description(String)`
-|Description of the attribute (shown in schema tools).
-
-|`complexType(String)`
-|Declares the attribute as a complex (embedded) attribute of the given type; complex attributes imply embedded/reference semantics.
-|===
+`complexType(String)`::
+  Declares the attribute as a complex (embedded) attribute of the given type; complex attributes imply embedded/reference semantics.
 
 [source,groovy]
 ----
@@ -236,52 +215,42 @@ objectClass("User") {
 
 Refines the ConnId side of the attribute:
 
-[cols="1,2", options="header"]
-|===
-|Method |Description
+`name(String)`::
+  ConnId attribute name. Supports system names: `+++__UID__+++` / `Uid`, `+++__NAME__+++` / `Name`. Any other name creates a regular (non-system) ConnId attribute.
 
-|`name(String)`
-|ConnId attribute name. Supports system names: `+++__UID__+++` / `Uid`, `+++__NAME__+++` / `Name`. Any other name creates a regular (non-system) ConnId attribute.
+`type(Class)`::
+  Force a ConnId Java type. Auto-detected from JDBC metadata when not set.
 
-|`type(Class)`
-|Force a ConnId Java type. Auto-detected from JDBC metadata when not set.
+`returnedByDefault(Boolean)`::
+  Whether the attribute is included in results by default. Default is `true`.
 
-|`returnedByDefault(Boolean)`
-|Whether the attribute is included in results by default. Default is `true`.
-
-|`required(Boolean)` / `multiValued(Boolean)` / `description(String)`
-|The corresponding ConnId attribute flags (also settable directly on the attribute block).
-|===
+`required(Boolean)` / `multiValued(Boolean)` / `description(String)`::
+  The corresponding ConnId attribute flags (also settable directly on the attribute block).
 
 === sql block
 
 Refines the SQL side of the attribute:
 
-[cols="1,2", options="header"]
-|===
-|Method |Description
+`name(String)` / `column(String)`::
+  SQL column name. Default is the attribute name. Use to map an attribute to a differently named column.
 
-|`name(String)` / `column(String)`
-|SQL column name. Default is the attribute name. Use to map an attribute to a differently named column.
+`type(...)`::
+  SQL type specification (see below). Mostly relevant for targeted discovery and for value-mapping overrides.
 
-|`type(...)`
-|SQL type specification (see below). Mostly relevant for targeted discovery and for value-mapping overrides.
+`primaryKey`::
+  Mark the column as primary key.
 
-|`primaryKey`
-|Mark the column as primary key.
+`autoIncrement`::
+  Mark the column as auto-generated by the database — an auto-increment / identity column, i.e., a column whose value the database assigns automatically when a row is inserted.
 
-|`autoIncrement`
-|Mark the column as auto-generated by the database — an auto-increment / identity column, i.e., a column whose value the database assigns automatically when a row is inserted.
+`notNull` / `nullable`::
+  Column nullability (mirrors the `required` flag).
 
-|`notNull` / `nullable`
-|Column nullability (mirrors the `required` flag).
+`unique`::
+  Mark the column as unique.
 
-|`unique`
-|Mark the column as unique.
-
-|`additionalColumns() { column("other_col") }`
-|SPI hook to attach additional physical columns (used for composite UIDs declared in scripts).
-|===
+`additionalColumns() { column("other_col") }`::
+  SPI hook to attach additional physical columns (used for composite UIDs declared in scripts).
 
 === SQL type specification
 
@@ -404,4 +373,4 @@ objectClasses:
           name: __NAME__
 ----
 
-See xref:schema-discovery/[] for what discovery detects, and xref:relationships/[] for multitable attributes.
+See xref:schema-discovery.adoc[] for what discovery detects, and xref:relationships.adoc[] for multitable attributes.

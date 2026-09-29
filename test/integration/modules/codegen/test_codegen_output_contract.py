@@ -103,7 +103,19 @@ def test_generation_status_keeps_envelope_and_code_format(client, path, session_
 
 
 @pytest.mark.parametrize(("path", "session_key"), OPERATIONS)
-@pytest.mark.parametrize(("code", "code_format"), [("{}", "YAML"), ('objectClass("user") {}', "GROOVY")])
+@pytest.mark.parametrize(
+    ("code", "code_format"),
+    [
+        ("{}", "YAML"),
+        ('objectClass("user") {}', "GROOVY"),
+        (
+            'objectClasses: {user: {search: {endpoints: [{path: /users, objectExtractor: {value: "$.data"}, '
+            "pagingSupport: {parameters: {offset: {in: query}}}}]}}}",
+            "YAML",
+        ),
+        ('objectClasses: {user: {scim: {extensions: {enterprise: {uri: "urn:example", flatten: photos}}}}}', "YAML"),
+    ],
+)
 def test_code_only_override_persists_derived_format(client, path, session_key, code, code_format):
     session_id = uuid4()
     with (

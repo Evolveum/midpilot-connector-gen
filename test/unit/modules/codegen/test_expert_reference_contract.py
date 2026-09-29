@@ -117,7 +117,7 @@ def test_override_boundary_accepts_documented_attribute_paths(mapping):
 @pytest.mark.parametrize(
     "mapping,location",
     [
-        ('scim: {extensions: {enterprise: "urn:example"}}', "scim.extensions"),
+        ("scim: {extensions: {enterprise: {flatten: photos}}}", "scim.extensions"),
         ("attributes: {firstName: {json: {path: {type: UNKNOWN, value: x}}}}", "firstName.json.path"),
     ],
 )
@@ -139,3 +139,85 @@ def test_search_retains_non_get_application_methods_as_requirements():
     assert "search.custom" in docs
     assert "== Authentication" not in docs
     assert "== Schema documents" not in docs
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        'scim: {extensions: {enterprise: "urn:example"}}',
+        'scim: {flatten: name, extensions: {enterprise: {uri: "urn:example", flatten: [photos]}}}',
+        "scim: {flatten: [name, emails]}",
+        'search: {endpoints: [{path: /users, objectExtractor: {value: "$.data"}}]}',
+        "search: {endpoints: [{path: /users, objectExtractor: {type: json_pointer, value: /data}}]}",
+        "search: {endpoints: [{path: /users, method: POST, pagingSupport: {pageSize: 50, parameters: "
+        "{pageSize: {in: body, name: size}, page: {in: header}, offset: {in: query}}}}]}",
+    ],
+)
+def test_new_declarative_forms_are_literal_not_groovy(mapping):
+    from unittest.mock import patch
+
+    code = "objectClasses: {User: {" + mapping + "}}"
+    with patch("src.modules.codegen.utils.connector_code_validation.validate_groovy_code") as parser:
+        assert GroovyCodePayload(code=code).code == code
+        parser.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        "scim: {flatten: {name: true}}",
+        "scim: {flatten: [null]}",
+        'scim: {flatten: " "}',
+        'scim: {extensions: {enterprise: {uri: "urn:example", unknown: true}}}',
+        "scim: {extensions: {enterprise: null}}",
+        "search: {endpoints: [{path: /users, objectExtractor: {type: UNKNOWN, value: /data}}]}",
+        "search: {endpoints: [{path: /users, objectExtractor: {type: JSON_PATH}}]}",
+        "search: {endpoints: [{path: /users, pagingSupport: {pageSize: 0}}]}",
+        "search: {endpoints: [{path: /users, pagingSupport: {parameters: {cursor: {in: query}}}}]}",
+        "search: {endpoints: [{path: /users, pagingSupport: {parameters: {page: {in: cookie}}}}]}",
+        "search: {endpoints: [{path: /users, pagingSupport: {parameters: {page: {name: page}}}}]}",
+    ],
+)
+def test_new_declarative_forms_reject_invalid_shapes(mapping):
+    with pytest.raises(ValidationError):
+        GroovyCodePayload(code="objectClasses: {User: {" + mapping + "}}")
+
+
+@pytest.mark.parametrize("hook", ["objectExtractor", "pagingSupport"])
+def test_declarative_alternatives_do_not_bypass_script_validation(hook):
+    code = "objectClasses: {User: {search: {endpoints: [{path: /users, " + hook + ": 'invalid('}]}}}"
+    with pytest.raises(ValidationError, match=hook):
+        GroovyCodePayload(code=code)
+
+
+def test_bundled_references_have_no_unresolved_includes():
+    from pathlib import Path
+
+    for path in Path("src/modules/codegen/documentations").rglob("*.adoc"):
+        assert "include::" not in path.read_text(), path
+
+
+def test_new_schema_references_stay_scoped_to_their_protocol_and_operation():
+    from src.modules.codegen.selection.protocol_selectors import get_operation_assets
+    from src.shared.enums import ApiType
+
+    scim_docs, _ = load_operation_documentation(get_operation_assets("native_schema", ApiType.SCIM))
+    assert "Flattening extension attributes" in scim_docs
+    sql_docs, _ = load_operation_documentation(get_operation_assets("native_schema", ApiType.SQL))
+    assert "Schema Script Basics (SQL)" in sql_docs
+    assert "Flattening SCIM Attributes" not in sql_docs
+    for protocol in ApiType:
+        docs, _ = load_operation_documentation(get_operation_assets("create", protocol))
+        assert "Flattening SCIM Attributes" not in docs
+        assert "JSON Types and Formats" not in docs
+
+
+def test_authorization_includes_method_reference_and_customization_context():
+    from src.modules.codegen.selection.protocol_selectors import get_operation_assets
+    from src.shared.enums import ApiType
+
+    docs, _ = load_operation_documentation(get_operation_assets("authorization", ApiType.REST))
+    assert "oauth2ClientCredentials" in docs
+    assert "== The implementation context" in docs
+    assert "newRequest(url)" in docs
+    assert "*replaces* the built-in behavior" in docs

@@ -151,7 +151,7 @@ def _validate_embedded_scripts(value: Any, path: str = "") -> Optional[str]:
             child = getattr(value, name)
             child_path = f"{path}.{field.alias or name}".lstrip(".")
             metadata = field.json_schema_extra
-            if isinstance(metadata, dict) and metadata.get("script"):
+            if isinstance(metadata, dict) and metadata.get("script") and isinstance(child, str):
                 if metadata.get("empty_body") and child == "EMPTY":
                     continue
                 # Hooks are closure bodies; spec is a single build-time expression.

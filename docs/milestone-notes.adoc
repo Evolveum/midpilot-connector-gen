@@ -17,6 +17,42 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-28 Refresh connector-generation framework references
+
+Author: Alexander Brecko
+
+Description: Updated expert documentation and prompts can generate newer REST
+and SCIM YAML syntax that older connector frameworks cannot load.
+Existing scripts and midPoint API responses remain unchanged.
+
+Required Upgrade Steps
+
+. Keep the previous backend version, connector bundles, and resource scripts
+for rollback. No database recreation, database backup, or configuration change
+is required.
+. Update the connector bundles used by midPoint to the source revisions listed
+in xref:codegen-expert-references.adoc#_source_revisions[Source revisions],
+or verified compatible builds.
+. Restart the backend with
+`docker compose up -d --build midpilot-connector-gen`.
+For a host installation, stop the running backend and start it with
+`uv run python server.py`.
+. Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen -q`.
+Before replacing working scripts, verify REST search pagination and SCIM schema
+discovery with the new scripts on the target connector.
+
+Rollback Procedure (If Upgrade Fails)
+
+* Restore the previous backend version, connector bundles, and resource scripts.
+* Restart using the applicable command above and verify search and schema discovery.
+* No database restore is needed because this change does not modify stored data.
+
+Notes & References
+
+* Related PR: Not created.
+* Docs: xref:codegen-expert-references.adoc[Source revisions and documentation mapping].
+* Affected configs: Generated connector YAML only; no backend settings change.
+
 === 2026-09-22 Delegate API keys to Gravitee and isolate sessions by fingerprint
 
 Author: Alexander Brecko

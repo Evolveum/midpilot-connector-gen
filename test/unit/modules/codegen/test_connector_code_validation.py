@@ -394,7 +394,7 @@ def test_configuration_strings_are_never_parsed_as_groovy():
     assert validate_connector_code(code) is None
 
 
-def test_bundled_declarative_examples_distinguish_supported_documents_and_preview():
+def test_bundled_declarative_examples_are_valid_artifacts():
     import re
     from pathlib import Path
 
@@ -411,11 +411,5 @@ def test_bundled_declarative_examples_distinguish_supported_documents_and_previe
             if "attributes" in document:
                 # Explicitly shown as an attribute fragment in the reference.
                 assert validate_yaml_connector_code(yaml.safe_dump({"objectClasses": {"User": document}})) is None
-            elif "extensions:" in block:
-                assert "not bindable in YAML yet" in path.read_text()
-                assert "scim.extensions" in validate_yaml_connector_code(block)
-            elif "# Custom search logic" in block:
-                # The expert example is illustrative: # inside a scalar is not a Groovy comment.
-                assert validate_yaml_connector_code(block) is not None
             else:
                 assert ensure_valid_connector_code(block) == block.strip(), path

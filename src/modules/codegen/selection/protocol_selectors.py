@@ -85,8 +85,12 @@ def _assets(operation: str, protocol: ApiType, system: str, user: str) -> Operat
         }[protocol]
     elif operation == "create" and protocol is ApiType.SCIM:
         additional = ("rest/create.adoc",)
-    elif operation == "native_schema" and protocol is ApiType.SCIM:
-        additional = ("scim/complex-attributes.adoc",)
+    elif operation == "native_schema":
+        additional = {
+            ApiType.REST: ("schema-script.adoc", "json-types.adoc"),
+            ApiType.SCIM: ("schema-script.adoc", "scim/complex-attributes.adoc", "scim/attribute-flattening.adoc"),
+            ApiType.SQL: ("sql/schema-script.adoc",),
+        }[protocol]
     elif sql and operation in {"create", "update", "delete"}:
         additional = ("sql/related-table-writes.adoc",)
 
@@ -196,12 +200,12 @@ def get_search_operation_assets(protocol: ApiType, intent: SearchIntent | str) -
     return SEARCH_PROMPT_MAP[protocol][normalized_intent]
 
 
-def resolve_operation_docs_paths(
+def resolve_operation_docs_sections(
     kind: ArtifactKind,
     protocol: ApiType,
     *,
     intent: SearchIntent | None = None,
-) -> tuple[str, ...]:
+) -> dict[str, tuple[str, ...]]:
     """
     Resolve the bundled DSL references for one generated artifact, primary first.
 
@@ -211,14 +215,14 @@ def resolve_operation_docs_paths(
     contract: the fix prompt tells the model that the first document is the syntax authority
     and the declarative reference is what makes YAML a valid alternative to it.
 
-    Returns an empty tuple when the combination has no bundled reference rather
+    Returns an empty mapping when the combination has no bundled reference rather
     than raising, so an object-class caller can carry on with the documents it has.
     """
     if kind is ArtifactKind.CONNID:
         # No slot produces this kind any more, but a connector-fix job scheduled
         # before the ConnID mapping moved into the native schema still rehydrates
         # one from its persisted input, and it needs its reference.
-        return (CONNID_ATTRIBUTES_DOCS_PATH,)
+        return {CONNID_ATTRIBUTES_DOCS_PATH: ()}
 
     try:
         if kind is ArtifactKind.SEARCH:
@@ -228,14 +232,29 @@ def resolve_operation_docs_paths(
         else:
             operation_name = _ARTIFACT_OPERATION_NAMES.get(kind)
             if operation_name is None:
-                return ()
+                return {}
             assets = get_operation_assets(operation_name, protocol)
     except ValueError:
-        return ()
+        return {}
 
-    if assets.connid_docs_path is None:
-        return (assets.docs_path, assets.declarative_docs_path, *assets.additional_docs_paths)
-    return (assets.docs_path, assets.declarative_docs_path, assets.connid_docs_path, *assets.additional_docs_paths)
+    references = {
+        assets.docs_path: assets.docs_sections,
+        assets.declarative_docs_path: assets.declarative_sections,
+    }
+    if assets.connid_docs_path is not None:
+        references[assets.connid_docs_path] = ()
+    references.update(dict.fromkeys(assets.additional_docs_paths, ()))
+    return references
+
+
+def resolve_operation_docs_paths(
+    kind: ArtifactKind,
+    protocol: ApiType,
+    *,
+    intent: SearchIntent | None = None,
+) -> tuple[str, ...]:
+    """Return reference paths in the same precedence order as their selected sections."""
+    return tuple(resolve_operation_docs_sections(kind, protocol, intent=intent))
 
 
 _ARTIFACT_OPERATION_NAMES: Mapping[ArtifactKind, str] = {

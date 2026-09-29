@@ -64,4 +64,4 @@ objectClasses:
           openApiFormat: int64
 ----
 
-See xref:../declarative-yaml/[declarative YAML] for the full reference.
+See xref:../declarative-yaml.adoc[declarative YAML] for the full reference.
