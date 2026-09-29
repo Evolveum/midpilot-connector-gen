@@ -77,6 +77,37 @@ async def test_generate_groovy_returns_empty_when_validation_fails() -> None:
     assert mock_append_job_error.await_count == 2
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair", [False, True])
+async def test_native_schema_preserves_reference_metadata_without_job_errors(repair):
+    code = (
+        "objectClasses: {group: {references: {members: "
+        "{objectClass: User, role: object, description: Members, multiValued: true}}}}"
+    )
+    repair_context = (
+        CodegenRepairContext(current_script="objectClasses: {group: {}}", midpoint_errors=["Missing role"])
+        if repair
+        else None
+    )
+    with (
+        patch("src.modules.codegen.core.generate_groovy.get_default_llm"),
+        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=_DummyChain([code])),
+        patch("src.modules.codegen.core.generate_groovy.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.generate_groovy.append_job_error", new_callable=AsyncMock) as errors,
+    ):
+        result = await generate_groovy(
+            records=[{"name": "members"}],
+            object_class="group",
+            system_prompt="system",
+            user_prompt="user",
+            job_id=uuid4(),
+            logger_prefix="NativeSchema",
+            repair_context=repair_context,
+        )
+    assert result == code
+    errors.assert_not_awaited()
+
+
 @dataclass
 class _DummyGenerator(BaseGroovyGenerator):
     def __init__(self):

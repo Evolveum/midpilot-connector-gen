@@ -168,7 +168,6 @@ def test_new_declarative_forms_are_literal_not_groovy(mapping):
         "scim: {flatten: {name: true}}",
         "scim: {flatten: [null]}",
         'scim: {flatten: " "}',
-        'scim: {extensions: {enterprise: {uri: "urn:example", unknown: true}}}',
         "scim: {extensions: {enterprise: null}}",
         "search: {endpoints: [{path: /users, objectExtractor: {type: UNKNOWN, value: /data}}]}",
         "search: {endpoints: [{path: /users, objectExtractor: {type: JSON_PATH}}]}",

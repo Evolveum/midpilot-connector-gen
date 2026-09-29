@@ -5,6 +5,8 @@
 
 Absent keys preserve framework defaults; explicit null is only valid for bare
 attributes and literal conditioned values. Script metadata controls syntax checking.
+Nested unknown options are retained for advisory logging: this local model is
+not an exhaustive contract for every connector runtime version.
 """
 
 from typing import Annotated, Any, ClassVar, Literal
@@ -13,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 
 
 class _Configuration(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(strict=True, extra="allow")
     nullable_fields: ClassVar[frozenset[str]] = frozenset()
 
     @field_validator("*", mode="before")
@@ -277,6 +279,9 @@ class _Authentication(_Configuration):
 
 
 class ConnectorYamlDocument(_Configuration):
+    # Keep the document envelope strict to reject wrong artifact shapes.
+    model_config = ConfigDict(strict=True, extra="forbid")
+
     objectClasses: dict[str, _ObjectClass] | None = Field(default=None)
     relationships: dict[str, _Relationship] | None = Field(default=None)
     authentication: _Authentication | None = Field(default=None)
