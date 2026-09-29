@@ -212,5 +212,9 @@ def test_fix_docs_include_all_three_references_for_a_native_schema_artifact(
         schema_docs_path,
         declarative_docs_path,
         "connid-attributes.adoc",
-        *(["scim/complex-attributes.adoc"] if protocol is ApiType.SCIM else []),
+        *{
+            ApiType.REST: ["schema-script.adoc", "json-types.adoc"],
+            ApiType.SCIM: ["schema-script.adoc", "scim/complex-attributes.adoc", "scim/attribute-flattening.adoc"],
+            ApiType.SQL: ["sql/schema-script.adoc"],
+        }[protocol],
     ]

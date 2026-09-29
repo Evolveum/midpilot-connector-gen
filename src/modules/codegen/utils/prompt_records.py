@@ -61,6 +61,10 @@ def build_attribute_context_records(payload: AttributesPayload) -> List[Dict[str
     return records
 
 
+def _flag_or_default(value: Any, default: bool) -> bool:
+    return default if value is None else bool(value)
+
+
 def _build_attribute_mapping_records(
     payload: AttributesPayload,
     *,
@@ -75,12 +79,12 @@ def _build_attribute_mapping_records(
             "jsonType": data.get("type") or "",
             "openApiFormat": data.get("format") or "",
             "description": data.get("description") or "",
-            "mandatory": bool(data.get("mandatory", False)),
-            "updateable": bool(data.get("updatable", data.get("updateable", False))),
-            "creatable": bool(data.get("creatable", False)),
-            "readable": bool(data.get("readable", True)),
-            "multiValued": bool(data.get("multivalue", False)),
-            "returnedByDefault": bool(data.get("returnedByDefault", True)),
+            "mandatory": _flag_or_default(data.get("mandatory"), False),
+            "updateable": _flag_or_default(data.get("updatable", data.get("updateable")), True),
+            "creatable": _flag_or_default(data.get("creatable"), True),
+            "readable": _flag_or_default(data.get("readable"), True),
+            "multiValued": _flag_or_default(data.get("multivalue"), False),
+            "returnedByDefault": _flag_or_default(data.get("returnedByDefault"), True),
         }
         for optional_key in optional_fields:
             if optional_key in data:

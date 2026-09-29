@@ -132,16 +132,57 @@ def test_validate_yaml_connector_code_rejects_unknown_top_level_key() -> None:
     assert "objectClass" in error
 
 
-def test_validate_yaml_connector_code_rejects_unknown_object_class_key() -> None:
-    error = validate_yaml_connector_code("objectClasses:\n  Person:\n    bogusKey: true\n")
-    assert error is not None
-    assert "bogusKey" in error
+@pytest.mark.parametrize(
+    ("code", "path"),
+    [
+        ("objectClasses: {Person: {bogusKey: true}}", "objectClasses.Person.bogusKey"),
+        ("authentication: {bogus: {basic: {}}}", "authentication.bogus"),
+        ("objectClasses: {User: {attributes: {id: {connId: {typo: x}}}}}", "attributes.id.connId.typo"),
+        ("objectClasses: {User: {relationships: {}}}", "objectClasses.User.relationships"),
+        ('authentication: {rest: {bearer: {validateToken: "true"}}}', "bearer.validateToken"),
+        (
+            'objectClasses: {User: {scim: {extensions: {enterprise: {uri: "urn:example", unknown: true}}}}}',
+            "scim.extensions.enterprise.unknown",
+        ),
+    ],
+)
+def test_unknown_nested_options_are_preserved_with_warning(code, path, caplog):
+    assert ensure_valid_connector_code(code) == code
+    assert "[Codegen:Validation] Unrecognized YAML option" in caplog.text
+    assert path in caplog.text
 
 
-def test_validate_yaml_connector_code_rejects_unknown_authentication_key() -> None:
-    error = validate_yaml_connector_code("authentication:\n  bogus:\n    basic: {}\n")
+def test_reference_metadata_is_preserved_without_logging_values(caplog):
+    code = (
+        "# Keep the user's formatting and metadata\n"
+        "objectClasses:\n  group:\n    references:\n      members:\n"
+        "        objectClass: User\n        role: object\n"
+        "        description: private-description-value\n        multiValued: true"
+    )
+    assert ensure_valid_connector_code(code) == code
+    assert "objectClasses.group.references.members.description" in caplog.text
+    assert "objectClasses.group.references.members.multiValued" in caplog.text
+    assert "private-description-value" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("code", "path"),
+    [
+        (
+            "objectClasses: {group: {references: {members: {description: x, multiValued: true, role: []}}}}",
+            "references.members.role",
+        ),
+        (
+            "objectClasses: {group: {references: {members: {description: x}}, "
+            "search: {custom: {implementation: 'return ('}}}}",
+            "search.custom.implementation",
+        ),
+    ],
+)
+def test_unknown_options_do_not_bypass_known_field_or_script_validation(code, path):
+    error = validate_connector_code(code)
     assert error is not None
-    assert "bogus" in error
+    assert path in error
 
 
 def test_validate_yaml_connector_code_allows_arbitrary_object_class_and_attribute_names() -> None:
@@ -249,21 +290,18 @@ def test_ensure_valid_connector_code_returns_normalized_code_for_valid_groovy() 
         ("objectClasses: {User: {attributes: {id: 3}}}", "objectClasses.User.attributes.id"),
         ('objectClasses: {User: {attributes: {id: {required: "false"}}}}', "required"),
         ("objectClasses: {User: {attributes: {id: {scim: {path: 3}}}}}", "scim.path"),
-        ("objectClasses: {User: {attributes: {id: {connId: {typo: x}}}}}", "connId.typo"),
         ('objectClasses: {User: {create: {enabled: "false"}}}', "create.enabled"),
         ("objectClasses: {User: {search: {endpoints: {path: /users}}}}", "search.endpoints"),
         ("objectClasses: {User: {search: {endpoints: [3]}}}", "search.endpoints.0"),
         ("objectClasses: {User: {search: {endpoints: [{path: false}]}}}", "path"),
         ("objectClasses: {User: {references: {group: null}}}", "references.group"),
-        ("objectClasses: {User: {relationships: {}}}", "objectClasses.User.relationships"),
         ("relationships: {member: {subject: {class: User, attribute: member}}}", "attribute"),
         ("authentication: null", "authentication"),
         ("authentication: {rest: {bearer: {implementation: 3}}}", "implementation"),
         ("authentication: {rest: {preference: bearer}}", "preference"),
-        ('authentication: {rest: {bearer: {validateToken: "true"}}}', "validateToken"),
     ],
 )
-def test_nested_configuration_rejects_wrong_types_and_keys(code, path):
+def test_nested_configuration_rejects_wrong_types_and_shapes(code, path):
     error = validate_connector_code(code)
     assert error is not None
     assert path in error
@@ -394,7 +432,7 @@ def test_configuration_strings_are_never_parsed_as_groovy():
     assert validate_connector_code(code) is None
 
 
-def test_bundled_declarative_examples_distinguish_supported_documents_and_preview():
+def test_bundled_declarative_examples_are_valid_artifacts():
     import re
     from pathlib import Path
 
@@ -411,11 +449,5 @@ def test_bundled_declarative_examples_distinguish_supported_documents_and_previe
             if "attributes" in document:
                 # Explicitly shown as an attribute fragment in the reference.
                 assert validate_yaml_connector_code(yaml.safe_dump({"objectClasses": {"User": document}})) is None
-            elif "extensions:" in block:
-                assert "not bindable in YAML yet" in path.read_text()
-                assert "scim.extensions" in validate_yaml_connector_code(block)
-            elif "# Custom search logic" in block:
-                # The expert example is illustrative: # inside a scalar is not a Groovy comment.
-                assert validate_yaml_connector_code(block) is not None
             else:
                 assert ensure_valid_connector_code(block) == block.strip(), path

@@ -1,0 +1,121 @@
+= Bundled codegen expert references
+
+The files in `src/modules/codegen/documentations/` are a reviewed snapshot of domain-expert documentation.
+They describe connector framework syntax; session uploads and scraped application documentation remain the source of target-specific facts.
+`src/modules/codegen/selection/protocol_selectors.py` selects the relevant references and declarative sections for generation and repair.
+
+== Source revisions
+
+Snapshot reviewed on 2026-09-28 from clean local checkouts:
+
+* `conndev`: `fcc168dca9959fcf8360cb5ea56110b0529c5a7c`
+* `connector-scimrest`: `b380e2626f53c039c46a1fa2329003c611bd26da`
+* `connector-sql`: `01d0fff8b1d7333162be0fc904a645a533f2bd9b`
+
+Paths below are relative to each source repository. Local paths are relative to `src/modules/codegen/documentations/`.
+
+== Mapping
+
+[cols="1,3",options="header"]
+|===
+|Local reference |Source
+|`authentication.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/authentication-script.adoc`
+|`connid-attributes.adoc`
+|`conndev/docs/src/main/asciidoc/general/connid-builtin-attributes.adoc`
+|`declarative-yaml.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/declarative-yaml.adoc`
+|`json-types.adoc`
+|`conndev/docs/src/main/asciidoc/general/json-types.adoc`
+|`rest/create.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/rest/create.adoc`
+|`rest/custom-search.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/implement-custom-search/index.adoc`
+|`rest/delete.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/rest/delete.adoc`
+|`rest/native-schema.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/rest/user-schema.adoc`
+|`rest/relationship.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/rest/relationship.adoc`
+|`rest/search-reference.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/implement-custom-search/custom-search-implementation-guide.adoc`
+|`rest/search.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/rest/search-users.adoc`
+|`rest/update.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/rest/update.adoc`
+|`schema-script.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/schema-script.adoc`
+|`scim/advanced-filters.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/scim/advanced-filters.adoc`
+|`scim/attribute-flattening.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/attribute-flattening.adoc`
+|`scim/complex-attributes.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/scim/complex-attributes.adoc`
+|`scim/create.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/scim/create.adoc`
+|`scim/delete.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/scim/delete.adoc`
+|`scim/native-schema.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/scim/schema-customization.adoc`
+|`scim/relationship-support.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/scim/relationship-support.adoc`
+|`scim/schema-discovery.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/scim/schema-discovery.adoc`
+|`scim/search.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/scim/search.adoc`
+|`scim/update.adoc`
+|`connector-scimrest/docs/src/main/asciidoc/scimrest/develop/scim/update.adoc`
+|`sql/configuration.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/configuration.adoc`
+|`sql/create.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/create.adoc`
+|`sql/custom-connector.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/custom-connector.adoc`
+|`sql/custom-search.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/custom-search.adoc`
+|`sql/declarative-yaml.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/declarative-yaml.adoc`
+|`sql/delete.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/delete.adoc`
+|`sql/native-schema.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/schema-customization.adoc`
+|`sql/related-table-writes.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/related-table-writes.adoc`
+|`sql/relationships.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/relationships.adoc`
+|`sql/schema-discovery.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/schema-discovery.adoc`
+|`sql/schema-script.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/schema-script.adoc`
+|`sql/search.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/search.adoc`
+|`sql/update.adoc`
+|`connector-sql/docs/src/main/asciidoc/sql/develop/update.adoc`
+|===
+
+`connid-attributes.adoc` also uses `connector-scimrest/docs/src/main/asciidoc/scimrest/develop/rest/attribute-to-connid-attributes.adoc` for the mapping-helper syntax.
+`authentication.adoc` expands `scimrest/develop/authentication-methods-overview.adoc` from the same repository.
+
+== Deliberate adaptations
+
+* Preserve the local REST / SCIM / SQL split. Shared SCIMREST schema and authentication pages stay at the documentation root; SQL has its own declarative reference.
+* Expand the authentication include at snapshot time and omit SQL tutorial-navigation includes. The runtime reads plain text and does not resolve AsciiDoc includes or follow cross-references.
+* Rewrite cross-references where a corresponding page is bundled under a different name. References to unbundled upstream tutorial pages retain their upstream meaning.
+* Keep the ConnId mapping introduction, built-in catalog, date-type guidance and low-code DSL section; omit generic SPI implementation and midPoint internals to control prompt size. UID omission from the final SPI schema must not suppress the native UID mapping.
+* Add schema basics only to native-schema contexts, JSON type guidance to REST schemas, and complex-attribute/flattening guidance to SCIM schemas. Operation contexts retain section selection, including exclusion of the application-specific REST search example from generation.
+* Correct the outdated SCIM YAML overview: extensions and flattening are supported by `ScimExtensionMappingHandler`, `ScimFlattenListHandler`, and `RestObjectClassDefinitionBuilder` in `connector-scimrest/common/src/main/java/com/evolveum/polygon/scimrest/`. The newer attribute-flattening guide agrees with these bindings.
+* Correct SCIM value-path grammar in `scim/complex-attributes.adoc` against `schema/ScimPathFormat.java`: zero-based indices and `eq` terms joined by `and`, not `=` or comma-separated terms.
+* Correct the REST search example to extract its documented `data` envelope and map zero-based offsets using `(page - 1) * pageSize`.
+* Use Groovy comments inside YAML scripting blocks; avoid simultaneously enabling two empty-filter search handlers in the declarative example.
+* Correct the JSON date-time example to use a string wire type, and normalize two Markdown headings in the upstream AsciiDoc schema basics.
+* Retain SQL scripted-search restrictions from `sql/develop/declarative-yaml.adoc`. The upstream `sql/yaml-builder-mapping.adoc` contains WIP examples and outdated claims (including inert SCIMREST YAML); it is not copied as a generation authority. The SQL search interfaces lack the YAML bindings needed for those scripted keys.
+
+== Updating the snapshot
+
+. Compare the mapped sources at the new source revisions, including included fragments and newly linked capability pages. Do not copy the source repositories wholesale into prompts.
+. Resolve contradictions against the matching Java builders and YAML handlers, and record each local correction here. Keep target application examples illustrative.
+. Update prompt rules and `src/modules/codegen/connector_yaml_schema.py` together when supported syntax changes; retain Groovy syntax validation for string hooks and literal validation for mapping alternatives.
+. Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen -q`, `uv run poe lint`, `uv run poe typecheck`, and `uv run poe importcheck`. The tests cover prompt rendering, bundled declarative examples, supported and rejected syntax, and the HTTP envelope.
+. Update the revisions and mapping above. Document connector runtime compatibility in `docs/milestone-notes.adoc` when new output syntax requires a newer framework.
+
+The refresh does not require recreating the development database or changing backend environment variables. Existing artifacts are not rewritten automatically.

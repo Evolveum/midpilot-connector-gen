@@ -74,8 +74,12 @@ registry and manual update instructions.
    base API URL, SQL gets `databaseName` and no URL at all.
 3. *Generation and validation* — the LLM output goes through post-processing
    and format-aware validation (`utils/connector_code_validation.py`, which
-   detects YAML vs. Groovy and uses strict nested YAML models plus the existing
-   Groovy parser for documented script fields; `utils/postprocess.py`). Worker
+   detects YAML vs. Groovy and checks known YAML fields with strict types plus the existing
+   Groovy parser for documented script fields; `utils/postprocess.py`). Unknown nested
+   YAML options are preserved and logged as `[Codegen:Validation]` warnings, not job
+   errors: the connector runtime may support options missing from the local model.
+   Their values and scripts are not validated locally. Unknown root keys, malformed
+   structures, duplicate keys and invalid known scripts still block acceptance. Worker
    validation runs in a thread without executing the embedded code. New generation
    sends an empty `<result>` until the first valid artifact is accepted; subsequent
    chunks receive that artifact. Invalid responses leave the previous result intact.

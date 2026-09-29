@@ -3,6 +3,7 @@
 The SQL framework connector configuration is provided by `SqlConnectorConfiguration`.
 
 
+
 == Configuration properties
 
 Set via the ConnId connector configuration (for example the midPoint connector form), not via the manifest.
@@ -89,7 +90,7 @@ Set via the ConnId connector configuration (for example the midPoint connector f
 |`developmentMode`
 |Boolean
 |`false`
-|Enables development support: two additional development object classes for schema introspection (see xref:schema-discovery/[]), native table definition retrieval, and script validation from the management system (see xref:custom-connector/[]). Java connector subclasses that pass `reinitializeOnEachCall = true` additionally reload scripts on each operation.
+|Enables development support: two additional development object classes for schema introspection (see xref:schema-discovery.adoc[]), native table definition retrieval, and script validation from the management system (see xref:custom-connector.adoc[]). Java connector subclasses that pass `reinitializeOnEachCall = true` additionally reload scripts on each operation.
 
 |===
 
@@ -102,42 +103,29 @@ NOTE: `getAutoDiscoverSchema()` (used by older API surfaces) reports auto-discov
 
 The JDBC driver class is resolved automatically from the `jdbcUrl` scheme:
 
-[cols="1,1,2", options="header"]
-|===
-|URL prefix |Driver class |Example
+`jdbc:postgresql:`::
+  `org.postgresql.Driver` — e.g. `jdbc:postgresql://host:5432/dbname`
 
-|`jdbc:postgresql:`
-|`org.postgresql.Driver`
-|`jdbc:postgresql://host:5432/dbname`
+`jdbc:mysql:`::
+  `com.mysql.cj.jdbc.Driver` — e.g. `jdbc:mysql://host:3306/dbname`
 
-|`jdbc:mysql:`
-|`com.mysql.cj.jdbc.Driver`
-|`jdbc:mysql://host:3306/dbname`
+`jdbc:mariadb:`::
+  `org.mariadb.jdbc.Driver` — e.g. `jdbc:mariadb://host:3306/dbname`
 
-|`jdbc:mariadb:`
-|`org.mariadb.jdbc.Driver`
-|`jdbc:mariadb://host:3306/dbname`
+`jdbc:sqlserver:`::
+  `com.microsoft.sqlserver.jdbc.SQLServerDriver` — e.g. `jdbc:sqlserver://host:1433;databaseName=dbname`
 
-|`jdbc:sqlserver:`
-|`com.microsoft.sqlserver.jdbc.SQLServerDriver`
-|`jdbc:sqlserver://host:1433;databaseName=dbname`
+`jdbc:sqlite:`::
+  `org.sqlite.JDBC` — e.g. `jdbc:sqlite:/path/to/file.db`
 
-|`jdbc:sqlite:`
-|`org.sqlite.JDBC`
-|`jdbc:sqlite:/path/to/file.db`
+`jdbc:h2:`::
+  `org.h2.Driver` — e.g. `jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1`
 
-|`jdbc:h2:`
-|`org.h2.Driver`
-|`jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1`
-
-|`jdbc:oracle:`
-|`oracle.jdbc.OracleDriver`
-|`jdbc:oracle:thin:@host:1521:service`
-
-|===
+`jdbc:oracle:`::
+  `oracle.jdbc.OracleDriver` — e.g. `jdbc:oracle:thin:@host:1521:service`
 
 When an unrecognized prefix is specified, the driver class falls back to HikariCP which derives the prefix from the JDBC URL.
-The driver JAR must be part of the connector bundle (see xref:/connectors/sql-framework/develop/custom-connector/[]).
+The driver JAR must be part of the connector bundle (see xref:custom-connector.adoc[]).
 
 == Example
 

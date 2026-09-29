@@ -5,15 +5,17 @@
 
 Absent keys preserve framework defaults; explicit null is only valid for bare
 attributes and literal conditioned values. Script metadata controls syntax checking.
+Nested unknown options are retained for advisory logging: this local model is
+not an exhaustive contract for every connector runtime version.
 """
 
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 class _Configuration(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(strict=True, extra="allow")
     nullable_fields: ClassVar[frozenset[str]] = frozenset()
 
     @field_validator("*", mode="before")
@@ -145,12 +147,34 @@ class _WriteEndpoint(_Configuration):
     supportedAttributes: list[str | _SupportedAttribute] | None = Field(default=None)
 
 
+class _ExtractorPath(_Configuration):
+    type: str = "JSON_PATH"
+    value: str
+
+    @field_validator("type")
+    @classmethod
+    def validate_path_type(cls, value: str) -> str:
+        if value.upper() not in {"JSON_PATH", "JSON_POINTER"}:
+            raise ValueError("expected JSON_PATH or JSON_POINTER")
+        return value
+
+
+class _PagingParameter(_Configuration):
+    location: Literal["query", "header", "body"] = Field(alias="in")
+    name: str | None = Field(default=None)
+
+
+class _PagingSupport(_Configuration):
+    pageSize: int | None = Field(default=None, ge=1)
+    parameters: dict[Literal["pageSize", "page", "offset"], _PagingParameter] | None = Field(default=None)
+
+
 class _SearchEndpoint(_Configuration):
     path: str
     method: str | None = Field(default=None)
     responseFormat: str | None = Field(default=None)
-    objectExtractor: str | None = _script()
-    pagingSupport: str | None = _script()
+    objectExtractor: str | _ExtractorPath | None = _script()
+    pagingSupport: str | _PagingSupport | None = _script()
     singleResult: bool | None = Field(default=None)
     emptyFilterSupported: bool | None = Field(default=None)
     supportedFilters: list[_Filter] | None = Field(default=None)
@@ -188,10 +212,20 @@ class _Search(_Configuration):
     custom: _CustomSearch | None = Field(default=None)
 
 
+_NonBlankString = Annotated[str, Field(min_length=1, pattern=r"\S")]
+
+
+class _ScimExtension(_Configuration):
+    uri: _NonBlankString
+    flatten: _NonBlankString | list[_NonBlankString] | None = Field(default=None)
+
+
 class _ScimClass(_Configuration):
     schemaUri: str | None = Field(default=None)
     name: str | None = Field(default=None)
     onlyExplicitlyListed: bool | None = Field(default=None)
+    flatten: _NonBlankString | list[_NonBlankString] | None = Field(default=None)
+    extensions: dict[_NonBlankString, _NonBlankString | _ScimExtension] | None = Field(default=None)
 
 
 class _SqlClass(_Configuration):
@@ -245,6 +279,9 @@ class _Authentication(_Configuration):
 
 
 class ConnectorYamlDocument(_Configuration):
+    # Keep the document envelope strict to reject wrong artifact shapes.
+    model_config = ConfigDict(strict=True, extra="forbid")
+
     objectClasses: dict[str, _ObjectClass] | None = Field(default=None)
     relationships: dict[str, _Relationship] | None = Field(default=None)
     authentication: _Authentication | None = Field(default=None)

@@ -103,7 +103,24 @@ def test_generation_status_keeps_envelope_and_code_format(client, path, session_
 
 
 @pytest.mark.parametrize(("path", "session_key"), OPERATIONS)
-@pytest.mark.parametrize(("code", "code_format"), [("{}", "YAML"), ('objectClass("user") {}', "GROOVY")])
+@pytest.mark.parametrize(
+    ("code", "code_format"),
+    [
+        ("{}", "YAML"),
+        ('objectClass("user") {}', "GROOVY"),
+        (
+            'objectClasses: {user: {search: {endpoints: [{path: /users, objectExtractor: {value: "$.data"}, '
+            "pagingSupport: {parameters: {offset: {in: query}}}}]}}}",
+            "YAML",
+        ),
+        ('objectClasses: {user: {scim: {extensions: {enterprise: {uri: "urn:example", flatten: photos}}}}}', "YAML"),
+        (
+            "# Preserve reference metadata\nobjectClasses: {group: {references: {members: "
+            "{objectClass: User, role: object, description: Members, multiValued: true}}}}",
+            "YAML",
+        ),
+    ],
+)
 def test_code_only_override_persists_derived_format(client, path, session_key, code, code_format):
     session_id = uuid4()
     with (
@@ -165,7 +182,7 @@ def test_fix_status_reports_each_script_format(client):
     "body",
     [
         {"code": ""},
-        {"code": "objectClasses: {user: {unknownOption: true}}"},
+        {"code": "objectClasses: {user: {attributes: []}}"},
         {"code": 'objectClass("user") {'},
         {"code": "objectClasses: {}\nobjectClasses: {}"},
         {"code": None},
