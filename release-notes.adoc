@@ -18,6 +18,7 @@
 
 
 * **Route outbound web traffic through env proxy**
+* Remove deprecated connid endpoint
 
 == 0.1.0-RC1
 

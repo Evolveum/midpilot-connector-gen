@@ -218,12 +218,6 @@ def resolve_operation_docs_sections(
     Returns an empty mapping when the combination has no bundled reference rather
     than raising, so an object-class caller can carry on with the documents it has.
     """
-    if kind is ArtifactKind.CONNID:
-        # No slot produces this kind any more, but a connector-fix job scheduled
-        # before the ConnID mapping moved into the native schema still rehydrates
-        # one from its persisted input, and it needs its reference.
-        return {CONNID_ATTRIBUTES_DOCS_PATH: ()}
-
     try:
         if kind is ArtifactKind.SEARCH:
             if intent is None:

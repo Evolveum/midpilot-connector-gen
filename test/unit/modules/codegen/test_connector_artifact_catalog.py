@@ -153,7 +153,6 @@ def test_docs_paths_are_deduplicated_across_object_classes():
 @pytest.mark.parametrize(
     "artifact",
     [
-        ConnectorArtifact(operation_key="userConnid", kind=ArtifactKind.CONNID, object_class="user", code="code"),
         ConnectorArtifact(
             operation_key="userSearchFilter",
             kind=ArtifactKind.SEARCH,
@@ -163,25 +162,11 @@ def test_docs_paths_are_deduplicated_across_object_classes():
         ),
         ConnectorArtifact(operation_key="authorization", kind=ArtifactKind.AUTHORIZATION, code="code"),
     ],
-    ids=["object-class", "search-intent", "no-object-class"],
+    ids=["object-class", "no-object-class"],
 )
 def test_an_artifact_survives_the_job_input_round_trip(artifact):
-    """
-    The fix job serializes artifacts into its input and rebuilds them in the worker.
-
-    The ConnID case is deliberate: no slot builds that kind any more, but a fix job
-    scheduled before the ConnID mapping moved into the native schema still rehydrates
-    one from its persisted input. Removing ``ArtifactKind.CONNID`` from the enum would
-    make those jobs raise on rehydration.
-    """
+    """The fix job serializes artifacts into its input and rebuilds them in the worker."""
     assert ConnectorArtifact.from_payload(artifact.to_payload()) == artifact
-
-
-def test_connid_reference_is_still_resolvable_for_a_persisted_connid_artifact():
-    """No slot builds this kind any more, but a fix job scheduled before the merge rehydrates one."""
-    slots = [ConnectorArtifactSlot(operation_key="userConnid", kind=ArtifactKind.CONNID, object_class="user")]
-
-    assert resolve_artifact_docs_paths(slots, ApiType.SQL) == ["connid-attributes.adoc"]
 
 
 @pytest.mark.parametrize(
