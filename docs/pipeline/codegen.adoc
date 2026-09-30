@@ -25,7 +25,8 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 
 | `/{sessionId}/classes/{objectClass}/native-schema`
 | The native schema definition for one object class, including its ConnId
-  attribute mapping (`UID` / `NAME`). Both live in the same Groovy script.
+  attribute mapping (`UID` / `NAME`). Both live in the same artifact
+  (declarative YAML or Groovy).
 
 | `/{sessionId}/classes/{objectClass}/search/{intent}`
 | Search operation; `intent` is `all` (list all), `filter` (query by
@@ -165,7 +166,7 @@ code. Override acknowledgements and generation enqueue responses are unchanged.
 | `native-schema` | yes | yes | yes (SQL context and SQL reference)
 | `search/{intent}` | yes | yes | yes
 | `create` / `update` / `delete` | yes | yes | yes
-| `relations/{relationName}` | YAML or Groovy | YAML or Groovy, respecting automatic SCIM mappings
+| `relations/{relationName}` | Groovy (YAML `relationships` is rejected by the connector) | Groovy, respecting automatic SCIM mappings
 | discovery only; scripted relationship overrides are unsupported
 | `authorization` | yes | yes | *not supported*
 |===

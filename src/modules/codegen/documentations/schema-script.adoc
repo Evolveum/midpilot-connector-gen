@@ -163,10 +163,9 @@ the `json` block (JSONPath / JSON Pointer locations).
 
 == References
 
-* *ConnId Built-in Attributes* — the full catalog of the built-in (special) ConnId attributes,
+* *ConnId attribute mapping and value types* — the full catalog of the built-in (special) ConnId attributes,
   their required value types, and how to handle them (chapter shown together with this page).
-* *JSON Types and Formats* — the base JSON types and the OpenAPI formats an attribute can use
-  (chapter shown together with this page).
+* *JSON Types and Formats* — the base JSON types and the OpenAPI formats an attribute can use.
 * xref:declarative-yaml.adoc[Declarative YAML] — the complete YAML reference.
 * xref:scim/native-schema.adoc[SCIM schema customization] / xref:rest/native-schema.adoc[REST user schema] —
   the protocol-specific attribute details.

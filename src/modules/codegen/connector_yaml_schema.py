@@ -6,17 +6,64 @@
 Absent keys preserve framework defaults; explicit null is only valid for bare
 attributes and literal conditioned values. Script metadata controls syntax checking.
 Nested unknown options are retained for advisory logging: this local model is
-not an exhaustive contract for every connector runtime version.
+not an exhaustive contract for every connector runtime version. Closed value
+vocabularies and keys the runtime rejects mirror the connector runtime parsers at
+the revisions listed in docs/codegen-expert-references.adoc.
 """
 
+from collections.abc import Mapping
 from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+
+# conndev DeclConnIdTypeParser: case-sensitive Java simple names.
+_ConnIdType = Literal[
+    "String",
+    "Integer",
+    "Long",
+    "Boolean",
+    "Double",
+    "Float",
+    "Character",
+    "Byte",
+    "Binary",
+    "BigDecimal",
+    "BigInteger",
+    "GuardedString",
+    "GuardedByteArray",
+    "ZonedDateTime",
+    "Map",
+    "ConnectorObjectReference",
+    "EmbeddedObject",
+]
+# conndev JsonSchemaValueMapping: case-sensitive base JSON types.
+_JsonType = Literal["string", "integer", "boolean", "number", "binary"]
+# connector-scimrest HttpMethod, parsed case-insensitively.
+_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"})
+# conndev AttributeResolverBuilder.ResolutionType, parsed case-insensitively.
+_RESOLUTION_TYPES = frozenset({"PER_OBJECT", "BATCH"})
+
+
+def _require_case_insensitive_member(value: str, allowed: frozenset[str]) -> str:
+    if value.upper() not in allowed:
+        raise ValueError(f"expected one of {', '.join(sorted(allowed))} (case-insensitive)")
+    return value
 
 
 class _Configuration(BaseModel):
     model_config = ConfigDict(strict=True, extra="allow")
     nullable_fields: ClassVar[frozenset[str]] = frozenset()
+    # Keys the connector runtime rejects, mapped to the reason reported to the caller.
+    unsupported_keys: ClassVar[Mapping[str, str]] = {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_unsupported_keys(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            for key, reason in cls.unsupported_keys.items():
+                if key in data:
+                    raise ValueError(f"'{key}' is not supported in declarative YAML: {reason}")
+        return data
 
     @field_validator("*", mode="before")
     @classmethod
@@ -30,9 +77,7 @@ def _script(*, expression: bool = False, empty_body: bool = False) -> Any:
     return Field(default=None, json_schema_extra={"script": True, "expression": expression, "empty_body": empty_body})
 
 
-class _ValueMapping(_Configuration):
-    deserialize: str | None = _script()
-    serialize: str | None = _script()
+_GROOVY_ONLY_VALUE_MAPPING = "custom value mapping (implementation with deserialize/serialize) is Groovy-only"
 
 
 class _AttributePath(_Configuration):
@@ -48,23 +93,30 @@ class _AttributePath(_Configuration):
 
 
 class _ScimAttribute(_Configuration):
+    unsupported_keys: ClassVar[Mapping[str, str]] = {"implementation": _GROOVY_ONLY_VALUE_MAPPING}
+
     name: str | None = Field(default=None)
     type: str | None = Field(default=None)
     path: str | _AttributePath | None = Field(default=None)
-    implementation: _ValueMapping | None = Field(default=None)
 
 
 class _ConnIdAttribute(_Configuration):
     name: str | None = Field(default=None)
-    type: str | None = Field(default=None)
+    type: _ConnIdType | None = Field(default=None)
 
 
-class _JsonAttribute(_ConnIdAttribute):
+class _JsonAttribute(_Configuration):
+    unsupported_keys: ClassVar[Mapping[str, str]] = {"implementation": _GROOVY_ONLY_VALUE_MAPPING}
+
+    name: str | None = Field(default=None)
+    type: _JsonType | None = Field(default=None)
     openApiFormat: str | None = Field(default=None)
     path: str | _AttributePath | None = Field(default=None)
 
 
-class _SqlAttribute(_ConnIdAttribute):
+class _SqlAttribute(_Configuration):
+    name: str | None = Field(default=None)
+    type: str | None = Field(default=None)
     notNull: bool | None = Field(default=None)
     unique: bool | None = Field(default=None)
     primaryKey: bool | None = Field(default=None)
@@ -82,7 +134,7 @@ class _Attribute(_Configuration):
     returnedByDefault: bool | None = Field(default=None)
     emulated: bool | None = Field(default=None)
     complexType: str | None = Field(default=None)
-    jsonType: str | None = Field(default=None)
+    jsonType: _JsonType | None = Field(default=None)
     openApiFormat: str | None = Field(default=None)
     json_mapping: _JsonAttribute | None = Field(default=None, alias="json")
     connId: _ConnIdAttribute | None = Field(default=None)
@@ -94,27 +146,6 @@ class _Reference(_Configuration):
     objectClass: str | None = Field(default=None)
     role: str | None = Field(default=None)
     subtype: str | None = Field(default=None)
-
-
-class _RelationshipResolver(_Configuration):
-    resolution: str | None = Field(default=None)
-    search: str | None = Field(default=None)
-    implementation: str | None = _script()
-
-
-class _RelationshipAttribute(_Configuration):
-    name: str
-    resolver: _RelationshipResolver | None = Field(default=None)
-
-
-class _Participant(_Configuration):
-    class_name: str = Field(alias="class")
-    attribute: _RelationshipAttribute
-
-
-class _Relationship(_Configuration):
-    subject: _Participant
-    object: _Participant
 
 
 class _Request(_Configuration):
@@ -140,10 +171,27 @@ class _Filter(_Configuration):
     request: str | None = _script()
 
 
-class _WriteEndpoint(_Configuration):
+class _HttpEndpoint(_Configuration):
     path: str
     method: str | None = Field(default=None)
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, value: str) -> str:
+        return _require_case_insensitive_member(value, _HTTP_METHODS)
+
+
+class _WriteEndpoint(_HttpEndpoint):
+    unsupported_keys: ClassVar[Mapping[str, str]] = {
+        "supportedAttributes": "only update endpoints accept it; limit create or delete attributes in Groovy"
+    }
+
     request: _Request | None = Field(default=None)
+
+
+class _UpdateEndpoint(_WriteEndpoint):
+    unsupported_keys: ClassVar[Mapping[str, str]] = {}
+
     supportedAttributes: list[str | _SupportedAttribute] | None = Field(default=None)
 
 
@@ -169,26 +217,47 @@ class _PagingSupport(_Configuration):
     parameters: dict[Literal["pageSize", "page", "offset"], _PagingParameter] | None = Field(default=None)
 
 
-class _SearchEndpoint(_Configuration):
-    path: str
-    method: str | None = Field(default=None)
-    responseFormat: str | None = Field(default=None)
+class _SearchEndpoint(_HttpEndpoint):
+    responseFormat: Literal["JSON_ARRAY", "JSON_OBJECT"] | None = Field(default=None)
     objectExtractor: str | _ExtractorPath | None = _script()
     pagingSupport: str | _PagingSupport | None = _script()
     singleResult: bool | None = Field(default=None)
     emptyFilterSupported: bool | None = Field(default=None)
     supportedFilters: list[_Filter] | None = Field(default=None)
 
+    @field_validator("objectExtractor")
+    @classmethod
+    def reject_path_written_as_script(cls, value: str | _ExtractorPath) -> str | _ExtractorPath:
+        # A scalar is always compiled as a Groovy block, so `$.data` parses but fails at runtime.
+        stripped = value.lstrip() if isinstance(value, str) else ""
+        if stripped.startswith("$") or (stripped.startswith("/") and not stripped.startswith(("//", "/*"))):
+            raise ValueError(
+                "a scalar objectExtractor is a Groovy block; write a JSONPath or JSON Pointer as {value: ...}"
+            )
+        return value
 
-class _WriteOperation(_Configuration):
+
+class _Operation(_Configuration):
     enabled: bool | None = Field(default=None)
+
+
+class _WriteOperation(_Operation):
     endpoints: list[_WriteEndpoint] | None = Field(default=None)
+
+
+class _UpdateOperation(_Operation):
+    endpoints: list[_UpdateEndpoint] | None = Field(default=None)
 
 
 class _AttributeResolver(_Configuration):
     attribute: str | None = Field(default=None)
     resolutionType: str | None = Field(default=None)
     implementation: str | None = _script()
+
+    @field_validator("resolutionType")
+    @classmethod
+    def validate_resolution_type(cls, value: str) -> str:
+        return _require_case_insensitive_member(value, _RESOLUTION_TYPES)
 
 
 class _Normalize(_Configuration):
@@ -244,7 +313,7 @@ class _ObjectClass(_Configuration):
     attributes: dict[str, _Attribute | None] | None = Field(default=None)
     references: dict[str, _Reference] | None = Field(default=None)
     create: _WriteOperation | None = Field(default=None)
-    update: _WriteOperation | None = Field(default=None)
+    update: _UpdateOperation | None = Field(default=None)
     delete: _WriteOperation | None = Field(default=None)
     search: _Search | None = Field(default=None)
 
@@ -281,7 +350,9 @@ class _Authentication(_Configuration):
 class ConnectorYamlDocument(_Configuration):
     # Keep the document envelope strict to reject wrong artifact shapes.
     model_config = ConfigDict(strict=True, extra="forbid")
+    unsupported_keys: ClassVar[Mapping[str, str]] = {
+        "relationships": 'the connector rejects this block; declare relationships with a Groovy relationship("...") block'
+    }
 
     objectClasses: dict[str, _ObjectClass] | None = Field(default=None)
-    relationships: dict[str, _Relationship] | None = Field(default=None)
     authentication: _Authentication | None = Field(default=None)

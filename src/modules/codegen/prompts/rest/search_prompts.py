@@ -25,9 +25,10 @@ _COMMON = build_operation_system_prompt(
 - Preserve the outer object-class and search structure when present in <result>.
 - No extra commentary outside the fenced code block.
 
-- Use search.endpoints for the documented endpoint handler; its method key supports GET (default) and POST.
-  Prefer objectExtractor: {{value: <JSONPath>}} (or an explicit JSON_POINTER type) for a fixed response
-  location, and pagingSupport.parameters for documented pageSize/page/offset query, header or POST-body
+- Use search.endpoints for the documented endpoint handler; its method key takes the application's
+  documented HTTP method (GET by default). Prefer objectExtractor: {{value: <JSONPath>}} (or an explicit
+  JSON_POINTER type) for a fixed response location; a bare scalar objectExtractor is a Groovy block, never
+  a JSONPath. Use pagingSupport.parameters for documented pageSize/page/offset query, header or POST-body
   parameters. Use the Groovy hook forms only when those declarative mappings cannot express the requirement.
   Do not add an undocumented search.endpoints[].request.body key. For behavior the endpoint handler
   cannot express, use documented search.custom.implementation composition or custom Groovy search.
