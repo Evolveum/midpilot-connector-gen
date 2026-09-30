@@ -39,7 +39,6 @@ class ArtifactKind(StrEnum):
 
     AUTHORIZATION = "authorization"
     NATIVE_SCHEMA = "nativeSchema"
-    CONNID = "connid"
     SEARCH = "search"
     CREATE = "create"
     UPDATE = "update"

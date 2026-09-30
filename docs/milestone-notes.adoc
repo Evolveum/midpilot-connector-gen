@@ -17,6 +17,84 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-09-30 Removal of the deprecated connid codegen endpoints
+
+Author: Alexander Brecko
+
+Description: The deprecated ConnID codegen endpoints
+`POST|GET|PUT /api/v1/codegen/{sessionId}/classes/{objectClass}/connid` are
+removed. Since the 2026-09-07 change, the ConnID attribute mapping
+(`UID` / `NAME`) is generated into the native-schema script by
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema`; the
+connid endpoints only produced a redundant second script for the same mapping.
+Requests to the removed paths now return 404. All other codegen endpoints, the
+object-class fix, and the supported midPoint response contracts are unchanged.
+
+Required Upgrade Steps
+. Point every caller at the `native-schema` endpoints instead of the `connid`
+ones (generation, status polling and manual override); the 2026-09-07 note
+carries the original migration guidance, including removing any old ConnID
+script from assembled connectors.
+. Recreate the development database, or run the cleanup below. Queued or
+interrupted `codegen.getConnID` jobs reference a worker function that no
+longer exists and fail when claimed; `codegen.fixConnector` jobs persisted
+before the 2026-09-07 merge may carry a `kind=connid` script in their input
+that no longer rehydrates. Finished jobs and their results are not affected,
+and no database schema change is involved.
+. Alternative for operators who cannot recreate the database: stop the API and
+all workers, then discard only the orphaned rows:
++
+[source,shell]
+----
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+BEGIN;
+DELETE FROM session_data WHERE key LIKE '%Connid%';
+DELETE FROM jobs WHERE job_type = 'codegen.getConnID';
+DELETE FROM jobs WHERE job_type = 'codegen.fixConnector'
+  AND input->'scripts' @> '[{"kind": "connid"}]';
+COMMIT;
+SQL
+----
++
+For externally managed PostgreSQL, have its owner run the same statements in
+the application database. The removed session keys are
+`{objectClass}ConnidOutput`, `{objectClass}ConnidInput` and
+`{objectClass}ConnidJobId`; the pattern matches exactly those rows because
+generated keys are lowercase except for these fixed suffixes. Nothing else
+reads them after this change.
+. Rebuild/restart with `docker compose up -d --build midpilot-connector-gen`,
+or start the host process with `uv run python server.py`. Verify `/health` and
+confirm `/openapi.json` no longer lists the connid operations;
+`POST|GET|PUT .../connid` must now return 404.
+. Validate with `uv run poe qa` and
+`uv run poe test test/integration/modules/codegen -q`, then generate a
+`native-schema` for one object class per protocol and confirm the result is a
+single `objectClass` block containing both the attribute definitions and the
+ConnID mapping.
+
+Rollback Procedure (If Upgrade Fails)
+. Stop the updated API and all workers. Restore the previous source revision
+and rebuild/restart with
+`docker compose up -d --build midpilot-connector-gen` (or
+`uv run python server.py` for a host installation).
+. If the development database was recreated, previous sessions, jobs and
+documentation are gone and cannot be recovered without a backup; sessions that
+were retained keep working unchanged. If the cleanup SQL was run, restore the
+deleted rows from a pre-upgrade dump taken with
+`docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > /tmp/midpilot-connid-removal.dump`
+using `pg_restore`.
+. No migration to reverse; the Alembic revision is unchanged by this change.
+
+Notes & References
+* Related PR: Not assigned.
+* Docs: `docs/pipeline/codegen.adoc`, `docs/api-type.adoc`; 2026-09-07 note
+*Native schema absorbs the ConnID attribute mapping*.
+* Affected endpoints: `POST|GET|PUT /api/v1/codegen/{sessionId}/classes/{objectClass}/connid`
+(removed).
+* Affected session keys: `{objectClass}ConnidOutput`, `{objectClass}ConnidInput`,
+`{objectClass}ConnidJobId` (orphaned since 2026-09-07, removed by the cleanup).
+* Affected configs: None.
+
 === 2026-09-28 Refresh connector-generation framework references
 
 Author: Alexander Brecko

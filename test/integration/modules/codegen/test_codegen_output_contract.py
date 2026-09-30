@@ -22,7 +22,6 @@ from src.modules.codegen.utils.connector_code_validation import ensure_valid_con
 OPERATIONS = [
     ("authorization", "authorizationOutput"),
     ("classes/user/native-schema", "userNativeSchemaOutput"),
-    ("classes/user/connid", "userConnidOutput"),
     ("classes/user/search/all", "userSearchAllOutput"),
     ("classes/user/search/filter", "userSearchFilterOutput"),
     ("classes/user/search/id", "userSearchIdOutput"),

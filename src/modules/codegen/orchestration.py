@@ -311,60 +311,6 @@ async def schedule_native_schema_job(
     return job_id
 
 
-async def schedule_connid_job(
-    *,
-    repo: SessionRepository,
-    session_id: UUID,
-    object_class: str,
-    skip_cache: bool,
-    codegen_input: Optional[CodegenRepairContext],
-) -> UUID:
-    """
-    Schedule the ConnID codegen job for an object class.
-
-    Loads attributes, schedules the job, and persists ``{object_class}ConnidJobId``
-    / ``{object_class}ConnidInput``.
-    """
-    attrs = await repo.get_session_data(session_id, f"{object_class}AttributesOutput")
-    if not attrs:
-        raise AttributesNotFoundError(object_class, session_id)
-
-    repair_context = codegen_input.repair_context() if codegen_input is not None else None
-    context_payload = codegen_input.context_payload() if codegen_input is not None else {}
-    job_input = {
-        "attributes": attrs,
-        "objectClass": object_class,
-        "skipCache": skip_cache,
-    }
-    job_input.update(context_payload)
-    worker_kwargs: dict[str, Any] = {}
-    if repair_context is not None:
-        worker_kwargs["repair_context"] = repair_context
-
-    job_id = await schedule_coroutine_job(
-        db=repo.db,
-        job_type="codegen.getConnID",
-        input_payload=job_input,
-        worker=generation.generate_conn_id_code,
-        worker_args=(job_input_reference("attributes"), object_class),
-        worker_kwargs=worker_kwargs,
-        initial_stage="queue",
-        initial_message="Queued code generation",
-        session_id=session_id,
-        session_result_key=f"{object_class}ConnidOutput",
-    )
-
-    await persist_job_pointer(
-        repo,
-        session_id,
-        f"{object_class}Connid",
-        {"attributes": attrs, "objectClass": object_class, **context_payload},
-        job_id,
-    )
-
-    return job_id
-
-
 async def schedule_relation_job(
     *,
     repo: SessionRepository,

@@ -43,10 +43,11 @@ async def generate_groovy(
     """
     Ask the LLM to generate a connector artifact given attribute records.
 
-    Despite its name (kept for the deprecated ConnID prompt and to avoid churn in every native-schema
-    call site), the output may be declarative YAML or Groovy - see
-    ``src.modules.codegen.prompts.declarative_format_prompts``. Defensive against LLM output shapes;
-    returns empty code when no artifact is accepted, preserving supplied code during repair.
+    Despite its name (kept to avoid churn in every call site), the output may be
+    declarative YAML or Groovy - see
+    ``src.modules.codegen.prompts.declarative_format_prompts``. Defensive against
+    LLM output shapes; returns empty code when no artifact is accepted, preserving
+    supplied code during repair.
     """
     df_json = json.dumps(records, ensure_ascii=False)
     llm = get_default_llm()
