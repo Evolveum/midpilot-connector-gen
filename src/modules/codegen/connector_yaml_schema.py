@@ -11,6 +11,7 @@ vocabularies and keys the runtime rejects mirror the connector runtime parsers a
 the revisions listed in docs/codegen-expert-references.adoc.
 """
 
+import re
 from collections.abc import Mapping
 from typing import Annotated, Any, ClassVar, Literal
 
@@ -42,6 +43,9 @@ _JsonType = Literal["string", "integer", "boolean", "number", "binary"]
 _HTTP_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"})
 # conndev AttributeResolverBuilder.ResolutionType, parsed case-insensitively.
 _RESOLUTION_TYPES = frozenset({"PER_OBJECT", "BATCH"})
+# Recognize only simple complete paths. Slashy literals and $-prefixed Groovy
+# identifiers must reach the embedded-script syntax check instead.
+_BARE_EXTRACTOR_PATH = re.compile(r"(?:\$(?:\.\.?[\w*]+|\[(?:\d+|\*|'[^'\r\n]*'|\"[^\"\r\n]*\")\])*|(?:/[\w~-]+)+)")
 
 
 def _require_case_insensitive_member(value: str, allowed: frozenset[str]) -> str:
@@ -229,8 +233,8 @@ class _SearchEndpoint(_HttpEndpoint):
     @classmethod
     def reject_path_written_as_script(cls, value: str | _ExtractorPath) -> str | _ExtractorPath:
         # A scalar is always compiled as a Groovy block, so `$.data` parses but fails at runtime.
-        stripped = value.lstrip() if isinstance(value, str) else ""
-        if stripped.startswith("$") or (stripped.startswith("/") and not stripped.startswith(("//", "/*"))):
+        stripped = value.strip() if isinstance(value, str) else ""
+        if _BARE_EXTRACTOR_PATH.fullmatch(stripped):
             raise ValueError(
                 "a scalar objectExtractor is a Groovy block; write a JSONPath or JSON Pointer as {value: ...}"
             )

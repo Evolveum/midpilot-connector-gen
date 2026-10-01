@@ -460,6 +460,63 @@ def test_runtime_vocabulary_is_accepted(code):
 
 
 @pytest.mark.parametrize(
+    "extractor",
+    [
+        "/data/.with { key -> response.body().get(key) }",
+        "$/data/$.with { key -> response.body().get(key) }",
+        "  /data/.with { key -> response.body().get(key) }\n",
+        "  $/data/$.with { key -> response.body().get(key) }\n",
+        "// Extract data\n/data/.with { key -> response.body().get(key) }",
+        "/* Extract data */\n$/data/$.with { key -> response.body().get(key) }",
+        "$key = 'data'; response.body().get($key)",
+    ],
+)
+def test_object_extractor_accepts_groovy_starting_with_path_like_prefix(extractor):
+    code = yaml.safe_dump(
+        {"objectClasses": {"User": {"search": {"endpoints": [{"path": "/users", "objectExtractor": extractor}]}}}}
+    )
+    assert ensure_valid_connector_code(code) == code.strip()
+
+
+@pytest.mark.parametrize(
+    "extractor",
+    ["$", "$.data", "$..data", "$.data.items[0]", "$['data']", "$.data[*]", "/data", "/data/items/0", "/data~1items"],
+)
+@pytest.mark.parametrize("padding", ["", " \n"])
+def test_object_extractor_rejects_complete_bare_paths(extractor, padding):
+    code = yaml.safe_dump(
+        {
+            "objectClasses": {
+                "User": {
+                    "search": {"endpoints": [{"path": "/users", "objectExtractor": f"{padding}{extractor}{padding}"}]}
+                }
+            }
+        }
+    )
+    error = validate_connector_code(code)
+    assert error is not None
+    assert "objectExtractor" in error
+    assert "write a JSONPath or JSON Pointer as {value: ...}" in error
+
+
+@pytest.mark.parametrize(
+    "extractor",
+    [
+        "/data/.with { key -> response.body().get(key)",
+        "$/data/$.with { key -> response.body().get(key)",
+    ],
+)
+def test_object_extractor_still_rejects_invalid_groovy_literals(extractor):
+    code = yaml.safe_dump(
+        {"objectClasses": {"User": {"search": {"endpoints": [{"path": "/users", "objectExtractor": extractor}]}}}}
+    )
+    error = validate_connector_code(code)
+    assert error is not None
+    assert "objectExtractor" in error
+    assert "a scalar objectExtractor is a Groovy block" not in error
+
+
+@pytest.mark.parametrize(
     ("code", "path"),
     [
         ("objectClasses: {User: {attributes: {a: {connId: {type: long}}}}}", "connId.type"),
