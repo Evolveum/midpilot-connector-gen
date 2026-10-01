@@ -220,3 +220,51 @@ def test_authorization_includes_method_reference_and_customization_context():
     assert "== The implementation context" in docs
     assert "newRequest(url)" in docs
     assert "*replaces* the built-in behavior" in docs
+
+
+def test_reference_lists_claim_only_chapters_present_in_the_same_context():
+    import re
+
+    from src.modules.codegen.selection.protocol_selectors import get_operation_assets
+    from src.shared.enums import ApiType
+
+    claim = re.compile(r"^\* \*([^*]+)\*[^*]*?\(chapter shown together with this page\)", re.MULTILINE)
+    for protocol in ApiType:
+        assets = get_operation_assets("native_schema", protocol)
+        docs, _ = load_operation_documentation(assets)
+        connid_docs = load_required_adoc_text("src.modules.codegen.documentations", assets.connid_docs_path)
+        headings = set(re.findall(r"^=+ (.+)$", docs + "\n" + connid_docs, re.MULTILINE))
+        claimed = claim.findall(docs)
+        assert claimed, protocol
+        assert set(claimed) <= headings, protocol
+
+
+@pytest.mark.parametrize("protocol", ["rest", "scim", "sql"])
+def test_native_schema_prompt_bridges_extracted_types_and_date_built_ins(protocol):
+    from src.modules.codegen.selection.protocol_selectors import get_operation_assets
+    from src.shared.enums import ApiType
+
+    system_prompt = get_operation_assets("native_schema", ApiType(protocol)).system_prompt
+    assert system_prompt.count("EXTRACTED TYPES:") == 1
+    assert "__LAST_LOGIN_DATE__" in system_prompt
+
+
+def test_connector_fix_prompts_bridge_extracted_types():
+    from src.modules.codegen.prompts.fix_prompts import get_connector_fix_system_prompt, get_connector_fix_user_prompt
+    from src.modules.codegen.prompts.sql.fix_prompts import get_sql_connector_fix_system_prompt
+
+    assert get_connector_fix_system_prompt.count("EXTRACTED TYPES:") == 1
+    assert get_sql_connector_fix_system_prompt.count("EXTRACTED TYPES:") == 1
+    assert "Groovy scripts selected" not in get_connector_fix_user_prompt
+
+
+@pytest.mark.parametrize("protocol", ["rest", "scim"])
+def test_relationship_prompt_uses_groovy_because_yaml_relationships_are_rejected(protocol):
+    from src.modules.codegen.selection.protocol_selectors import get_operation_assets
+    from src.shared.enums import ApiType
+
+    assets = get_operation_assets("relationship", ApiType(protocol))
+    assert 'complete Groovy relationship("...") block' in assets.system_prompt
+    assert "prefer the documented root-level relationships YAML map" not in assets.system_prompt
+    _, declarative = load_operation_documentation(assets)
+    assert "the schema loader rejects a `relationships` block" in declarative

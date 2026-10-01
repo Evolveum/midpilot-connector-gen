@@ -112,6 +112,16 @@ def test_generation_status_keeps_envelope_and_code_format(client, path, session_
             "pagingSupport: {parameters: {offset: {in: query}}}}]}}}",
             "YAML",
         ),
+        (
+            "# Extract the data collection\nobjectClasses: {user: {search: {endpoints: [{path: /users, "
+            'objectExtractor: "/data/.with { key -> response.body().get(key) }"}]}}}',
+            "YAML",
+        ),
+        (
+            "# Extract the data collection\nobjectClasses: {user: {search: {endpoints: [{path: /users, "
+            'objectExtractor: "$/data/$.with { key -> response.body().get(key) }"}]}}}',
+            "YAML",
+        ),
         ('objectClasses: {user: {scim: {extensions: {enterprise: {uri: "urn:example", flatten: photos}}}}}', "YAML"),
         (
             "# Preserve reference metadata\nobjectClasses: {group: {references: {members: "
@@ -184,6 +194,8 @@ def test_fix_status_reports_each_script_format(client):
         {"code": "objectClasses: {user: {attributes: []}}"},
         {"code": 'objectClass("user") {'},
         {"code": "objectClasses: {}\nobjectClasses: {}"},
+        {"code": "objectClasses: {user: {search: {endpoints: [{path: /users, objectExtractor: $.data}]}}}"},
+        {"code": "objectClasses: {user: {search: {endpoints: [{path: /users, objectExtractor: /data}]}}}"},
         {"code": None},
         {"code": 42},
         {},
