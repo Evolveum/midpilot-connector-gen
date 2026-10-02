@@ -15,6 +15,68 @@ from src.modules.digester.schemas.common import (
 
 # --- Attributes ---
 
+_UNDETERMINED = (
+    "Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+)
+_COLLECTION_LINK_NOT_WRITABLE = (
+    "A single link to a separate collection or sub-resource (e.g. a URL from which the related items are listed) "
+    "is neither creatable nor updatable unless the documentation describes it as settable."
+)
+_TYPE_DESCRIPTION = (
+    "Type as declared in the documentation (prefer OpenAPI). For a simple attribute use 'string' (including "
+    "binaries encoded as base64), 'number', 'integer' or 'boolean'. For a complex attribute use the name of the "
+    "object class as the documentation names the objects (e.g. 'Group'), not the name of a schema component, "
+    "wrapper or transfer object (e.g. not 'GroupModel', 'GroupDto' or 'GroupCollection'); for a collection use the "
+    "class of its items. Use 'object' only for an anonymous inline object. For an array use the type of its items; "
+    "multiplicity belongs to multivalue. " + _UNDETERMINED
+)
+_FORMAT_DESCRIPTION = (
+    "Additional type detail. For a simple attribute use an OpenAPI format registry value (e.g. 'email', 'uri', "
+    "'int64', 'date-time'). For a complex attribute use 'reference' when it points to another full object class, "
+    "even if the full object appears embedded in the payload, or 'embedded' when the object is part of this one. "
+    "For an array use the format of its items. Do not put other standards or patterns (e.g. the name of a code "
+    "standard or a regular expression) in format; leave it null and keep them in the description. Null when the "
+    "documentation gives no format."
+)
+_MANDATORY_DESCRIPTION = (
+    "Is the attribute mandatory for this object class in the IGA schema and in the connector? True when the "
+    "documentation shows that an object cannot exist or be created without it (e.g. marked as required, required "
+    "in this object class's create request, or described as mandatory). False when the documentation shows it as "
+    "optional (e.g. it may be omitted, has a default value, or is marked as not required). " + _UNDETERMINED
+)
+_UPDATABLE_DESCRIPTION = (
+    "Can the attribute be changed on an existing object? True when the documentation shows it as writable (e.g. "
+    "write access in a field table) or it is accepted by this object class's update request. False when it is "
+    "read-only or server-generated, explicitly not modifiable after creation, or missing from a documented update "
+    "request of this object class. " + _COLLECTION_LINK_NOT_WRITABLE + " " + _UNDETERMINED
+)
+_CREATABLE_DESCRIPTION = (
+    "Can the attribute be set when creating the object? True when the documentation shows it as writable on "
+    "create (e.g. write access in a field table) or it is accepted by this object class's create request. False "
+    "when it is read-only or server-generated, limited to existing objects (e.g. only on update), or missing from "
+    "a documented create request of this object class. Do not decide it from the list of endpoints alone. "
+    + _COLLECTION_LINK_NOT_WRITABLE
+    + " "
+    + _UNDETERMINED
+)
+_READABLE_DESCRIPTION = (
+    "Can the attribute value be read from the target system? True when the documentation shows it as readable "
+    "(read access, part of a returned representation). False when it is write-only: marked write-only, accepted "
+    "only in requests and never returned, or a secret such as a password. " + _UNDETERMINED
+)
+_MULTIVALUE_DESCRIPTION = (
+    "Can the attribute hold more than one value? True for arrays or lists and for links or references to a "
+    "collection. False for a single value: a scalar, one object or one reference. " + _UNDETERMINED
+)
+_RETURNED_BY_DEFAULT_DESCRIPTION = (
+    "Is the attribute returned when the object is read or searched without extra request options? True when its "
+    "values are part of the object's returned representation: a property of the response model, a value shown in "
+    "a response example, or a list of links to the referenced objects included in the representation. False when "
+    "the representation carries only a single link (href) to a separate collection or sub-resource whose items "
+    "must be fetched with another request, when the attribute needs an expand, embed or include option, or when it "
+    "is not readable. " + _UNDETERMINED
+)
+
 
 class AttributeBase(BaseModel):
     """
@@ -38,26 +100,8 @@ class AttributeTypeFormatBase(AttributeBase):
     Named attribute schema enriched with type and format.
     """
 
-    type: Optional[str] = Field(
-        default=None,
-        description=(
-            "Type as declared in the documentation (prefer OpenAPI). For simple attributes, use one of: 'string' "
-            "(includes binaries encoded as base64), 'number', 'integer', or 'boolean'. For complex attributes, use "
-            "the object class name. Put additional type details in 'format' (e.g., 'email', 'binary', 'double', "
-            "'embedded', 'reference'). If a complex attribute is relevant, ensure the referenced object class is "
-            "included in extracted object classes. Use null if unknown."
-        ),
-    )
-    format: Optional[str] = Field(
-        default=None,
-        description=(
-            "Format of the type with additional detail. For simple attributes, use an OpenAPI format registry value "
-            "(e.g., 'email', 'uri', 'int64', 'date-time'). For complex attributes, use one of: 'embedded' or "
-            "'reference'. Use 'embedded' for object classes directly embedded in JSON/XML. Use 'reference' for a "
-            "reference to another full object class (embedded=false), even if the full object appears embedded in "
-            "the payload. Use null if unknown."
-        ),
-    )
+    type: Optional[str] = Field(default=None, description=_TYPE_DESCRIPTION)
+    format: Optional[str] = Field(default=None, description=_FORMAT_DESCRIPTION)
 
 
 class AttributeBooleanFlagsBase(AttributeTypeFormatBase):
@@ -65,34 +109,12 @@ class AttributeBooleanFlagsBase(AttributeTypeFormatBase):
     Complete named attribute schema enriched with boolean flags.
     """
 
-    mandatory: Optional[bool] = Field(
-        default=None,
-        description="Is attribute required? True if the attribute is required; otherwise false. Use null if unknown.",
-    )
-    updatable: Optional[bool] = Field(
-        default=None,
-        description="Can be attribute modified? False if readOnly=true; otherwise true. Use null if unknown.",
-    )
-    creatable: Optional[bool] = Field(
-        default=None,
-        description="Can attribute be used during create operation? False if readOnly=true; otherwise true (do not infer from endpoints). Use null if unknown.",
-    )
-    readable: Optional[bool] = Field(
-        default=None,
-        description="Is attribute readable? False if writeOnly=true; otherwise true. Use null if unknown.",
-    )
-    multivalue: Optional[bool] = Field(
-        default=None,
-        description="Is attribute multivalue? True if the property's type is 'array'; otherwise false. Use null if unknown.",
-    )
-    returnedByDefault: Optional[bool] = Field(
-        default=None,
-        description=(
-            "Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should."
-            "True if the attribute is returned by default without additional calls; set false when it "
-            "requires extra expansion or separate endpoint fetches. Use null if unknown."
-        ),
-    )
+    mandatory: Optional[bool] = Field(default=None, description=_MANDATORY_DESCRIPTION)
+    updatable: Optional[bool] = Field(default=None, description=_UPDATABLE_DESCRIPTION)
+    creatable: Optional[bool] = Field(default=None, description=_CREATABLE_DESCRIPTION)
+    readable: Optional[bool] = Field(default=None, description=_READABLE_DESCRIPTION)
+    multivalue: Optional[bool] = Field(default=None, description=_MULTIVALUE_DESCRIPTION)
+    returnedByDefault: Optional[bool] = Field(default=None, description=_RETURNED_BY_DEFAULT_DESCRIPTION)
 
 
 class AttributeInfoBase(AttributeBooleanFlagsBase, RelevantDocumentationsMixin):
@@ -139,6 +161,17 @@ class DiscoveryAttribute(AttributeBase):
     )
 
 
+class ValidatedAttributeCandidate(AttributeBase):
+    """Discovered attribute supported by sequences verified against a known chunk."""
+
+    model_config = {"extra": "forbid"}
+
+    relevant_sequences: List[DocProcessingSequenceItem] = Field(
+        min_length=1,
+        description="Verified evidence with its source chunk, matched markers, and extracted text.",
+    )
+
+
 class AttributeDiscoveryResponse(BaseModel):
     """
     Container for extracted attributes of an object class in discovery phase.
@@ -171,14 +204,8 @@ class AttributeTypeFormatBuildResponse(BaseModel):
     LLM response for the type/format enrichment phase.
     """
 
-    type: Optional[str] = Field(
-        default=None,
-        description="Attribute type found or corrected during type/format enrichment. Use null if unknown.",
-    )
-    format: Optional[str] = Field(
-        default=None,
-        description="Attribute format found or corrected during type/format enrichment. Use null if unknown.",
-    )
+    type: Optional[str] = Field(default=None, description=_TYPE_DESCRIPTION)
+    format: Optional[str] = Field(default=None, description=_FORMAT_DESCRIPTION)
 
     model_config = {"extra": "forbid"}
 
@@ -188,34 +215,12 @@ class AttributeBooleanFlagsBuildResponse(BaseModel):
     LLM response for the boolean flag enrichment phase.
     """
 
-    mandatory: Optional[bool] = Field(
-        default=None,
-        description="Is attribute required? True if the attribute is required; otherwise false. Use null if unknown.",
-    )
-    updatable: Optional[bool] = Field(
-        default=None,
-        description="Can be attribute modified? False if readOnly=true; otherwise true. Use null if unknown.",
-    )
-    creatable: Optional[bool] = Field(
-        default=None,
-        description="Can attribute be used during create operation? False if readOnly=true; otherwise true (do not infer from endpoints). Use null if unknown.",
-    )
-    readable: Optional[bool] = Field(
-        default=None,
-        description="Is attribute readable? False if writeOnly=true; otherwise true. Use null if unknown.",
-    )
-    multivalue: Optional[bool] = Field(
-        default=None,
-        description="Is attribute multivalue? True if the property's type is 'array'; otherwise false. Use null if unknown.",
-    )
-    returnedByDefault: Optional[bool] = Field(
-        default=None,
-        description=(
-            "Is attribute returned by default? Eg. attributes which requires fetching additional endpoint to resolve should."
-            "True if the attribute is returned by default without additional calls; set false when it "
-            "requires extra expansion or separate endpoint fetches. Use null if unknown."
-        ),
-    )
+    mandatory: Optional[bool] = Field(default=None, description=_MANDATORY_DESCRIPTION)
+    updatable: Optional[bool] = Field(default=None, description=_UPDATABLE_DESCRIPTION)
+    creatable: Optional[bool] = Field(default=None, description=_CREATABLE_DESCRIPTION)
+    readable: Optional[bool] = Field(default=None, description=_READABLE_DESCRIPTION)
+    multivalue: Optional[bool] = Field(default=None, description=_MULTIVALUE_DESCRIPTION)
+    returnedByDefault: Optional[bool] = Field(default=None, description=_RETURNED_BY_DEFAULT_DESCRIPTION)
 
     model_config = {"extra": "forbid"}
 

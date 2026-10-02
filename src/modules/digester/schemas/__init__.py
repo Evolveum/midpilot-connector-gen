@@ -21,6 +21,7 @@ from src.modules.digester.schemas.attributes import (
     ExtractedAttributeInfoSCIM,
     ExtractedAttributeResponseSCIM,
     SqlForeignKey,
+    ValidatedAttributeCandidate,
 )
 from src.modules.digester.schemas.auth import (
     AuthBuildResponse,
@@ -127,6 +128,7 @@ __all__ = [
     "ConnectivityEndpointRankingResponse",
     "ConnectivityEndpointResponse",
     "DiscoveryAttribute",
+    "ValidatedAttributeCandidate",
     "DiscoveryAuth",
     "DocMarkerMatch",
     "DocProcessingSequenceItem",

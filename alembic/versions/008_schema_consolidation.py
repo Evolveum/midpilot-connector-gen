@@ -32,8 +32,6 @@ One migration, five groups of changes:
    and ``chunk_id`` but only ``chunk_id`` was a foreign key, so a row could claim
    a session or document the referenced chunk does not belong to - and the rows
    are built from LLM output, which is exactly where such a mismatch comes from.
-   ``sessions.api_key_id`` moves from SET NULL to RESTRICT, because keys are
-   revoked rather than deleted and a delete would silently orphan owned sessions.
 
 ``uq_relevant_chunk_unique`` becomes a unique index over the *digest* of
 ``relevant_sequence`` instead of the value itself. That column holds LLM-authored
@@ -58,7 +56,6 @@ If the upgrade fails on an existing deployment, these queries locate the rows:
      WHERE started_at IS NOT NULL AND finished_at IS NOT NULL AND finished_at < started_at;
     SELECT job_id FROM job_progress
      WHERE total_processing < 0 OR processing_completed < 0;
-    SELECT api_key_id FROM api_keys WHERE key_hash !~ '^[0-9a-f]{64}$';
 
 Revision ID: 008
 Revises: 007
@@ -253,7 +250,6 @@ def _upgrade_state_constraints() -> None:
         "job_progress",
         "processing_completed IS NULL OR processing_completed >= 0",
     )
-    op.create_check_constraint("check_api_key_hash_hex", "api_keys", "key_hash ~ '^[0-9a-f]{64}$'")
 
 
 def _repair_relevant_chunks() -> None:
@@ -328,16 +324,6 @@ def _upgrade_reference_integrity() -> None:
         unique=False,
     )
 
-    op.drop_constraint("fk_sessions_api_key_id", "sessions", type_="foreignkey")
-    op.create_foreign_key(
-        "fk_sessions_api_key_id",
-        "sessions",
-        "api_keys",
-        ["api_key_id"],
-        ["api_key_id"],
-        ondelete="RESTRICT",
-    )
-
 
 def upgrade() -> None:
     _upgrade_indexes()
@@ -348,16 +334,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_sessions_api_key_id", "sessions", type_="foreignkey")
-    op.create_foreign_key(
-        "fk_sessions_api_key_id",
-        "sessions",
-        "api_keys",
-        ["api_key_id"],
-        ["api_key_id"],
-        ondelete="SET NULL",
-    )
-
     op.drop_index("idx_relevant_chunks_chunk_ref", table_name="relevant_chunks")
     op.create_index("idx_relevant_chunks_chunk_id", "relevant_chunks", ["chunk_id"], unique=False)
 
@@ -408,7 +384,6 @@ def downgrade() -> None:
         postgresql_where=sa.text("status = 'finished'"),
     )
 
-    op.drop_constraint("check_api_key_hash_hex", "api_keys", type_="check")
     op.drop_constraint("check_progress_completed", "job_progress", type_="check")
     op.drop_constraint("check_progress_total", "job_progress", type_="check")
     op.drop_constraint("check_job_timeline", "jobs", type_="check")

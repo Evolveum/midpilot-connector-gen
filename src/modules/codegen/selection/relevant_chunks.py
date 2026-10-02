@@ -24,6 +24,7 @@ from src.modules.codegen.selection.authorization import (
 )
 from src.modules.digester.schemas import RelationsResponse
 from src.shared.normalize import normalize_chunk_pair
+from src.shared.session_keys import AUTH, OBJECT_CLASSES, attributes_keys, endpoints_keys
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ async def _collect_relation_object_class_pairs(
         repo = RelevantChunkRepository(db)
         chunk_map = await repo.get_relevant_chunks_grouped_by_entity(
             session_id=session_id,
-            result_key="objectClassesOutput",
+            result_key=OBJECT_CLASSES.output,
         )
 
     selected_relation = relations.relations[0]
@@ -159,8 +160,8 @@ async def _collect_relevant_chunks(
     Returns:
         Ordered relevant chunk references, or ``None`` when no selection exists.
     """
-    key_endpoints = f"{object_class}EndpointsOutput"
-    key_attributes = f"{object_class}AttributesOutput"
+    key_endpoints = endpoints_keys(object_class).output
+    key_attributes = attributes_keys(object_class).output
     async with async_session_maker() as db:
         repo = RelevantChunkRepository(db)
         relevant_map = await repo.get_relevant_chunks_map(session_id, result_keys=[key_endpoints, key_attributes])
@@ -191,7 +192,7 @@ async def _collect_authorization_relevant_chunks(
 ) -> Optional[List[Dict[str, Any]]]:
     async with async_session_maker() as db:
         repo = RelevantChunkRepository(db)
-        relevant_map = await repo.get_relevant_chunks_map(session_id, result_keys=["authOutput"])
+        relevant_map = await repo.get_relevant_chunks_map(session_id, result_keys=[AUTH.output])
 
     auth_pairs = select_authorization_chunk_refs(relevant_map, auth_payload, preferred_authorizations)
     if not auth_pairs:
@@ -231,8 +232,8 @@ async def collect_connector_relevant_chunks(
 
     result_keys: List[str] = []
     for object_class in normalized_object_classes:
-        result_keys.append(f"{object_class}EndpointsOutput")
-        result_keys.append(f"{object_class}AttributesOutput")
+        result_keys.append(endpoints_keys(object_class).output)
+        result_keys.append(attributes_keys(object_class).output)
 
     async with async_session_maker() as db:
         repo = RelevantChunkRepository(db)
@@ -241,7 +242,7 @@ async def collect_connector_relevant_chunks(
         for object_class in normalized_object_classes:
             refs = await repo.get_relevant_chunks(
                 session_id=session_id,
-                result_key="objectClassesOutput",
+                result_key=OBJECT_CLASSES.output,
                 entity_key=object_class,
             )
             object_class_refs.extend(ref for ref in refs if isinstance(ref, dict))

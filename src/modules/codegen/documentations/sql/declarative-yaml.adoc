@@ -1,15 +1,14 @@
 = Declarative YAML
 
-The SQL Framework supports a declarative YAML form for the connector manifest, schema definitions, and operation handlers, in addition to Groovy scripts.
+The connector supports a declarative YAML form for the connector manifest, schema definitions, and operation handlers, in addition to Groovy scripts.
 
 YAML documents and Groovy scripts are two front-ends over the *same* builders — a YAML document drives the same live builders the Groovy DSL does, so both forms can be mixed per connector.
 
-
-IMPORTANT: Use Groovy scripts for anything requiring scripted behavior — custom search queries, `where` predicates, attribute resolvers. YAML covers declarative table/attribute mapping and operation control. This page and xref:schema-customization/[schema customization] describe the same schema customization — the YAML form is a declarative subset of the Groovy DSL.
+IMPORTANT: Use Groovy scripts for anything requiring scripted behavior — custom search queries, `where` predicates, attribute resolvers. YAML covers declarative table/attribute mapping and operation control. This page and xref:native-schema.adoc[schema customization] describe the same schema customization — the YAML form is a declarative subset of the Groovy DSL.
 
 == YAML connector manifest
 
-The connector manifest may be named `connector.manifest.json`, `connector.manifest.yaml` or `connector.manifest.yml` — exactly one of the three may be present on the classpath of the connector bundle (the bundle JAR together with the JARs in its `lib/` directory; see xref:custom-connector/#option-1-manifest-based-connector-no-java[bundle layout]).
+The connector manifest may be named `connector.manifest.json`, `connector.manifest.yaml` or `connector.manifest.yml` — exactly one of the three may be present on the classpath of the connector bundle (the bundle JAR together with the JARs in its `lib/` directory; see xref:custom-connector.adoc#_option_1_manifest_based_connector_no_java[bundle layout]).
 
 [source,yaml]
 ----
@@ -65,61 +64,51 @@ objectClasses:
 
 Structure:
 
-[cols="1,3", options="header"]
-|===
-|Key |Description
+`objectClasses.<name>`::
+  The ConnId object class name (the counterpart of `objectClass("...") { ... }`)
 
-|`objectClasses.<name>`
-|The ConnId object class name (the counterpart of `objectClass("...") { ... }`)
+`description` / `embedded`::
+  The corresponding object-class flags (see xref:native-schema.adoc[])
 
-|`description` / `embedded`
-|The corresponding object-class flags (see xref:schema-customization/[])
+`readOnly`::
+  The object class is read-only; create, update, and delete are disabled automatically
 
-|`readOnly`
-|The object class is read-only; create, update, and delete are disabled automatically
+`onlyExplicitlyListed`::
+  Only the explicitly listed attributes are considered (all other discovered columns are ignored)
 
-|`onlyExplicitlyListed`
-|Only the explicitly listed attributes are considered (all other discovered columns are ignored)
+`connId` (object-class level)::
+  Built-in attribute alias map, e.g. `connId: { UID: user_id }` binds `__UID__` to the `user_id` attribute
 
-|`connId` (object-class level)
-|Built-in attribute alias map, e.g. `connId: { UID: user_id }` binds `__UID__` to the `user_id` attribute
+`sql: { table, schema }`::
+  The SQL table name (defaults to the object class name) and optional SQL schema qualifier
 
-|`sql: { table, schema }`
-|The SQL table name (defaults to the object class name) and optional SQL schema qualifier
+`attributes.<name>`::
+  One attribute — the regular attribute settings (`description`, `required`, `multiValued`, `creatable`, `updateable`, `readable`, `returnedByDefault`, `emulated`, `complexType`), the `connId: { name, type }` mapping (including the `__UID__` / `__NAME__` built-ins), the inherited `json: { name, type, openApiFormat, path }` block (the `path` is an attribute-path string such as `$.name.first`, default basic JSONPath — or an explicit `{ type: JSON_POINTER, value: /name/first }` mapping), and the `sql` block below. An empty value (`{}`) declares the attribute without renaming.
 
-|`attributes.<name>`
-|One attribute — the regular attribute settings (`description`, `required`, `multiValued`, `creatable`, `updateable`, `readable`, `returnedByDefault`, `emulated`, `complexType`), the `connId: { name, type }` mapping (including the `__UID__` / `__NAME__` built-ins), the inherited `json: { name, type, openApiFormat, path }` block (the `path` is an attribute-path string such as `$.name.first`, default basic JSONPath — or an explicit `{ type: JSON_POINTER, value: /name/first }` mapping), and the `sql` block below. An empty value (`{}`) declares the attribute without renaming.
-
-|`references.<name>`
-|Map of `attribute name → reference attribute definition`, with `objectClass`, `subtype`, `role` (see xref:schema-customization/[reference attributes])
-|===
+`references.<name>`::
+  Map of `attribute name → reference attribute definition`, with `objectClass`, `subtype`, `role` (see xref:native-schema.adoc[reference attributes])
 
 Attribute-level `sql` keys:
 
-[cols="1,3", options="header"]
-|===
-|Key |Description
+`name`::
+  The SQL column when it differs from the attribute name
 
-|`name`
-|The SQL column when it differs from the attribute name
+`type`::
+  The SQL column type (`INT`, `BIGINT`, `SMALLINT`, `TINYINT`, `BOOLEAN`, `VARCHAR(n)`, `NUMBER(p)`, `NUMBER(p, s)`, `VARCHAR2(n)`, `TIMESTAMP(p)`, `INTEGER`, ...)
 
-|`type`
-|The SQL column type (`INT`, `BIGINT`, `SMALLINT`, `TINYINT`, `BOOLEAN`, `VARCHAR(n)`, `NUMBER(p)`, `NUMBER(p, s)`, `VARCHAR2(n)`, `TIMESTAMP(p)`, `INTEGER`, ...)
+`notNull`::
+  The column is not nullable
 
-|`notNull`
-|The column is not nullable
+`unique`::
+  The column is unique
 
-|`unique`
-|The column is unique
+`primaryKey`::
+  The column is part of the primary key
 
-|`primaryKey`
-|The column is part of the primary key
+`autoIncrement`::
+  The column is auto-incremented
 
-|`autoIncrement`
-|The column is auto-incremented
-|===
-
-YAML schema documents bind directly into the same live schema builder as Groovy scripts, so they merge with auto-discovered columns exactly like xref:/connectors/sql-framework/develop/schema-customization/[Groovy customizations] do — including correlation with discovery and the built-in mapping rules.
+YAML schema documents bind directly into the same live schema builder as Groovy scripts, so they merge with auto-discovered columns exactly like xref:native-schema.adoc[Groovy customizations] do — including correlation with discovery and the built-in mapping rules.
 
 Yes — Groovy and YAML customizations can target the same table (object class): both are applied to the same builder and are merged. The only limit is that a property set explicitly in *both* forms (or set twice, in any combination of Groovy and YAML) is a conflict and fails at script evaluation — declare each property in exactly one place.
 
@@ -138,15 +127,10 @@ objectClasses:
       enabled: false
 ----
 
-[cols="1,3", options="header"]
-|===
-|Key |Description
+`create: { enabled }` / `update: { enabled }` / `delete: { enabled }`::
+  Enables or disables the operation (e.g. `enabled: false` ≙ `disableCreate()`); `readOnly: true` on the schema disables all three automatically
 
-|`create: { enabled }` / `update: { enabled }` / `delete: { enabled }`
-|Enables or disables the operation (e.g. `enabled: false` ≙ `disableCreate()`); `readOnly: true` on the schema disables all three automatically
-|===
-
-Search works out of the box for discovered tables; Groovy remains the front-end for scripted search behavior (custom query implementations, `where` predicates — see xref:search/[search] and xref:custom-search/[custom search]).
+Search works out of the box for discovered tables; Groovy remains the front-end for scripted search behavior (custom query implementations, `where` predicates — see xref:search.adoc[search] and xref:custom-search.adoc[custom search]).
 
 == Groovy to YAML fallback
 

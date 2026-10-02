@@ -10,8 +10,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from src.database.models import ApiKey, Base, Job, Session
+from src.database.models import Base, Job, Session
 from src.database.repositories.job_repository import JobRepository
+from src.shared.job_types import JobType
 from src.shared.normalize import normalized_input_fingerprint
 
 
@@ -34,8 +35,8 @@ async def test_job_lookup_enforces_session_and_tenant_boundaries() -> None:
             schema_created = True
             await connection.run_sync(Base.metadata.create_all)
 
-        owner_a_id = uuid4()
-        owner_b_id = uuid4()
+        owner_a_id = "a" * 64
+        owner_b_id = "b" * 64
         owner_a_source_session_id = uuid4()
         owner_a_requesting_session_id = uuid4()
         owner_b_session_id = uuid4()
@@ -44,7 +45,7 @@ async def test_job_lookup_enforces_session_and_tenant_boundaries() -> None:
         owner_a_job_id = uuid4()
         owner_b_job_id = uuid4()
         ownerless_job_id = uuid4()
-        job_type = "discovery.getCandidateLinks"
+        job_type = JobType.DISCOVERY_CANDIDATE_LINKS
         normalized_input = {"applicationName": "Demo"}
         now = datetime.now(timezone.utc)
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -52,21 +53,9 @@ async def test_job_lookup_enforces_session_and_tenant_boundaries() -> None:
         async with session_factory() as db:
             db.add_all(
                 [
-                    ApiKey(
-                        api_key_id=owner_a_id,
-                        name="owner-a",
-                        key_prefix="mpcg_a",
-                        key_hash="a" * 64,
-                    ),
-                    ApiKey(
-                        api_key_id=owner_b_id,
-                        name="owner-b",
-                        key_prefix="mpcg_b",
-                        key_hash="b" * 64,
-                    ),
-                    Session(session_id=owner_a_source_session_id, api_key_id=owner_a_id),
-                    Session(session_id=owner_a_requesting_session_id, api_key_id=owner_a_id),
-                    Session(session_id=owner_b_session_id, api_key_id=owner_b_id),
+                    Session(session_id=owner_a_source_session_id, owner_key_hash=owner_a_id),
+                    Session(session_id=owner_a_requesting_session_id, owner_key_hash=owner_a_id),
+                    Session(session_id=owner_b_session_id, owner_key_hash=owner_b_id),
                     Session(session_id=ownerless_source_session_id),
                     Session(session_id=ownerless_requesting_session_id),
                     Job(

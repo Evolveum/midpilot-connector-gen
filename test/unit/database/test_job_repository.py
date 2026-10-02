@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from src.database.repositories.job_repository import JobRepository
+from src.shared.job_types import JobType
 
 
 def _compile_postgres(query):
@@ -25,7 +26,7 @@ async def test_reusable_job_query_is_scoped_to_session_or_matching_owner() -> No
     requesting_session_id = uuid4()
 
     await JobRepository(db).get_job_by_input(
-        "discovery.getCandidateLinks",
+        JobType.DISCOVERY_CANDIDATE_LINKS,
         {"applicationName": "Demo"},
         datetime.now(timezone.utc) - timedelta(days=1),
         requesting_session_id=requesting_session_id,
@@ -37,7 +38,7 @@ async def test_reusable_job_query_is_scoped_to_session_or_matching_owner() -> No
     assert "jobs.session_id = %(session_id_1)s::UUID OR" in sql
     assert "sessions_2.session_id = %(session_id_2)s::UUID" in sql
     # NULL owner must match NULL owner, so ownerless sessions form one tenant.
-    assert "sessions_1.api_key_id IS NOT DISTINCT FROM" in sql
+    assert "sessions_1.owner_key_hash IS NOT DISTINCT FROM" in sql
     assert list(compiled.params.values()).count(requesting_session_id) == 2
 
 
@@ -50,7 +51,7 @@ async def test_reusable_job_query_transfers_only_the_newest_row_without_its_inpu
     db.execute = AsyncMock(return_value=result)
 
     await JobRepository(db).get_job_by_input(
-        "digester.getObjectClasses",
+        JobType.DIGESTER_OBJECT_CLASSES,
         {"applicationName": "Demo"},
         datetime.now(timezone.utc) - timedelta(days=1),
         requesting_session_id=uuid4(),

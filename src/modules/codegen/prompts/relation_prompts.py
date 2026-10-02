@@ -11,11 +11,11 @@ get_relation_system_prompt = build_operation_system_prompt(
   invent participants or infer a different relationship from endpoint examples.
 - One bidirectional association is one relationship containing both participants. Merge duplicate
   descriptions of the same association rather than create multiple blocks.
-- For REST and SCIM, prefer the documented root-level relationships YAML map when sufficient.
-  If an attribute is already resolved automatically (for example standard SCIM groups/members),
-  preserve framework defaults rather than install a duplicate resolver.
-- A required scripted resolver may use the documented YAML implementation hook. Otherwise use a
-  complete Groovy relationship("...") block. Never emit a non-existent relation {{ ... }} DSL.
+- For REST and SCIM, declarative YAML cannot declare relationships: the connector rejects a
+  root-level relationships YAML map. Use a complete Groovy relationship("...") block. If an
+  attribute is already resolved automatically (for example standard SCIM groups/members),
+  preserve framework defaults rather than install a duplicate resolver. Never emit a
+  non-existent relation {{ ... }} DSL.
 - For SQL, relationships are detected from foreign-key metadata and conventions. Scripted
   relationship overrides are unsupported. Do not fabricate a relationship block or a join API.
   If discovery suffices, emit {{}}. If the selected relationship needs an unsupported override,

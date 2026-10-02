@@ -52,23 +52,7 @@ objectClass("User") {
 }
 ----
 
-The same in YAML:
-
-[source,yaml]
-----
-objectClasses:
-  User:
-    create:
-      endpoints:
-        - method: POST
-          path: /users
-          request:
-            contentType: APPLICATION_JSON
-          supportedAttributes:
-            - externalId
-            - displayName
-            - nickName
-----
+NOTE: In declarative YAML, `supportedAttributes` is bound only on update endpoints; a create endpoint rejects the key. Use the Groovy form above when create must be limited to a subset of attributes.
 
 == Attribute-specific configuration
 
@@ -105,7 +89,7 @@ objectClasses:
         - method: POST
           path: /users
           request:
-            contentType: APPLICATION_JSON
+            contentType: application/json
 ----
 
-See xref:../declarative-yaml/[declarative YAML] for the full reference.
+See xref:../declarative-yaml.adoc[declarative YAML] for the full reference.

@@ -16,6 +16,7 @@ from src.modules.scrape import orchestration
 from src.modules.scrape.schema import ScrapeRequest
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import JobStatus
+from src.shared.session_keys import SCRAPE
 
 router = APIRouter()
 
@@ -68,7 +69,7 @@ async def get_scrape_status(
         repo,
         session_id,
         jobId,
-        session_key="scrapeJobId",
+        session_key=SCRAPE.job_id,
         job_label="scrape",
     )
 

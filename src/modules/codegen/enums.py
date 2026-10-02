@@ -39,9 +39,24 @@ class ArtifactKind(StrEnum):
 
     AUTHORIZATION = "authorization"
     NATIVE_SCHEMA = "nativeSchema"
-    CONNID = "connid"
     SEARCH = "search"
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
     RELATION = "relation"
+
+
+_OBJECT_CLASS_OPERATION_SUFFIX: dict[ArtifactKind, str] = {
+    ArtifactKind.NATIVE_SCHEMA: "NativeSchema",
+    ArtifactKind.CREATE: "Create",
+    ArtifactKind.UPDATE: "Update",
+    ArtifactKind.DELETE: "Delete",
+}
+
+OBJECT_CLASS_OPERATION_KINDS: tuple[ArtifactKind, ...] = tuple(_OBJECT_CLASS_OPERATION_SUFFIX)
+"""Per-object-class operations other than search, in connector catalog order."""
+
+
+def build_object_class_operation_key(object_class: str, kind: ArtifactKind) -> str:
+    """Operation key of a native-schema or CRUD script, e.g. ``userCreate``; it prefixes its session keys."""
+    return f"{object_class}{_OBJECT_CLASS_OPERATION_SUFFIX[kind]}"

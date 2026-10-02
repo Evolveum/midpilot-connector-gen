@@ -4,6 +4,8 @@
 
 """Unit tests for the one-round documentation escalation of the connector fix."""
 
+import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -356,3 +358,75 @@ async def test_escalation_loads_every_relevant_chunk_by_id_and_excludes_conndev(
         [second_chunk_id, first_chunk_id, conndev_chunk_id],
     )
     assert result == "second\n\n---\n\nfirst"
+
+
+@pytest.mark.asyncio
+async def test_dsl_documentation_is_assembled_off_the_event_loop():
+    """Reading and slicing the bundled references must not stall coroutines sharing the loop."""
+    released = threading.Event()
+
+    def blocking_load(artifacts, protocol) -> str:
+        # Only an independent coroutine can release this; on the event loop it would time out.
+        assert released.wait(timeout=5), "DSL documentation loading blocked the event loop"
+        return "dsl reference"
+
+    async def independent_coroutine() -> None:
+        await asyncio.sleep(0)
+        released.set()
+
+    fixed = _llm(fixedScripts=[{"operationKey": "userUpdate", "code": FIXED_UPDATE, "reason": "fix"}])
+    with (
+        patch(
+            "src.modules.codegen.connector_fix.run_connector_fix_pass", new_callable=AsyncMock, return_value=fixed
+        ) as pass_mock,
+        patch("src.modules.codegen.connector_fix.store_fixed_connector_scripts", new_callable=AsyncMock),
+        patch("src.modules.codegen.connector_fix.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.modules.codegen.connector_fix.get_session_connection_target",
+            new_callable=AsyncMock,
+            return_value=("https://api.example.test", ""),
+        ),
+        patch("src.modules.codegen.connector_fix._load_dsl_documentation", side_effect=blocking_load),
+    ):
+        result, _ = await asyncio.gather(
+            fix_connector_code(
+                scripts=SCRIPTS,
+                midpoint_errors=["unsupported filter"],
+                attributes={"attributes": {"Username": {"type": "string"}}},
+                session_id=uuid4(),
+                job_id=uuid4(),
+                protocol=ApiType.REST,
+            ),
+            independent_coroutine(),
+        )
+
+    assert [change.operation_key for change in result.changed_operations] == ["userUpdate"]
+    assert pass_mock.await_args.kwargs["dsl_documentation"] == "dsl reference"
+
+
+@pytest.mark.asyncio
+async def test_dsl_documentation_failure_propagates_before_any_llm_pass():
+    with (
+        patch("src.modules.codegen.connector_fix.run_connector_fix_pass", new_callable=AsyncMock) as pass_mock,
+        patch("src.modules.codegen.connector_fix.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.modules.codegen.connector_fix.get_session_connection_target",
+            new_callable=AsyncMock,
+            return_value=("https://api.example.test", ""),
+        ),
+        patch(
+            "src.modules.codegen.connector_fix._load_dsl_documentation",
+            side_effect=FileNotFoundError("Required codegen documentation resource not found"),
+        ),
+    ):
+        with pytest.raises(FileNotFoundError, match="documentation resource not found"):
+            await fix_connector_code(
+                scripts=SCRIPTS,
+                midpoint_errors=["unsupported filter"],
+                attributes={"attributes": {"Username": {"type": "string"}}},
+                session_id=uuid4(),
+                job_id=uuid4(),
+                protocol=ApiType.REST,
+            )
+
+    pass_mock.assert_not_awaited()

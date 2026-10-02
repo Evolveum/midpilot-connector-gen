@@ -19,6 +19,7 @@ scalar or sequence rather than a mapping. See test_connector_code_validation.py 
 empirical basis - no real Groovy sample tried there parses to a ``dict``.
 """
 
+import logging
 from typing import Any, Optional
 
 import yaml
@@ -29,6 +30,8 @@ from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.errors import ConnectorCodeValidationError
 from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
+
+logger = logging.getLogger(__name__)
 
 
 class _RejectDuplicateKeysLoader(yaml.SafeLoader):
@@ -88,9 +91,11 @@ def validate_yaml_connector_code(code: str) -> Optional[str]:
     """
     Validate a declarative YAML connector artifact.
 
-    Checks all documented configuration levels with strict types and rejects unknown
-    keys. Only explicit script fields are parsed as Groovy; the artifact is never
-    reserialized, preserving comments and formatting.
+    Checks known configuration fields with strict types and rejects unknown root
+    keys. Unknown nested options produce log warnings, not validation errors: the
+    connector runtime may support options absent from our local model. Only known
+    script fields are parsed as Groovy; unknown options are not inspected. The
+    artifact is never reserialized, preserving all options, comments and formatting.
 
     Returns None when valid, otherwise a human-readable error message.
     """
@@ -114,7 +119,7 @@ def validate_yaml_connector_code(code: str) -> Optional[str]:
     except ValidationError as exc:
         error = exc.errors(include_url=False)[0]
         path = ".".join(map(str, error["loc"]))
-        return f"{path}: {error['msg']}"
+        return f"{path}: {error['msg']}" if path else error["msg"]
     return _validate_embedded_scripts(model)
 
 
@@ -145,13 +150,18 @@ def _has_cyclic_containers(document: Any) -> bool:
 
 def _validate_embedded_scripts(value: Any, path: str = "") -> Optional[str]:
     if isinstance(value, BaseModel):
+        for key in value.model_extra or {}:
+            logger.warning(
+                "[Codegen:Validation] Unrecognized YAML option at %s; preserving it for connector runtime validation",
+                f"{path}.{key}".lstrip("."),
+            )
         for name, field in type(value).model_fields.items():
             if name not in value.model_fields_set:
                 continue
             child = getattr(value, name)
             child_path = f"{path}.{field.alias or name}".lstrip(".")
             metadata = field.json_schema_extra
-            if isinstance(metadata, dict) and metadata.get("script"):
+            if isinstance(metadata, dict) and metadata.get("script") and isinstance(child, str):
                 if metadata.get("empty_body") and child == "EMPTY":
                     continue
                 # Hooks are closure bodies; spec is a single build-time expression.

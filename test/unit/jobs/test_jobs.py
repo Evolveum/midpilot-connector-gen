@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -16,6 +17,8 @@ from src.jobs.lifecycle import increment_processed_documents
 from src.jobs.payload import build_execution_payload
 from src.jobs.runner import _resolve_dynamic_input, _run_claimed_job, schedule_coroutine_job
 from src.jobs.session_persistence import persist_result_to_session
+from src.session.errors import InvalidDocumentationContentError, UnsupportedDocumentationFormatError
+from src.shared.job_types import JobType, UnknownJobTypeError, job_type_policy
 
 
 class _AsyncSessionContext:
@@ -47,7 +50,7 @@ async def test_schedule_coroutine_job_persists_versioned_execution_payload_in_ca
     with patch("src.jobs.runner.JobRepository", return_value=repo):
         returned_job_id = await schedule_coroutine_job(
             db=db,
-            job_type="digester.test",
+            job_type=JobType.DIGESTER_AUTH,
             input_payload={"skipCache": True},
             worker=durable_test_worker,
             worker_args=("hello",),
@@ -78,7 +81,7 @@ async def test_documentation_dependency_is_persisted_without_starting_a_waiting_
     with patch("src.jobs.runner.JobRepository", return_value=repo):
         await schedule_coroutine_job(
             db=MagicMock(),
-            job_type="digester.test",
+            job_type=JobType.DIGESTER_AUTH,
             input_payload={"skipCache": True},
             worker=durable_test_worker,
             worker_args=("hello",),
@@ -112,7 +115,7 @@ async def test_dynamic_input_is_resolved_by_the_claiming_worker_and_persisted_un
     claimed = ClaimedJob(
         job_id=job_id,
         session_id=session_id,
-        job_type="digester.test",
+        job_type=JobType.DIGESTER_AUTH,
         input_payload={"skipCache": True, "apiType": "sql"},
         execution_payload={},
         worker_id="worker-a",
@@ -153,7 +156,7 @@ async def test_superseded_session_result_is_explicitly_recorded_before_job_finis
     claimed = ClaimedJob(
         job_id=job_id,
         session_id=session_id,
-        job_type="digester.test",
+        job_type=JobType.DIGESTER_AUTH,
         input_payload={"skipCache": True},
         execution_payload=build_execution_payload(
             worker=durable_test_worker,
@@ -248,7 +251,7 @@ async def test_release_interrupted_claim_gives_up_when_the_database_does_not_ans
     claimed_job = ClaimedJob(
         job_id=uuid4(),
         session_id=uuid4(),
-        job_type="digester.test",
+        job_type=JobType.DIGESTER_AUTH,
         input_payload={},
         execution_payload={},
         worker_id="test-worker",
@@ -282,7 +285,7 @@ async def test_lost_heartbeat_cancels_the_running_execution(monkeypatch: pytest.
     claimed_job = ClaimedJob(
         job_id=uuid4(),
         session_id=uuid4(),
-        job_type="digester.test",
+        job_type=JobType.DIGESTER_AUTH,
         input_payload={},
         execution_payload={},
         worker_id="test-worker",
@@ -297,3 +300,110 @@ async def test_lost_heartbeat_cancels_the_running_execution(monkeypatch: pytest.
 
     assert execution_cancelled.is_set()
     set_failed.assert_not_awaited()
+
+
+def _claimed(job_type: str, input_payload: dict) -> ClaimedJob:
+    return ClaimedJob(
+        job_id=uuid4(),
+        session_id=uuid4(),
+        job_type=job_type,
+        input_payload=input_payload,
+        execution_payload=build_execution_payload(
+            worker=durable_test_worker,
+            worker_args=("value",),
+            worker_kwargs={},
+            dynamic_input_provider=None,
+            session_result_key=None,
+        ),
+        worker_id="worker-a",
+        execution_token=uuid4(),
+        attempt_count=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_unknown_job_type_fails_before_any_worker_code_runs():
+    claimed = _claimed("codegen.getConnID", {"skipCache": True})
+
+    with (
+        patch("src.jobs.runner.resolve_callable") as resolve,
+        patch("src.jobs.runner.lifecycle.set_finished", new_callable=AsyncMock) as set_finished,
+    ):
+        with pytest.raises(UnknownJobTypeError, match="codegen.getConnID"):
+            await _run_claimed_job(claimed)
+
+    resolve.assert_not_called()
+    set_finished.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("job_type", "input_payload", "expect_cache"),
+    [
+        (JobType.SCRAPE_RELEVANT_DOCUMENTATION, {}, False),
+        (JobType.CODEGEN_FIX_CONNECTOR, {}, False),
+        (JobType.DIGESTER_AUTH, {"skipCache": True}, False),
+        (JobType.DIGESTER_AUTH, {"skipCache": False}, True),
+        (JobType.CODEGEN_SEARCH, {}, True),
+    ],
+)
+async def test_cache_reuse_follows_the_declared_policy_and_skip_cache(job_type, input_payload, expect_cache):
+    claimed = _claimed(job_type.value, input_payload)
+    job_repo = MagicMock()
+    job_repo.get_job_artifacts = AsyncMock(return_value={})
+
+    with (
+        patch("src.jobs.runner.async_session_maker", return_value=_AsyncSessionContext()),
+        patch("src.jobs.runner.JobRepository", return_value=job_repo),
+        patch("src.jobs.runner.cache.reuse_or_run", new_callable=AsyncMock, return_value={"value": "cached"}) as reuse,
+        patch("src.jobs.runner.lifecycle.set_finished", new_callable=AsyncMock) as set_finished,
+    ):
+        await _run_claimed_job(claimed)
+
+    if expect_cache:
+        reuse.assert_awaited_once()
+        assert reuse.await_args.kwargs["job_type"] is job_type
+        assert reuse.await_args.kwargs["cache_policy"] == job_type_policy(job_type).cache
+        set_finished.assert_awaited_once_with(claimed.job_id, result={"value": "cached"})
+    else:
+        reuse.assert_not_awaited()
+        set_finished.assert_awaited_once_with(claimed.job_id, result={"value": "value"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expect_traceback"),
+    [
+        (InvalidDocumentationContentError("Uploaded PDF broken.pdf does not contain extractable text."), False),
+        (UnsupportedDocumentationFormatError("application/zip", "archive.zip"), False),
+        (ValueError("unexpected parser state"), True),
+    ],
+)
+async def test_job_failure_logs_a_traceback_only_for_unexpected_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    expect_traceback: bool,
+):
+    """A rejected upload is the caller's to fix; a plain ValueError is never assumed to be."""
+    claimed = _claimed(JobType.DOCUMENTATION_PROCESS_UPLOAD.value, {})
+
+    async def fail(claimed_job: ClaimedJob) -> None:
+        raise error
+
+    async def idle_heartbeat(claimed_job: ClaimedJob) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(runner, "_run_claimed_job", fail)
+    monkeypatch.setattr(runner, "_heartbeat", idle_heartbeat)
+
+    with (
+        patch("src.jobs.runner.lifecycle.set_failed", new_callable=AsyncMock) as set_failed,
+        caplog.at_level(logging.ERROR, logger="src.jobs.runner"),
+    ):
+        await runner.execute_claimed_job(claimed)
+
+    set_failed.assert_awaited_once_with(claimed.job_id, error=str(error))
+    failures = [record for record in caplog.records if "Job failed" in record.getMessage()]
+    assert len(failures) == 1
+    assert (failures[0].exc_info is not None) is expect_traceback

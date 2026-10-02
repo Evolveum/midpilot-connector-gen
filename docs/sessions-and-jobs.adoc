@@ -47,6 +47,14 @@ link:pipeline/scrape.adoc[scrape stage], or by direct upload:
 | `PUT /api/session/{sessionId}/documentation`
 | Replace *all* documentation in the session with one uploaded file.
 
+| `POST /api/session/{sessionId}/documentation/{docId}`
+| Upload a file under an explicit document ID. Reusing an ID logs a warning:
+  the previous content will be deleted and replaced only when the new upload
+  has been fully processed and its database transaction commits. Processing
+  or publication failure preserves the previous content. Cached uploads use
+  the same replacement rule. Only the latest queued upload for that ID may
+  publish; superseded uploads fail without modifying the document.
+
 | `PUT /api/session/{sessionId}/documentation/{docId}`
 | Import already-processed documentation (chunks as JSON) — no LLM involved.
 
@@ -59,6 +67,12 @@ link:pipeline/scrape.adoc[scrape stage], or by direct upload:
 | `DELETE .../documentation`, `DELETE .../documentation/{docId}`
 | Remove documentation.
 |===
+
+During replacement, GET and HEAD continue to expose the existing document.
+Use the upload job status to track the pending replacement. Old chunk IDs and
+their stored relevance references are removed when the replacement commits;
+rerun extraction when the new document must be used for connector generation.
+New chunks are published together rather than exposed as partial uploads.
 
 SQL inputs can be uploaded directly as `.sql`/SQL media types, as a JSON table
 list (prefer `application/sql+json` so schema-preserving chunking is selected),
@@ -91,7 +105,36 @@ Every expensive operation follows the same contract:
    (e.g. correcting an extracted object class before running codegen).
 
 Job statuses and progress stages are defined centrally in
-`src/shared/enums.py` (`JobStatus`, `JobStage`).
+`src/shared/enums.py` (`JobStatus`, `JobStage`). Job types and the rules that
+depend on them (output reuse, the documentation gate, progress counter names)
+are declared once in `src/shared/job_types.py`; see
+<<result-caching-and-skipcache>>.
+
+=== Session keys
+
+Every key a module reads from or writes to the session is built by
+`src/shared/session_keys.py`, which also documents the owner and the value
+model of each key family. A job-backed stage owns three keys:
+
+[cols="1,3", options="header"]
+|===
+| Key | Content
+
+| `{prefix}JobId`
+| The latest scheduled job. A finished job publishes its result only while this
+  pointer still names it.
+| `{prefix}Input`
+| Identifiers and caller-supplied metadata of that request (object class,
+  intent, repair context, preferred endpoints, ...). It never copies stored
+  outputs such as attributes, endpoints, relations or object classes - the
+  complete input of a job lives in `jobs.input`.
+| `{prefix}Output`
+| The published result.
+|===
+
+Only `discoveryInput` and `scrapeInput` are read back (application name and
+version); the other `*Input` keys are diagnostic metadata. An upload is tracked
+by `documentation.processUpload_{docId}_job_id` instead of a stage family.
 
 == Durable multi-worker execution
 
@@ -179,20 +222,63 @@ Migration `007` marks pre-migration queued/running jobs as failed because they
 do not contain a resumable execution payload. The same migration adds
 idempotency keys for documentation chunks.
 
+[[result-caching-and-skipcache]]
 == Result caching and `skipCache`
 
-Discovery, scrape, and digester jobs cache results by *normalized input*: if
-the same input was already processed in the same session or API-key tenant
-within a configured time window, the stored result is reused instead of
-re-running the LLM work. With authentication disabled, ownerless sessions form
-one cache tenant; production deployments should enable API-key authentication.
+Jobs cache results by *normalized input*: if a job of the same type with the
+same input was already processed in the same session or API-key tenant within
+a configured time window, the stored result is reused instead of re-running the
+LLM work. With authentication disabled, ownerless sessions form one cache
+tenant; production deployments should enable API-key authentication.
 
-* The windows are configured per module:
-  `+SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL+`,
-  `+SCRAPE_AND_PROCESS__SCRAPE_INPUT_CHECK_INTERVAL+`,
-  `+DIGESTER__DIGESTER_INPUT_CHECK_INTERVAL+` (all default to 4 weeks).
-* Every such endpoint accepts `skipCache=true` (query parameter or request
+Whether and how a job type reuses output is declared explicitly per type in
+`src/shared/job_types.py`; nothing is inferred from the type name:
+
+[cols="2,2,3", options="header"]
+|===
+| Job types | Window | Reuse
+
+| `digester.getObjectClassSchema` (attributes), `digester.getEndpoints`
+| `+DIGESTER__DIGESTER_INPUT_CHECK_INTERVAL+`
+| Relevance references are remapped between the documentation selections
+  stored in the source and the reusing job input. A cached reference that the
+  source selection does not contain is never published; the job runs instead.
+| Other `digester.*` jobs
+| `+DIGESTER__DIGESTER_INPUT_CHECK_INTERVAL+`
+| Relevance references are remapped between the source session's documentation
+  and this job's documentation input.
+| `codegen.*` except `codegen.fixConnector`
+| `+SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL+`
+| The result is copied and the source job's non-fatal errors are carried over.
+| `discovery.getCandidateLinks`
+| `+SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL+`
+| The result is copied.
+| `documentation.processUpload`
+| `+SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL+`
+| The source upload's processed chunks are republished as this document.
+| `scrape.getRelevantDocumentation`, `codegen.fixConnector`
+| -
+| Never reused by the job runner. Scraping reuses documentation of an earlier
+  scrape inside its own worker (`+SCRAPE_AND_PROCESS__SCRAPE_INPUT_CHECK_INTERVAL+`).
+|===
+
+* All windows default to 4 weeks.
+* Every cacheable endpoint accepts `skipCache=true` (query parameter or request
   field) to force a fresh run.
+* A job row whose type has no declared policy - e.g. left behind by a removed
+  job type - is rejected explicitly: the worker fails it before running any
+  worker code, and its status lookup reports a server error.
+
+The cache identity of attribute and endpoint jobs covers exactly the
+documentation they can read: for each selected chunk its text, URL, summary,
+extraction metadata (content type and tags) and the attempt it belongs to, plus
+the effective protocol and the request parameters. Chunk UUIDs are not part of it, so a
+session holding the same documentation reuses the result; documentation
+outside the stored selection does not prevent reuse, and a change to any
+selected chunk does. The order of the SCIM baseline and SQL schema chunks is
+part of the identity as well, because conflicting definitions are resolved by
+position (the last SCIM definition and the first SQL table definition win); the
+order of the primary and fallback chunks is not.
 
 IMPORTANT: When testing prompt or extraction changes, pass `skipCache=true` —
 otherwise you may be looking at a weeks-old cached result and wrongly conclude

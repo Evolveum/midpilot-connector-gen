@@ -82,6 +82,28 @@ async def test_untouched_scripts_are_returned_byte_identical_and_not_persisted()
 
 
 @pytest.mark.asyncio
+async def test_reference_metadata_fix_is_returned_and_persisted_without_job_errors(caplog):
+    original = "objectClasses: {group: {attributes: {members: {multiValued: true}}}}"
+    fixed = (
+        "# Preserve reference metadata\nobjectClasses: {group: {references: {members: "
+        "{objectClass: User, role: object, description: Members, multiValued: true}}}}"
+    )
+    result, store, errors = await _run(
+        _llm(fixedScripts=[{"operationKey": "groupNativeSchema", "code": fixed, "reason": "Add reference role"}]),
+        scripts=[
+            {"operationKey": "groupNativeSchema", "kind": "nativeSchema", "objectClass": "group", "code": original}
+        ],
+    )
+    assert result.scripts[0].code == fixed
+    assert result.scripts[0].format == "YAML"
+    assert not result.rejected_scripts
+    assert store.await_args.args[1] == {"groupNativeSchemaOutput": {"format": "YAML", "code": fixed}}
+    errors.assert_not_awaited()
+    assert "references.members.description" in caplog.text
+    assert "references.members.multiValued" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_valid_yaml_fix_is_accepted_and_persisted():
     """A fix may switch a broken Groovy script to declarative YAML - the validator is format-aware."""
     fixed_yaml = "objectClasses:\n  user:\n    update:\n      enabled: true\n"

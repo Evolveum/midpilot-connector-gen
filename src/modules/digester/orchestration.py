@@ -39,9 +39,19 @@ from src.modules.digester.selection import (
     connectivity_endpoint_input,
     metadata_input,
 )
-from src.session.errors import SessionNotFoundError
 from src.session.info_metadata import get_session_base_api_url, resolve_effective_api_type
 from src.shared.enums import ApiType, GenerationIntent
+from src.shared.job_types import JobType
+from src.shared.normalize import DOCUMENTATION_SELECTION_INPUT_KEY
+from src.shared.session_keys import (
+    AUTH,
+    CONNECTIVITY_ENDPOINT,
+    METADATA,
+    OBJECT_CLASSES,
+    RELATIONS,
+    attributes_keys,
+    endpoints_keys,
+)
 
 _DOCUMENTATION_WAIT_TIMEOUT_SECONDS = 750
 
@@ -71,7 +81,7 @@ async def schedule_object_class_extraction(
 
     job_id = await schedule_coroutine_job(
         db=repo.db,
-        job_type="digester.getObjectClass",
+        job_type=JobType.DIGESTER_OBJECT_CLASSES,
         input_payload=input_payload,
         dynamic_input_enabled=True,
         dynamic_input_provider=build_object_class_extraction_input,
@@ -84,12 +94,12 @@ async def schedule_object_class_extraction(
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
-        session_result_key="objectClassesOutput",
+        session_result_key=OBJECT_CLASSES.output,
         await_documentation=True,
         await_documentation_timeout=_DOCUMENTATION_WAIT_TIMEOUT_SECONDS,
     )
 
-    await persist_job_pointer(repo, session_id, "objectClasses", dict(input_payload), job_id)
+    await persist_job_pointer(repo, session_id, OBJECT_CLASSES, dict(input_payload), job_id)
     return job_id
 
 
@@ -105,43 +115,47 @@ async def schedule_attribute_extraction(
     """
     Schedule attribute extraction for one normalized object class and persist
     ``{object_class}AttributesJobId`` / ``{object_class}AttributesInput``.
+
+    The job input stores the documentation selection (primary, fallback and SCIM
+    baseline, or the SQL schema) and the effective protocol, so the worker never
+    reloads the session's documentation.
     """
-    selection = await DocumentationSelector(db).build_attribute_plan(
+    keys = attributes_keys(object_class)
+    protocol = await resolve_effective_api_type(session_id, api_type)
+    plan = await DocumentationSelector(db).build_attribute_plan(
         repo=repo,
         session_id=session_id,
         object_class=object_class,
-        api_type_override=api_type,
+        protocol=protocol,
     )
 
-    total_chunks = len(selection.relevant_chunks)
     job_id = await schedule_coroutine_job(
         db=repo.db,
-        job_type="digester.getObjectClassSchema",
+        job_type=JobType.DIGESTER_ATTRIBUTES,
         input_payload={
-            "documentationItems": selection.doc_items,
             "objectClass": object_class,
-            "relevantDocumentations": selection.relevant_chunks,
+            "apiType": protocol.value,
+            DOCUMENTATION_SELECTION_INPUT_KEY: plan.selection.to_job_input(),
             "skipCache": skip_cache,
         },
         worker=extract_attributes,
-        worker_args=(
-            job_input_reference("documentationItems"),
-            object_class,
-            session_id,
-            job_input_reference("relevantDocumentations"),
-        ),
-        worker_kwargs={"api_type_override": api_type},
+        worker_kwargs={
+            "selection": job_input_reference(DOCUMENTATION_SELECTION_INPUT_KEY),
+            "object_class": object_class,
+            "session_id": session_id,
+            "protocol": protocol,
+        },
         initial_stage="chunking",
-        initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
+        initial_message=f"Processing {plan.relevant_chunk_count} relevant chunks for {object_class}",
         session_id=session_id,
-        session_result_key=f"{object_class}AttributesOutput",
+        session_result_key=keys.output,
     )
 
     await persist_job_pointer(
         repo,
         session_id,
-        f"{object_class}Attributes",
-        {"objectClass": object_class, "relevantDocumentationsCount": total_chunks},
+        keys,
+        {"objectClass": object_class, "relevantDocumentationsCount": plan.relevant_chunk_count},
         job_id,
     )
     return job_id
@@ -163,56 +177,54 @@ async def schedule_endpoint_extraction(
     A SQL session is rejected before a job is created: a database connector has no
     endpoints, so there is nothing to extract and nothing downstream consumes the result.
     """
+    keys = endpoints_keys(object_class)
     protocol = await resolve_effective_api_type(session_id, api_type)
     if protocol == ApiType.SQL:
         raise EndpointExtractionNotSupportedError(object_class, protocol.value)
 
-    selection = await DocumentationSelector(db).build_endpoint_plan(
+    plan = await DocumentationSelector(db).build_endpoint_plan(
         repo=repo,
         session_id=session_id,
         object_class=object_class,
+        protocol=protocol,
         api_type_override=api_type,
     )
 
-    total_chunks = len(selection.relevant_chunks)
     job_id = await schedule_coroutine_job(
         db=repo.db,
-        job_type="digester.getEndpoints",
+        job_type=JobType.DIGESTER_ENDPOINTS,
         input_payload={
-            "documentationItems": selection.doc_items,
             "objectClass": object_class,
-            "objectClassFlags": selection.object_class_flags,
-            "baseApiUrl": selection.base_api_url,
-            "relevantDocumentations": selection.relevant_chunks,
+            "apiType": protocol.value,
+            "objectClassFlags": plan.object_class_flags,
+            "baseApiUrl": plan.base_api_url,
+            DOCUMENTATION_SELECTION_INPUT_KEY: plan.selection.to_job_input(),
             "skipCache": skip_cache,
         },
         worker=extract_endpoints,
-        worker_args=(
-            job_input_reference("documentationItems"),
-            object_class,
-            session_id,
-            job_input_reference("relevantDocumentations"),
-        ),
         worker_kwargs={
+            "selection": job_input_reference(DOCUMENTATION_SELECTION_INPUT_KEY),
+            "object_class": object_class,
+            "session_id": session_id,
+            "protocol": protocol,
             "base_api_url": job_input_reference("baseApiUrl"),
-            "api_type_override": api_type,
             "object_class_flags": job_input_reference("objectClassFlags"),
         },
         initial_stage="chunking",
-        initial_message=f"Processing {total_chunks} relevant chunks for {object_class}",
+        initial_message=f"Processing {plan.relevant_chunk_count} relevant chunks for {object_class}",
         session_id=session_id,
-        session_result_key=f"{object_class}EndpointsOutput",
+        session_result_key=keys.output,
     )
 
     await persist_job_pointer(
         repo,
         session_id,
-        f"{object_class}Endpoints",
+        keys,
         {
             "objectClass": object_class,
-            "objectClassFlags": selection.object_class_flags,
-            "relevantDocumentationsCount": total_chunks,
-            "baseApiUrl": selection.base_api_url,
+            "objectClassFlags": plan.object_class_flags,
+            "relevantDocumentationsCount": plan.relevant_chunk_count,
+            "baseApiUrl": plan.base_api_url,
         },
         job_id,
     )
@@ -230,18 +242,15 @@ async def schedule_relations_extraction(
     Schedule relation extraction and persist ``relationsJobId`` /
     ``relationsInput``.
     """
-    try:
-        doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
-    except ValueError as e:
-        raise SessionNotFoundError(session_id) from e
+    doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
 
-    relevant = await repo.get_session_data(session_id, "objectClassesOutput")
+    relevant = await repo.get_session_data(session_id, OBJECT_CLASSES.output)
     if not relevant:
         raise ObjectClassesNotFoundError(session_id)
 
     job_id = await schedule_coroutine_job(
         db=repo.db,
-        job_type="digester.getRelations",
+        job_type=JobType.DIGESTER_RELATIONS,
         input_payload={
             "documentationItems": doc_items,
             "relevantObjectClasses": relevant,
@@ -255,16 +264,11 @@ async def schedule_relations_extraction(
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
-        session_result_key="relationsOutput",
+        session_result_key=RELATIONS.output,
     )
 
-    await persist_job_pointer(
-        repo,
-        session_id,
-        "relations",
-        {"relevantObjectClasses": relevant, "skipCache": skip_cache},
-        job_id,
-    )
+    # The object classes travel in the job input; the pointer keeps request metadata only.
+    await persist_job_pointer(repo, session_id, RELATIONS, {"skipCache": skip_cache}, job_id)
     return job_id
 
 
@@ -281,7 +285,7 @@ async def schedule_connectivity_endpoint_extraction(
     base_api_url = await get_session_base_api_url(session_id)
     job_id = await schedule_coroutine_job(
         db=repo.db,
-        job_type="digester.getConnectivityEndpoint",
+        job_type=JobType.DIGESTER_CONNECTIVITY_ENDPOINT,
         input_payload={
             "baseApiUrl": base_api_url,
             "skipCache": skip_cache,
@@ -296,7 +300,7 @@ async def schedule_connectivity_endpoint_extraction(
         initial_stage="chunking",
         initial_message="Preparing documentation for connectivity endpoint extraction",
         session_id=session_id,
-        session_result_key="connectivityEndpointOutput",
+        session_result_key=CONNECTIVITY_ENDPOINT.output,
         await_documentation=True,
         await_documentation_timeout=_DOCUMENTATION_WAIT_TIMEOUT_SECONDS,
     )
@@ -304,7 +308,7 @@ async def schedule_connectivity_endpoint_extraction(
     await persist_job_pointer(
         repo,
         session_id,
-        "connectivityEndpoint",
+        CONNECTIVITY_ENDPOINT,
         {"baseApiUrl": base_api_url, "skipCache": skip_cache},
         job_id,
     )
@@ -320,7 +324,7 @@ async def schedule_auth_extraction(
     """Schedule auth extraction and persist ``authJobId`` / ``authInput``."""
     job_id = await schedule_coroutine_job(
         db=repo.db,
-        job_type="digester.getAuth",
+        job_type=JobType.DIGESTER_AUTH,
         input_payload={"skipCache": skip_cache},
         dynamic_input_enabled=True,
         dynamic_input_provider=auth_input,
@@ -329,12 +333,12 @@ async def schedule_auth_extraction(
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
-        session_result_key="authOutput",
+        session_result_key=AUTH.output,
         await_documentation=True,
         await_documentation_timeout=_DOCUMENTATION_WAIT_TIMEOUT_SECONDS,
     )
 
-    await persist_job_pointer(repo, session_id, "auth", {"skipCache": skip_cache}, job_id)
+    await persist_job_pointer(repo, session_id, AUTH, {"skipCache": skip_cache}, job_id)
     return job_id
 
 
@@ -347,7 +351,7 @@ async def schedule_metadata_extraction(
     """Schedule metadata extraction and persist ``metadataJobId`` / ``metadataInput``."""
     job_id = await schedule_coroutine_job(
         db=repo.db,
-        job_type="digester.getInfoMetadata",
+        job_type=JobType.DIGESTER_INFO_METADATA,
         input_payload={"skipCache": skip_cache},
         dynamic_input_enabled=True,
         dynamic_input_provider=metadata_input,
@@ -356,10 +360,10 @@ async def schedule_metadata_extraction(
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
-        session_result_key="metadataOutput",
+        session_result_key=METADATA.output,
         await_documentation=True,
         await_documentation_timeout=_DOCUMENTATION_WAIT_TIMEOUT_SECONDS,
     )
 
-    await persist_job_pointer(repo, session_id, "metadata", {"skipCache": skip_cache}, job_id)
+    await persist_job_pointer(repo, session_id, METADATA, {"skipCache": skip_cache}, job_id)
     return job_id

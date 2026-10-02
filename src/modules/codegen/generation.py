@@ -18,7 +18,6 @@ from src.modules.codegen.core.operations import (
     build_other_authorization_scaffold,
 )
 from src.modules.codegen.enums import SearchIntent
-from src.modules.codegen.prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
 from src.modules.codegen.schema import (
     AttributesPayload,
     AuthPayload,
@@ -33,7 +32,6 @@ from src.modules.codegen.selection.authorization import (
 )
 from src.modules.codegen.selection.docs_loader import load_operation_documentation, load_required_adoc_text
 from src.modules.codegen.selection.protocol_selectors import (
-    CONNID_ATTRIBUTES_DOCS_PATH,
     get_operation_assets,
     get_search_operation_assets,
 )
@@ -45,7 +43,6 @@ from src.modules.codegen.selection.relevant_chunks import (
 from src.modules.codegen.utils.code_output import build_connector_code_output
 from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
-    build_connid_attribute_mapping_records,
     build_scim_contract_prompt_vars,
     build_sql_context_prompt_vars,
     extract_sql_context,
@@ -171,39 +168,6 @@ async def generate_authorization_code(
         job_id=job_id,
         repair_context=repair_context,
         auth_payload=auth_payload,
-    )
-    return await build_connector_code_output(code)
-
-
-async def generate_conn_id_code(
-    attributes_payload: AttributesPayload,
-    object_class: str,
-    *,
-    job_id: UUID,
-    repair_context: Optional[CodegenRepairContext] = None,
-) -> ConnectorCodeOutput:
-    """
-    Generate Groovy for ConnID attribute mapping from attributes.
-
-    Deprecated: ``generate_native_schema_code`` emits this mapping into the native
-    schema script. Kept working for callers that have not migrated; its prompt is
-    deliberately frozen.
-    """
-    docs_text = await asyncio.to_thread(
-        load_required_adoc_text, __package__ + ".documentations", CONNID_ATTRIBUTES_DOCS_PATH
-    )
-
-    records = build_connid_attribute_mapping_records(attributes_payload)
-
-    code = await generate_groovy(
-        records=records,
-        object_class=object_class,
-        system_prompt=get_connID_system_prompt,
-        user_prompt=get_connID_user_prompt,
-        logger_prefix="ConnID",
-        extra_prompt_vars={"connID_docs": docs_text},
-        job_id=job_id,
-        repair_context=repair_context,
     )
     return await build_connector_code_output(code)
 

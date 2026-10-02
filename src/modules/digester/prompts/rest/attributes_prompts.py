@@ -136,7 +136,17 @@ Please return:
 2. `to_be_deleted`: list of attribute names to remove.
 """)
 
-get_build_type_format_from_sequences_system_prompt = textwrap.dedent("""
+_ATTRIBUTE_EVIDENCE_RULES = textwrap.dedent("""
+Evidence rules:
+- Use only evidence about this attribute of the given object class. The object class's own response representation and its own create and update requests (request bodies, request schemas or parameters, whatever they are named) all describe this object class. Ignore same-named attributes of other object classes.
+- A field counts as this attribute only under the same name; a differently named request field (e.g. `enabled` for an attribute named `is_enabled`) is a different attribute.
+- Evidence is what the relevant sequences state or what follows clearly from the documentation's own conventions: schema keywords (e.g. readOnly, writeOnly, required, array types, references), field or property tables (type, constraints, access or supported operations), request and response schemas and examples, and conditions in descriptions.
+- Evaluate from the perspective of the privileged integration account the connector runs under (administrator or global management permissions). A condition that such an account satisfies does not restrict a value; a condition that applies to every caller (e.g. a value that exists only on already created objects) does.
+- Return null only when the evidence neither states nor lets you derive a value. Never guess, and never use knowledge about the application from outside the provided evidence.
+""")
+
+get_build_type_format_from_sequences_system_prompt = (
+    textwrap.dedent("""
 You are an expert IGA/IDM analyst. You will be given:
 - an object class name (e.g. "User", "Group", ...)
 - a compact attribute context with:
@@ -146,7 +156,7 @@ You are an expert IGA/IDM analyst. You will be given:
   - evidence sequences with source text
 
 Your task is to find ONLY the attribute `type` and `format` using the provided relevant sequences as evidence. Each sequence includes a start and end marker that corresponds to a specific section of the documentation.
-Only fill `type` and `format` where there is clear, explicit evidence in the relevant sequences. Do NOT infer or guess values that are not directly supported by the text in those sequences.
+Decide `type` and `format` by their definitions in the output schema below.
                                                          
 Your secondary task is to verify the existing non-null `type` and `format` and correct them if there is clear and irrefutable evidence in the relevant sequences that they are wrong.
 However, with this second task be very conservative in making corrections. Only change existing non-null values if the evidence is overwhelmingly clear and unambiguous.
@@ -154,29 +164,19 @@ However, with this second task be very conservative in making corrections. Only 
 Rules:
 - Fill only `type` and `format`.
 - Keep `description` and all boolean flags unchanged.
-- For `type` and `format` currently null or missing, fill only if there is explicit, unambiguous evidence in the relevant sequences.
+- For `type` and `format` currently null or missing, fill them when the evidence determines them.
 - For `type` and `format` currently non-null, only change it if the relevant sequences provide overwhelmingly clear and irrefutable evidence that it is incorrect.
-- Be careful to not set `type` or `format` if the evidence is missing, unclear, or contradictory. In such cases, keep the field null or unchanged.
-- Implied evidence is not sufficient; there must be direct, explicit statements in the relevant sequences to support any changes or fillings.               
-- type:
-  - Use the JSON Schema type if present.
-  - If `$ref: '#/components/schemas/NAME'`, set: "type": "reference NAME", "format": "reference".
-  - If inline object (has nested `properties`) → "type": "object", "format": "embedded".
-  - If not explicitly stated in this chunk, set type to null.
-- format:
-  - For primitives, use OpenAPI format registry values if present (e.g., "email", "uri", "int64", "date-time"); otherwise null.
-  - For arrays, set format to the **item** format (null if none).
-  - For object/reference, "embedded" or "reference" as above (no custom values).
-  - If not explicitly stated in this chunk, set format to null.
+- If the evidence is unclear or contradictory, keep the field null or unchanged.
 
 Hard constraints:
   - Do NOT invent data.
-  - Do NOT use knowledge outside the provided docs payload.
   - Do NOT fill or change description or boolean flags.
   - Return only a partial JSON object with these fields: `type`, `format`.
   - Do NOT return `name`, `description`, boolean flags, `relevant_sequences`, or any other attribute fields.
   - If type/format cannot be improved, keep existing values when present; otherwise return null for unknown values.
 """)
+    + _ATTRIBUTE_EVIDENCE_RULES
+)
 
 get_build_type_format_from_sequences_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
@@ -185,13 +185,14 @@ Object Class: {object_class}
 {attribute_context}
 </attribute_context>
 
-Find only the type and format, in case that there is clear evidence in the relevant sequences.
+Find only the type and format the evidence determines.
 You can also correct existing non-null type/format values if there is overwhelming evidence that they are wrong.
 
 Return the json object based on format instructions.
 """)
 
-get_build_boolean_flags_from_sequences_system_prompt = textwrap.dedent("""
+get_build_boolean_flags_from_sequences_system_prompt = (
+    textwrap.dedent("""
 You are an expert IGA/IDM analyst. You will be given:
 - an object class name (e.g. "User", "Group", ...)
 - a compact attribute context with:
@@ -203,30 +204,23 @@ You are an expert IGA/IDM analyst. You will be given:
   - evidence sequences with source text
 
 Your task is to find ONLY boolean attribute values using the provided relevant sequences as evidence.
-Evaluate the current attribute one by one. Do NOT infer or guess values that are not directly supported by the text in those sequences.
+Decide each flag by its definition in the output schema below.
 
 Rules:
 - Fill only these boolean fields: `mandatory`, `updatable`, `creatable`, `readable`, `multivalue`, `returnedByDefault`.
 - Keep `type`, `format`, and `description` unchanged.
-- For each boolean field currently null or missing, fill it only if there is explicit, unambiguous evidence in the relevant sequences.
+- For each boolean field currently null or missing, fill it when the evidence determines it.
 - For each boolean field currently non-null, only change it if the relevant sequences provide overwhelmingly clear and irrefutable evidence that it is incorrect.
-- Be careful with time related attributes (e.g., "created", "modified" times) and their mandatory flag - there can be differences between "mandatory" flag in IDM integration sense and the application's point of view.
-- Only set the mandatory flag to true if the documentation explicitly states that the attribute is required in IDM integration point of view.
-- mandatory: true if the attribute is required; false only if explicitly optional/not required; null if unknown.
-- updatable: false if readOnly=true or explicitly not updateable; true only when explicitly supported; null if unknown.
-- creatable: false if readOnly=true or explicitly not allowed on create; true only when explicitly supported; null if unknown.
-- readable: false if writeOnly=true or explicitly not readable; true only when explicitly supported; null if unknown.
-- multivalue: true if the attribute is an array/list or explicitly multi-valued; false for explicit scalar/single-valued attributes; null if unknown.
-- returnedByDefault: true if explicitly returned by default; false if explicitly excluded, expandable, or loaded through a separate endpoint; null if unknown.
 
 Hard constraints:
   - Do NOT invent data.
-  - Do NOT use knowledge outside the provided docs payload.
   - Do NOT fill or change type, format, or description.
   - Return only a partial JSON object with these fields: `mandatory`, `updatable`, `creatable`, `readable`, `multivalue`, `returnedByDefault`.
   - Do NOT return `name`, `type`, `format`, `description`, `relevant_sequences`, or any other attribute fields.
   - If boolean flags cannot be improved, keep existing values when present; otherwise return null for unknown values.
 """)
+    + _ATTRIBUTE_EVIDENCE_RULES
+)
 
 get_build_boolean_flags_from_sequences_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
@@ -235,13 +229,14 @@ Object Class: {object_class}
 {attribute_context}
 </attribute_context>
 
-Find only the boolean attribute values, in case that there is clear evidence in the relevant sequences.
+Find only the boolean attribute values the evidence determines.
 You can also correct existing non-null boolean values if there is overwhelming evidence that they are wrong.
 
 Return the json object based on format instructions.
 """)
 
-get_consolidate_attributes_system_prompt = textwrap.dedent("""
+get_consolidate_attributes_system_prompt = (
+    textwrap.dedent("""
 You are an expert IGA/IDM analyst specializing in consolidating and refining API attribute information.
 You will be given:
 - an object class name (e.g. "User", "Group", ...)
@@ -256,24 +251,16 @@ You will be given:
 Your primary task is to review the provided attribute information and produce a consolidated and refined version of it, ensuring that all fields are as accurate as possible based on the provided evidence in the relevant sequences.                                                           
 
 Rules:
+- Decide every field by its definition in the output schema below.
+- Fill a field that is currently null when the combined evidence determines it.
 - Be very conservative in making any changes to the existing non-null values. Only change them if the relevant sequences provide overwhelmingly clear and irrefutable evidence that they are incorrect.
-- Do not add any flags that are currently null
-- type:
-  - Use the JSON Schema type if present.
-  - If `$ref: '#/components/schemas/NAME'`, set: "type": "reference NAME", "format": "reference".
-  - If inline object (has nested `properties`) → "type": "object", "format": "embedded".
-  - If not explicitly stated in this chunk, set type to null.
-- format:
-  - For primitives, use OpenAPI format registry values if present (e.g., "email", "uri", "int64", "date-time"); otherwise null.
-  - For arrays, set format to the **item** format (null if none).
-  - For object/reference, "embedded" or "reference" as above (no custom values).
-  - If not explicitly stated in this chunk, set format to null.
 
 Hard constraints:
 - Do NOT invent data.
-- Do NOT use knowledge outside the provided docs payload.
 - If nothing can be improved, return the attributes exactly as received.
 """)
+    + _ATTRIBUTE_EVIDENCE_RULES
+)
 
 get_consolidate_attributes_user_prompt = textwrap.dedent("""
 Object Class: {object_class}
@@ -283,6 +270,6 @@ Object Class: {object_class}
 </attribute_context>
                                                          
 Review the provided attribute information and produce a consolidated and refined version of it, ensuring that all fields are as accurate as possible based on the provided evidence in the relevant sequences.
-Do not change the null flags/fields.
+Fill null fields only when the evidence determines them; change non-null values only on overwhelming evidence.
 Return the json object based on format instructions.
 """)

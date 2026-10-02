@@ -15,6 +15,7 @@ imported rather than restated.
 
 import textwrap
 
+from src.modules.codegen.prompts.native_schema_prompts import EXTRACTED_ATTRIBUTE_TYPE_RULES
 from src.modules.codegen.prompts.repair_prompts import REPAIR_POLICY_RULES
 
 
@@ -57,6 +58,7 @@ ATTRIBUTE NAMING (<extracted_info> is the <extracted_attributes> block below):
   the syntax from whichever of the first two matches the artifact's format; do not rewrite a ConnID mapping
   from one form into the other.
 """)
+        + EXTRACTED_ATTRIBUTE_TYPE_RULES
         + protocol_context_rules
         + REPAIR_POLICY_RULES
         + textwrap.dedent("""\
@@ -84,7 +86,7 @@ midPoint reported these errors for the deployed connector:
 {midpoint_errors}
 </midpoint_errors>
 
-These are the Groovy scripts selected for this fix:
+These are the connector artifacts selected for this fix:
 <connector_scripts>
 {operation_scripts}
 </connector_scripts>

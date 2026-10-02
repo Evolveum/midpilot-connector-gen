@@ -1,0 +1,177 @@
+= JSON Types and Formats
+
+Attribute definitions declare how an attribute's value appears on the wire (the JSON, or the
+protocol payload, of the target system). In the schema script you do this with a JSON type and,
+optionally, an OpenAPI format:
+
+[source,groovy]
+----
+attribute("createdAt") {
+    jsonType "string"            // base JSON type
+    openApiFormat "date-time"     // optional OpenAPI format (refines the value handling)
+}
+
+// or in one block:
+attribute("updatedAt") {
+    json {
+        name "updated_at"
+        type "string"
+        openApiFormat "date-time"
+    }
+}
+----
+
+In declarative YAML the same settings are the `jsonType`, `openApiFormat`, and `json: { type, openApiFormat }`
+keys of an attribute.
+
+== Base JSON types
+
+The base JSON type selects the value class the connector converts the wire value to and from:
+
+[cols="1,2,2",options="header"]
+|===
+| Type | Description | ConnId value class
+
+| `string`
+| A string value
+| `String`
+
+| `integer`
+| A signed integer value
+| `Integer`
+
+| `boolean`
+| A boolean value
+| `Boolean`
+
+| `number`
+| A number value
+| `Number`
+
+| `binary`
+| A binary value (base64 string on the wire)
+| `byte[]`
+|===
+
+== OpenAPI formats
+
+The OpenAPI format refines a base type: it documents the value's meaning and drives the
+conversion between the wire representation and the ConnId value. The formats supported out of
+the box:
+
+[cols="1,2,3",options="header"]
+|===
+| Format | Description | ConnId value class
+
+| `date-time`
+| Date and time, RFC 3339
+| `ZonedDateTime`
+
+| `date`
+| A calendar date, RFC 3339 full-date
+| `ZonedDateTime`
+
+| `time`
+| A time of day, RFC 3339 full-time
+| `String`
+
+| `http-date`
+| Date and time, RFC 7231 HTTP-date
+| `String`
+
+| `duration`
+| A duration, RFC 3339
+| `String`
+
+| `int8` / `int16` / `int32`
+| Signed integer with the given bit width
+| `Byte` / `Integer` / `Integer`
+
+| `int64`
+| Signed 64-bit integer
+| `Long`
+
+| `uint8`
+| Unsigned 8-bit integer
+| `Integer`
+
+| `float` / `double`
+| Single / double precision floating point
+| `Float` / `Double`
+
+| `decimal` / `decimal128`
+| Fixed-point decimal / 34-significant-digit decimal
+| `BigDecimal`
+
+| `double-int`
+| Integer that fits an IEEE 754 double exactly
+| `BigInteger`
+
+| `char`
+| A single character
+| `Character`
+
+| `binary` / `byte` / `base64url`
+| Binary data, base64 (standard / base64 / URL-safe)
+| `byte[]`
+
+| `email` / `idn-email`
+| An email address (RFC 5321 / RFC 6531)
+| `String`
+
+| `hostname` / `idn-hostname`
+| A host name (RFC 1123 / RFC 5890)
+| `String`
+
+| `ipv4` / `ipv6`
+| An IP address (dotted-quad / RFC 4673)
+| `String`
+
+| `uuid`
+| A universally unique identifier (RFC 4122)
+| `String`
+
+| `uri` / `uri-reference` / `uri-template`
+| A URI (RFC 3986) / URI reference / URI template (RFC 6570)
+| `String`
+
+| `iri` / `iri-reference`
+| An internationalized resource identifier (RFC 3987)
+| `String`
+
+| `json-pointer` / `relative-json-pointer`
+| A JSON Pointer (RFC 6901) / relative JSON Pointer
+| `String`
+
+| `password`
+| A string hinting that the value should be obscured
+| `String`
+
+| `html` / `commonmark`
+| HTML-formatted / CommonMark-formatted text
+| `String`
+
+| `regex`
+| A regular expression (ECMA-262)
+| `String`
+
+| `media-range`
+| A media type (RFC 9110)
+| `String`
+
+| `sf-binary` / `sf-boolean` / `sf-decimal` / `sf-integer` / `sf-string` / `sf-token`
+| Structured-fields types (RFC 8941)
+| `byte[]` / `Boolean` / `BigDecimal` / `Integer` / `String` / `String`
+|===
+
+== Guidance
+
+* Dates and timestamps: use the base type `string` with the `date-time` format. The value is a
+  RFC 3339 string on the wire and a `ZonedDateTime` in ConnId. (For the ConnId *built-in* date
+  attributes such as `__ENABLE_DATE__`, `long` epoch-millis is required instead — see the
+  *ConnId attribute mapping and value types* chapter.)
+* Identifiers: `uuid` and `uri` formats keep values well-formed and self-documenting.
+* Passwords on the wire: the `password` format hints that the value must not be displayed in
+  logs or traces.
+* The built-in `__UID__` / `__NAME__` attributes are always `String` — the type is forced by the
+  framework regardless of what the protocol payload suggests.

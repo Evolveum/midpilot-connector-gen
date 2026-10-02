@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.documents.selection import DocumentationSelection, SelectionRole
 from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.extractors.endpoints import extract_endpoints
 from src.modules.digester.extractors.object_class import extract_object_classes
@@ -87,61 +88,54 @@ async def test_full_workflow_object_class_to_endpoints(mock_llm, mock_digester_u
         mock_parallel.assert_awaited_once()
         mock_dedupe_classes.assert_awaited_once()
 
+    # Steps 2 and 3 read the documentation selection stored when their jobs were scheduled.
+    selected_item = {
+        "docId": str(doc_uuid),
+        "chunkId": str(doc_uuid),
+        "content": doc_items[0]["content"],
+        "summary": doc_items[0]["summary"],
+        "@metadata": {"tags": ["spec"]},
+    }
+    selection = DocumentationSelection.from_corpus([selected_item], {SelectionRole.PRIMARY: [selected_item]})
+
     # Step 2: Extract attributes
     with (
-        patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_chunks,
-        patch("src.modules.digester.extractors.attributes._extract_rest_attributes") as mock_attrs,
+        patch(
+            "src.modules.digester.extractors.attributes._extract_rest_attributes",
+            new_callable=AsyncMock,
+            return_value={
+                "result": {"attributes": {"id": {"type": "string", "description": "ID"}}},
+                "relevantDocumentations": [],
+            },
+        ),
         patch(
             "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch(
-            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ),
     ):
-        mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
-        mock_attrs.return_value = {
-            "result": {"attributes": {"id": {"type": "string", "description": "ID"}}},
-            "relevantDocumentations": [],
-        }
-
-        attrs_result = await extract_attributes(
-            doc_items, "User", session_id, [{"doc_id": str(doc_uuid), "chunk_id": str(doc_uuid)}], uuid4()
-        )
+        attrs_result = await extract_attributes(selection, "User", session_id, uuid4(), ApiType.REST)
         assert "id" in attrs_result["result"]["attributes"]
         mock_update_object_class.assert_awaited_once()
 
     # Step 3: Extract endpoints
     with (
-        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_chunks,
-        patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints") as mock_endpoints,
+        patch(
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
+            new_callable=AsyncMock,
+            return_value={
+                "result": {"endpoints": [{"method": "GET", "path": "/users", "description": "Get users"}]},
+                "relevantDocumentations": [],
+            },
+        ),
         patch(
             "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_update_object_class,
-        patch(
-            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ),
     ):
-        mock_chunks.return_value = (["chunk"], [(0, str(doc_uuid))])
-        mock_endpoints.return_value = {
-            "result": {"endpoints": [{"method": "GET", "path": "/users", "description": "Get users"}]},
-            "relevantDocumentations": [],
-        }
-
         endpoints_result = await extract_endpoints(
-            doc_items,
-            "User",
-            session_id,
-            [{"doc_id": str(doc_uuid), "chunk_id": str(doc_uuid)}],
-            uuid4(),
-            "https://api.example.com",
+            selection, "User", session_id, uuid4(), ApiType.REST, "https://api.example.com"
         )
         assert len(endpoints_result["result"]["endpoints"]) == 1
         mock_update_object_class.assert_awaited_once()

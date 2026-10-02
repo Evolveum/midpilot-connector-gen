@@ -43,10 +43,10 @@ objectClasses:
         - method: PATCH
           path: /users/{id}
           request:
-            contentType: APPLICATION_JSON
+            contentType: application/json
 ----
 
-See xref:../declarative-yaml/[declarative YAML] for the full reference.
+See xref:../declarative-yaml.adoc[declarative YAML] for the full reference.
 
 == Basic update script using PUT
 
@@ -108,7 +108,7 @@ objectClasses:
         - method: PATCH
           path: /users/{id}
           request:
-            contentType: APPLICATION_JSON
+            contentType: application/json
           supportedAttributes:
             - externalId
             - displayName
