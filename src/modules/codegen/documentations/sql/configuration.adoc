@@ -17,6 +17,11 @@ Set via the ConnId connector configuration (for example the midPoint connector f
 |*required*
 |JDBC connection URL (e.g., `jdbc:postgresql://localhost:5432/mydb`)
 
+|`driverClassName`
+|String
+|`null`
+|Explicit JDBC driver class name (fully-qualified). When omitted or blank, the driver class is resolved automatically from the `jdbcUrl` scheme. Use this to bundle a different JDBC backend (e.g. a vendor-specific, forked, or custom driver). Takes precedence over automatic resolution.
+
 |`username`
 |String
 |*required*
@@ -101,7 +106,7 @@ NOTE: `getAutoDiscoverSchema()` (used by older API surfaces) reports auto-discov
 
 == Driver resolution
 
-The JDBC driver class is resolved automatically from the `jdbcUrl` scheme:
+When `driverClassName` is not set, the JDBC driver class is resolved automatically from the `jdbcUrl` scheme:
 
 `jdbc:postgresql:`::
   `org.postgresql.Driver` — e.g. `jdbc:postgresql://host:5432/dbname`
@@ -126,6 +131,8 @@ The JDBC driver class is resolved automatically from the `jdbcUrl` scheme:
 
 When an unrecognized prefix is specified, the driver class falls back to HikariCP which derives the prefix from the JDBC URL.
 The driver JAR must be part of the connector bundle (see xref:custom-connector.adoc[]).
+
+An explicit `driverClassName` always takes precedence over the automatic resolution above — set it whenever the driver bundled in the connector differs from the built-in mapping (e.g. a different JDBC backend for the same URL scheme).
 
 == Example
 

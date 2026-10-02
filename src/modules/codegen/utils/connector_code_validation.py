@@ -119,7 +119,7 @@ def validate_yaml_connector_code(code: str) -> Optional[str]:
     except ValidationError as exc:
         error = exc.errors(include_url=False)[0]
         path = ".".join(map(str, error["loc"]))
-        return f"{path}: {error['msg']}"
+        return f"{path}: {error['msg']}" if path else error["msg"]
     return _validate_embedded_scripts(model)
 
 

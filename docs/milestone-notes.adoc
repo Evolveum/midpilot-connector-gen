@@ -147,6 +147,92 @@ endpoints).
 `{relationName}CodeInput`, `relationsInput` (content only, names unchanged).
 * Affected configs: None.
 
+=== 2026-09-30 Align connector generation with the connector runtime
+
+Author: Alexander Brecko
+
+Description: The bundled codegen references now follow `conndev`
+`b5c8205584fef90ee6bb58d06ebf60fdb081bdba`, `connector-scimrest`
+`0abab9444ee9afd807a2cd62c21e5fd5b4542ffc` and `connector-sql`
+`16762e98799345f37831ec201600c3ac733f237d`, and are corrected where the
+upstream documentation disagrees with the runtime. Generated YAML may therefore
+use syntax introduced in those revisions (`contentType: application/json` or
+the `APPLICATION_*` shortcuts, `body: EMPTY`, and `connId.name` shortcuts such
+as `NAME`) and writes `connId.type` as the case-sensitive Java class name
+(`Long`, `GuardedString`, ...). REST and SCIM relationship generation now
+produces a Groovy `relationship("...")` block, because the runtime rejects a
+YAML `relationships` block.
+
+Declarative YAML validation now rejects what the runtime rejects: a
+`connId.type` other than the Java class names; a `jsonType` or `json.type`
+other than `string`, `integer`, `number`, `boolean` or `binary`; a
+`responseFormat` other than `JSON_ARRAY` or `JSON_OBJECT`; an endpoint `method`
+that is not an HTTP method; a `resolutionType` other than `PER_OBJECT` or
+`BATCH`; a scalar `objectExtractor` that starts with `$` or `/`; a root
+`relationships` block; `supportedAttributes` on create or delete endpoints;
+and `implementation` inside the attribute `scim` or `json` block. This applies
+to generated code and to caller-supplied code: the codegen override endpoints
+(`PUT`) return 422 for such YAML, and connector-fix script overrides return
+422 `invalid_connector_script_override`. The shape of midPoint API responses is
+unchanged. Stored artifacts are neither re-validated nor rewritten.
+
+Required Upgrade Steps
+
+. Keep the previous backend version, connector bundles, and resource scripts
+for rollback. No database recreation, database backup, or configuration change
+is required.
+. Build the connector bundles used by midPoint from the revisions above or
+later; see
+xref:codegen-expert-references.adoc#_source_revisions[Source revisions].
+. Restart the backend with
+`docker compose up -d --build midpilot-connector-gen`.
+For a host installation, stop the running backend and start it with
+`uv run python server.py`.
+. List the YAML artifacts stored before the upgrade:
++
+[source,sql]
+----
+SELECT session_id, key
+FROM session_data
+WHERE key LIKE '%Output'
+  AND value ->> 'format' = 'YAML'
+  AND updated_at < '<upgrade timestamp>';
+----
++
+Regenerate every listed REST or SCIM relationship artifact
+(`{relationName}CodeOutput`), because the connector cannot load a YAML
+`relationships` block:
+`POST /api/v1/codegen/{sessionId}/relations/{relationName}?skipCache=true`
+with the operation's existing request body. Regenerate other listed artifacts
+the same way, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema?skipCache=true`,
+or submit a corrected artifact through the corresponding `PUT` endpoint, whose
+422 response names the rejected path.
+. Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen -q`.
+Load the regenerated artifacts in the target connector and verify schema
+discovery, search, and relationship resolution before replacing working
+scripts.
+
+Rollback Procedure (If Upgrade Fails)
+
+. Restore the previous backend version, connector bundles, and resource scripts,
+and restart using the applicable command above.
+. Artifacts generated with this snapshot may use syntax that older connector
+frameworks cannot load. Restore the retained scripts through the codegen `PUT`
+endpoints.
+. No database restore is needed because this change does not modify stored data.
+
+Notes & References
+
+* Related PR: Not assigned.
+* Docs: xref:codegen-expert-references.adoc[Bundled codegen expert references]
+(Source revisions, Deliberate adaptations), `docs/pipeline/codegen.adoc`.
+* Affected endpoints: codegen `PUT` override endpoints and
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix` script overrides
+(stricter YAML validation); `POST /api/v1/codegen/{sessionId}/relations/{relationName}`
+(Groovy output for REST and SCIM).
+* Affected configs: None.
+
 === 2026-09-30 Removal of the deprecated connid codegen endpoints
 
 Author: Alexander Brecko
@@ -230,8 +316,24 @@ Notes & References
 Author: Alexander Brecko
 
 Description: Updated expert documentation and prompts can generate newer REST
-and SCIM YAML syntax that older connector frameworks cannot load.
-Existing scripts and midPoint API responses remain unchanged.
+and SCIM YAML syntax that older connector frameworks cannot load, including
+the YAML `scim.extensions` and `scim.flatten` bindings. This supersedes the
+2026-09-14 guidance to declare SCIM extensions in Groovy. Existing scripts and
+midPoint API responses remain unchanged.
+
+The same snapshot changes two inputs of generation:
+
+* Attribute flags that the digester left `null` now reach the native-schema and
+connector-fix prompts with their documented defaults: `true` for `creatable`,
+`updatable`, `readable` and `returnedByDefault`, and `false` for `mandatory`
+and `multiValued`. Previously every `null` flag was rendered as `false`, so the
+same stored digester output can now produce a different
+`{objectClass}NativeSchemaOutput`.
+* Declarative YAML validation accepts unknown nested options and logs them as
+`[Codegen:Validation]` warnings instead of rejecting the artifact. Unknown root
+keys, malformed structures, duplicate keys and invalid known scripts are still
+rejected. As a result, `sql.column` and other nested options that the
+2026-09-14 entry lists as rejected are now accepted with a warning.
 
 Required Upgrade Steps
 
@@ -240,7 +342,12 @@ for rollback. No database recreation, database backup, or configuration change
 is required.
 . Update the connector bundles used by midPoint to the source revisions listed
 in xref:codegen-expert-references.adoc#_source_revisions[Source revisions],
-or verified compatible builds.
+or verified compatible builds. The 2026-09-30 entry *Align connector
+generation with the connector runtime* raises these revisions.
+. Where a native schema relied on the previous `false` rendering of an
+undetermined flag, regenerate it with
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema?skipCache=true`
+using the operation's existing request body, and review the changed flags.
 . Restart the backend with
 `docker compose up -d --build midpilot-connector-gen`.
 For a host installation, stop the running backend and start it with
@@ -625,6 +732,13 @@ mappings and rejects unsupported `scim.extensions`, `sql.column` (use `sql.name`
 methods an application may require for search; an appropriate documented custom implementation
 is needed for behavior outside it. Existing midPoint response fields and HTTP contracts are unchanged.
 
+NOTE: Later entries supersede parts of this one. YAML `scim.extensions` is
+supported, and unknown nested options such as `sql.column` are accepted with a
+warning (2026-09-28); the connector itself still requires `sql.name`. YAML
+`search.endpoints[].method` has been accepted since 0.1.0-RC1 and takes any
+HTTP method, and REST and SCIM relationships are generated as Groovy because
+the connector rejects a YAML `relationships` block (2026-09-30).
+
 Required Upgrade Steps
 
 * Allow pending `codegen.getRelation` jobs to finish before restarting with this snapshot;
@@ -632,9 +746,8 @@ new relationship jobs persist their resolved `apiType` and pass it to the worker
 * Rebuild and deploy the application package, then restart the workers to load the updated
 bundled references and clear in-memory reference caches. No configuration changes or database
 recreation are required.
-* Review existing YAML that uses the rejected fields. Replace `sql.column` with `sql.name`.
-Use Groovy for SCIM extension declarations. Regenerate a search requiring a different HTTP
-method using documented custom behavior instead of an unsupported YAML endpoint key.
+* Review existing YAML that uses `sql.column` and replace it with `sql.name`. The
+former SCIM extension and search `method` restrictions no longer apply; see the NOTE above.
 * Regenerate affected outputs with `skipCache=true`, for example
 `POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/id?skipCache=true`.
 Use the operation's existing request body. Stored outputs are not rewritten automatically.

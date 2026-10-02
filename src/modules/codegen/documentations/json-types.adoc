@@ -169,7 +169,7 @@ the box:
 * Dates and timestamps: use the base type `string` with the `date-time` format. The value is a
   RFC 3339 string on the wire and a `ZonedDateTime` in ConnId. (For the ConnId *built-in* date
   attributes such as `__ENABLE_DATE__`, `long` epoch-millis is required instead — see the
-  *ConnId Built-in Attributes* chapter.)
+  *ConnId attribute mapping and value types* chapter.)
 * Identifiers: `uuid` and `uri` formats keep values well-formed and self-documenting.
 * Passwords on the wire: the `password` format hints that the value must not be displayed in
   logs or traces.

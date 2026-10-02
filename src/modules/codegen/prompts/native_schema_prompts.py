@@ -6,6 +6,24 @@ import textwrap
 
 from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
 
+# The digester's `type` / `format` vocabulary (object class names, `reference`, `embedded`,
+# `object`) is not the connector's wire vocabulary; every prompt that turns extracted attribute
+# records into schema declarations bridges the two with these rules.
+EXTRACTED_ATTRIBUTE_TYPE_RULES = textwrap.dedent("""\
+
+EXTRACTED TYPES:
+- `jsonType` / `openApiFormat` in <extracted_info> describe the attribute; they are not values to copy.
+  The only JSON wire types (`jsonType`, `json.type`) are `string`, `integer`, `number`, `boolean` and
+  `binary`; an array is its item type plus `multiValued`, never `array`.
+- `openApiFormat: "reference"`: the attribute points to the object class named in `jsonType`. Declare it
+  only with a reference construct your chosen format documents (declarative YAML: `references.<name>`
+  with `objectClass`), never as a wire type or format.
+- `openApiFormat: "embedded"`: an embedded object of the class named in `jsonType`; declare that class
+  with `complexType`.
+- `jsonType: "object"`: an anonymous inline object with no wire type. Map its documented scalar parts with
+  attribute paths, or leave a TODO.
+""")
+
 
 def build_native_schema_system_prompt(protocol_context_rules: str = "") -> str:
     """
@@ -45,14 +63,18 @@ CONNID MAPPING:
 - The same artifact must also map the object class's ConnID attributes. Map UID, and map NAME when a
   user-friendly identifier exists. Only UID and NAME are supported by the object-class alias helper.
   Other built-ins may use the documented per-attribute connId.name mapping when target semantics match.
-  Honor their required value types: boolean for enable/lock flags, epoch-millisecond long for built-in
-  activation dates, and GuardedString for passwords. If the chosen format cannot express the required
-  type or conversion, use a documented Groovy mapping or leave a TODO; never substitute a plain string.
+  Honor their required value types: boolean for enable/lock flags, epoch-millisecond long for the built-in
+  dates __ENABLE_DATE__, __DISABLE_DATE__ and __LAST_LOGIN_DATE__, and GuardedString for passwords. In
+  declarative YAML, write connId.type exactly as <declarative_docs> lists it (case-sensitive). If the chosen
+  format cannot express the required type or conversion, use a documented Groovy mapping or leave a TODO;
+  never substitute a plain string.
   UID exclusion from the final ConnId SPI schema does not mean omitting the native UID mapping: the
   connector framework owns that conversion. Do not emit low-level SPI implementation code.
 - Commented-out lines in the examples illustrate unsupported features. Never emit them, commented or otherwise.
 - If no attribute is a credible unique identifier, emit no ConnID mapping rather than guessing one.
-
+""")
+        + EXTRACTED_ATTRIBUTE_TYPE_RULES
+        + textwrap.dedent("""
 DOCUMENTATION PRECEDENCE:
 - <protocol_schema_docs> is the authoritative Groovy DSL for this connector, and <declarative_docs> is the
   authoritative declarative-YAML syntax for the same connector. <connid_attribute_docs> is a

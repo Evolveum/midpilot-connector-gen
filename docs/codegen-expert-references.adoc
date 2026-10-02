@@ -6,11 +6,13 @@ They describe connector framework syntax; session uploads and scraped applicatio
 
 == Source revisions
 
-Snapshot reviewed on 2026-09-28 from clean local checkouts:
+Snapshot reviewed on 2026-09-30 from clean local checkouts:
 
-* `conndev`: `fcc168dca9959fcf8360cb5ea56110b0529c5a7c`
-* `connector-scimrest`: `b380e2626f53c039c46a1fa2329003c611bd26da`
-* `connector-sql`: `01d0fff8b1d7333162be0fc904a645a533f2bd9b`
+* `conndev`: `b5c8205584fef90ee6bb58d06ebf60fdb081bdba`
+* `connector-scimrest`: `0abab9444ee9afd807a2cd62c21e5fd5b4542ffc`
+* `connector-sql`: `16762e98799345f37831ec201600c3ac733f237d`
+
+Generated YAML may use syntax that exists only from these revisions on (for example the `contentType: APPLICATION_JSON` and `connId.name: NAME` shortcuts), so connector bundles must be built from these revisions or later.
 
 Paths below are relative to each source repository. Local paths are relative to `src/modules/codegen/documentations/`.
 
@@ -108,12 +110,20 @@ Paths below are relative to each source repository. Local paths are relative to 
 * Correct the REST search example to extract its documented `data` envelope and map zero-based offsets using `(page - 1) * pageSize`.
 * Use Groovy comments inside YAML scripting blocks; avoid simultaneously enabling two empty-filter search handlers in the declarative example.
 * Correct the JSON date-time example to use a string wire type, and normalize two Markdown headings in the upstream AsciiDoc schema basics.
-* Retain SQL scripted-search restrictions from `sql/develop/declarative-yaml.adoc`. The upstream `sql/yaml-builder-mapping.adoc` contains WIP examples and outdated claims (including inert SCIMREST YAML); it is not copied as a generation authority. The SQL search interfaces lack the YAML bindings needed for those scripted keys.
+* Retain SQL scripted-search restrictions from `sql/develop/declarative-yaml.adoc`. The upstream `sql/yaml-builder-mapping.adoc` contains WIP examples and outdated claims (including inert SCIMREST YAML); it is not copied as a generation authority. The SQL search interfaces lack the YAML bindings needed for those scripted keys, and `sql/schema-script.adoc` no longer links to it.
+* Correct the YAML `connId.type` values in `declarative-yaml.adoc` to the case-sensitive Java class names accepted by `conndev/base/.../yaml/decl/DeclConnIdTypeParser.java`, and list the `connId.name` built-in shortcuts from `@Yaml.Shortcut` on `AttributeBuilder.ConnIdMapping.name`.
+* Restrict the JSON wire types in `declarative-yaml.adoc` and `rest/native-schema.adoc` to the base types of `conndev/base/.../json/JsonSchemaValueMapping.java` (no `array`), and fix the `json.openApiFormat` spelling.
+* Mark the root-level YAML `relationships` block as unsupported: `conndev/base/.../yaml/YamlSchemaLoader.java` rejects it, so relationships stay Groovy.
+* Mark `supportedAttributes` as update-only in YAML and drop it from the YAML create example in `rest/create.adoc`: only `RestUpdateOperationBuilder.Endpoint` carries the `@Yaml.Custom(SupportedAttributesHandler.class)` binding.
+* Mark attribute value mapping (`implementation` with `deserialize` / `serialize`) as Groovy-only: `AttributeBuilder.MappingBuilder.implementation` takes an `@Script.Initialization` closure, which the YAML binder does not bind.
+* Document the search `method` as any `HttpMethod` value (parsed case-insensitively by `SearchEndpointsHandler`), state that a scalar `objectExtractor` is always compiled as Groovy (`ObjectExtractorHandler`), and replace the contradictory `pagingSupport` sentence: `PagingSupportHandler` accepts either the mapping or the Groovy block.
+* Re-indent the declarative search and update examples, and name the ConnId reference by its bundled title. Claim "(chapter shown together with this page)" only for chapters every selecting context includes; JSON types are bundled for REST native schema only.
 
 == Updating the snapshot
 
 . Compare the mapped sources at the new source revisions, including included fragments and newly linked capability pages. Do not copy the source repositories wholesale into prompts.
 . Resolve contradictions against the matching Java builders and YAML handlers, and record each local correction here. Keep target application examples illustrative.
+. Audit every documented YAML key and closed value against its binding (`@Yaml.Key`, `@Yaml.Shortcut`, `@Yaml.ValueParser`, `@Yaml.Custom`, `@Yaml.Map`, `@Yaml.Sub`, or a `@Script.Runtime` closure) and against `YamlSchemaLoader`; a documented key without a binding is rejected at connector load.
 . Update prompt rules and `src/modules/codegen/connector_yaml_schema.py` together when supported syntax changes; retain Groovy syntax validation for string hooks and literal validation for mapping alternatives.
 . Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen -q`, `uv run poe lint`, `uv run poe typecheck`, and `uv run poe importcheck`. The tests cover prompt rendering, bundled declarative examples, supported and rejected syntax, and the HTTP envelope.
 . Update the revisions and mapping above. Document connector runtime compatibility in `docs/milestone-notes.adoc` when new output syntax requires a newer framework.

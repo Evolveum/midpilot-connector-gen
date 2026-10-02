@@ -63,8 +63,8 @@ Keys:
 `references.<name>`::
   A reference attribute (memberships, foreign keys): `objectClass`, `role` (`subject` / `object`), `subtype`
 
-`relationships.<name>`::
-  An association between object classes: `subject` / `object` participants, each with `class` and `attribute` (including `resolver: { resolution: PER_OBJECT, search: <attribute> eq $value }`)
+`relationships`::
+  Not supported in YAML yet: the schema loader rejects a `relationships` block. Declare relationships with the Groovy `relationship("...")` builder (see xref:rest/relationship.adoc[relationships])
 
 Attribute keys (all optional — only present keys are applied, so the defaults stay untouched):
 
@@ -72,19 +72,18 @@ Attribute keys (all optional — only present keys are applied, so the defaults 
   The regular attribute settings (see xref:rest/native-schema.adoc[user schema])
 
 `jsonType`, `openApiFormat`, `complexType`::
-  JSON wire type, OpenAPI format, and the embedded object class for structured attributes
+  JSON wire type (`string`, `integer`, `number`, `boolean`, or `binary`; an array uses the type of its items with `multiValued`), OpenAPI format, and the embedded object class for structured attributes
 
 `json: { name, type, openApiFormat, path }`::
   The JSON wire mapping block; `path` maps the attribute to a (nested) JSON location — see the attribute paths below
 
 `connId: { name, type }`::
-  The ConnId-side name (including the `__UID__` / `__NAME__` built-ins) and value type (`string`, `integer`, `long`, `boolean`, `double`, `bigdecimal`, `binary`)
+  The ConnId-side name (including the `__UID__` / `__NAME__` built-ins; the names `UID`, `NAME`, `PASSWORD`, `ENABLE`, `ENABLE_DATE`, `DISABLE_DATE`, and `LOCK_OUT` resolve to the corresponding built-in) and value type, written as the case-sensitive Java class name: `String`, `Integer`, `Long`, `Boolean`, `Double`, `Float`, `Character`, `Byte`, `Binary`, `BigDecimal`, `BigInteger`, `GuardedString`, `GuardedByteArray`, `ZonedDateTime`, `Map`, `ConnectorObjectReference`, or `EmbeddedObject`
 
 `scim: { name, type, path }`::
   The SCIM wire name, SCIM type, and SCIM attribute path (a path string such as `name.givenName`, `emails[0].value`, `emails[primary eq true].value`, or a full extension URI) — see the attribute paths below
 
-`scim.implementation: { deserialize: |, serialize: | }`::
-  Groovy blocks for custom value mapping
+Custom value mapping (an `implementation { ... }` block with `deserialize` / `serialize`) is Groovy-only: neither the `scim` nor the `json` block accepts an `implementation` key in YAML.
 
 A bare `attr:` (no keys) declares the attribute with defaults — the counterpart of `attribute("x")` with an empty closure.
 
@@ -118,33 +117,33 @@ objectClasses:
   User:
     search:
       endpoints:
-         - path: /users/search
-           method: POST
-           responseFormat: JSON_OBJECT
-           emptyFilterSupported: true
-           objectExtractor:
-             value: $.users
-           # objectExtractor: |
-           #   response.body().get("users")  // Groovy alternative for arbitrary logic
-           pagingSupport:
-             parameters:
-               pageSize:
-                 in: query
-                 name: size
-               page:
-                 in: query
-           # pagingSupport: |
-           #   request.queryParameter("size", paging.pageSize)  // Groovy alternative
-           supportedFilters:
+        - path: /users/search
+          method: POST
+          responseFormat: JSON_OBJECT
+          emptyFilterSupported: true
+          objectExtractor:
+            value: $.users
+          # objectExtractor: |
+          #   response.body().get("users")  // Groovy alternative for arbitrary logic
+          pagingSupport:
+            parameters:
+              pageSize:
+                in: query
+                name: size
+              page:
+                in: query
+          # pagingSupport: |
+          #   request.queryParameter("size", paging.pageSize)  // Groovy alternative
+          supportedFilters:
             - spec: attribute("login").eq().anySingleValue()
               request: |
                 request.queryParameter("login", value)
-         - path: /users/{id}
-           singleResult: true
-           supportedFilters:
-             - spec: attribute("id").eq().anySingleValue()
-               request: |
-                 request.pathParameter("id", value)
+        - path: /users/{id}
+          singleResult: true
+          supportedFilters:
+            - spec: attribute("id").eq().anySingleValue()
+              request: |
+                request.pathParameter("id", value)
       attributeResolvers:
         - attribute: team
           resolutionType: PER_OBJECT
@@ -163,16 +162,16 @@ objectClasses:
   The search / list endpoint path (required)
 
 `search.endpoints[].method`::
-  The HTTP method of the search endpoint: `GET` (default) or `POST` — for APIs that search via a POST request with a (form or JSON) body
+  The HTTP method of the search endpoint (case-insensitive): `GET` (default), `POST` for APIs that search via a POST request with a (form or JSON) body, or another HTTP method (`PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`) the API documents for search
 
 `search.endpoints[].responseFormat`::
   Whether the response is a JSON array or a JSON object: `JSON_ARRAY` / `JSON_OBJECT`; default `JSON_OBJECT`
 
 `search.endpoints[].objectExtractor`::
-  How the list of objects is extracted from the response, in one of two forms. A *path mapping* `{ type, value }` (the same `{ type, value }` shape as the attribute `path` keys) resolves a JSON Pointer (`/_embedded/elements`) or a basic JSONPath (`$._embedded.elements`) against the response body — a resolved array yields its elements, a resolved object yields the single object, and a missing path yields no objects; `type` is case-insensitive and defaults to `JSON_PATH` (so `value:` alone is a JSONPath expression). A *Groovy block* (variable `response`) keeps arbitrary extraction logic. The default (no `objectExtractor`) handles a JSON array or a single object
+  How the list of objects is extracted from the response, in one of two forms. A *path mapping* `{ type, value }` (the same `{ type, value }` shape as the attribute `path` keys) resolves a JSON Pointer (`/_embedded/elements`) or a basic JSONPath (`$._embedded.elements`) against the response body — a resolved array yields its elements, a resolved object yields the single object, and a missing path yields no objects; `type` is case-insensitive and defaults to `JSON_PATH` (so `value:` alone is a JSONPath expression). A *Groovy block* (variable `response`) keeps arbitrary extraction logic. Any scalar value is the Groovy block, so a JSONPath or JSON Pointer must be written as the mapping (`objectExtractor: { value: $.data }`), never as a bare scalar (`objectExtractor: $.data` is compiled as Groovy). The default (no `objectExtractor`) handles a JSON array or a single object
 
 `search.endpoints[].pagingSupport`::
-  How paging information is mapped onto the request, in one of two forms. A *mapping* declares the paging declaratively: `pageSize` (the requested page size, default 25) and/or `parameters` — a mapping of paging tokens to where they are sent. Each token entry takes `in` — `query`, `header`, or `body` (a request body; requires `method: POST`) — and an optional `name` (the request parameter name, defaulting to the token). The tokens are `pageSize` (the requested page size), `page` (the page number, starting with 1), and `offset` (the zero-based object offset, `(page - 1) * pageSize`). Example: `parameters: { pageSize: { in: query, name: size }, page: { in: query } }`. A *Groovy block* (variables `request`, `paging` with `pageSize` and `pageOffset`) keeps arbitrary mapping logic. The two forms are mutually exclusive; `pageSize` alone (without `parameters`) composes with the Groovy form by feeding its `paging.pageSize`
+  How paging information is mapped onto the request, in one of two forms. A *mapping* declares the paging declaratively: `pageSize` (the requested page size, default 25) and/or `parameters` — a mapping of paging tokens to where they are sent. Each token entry takes `in` — `query`, `header`, or `body` (a request body; requires `method: POST`) — and an optional `name` (the request parameter name, defaulting to the token). The tokens are `pageSize` (the requested page size), `page` (the page number, starting with 1), and `offset` (the zero-based object offset, `(page - 1) * pageSize`). Example: `parameters: { pageSize: { in: query, name: size }, page: { in: query } }`. A *Groovy block* (variables `request`, `paging` with `pageSize` and `pageOffset`) keeps arbitrary mapping logic. One endpoint uses exactly one of the two forms; a mapping with `pageSize` alone only sets the requested page size
 
 `search.endpoints[].singleResult`::
   The endpoint returns exactly one object
@@ -206,19 +205,19 @@ objectClasses:
         - method: POST
           path: users
           request:
-            contentType: APPLICATION_JSON
+            contentType: application/json
     update:
       endpoints:
         - method: PATCH
           path: /users/{id}
           request:
-            contentType: APPLICATION_JSON
+            contentType: application/json
           supportedAttributes:
             - firstName
             - lastName
             - email
-         # Dedicated endpoint — no body required
-         # (the transition filter is accepted but not enforced yet)
+        # Dedicated endpoint — no body required
+        # (the transition filter is accepted but not enforced yet)
         - method: POST
           path: /users/{id}/lock
           request:
@@ -238,19 +237,21 @@ objectClasses:
   Per-operation switch, e.g. `create: { enabled: false }`
 
 `endpoints[].method`::
-  HTTP method (`POST`, `PUT`, `PATCH`, `DELETE`, ...); default `POST`
+  HTTP method, case-insensitive (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`); default `POST`
 
 `endpoints[].path`::
   The endpoint path (required); `{name}` path parameters are replaced from the object
 
 `endpoints[].request.contentType`::
-  The request content type
+  The request content type — a literal media type (`application/json`) or one of the built-in
+  constant names (`APPLICATION_JSON`, `APPLICATION_XML`, `APPLICATION_YAML`, `APPLICATION_HAL_JSON`),
+  which resolve to the corresponding media type the same way as in the Groovy DSL
 
 `endpoints[].request.body`::
   Groovy block producing the request body, or `EMPTY` for no body; the default serializes the `creatable` / `updateable` attributes into a JSON body
 
 `endpoints[].supportedAttributes`::
-  Plain attribute names, a fixed value (`{ name, value }`), or a value transition (`{ name, transition: { from, to } }` — accepted but not enforced yet; a transition-only entry matches no requests)
+  Update endpoints only (a create endpoint rejects the key in YAML): plain attribute names, a fixed value (`{ name, value }`), or a value transition (`{ name, transition: { from, to } }` — accepted but not enforced yet; a transition-only entry matches no requests)
 
 See xref:rest/create.adoc[create], xref:rest/update.adoc[update], and xref:rest/delete.adoc[delete] for the operation semantics.
 
