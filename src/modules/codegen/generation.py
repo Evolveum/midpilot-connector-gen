@@ -24,6 +24,7 @@ from src.modules.codegen.schema import (
     CodegenRepairContext,
     ConnectorCodeOutput,
     EndpointsPayload,
+    RelationCodegenContext,
 )
 from src.modules.codegen.selection.authorization import (
     enrich_preferred_authorizations,
@@ -35,6 +36,7 @@ from src.modules.codegen.selection.protocol_selectors import (
     get_operation_assets,
     get_search_operation_assets,
 )
+from src.modules.codegen.selection.relation_analysis import relation_documentation_classes
 from src.modules.codegen.selection.relevant_chunks import (
     _collect_authorization_relevant_chunks,
     _collect_relation_object_class_pairs,
@@ -373,32 +375,50 @@ async def generate_relation_code(
     session_id: UUID,
     job_id: UUID,
     protocol: ApiType,
+    relation_context: Optional[RelationCodegenContext] = None,
 ) -> ConnectorCodeOutput:
     """
-    Generate a relationship artifact using the resolved protocol's expert references.
+    Generate a relationship artifact using protocol references and stored analysis.
+
+    ``relation_context`` carries what the midPoint-facing record cannot: how the association
+    is carried and, when a third class carries it, which class that is. That class's
+    documentation is selected alongside the subject's and the object's, because the endpoints
+    implementing such an association are documented on it and nowhere else.
     """
     assets = get_operation_assets("relationship", protocol)
     relation_docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
 
-    relevant_pairs = await _collect_relation_object_class_pairs(relations, session_id)
+    selected_relation = relations.relations[0] if relations.relations else None
+    documentation_classes = (
+        relation_documentation_classes(selected_relation, relation_context) if selected_relation is not None else []
+    )
+    relevant_pairs = await _collect_relation_object_class_pairs(session_id, documentation_classes)
     if relevant_pairs:
-        selected_relation = relations.relations[0]
         logger.info(
-            "[Codegen:Relation] Relevant chunks from DB for %s: subject=%s, object=%s, chunks=%d",
+            "[Codegen:Relation:%s] Relevant chunks from DB for %s: kind=%s, classes=%s, chunks=%d",
+            protocol.value,
             relation_name,
-            selected_relation.subject,
-            selected_relation.object,
-            len(relevant_pairs) if relevant_pairs else 0,
+            relation_context.kind if relation_context is not None else "unknown",
+            ", ".join(documentation_classes),
+            len(relevant_pairs),
         )
     else:
-        logger.warning("[Codegen:Relation] No relevant object-class chunks found for relation %s", relation_name)
+        logger.warning(
+            "[Codegen:Relation:%s] No relevant object-class chunks found for relation %s",
+            protocol.value,
+            relation_name,
+        )
 
     generator = RelationGenerator(
+        relation_name=relation_name,
         docs_text=relation_docs_text,
         declarative_docs_text=declarative_docs_text,
+        extra_prompt_vars={"protocol": protocol.value},
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
-        extra_prompt_vars={"protocol": protocol.value},
+        protocol=protocol,
+        relation_context=relation_context,
+        context_only_for_conndev=_uses_deterministic_context(protocol),
     )
     code = await generator.generate(
         session_id=session_id,

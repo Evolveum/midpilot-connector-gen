@@ -1,0 +1,1624 @@
+{
+  "relations": [
+    {
+      "name": "group_to_membership",
+      "object": "membership",
+      "subject": "group",
+      "displayName": "Group to Membership",
+      "objectAttribute": "principal",
+      "shortDescription": "Group records its memberships; each membership records its principal group.",
+      "subjectAttribute": "memberships"
+    },
+    {
+      "name": "group_to_principal_members",
+      "object": "principal",
+      "subject": "group",
+      "displayName": "Group to Principal (members)",
+      "objectAttribute": "",
+      "shortDescription": "Group lists its member Principals.",
+      "subjectAttribute": "members"
+    },
+    {
+      "name": "group_to_project",
+      "object": "project",
+      "subject": "group",
+      "displayName": "Group to Project (membership)",
+      "objectAttribute": "",
+      "shortDescription": "Group assigned to Project via Membership link object.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "group_to_role",
+      "object": "role",
+      "subject": "group",
+      "displayName": "Group to Role (membership)",
+      "objectAttribute": "",
+      "shortDescription": "Groups are assigned to Roles through Membership link objects.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "group_to_user_members",
+      "object": "user",
+      "subject": "group",
+      "displayName": "Group to User (members)",
+      "objectAttribute": "",
+      "shortDescription": "Group lists its member Users via the 'members' attribute.",
+      "subjectAttribute": "members"
+    },
+    {
+      "name": "group_to_workspace",
+      "object": "workspace",
+      "subject": "group",
+      "displayName": "Group to Workspace (membership)",
+      "objectAttribute": "",
+      "shortDescription": "Group instances are associated with a Workspace via the Membership link object.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "group_to_portfolio",
+      "object": "portfolio",
+      "subject": "group",
+      "displayName": "Group to Portfolio (membership)",
+      "objectAttribute": "memberships",
+      "shortDescription": "Group's memberships link it to portfolios via Membership objects.",
+      "subjectAttribute": "memberships"
+    },
+    {
+      "name": "group_to_program",
+      "object": "program",
+      "subject": "group",
+      "displayName": "Group to Program (membership)",
+      "objectAttribute": "memberships",
+      "shortDescription": "Groups are linked to programs via Membership objects, representing group membership in programs.",
+      "subjectAttribute": "memberships"
+    },
+    {
+      "name": "membership_to_project",
+      "object": "project",
+      "subject": "membership",
+      "displayName": "Membership to Project",
+      "objectAttribute": "memberships",
+      "shortDescription": "Memberships reference a Project via the 'project' attribute, and Projects expose a list of Memberships via the 'memberships' link.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "membership_to_role",
+      "object": "role",
+      "subject": "membership",
+      "displayName": "Membership to Role (role assignment)",
+      "objectAttribute": "",
+      "shortDescription": "Membership objects list the Roles assigned to a principal via the 'roles' attribute.",
+      "subjectAttribute": "roles"
+    },
+    {
+      "name": "membership_to_workspace",
+      "object": "workspace",
+      "subject": "membership",
+      "displayName": "Membership to Workspace (project reference)",
+      "objectAttribute": "",
+      "shortDescription": "A Membership references a Workspace via its 'project' attribute, indicating the workspace to which the principal is assigned.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "membership_to_portfolio",
+      "object": "portfolio",
+      "subject": "membership",
+      "displayName": "Membership to Portfolio (assignment)",
+      "objectAttribute": "memberships",
+      "shortDescription": "Memberships assign a principal to a Portfolio via the `project` reference; a Portfolio lists its Memberships through the `memberships` link.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "membership_to_program",
+      "object": "program",
+      "subject": "membership",
+      "displayName": "Membership to Program (assignment)",
+      "objectAttribute": "memberships",
+      "shortDescription": "Memberships link a principal to a Program via the 'project' attribute, and Programs expose related Memberships through the 'memberships' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "principal_to_group_membership",
+      "object": "group",
+      "subject": "principal",
+      "displayName": "Principal to Group (membership via Membership)",
+      "objectAttribute": "memberships",
+      "shortDescription": "Principal's group memberships are represented by Membership link objects.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_membership",
+      "object": "membership",
+      "subject": "principal",
+      "displayName": "Principal to Membership",
+      "objectAttribute": "principal",
+      "shortDescription": "Principal objects hold a multi‑valued 'memberships' reference to their Membership assignments, while each Membership references its Principal via the singular 'principal' attribute.",
+      "subjectAttribute": "memberships"
+    },
+    {
+      "name": "principal_to_project_capability",
+      "object": "project",
+      "subject": "principal",
+      "displayName": "Principal to Project (capability)",
+      "objectAttribute": "",
+      "shortDescription": "Principals that have a Capability on a Project.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_project_membership",
+      "object": "project",
+      "subject": "principal",
+      "displayName": "Principal to Project (membership)",
+      "objectAttribute": "project",
+      "shortDescription": "Principals that are members of a Project.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_role",
+      "object": "role",
+      "subject": "principal",
+      "displayName": "Principal to Role (assignment)",
+      "objectAttribute": "",
+      "shortDescription": "Principals are assigned Roles, recorded by the multi‑valued 'roles' attribute on Principal.",
+      "subjectAttribute": "roles"
+    },
+    {
+      "name": "principal_to_workspace_capability",
+      "object": "workspace",
+      "subject": "principal",
+      "displayName": "Principal to Workspace (Capability)",
+      "objectAttribute": "",
+      "shortDescription": "Principal associated with Workspace via Capability objects.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_workspace_membership",
+      "object": "workspace",
+      "subject": "principal",
+      "displayName": "Principal to Workspace (Membership)",
+      "objectAttribute": "memberships",
+      "shortDescription": "Principal linked to Workspace through Membership objects.",
+      "subjectAttribute": "memberships"
+    },
+    {
+      "name": "principal_to_action",
+      "object": "action",
+      "subject": "principal",
+      "displayName": "Principal to Action (capability)",
+      "objectAttribute": "",
+      "shortDescription": "Principals are granted Actions via Capability link objects that reference both the Action and the Principal.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_capability",
+      "object": "capability",
+      "subject": "principal",
+      "displayName": "Principal to Capability (assignment)",
+      "objectAttribute": "principal",
+      "shortDescription": "Principal receives a Capability; the Capability object references the Principal via its \"principal\" attribute.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_portfolio_membership",
+      "object": "portfolio",
+      "subject": "principal",
+      "displayName": "Principal to Portfolio (Membership)",
+      "objectAttribute": "",
+      "shortDescription": "Associates a Principal with a Portfolio via the Membership object, representing membership granting.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_portfolio_capability",
+      "object": "portfolio",
+      "subject": "principal",
+      "displayName": "Principal to Portfolio (Capability)",
+      "objectAttribute": "context",
+      "shortDescription": "Links a Principal to a Portfolio via the Capability object, defining the Principal's access within the Portfolio context.",
+      "subjectAttribute": "principal"
+    },
+    {
+      "name": "principal_to_attachment",
+      "object": "attachment",
+      "subject": "principal",
+      "displayName": "Principal to Attachment (via Activity)",
+      "objectAttribute": "attachments",
+      "shortDescription": "Principal and Attachment are linked through Activity, which references both the user and the attached files.",
+      "subjectAttribute": "user"
+    },
+    {
+      "name": "principal_to_emojireaction_activity",
+      "object": "emojireaction",
+      "subject": "principal",
+      "displayName": "Principal to EmojiReaction (via Activity)",
+      "objectAttribute": "",
+      "shortDescription": "Principal is linked to EmojiReaction through the Activity object, which references both ends.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_membershipreadmodel",
+      "object": "membershipreadmodel",
+      "subject": "principal",
+      "displayName": "Principal to MembershipReadModel (principal reference)",
+      "objectAttribute": "principal",
+      "shortDescription": "A MembershipReadModel references a Principal via the 'principal' attribute, indicating the principal associated with the membership.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_workpackage_notification",
+      "object": "workpackage",
+      "subject": "principal",
+      "displayName": "Principal to WorkPackage (Notification)",
+      "objectAttribute": "",
+      "shortDescription": "Principal is linked to a WorkPackage via a Notification.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "principal_to_workpackage_activity",
+      "object": "workpackage",
+      "subject": "principal",
+      "displayName": "Principal to WorkPackage (Activity)",
+      "objectAttribute": "workPackage",
+      "shortDescription": "Principal is linked to a WorkPackage via an Activity.",
+      "subjectAttribute": "user"
+    },
+    {
+      "name": "project_to_project_ancestors",
+      "object": "project",
+      "subject": "project",
+      "displayName": "Project to Project (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "Projects referencing their ancestor projects.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "project_to_project_parent",
+      "object": "project",
+      "subject": "project",
+      "displayName": "Project to Project (parent)",
+      "objectAttribute": "",
+      "shortDescription": "Projects referencing their parent project.",
+      "subjectAttribute": "parent"
+    },
+    {
+      "name": "project_to_user_assignable",
+      "object": "user",
+      "subject": "project",
+      "displayName": "Project to User (assignable users)",
+      "objectAttribute": "",
+      "shortDescription": "Project provides a list of Users that can be assigned to its work packages.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "project_to_user_customfield26",
+      "object": "user",
+      "subject": "project",
+      "displayName": "Project to User (customField26)",
+      "objectAttribute": "",
+      "shortDescription": "Project references a User via the customField26 attribute.",
+      "subjectAttribute": "customField26"
+    },
+    {
+      "name": "project_to_user_customfield456",
+      "object": "user",
+      "subject": "project",
+      "displayName": "Project to User (customField456)",
+      "objectAttribute": "",
+      "shortDescription": "Project references a User via the customField456 attribute.",
+      "subjectAttribute": "customField456"
+    },
+    {
+      "name": "project_to_portfolio_ancestors",
+      "object": "portfolio",
+      "subject": "project",
+      "displayName": "Project to Portfolio (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "Projects list ancestor Portfolio(s) via the 'ancestors' reference.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "project_to_program",
+      "object": "program",
+      "subject": "project",
+      "displayName": "Project to Program (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "Projects reference their ancestor Programs via the multi‑valued 'ancestors' attribute.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "project_to_query",
+      "object": "query",
+      "subject": "project",
+      "displayName": "Project to Query (default query endpoint)",
+      "objectAttribute": "",
+      "shortDescription": "Projects expose their default Query via a dedicated API endpoint.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "project_to_storage",
+      "object": "storage",
+      "subject": "project",
+      "displayName": "Project to Storage (storage reference)",
+      "objectAttribute": "projectStorages",
+      "shortDescription": "Projects reference linked Storages by ID (and URL) and Storages list associated Projects.",
+      "subjectAttribute": "storage_id"
+    },
+    {
+      "name": "project_to_customoption",
+      "object": "customoption",
+      "subject": "project",
+      "displayName": "Project to CustomOption (custom field reference)",
+      "objectAttribute": "",
+      "shortDescription": "Project references a CustomOption via its customField31 attribute.",
+      "subjectAttribute": "customField31"
+    },
+    {
+      "name": "role_to_role",
+      "object": "role",
+      "subject": "role",
+      "displayName": "Role to Role (self reference)",
+      "objectAttribute": "",
+      "shortDescription": "A Role may reference another Role via its 'self' attribute.",
+      "subjectAttribute": "self"
+    },
+    {
+      "name": "user_to_membership",
+      "object": "membership",
+      "subject": "user",
+      "displayName": "User to Membership (membership)",
+      "objectAttribute": "principal",
+      "shortDescription": "User's memberships linking to assignment objects (Membership).",
+      "subjectAttribute": "memberships"
+    },
+    {
+      "name": "user_to_project_capability",
+      "object": "project",
+      "subject": "user",
+      "displayName": "User to Project (capability)",
+      "objectAttribute": "",
+      "shortDescription": "User is linked to Project through Capability objects.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_to_workspace_capability",
+      "object": "workspace",
+      "subject": "user",
+      "displayName": "User to Workspace (capability)",
+      "objectAttribute": "context",
+      "shortDescription": "Users with capabilities in a workspace.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_to_action",
+      "object": "action",
+      "subject": "user",
+      "displayName": "User to Action (via Capability)",
+      "objectAttribute": "action",
+      "shortDescription": "Users are linked to actions through capabilities that grant them permission to perform the action.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_to_capability",
+      "object": "capability",
+      "subject": "user",
+      "displayName": "User to Capability (principal reference)",
+      "objectAttribute": "principal",
+      "shortDescription": "User is granted a Capability, recorded by the Capability's `principal` attribute.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_to_ldapauthsource",
+      "object": "ldapauthsource",
+      "subject": "user",
+      "displayName": "User to LdapAuthSource (authentication source)",
+      "objectAttribute": "",
+      "shortDescription": "Each User references an LdapAuthSource that provides authentication for the user.",
+      "subjectAttribute": "authSource"
+    },
+    {
+      "name": "user_to_portfolio_capability",
+      "object": "portfolio",
+      "subject": "user",
+      "displayName": "User to Portfolio (Capability)",
+      "objectAttribute": "",
+      "shortDescription": "User has a Capability linking it to a Portfolio.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_to_portfolio_membership",
+      "object": "portfolio",
+      "subject": "user",
+      "displayName": "User to Portfolio (Membership)",
+      "objectAttribute": "",
+      "shortDescription": "User membership in a Portfolio via Membership objects.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_to_customoption",
+      "object": "customoption",
+      "subject": "user",
+      "displayName": "User to CustomOption (custom field reference)",
+      "objectAttribute": "",
+      "shortDescription": "User instances hold a reference to a CustomOption via the customField2 attribute.",
+      "subjectAttribute": "customField2"
+    },
+    {
+      "name": "user_to_groupmodel",
+      "object": "groupmodel",
+      "subject": "user",
+      "displayName": "User to GroupModel (membership)",
+      "objectAttribute": "members",
+      "shortDescription": "User objects are members of a GroupModel, as listed in the group's \"members\" array.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_to_wikipage",
+      "object": "wikipage",
+      "subject": "user",
+      "displayName": "User to WikiPage (attachment)",
+      "objectAttribute": "container",
+      "shortDescription": "User is associated with a WikiPage via an Attachment that records the author and container.",
+      "subjectAttribute": "author"
+    },
+    {
+      "name": "user_to_workpackage_activity",
+      "object": "workpackage",
+      "subject": "user",
+      "displayName": "User to WorkPackage (activity)",
+      "objectAttribute": "",
+      "shortDescription": "An Activity links a user to a work package.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_to_workpackage_attachment",
+      "object": "workpackage",
+      "subject": "user",
+      "displayName": "User to WorkPackage (attachment)",
+      "objectAttribute": "",
+      "shortDescription": "An Attachment links a user (author) to a work package (container).",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_to_workpackage_emoji_reaction",
+      "object": "workpackage",
+      "subject": "user",
+      "displayName": "User to WorkPackage (emoji reaction)",
+      "objectAttribute": "",
+      "shortDescription": "An EmojiReaction links a reacting user to a work package.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "workspace_to_project",
+      "object": "project",
+      "subject": "workspace",
+      "displayName": "Workspace to Project (via Capability)",
+      "objectAttribute": "",
+      "shortDescription": "Workspace instances are linked to Project instances through the Capability link object, which holds a 'context' reference to both.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "workspace_to_workspace_parent",
+      "object": "workspace",
+      "subject": "workspace",
+      "displayName": "Workspace to Workspace (parent)",
+      "objectAttribute": "",
+      "shortDescription": "A Workspace references its parent Workspace.",
+      "subjectAttribute": "parent"
+    },
+    {
+      "name": "workspace_to_customoption",
+      "object": "customoption",
+      "subject": "workspace",
+      "displayName": "Workspace to CustomOption",
+      "objectAttribute": "",
+      "shortDescription": "Workspace instances reference a CustomOption via the customField31 attribute.",
+      "subjectAttribute": "customField31"
+    },
+    {
+      "name": "workspace_to_version_customfield32",
+      "object": "version",
+      "subject": "workspace",
+      "displayName": "Workspace to Version (customField32)",
+      "objectAttribute": "",
+      "shortDescription": "Workspace custom field storing a reference to a Version.",
+      "subjectAttribute": "customField32"
+    },
+    {
+      "name": "action_to_project",
+      "object": "project",
+      "subject": "action",
+      "displayName": "Action to Project (Capability)",
+      "objectAttribute": "context",
+      "shortDescription": "Actions assignable within a project via the Capability link object.",
+      "subjectAttribute": "action"
+    },
+    {
+      "name": "action_to_workspace",
+      "object": "workspace",
+      "subject": "action",
+      "displayName": "Action to Workspace (via Capability)",
+      "objectAttribute": "",
+      "shortDescription": "Action instances are linked to Workspace contexts through Capability objects.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "capability_to_project",
+      "object": "project",
+      "subject": "capability",
+      "displayName": "Capability to Project (context)",
+      "objectAttribute": "",
+      "shortDescription": "Capability instances reference a Project via the 'context' attribute.",
+      "subjectAttribute": "context"
+    },
+    {
+      "name": "capability_to_workspace",
+      "object": "workspace",
+      "subject": "capability",
+      "displayName": "Capability to Workspace (context reference)",
+      "objectAttribute": "",
+      "shortDescription": "A Capability references the Workspace that defines the context in which the permission applies.",
+      "subjectAttribute": "context"
+    },
+    {
+      "name": "capability_to_action_action",
+      "object": "action",
+      "subject": "capability",
+      "displayName": "Capability to Action (action)",
+      "objectAttribute": "",
+      "shortDescription": "Capability records the Action that is granted to a principal.",
+      "subjectAttribute": "action"
+    },
+    {
+      "name": "capability_to_action_principal",
+      "object": "action",
+      "subject": "capability",
+      "displayName": "Capability to Action (principal)",
+      "objectAttribute": "",
+      "shortDescription": "Capability references the principal that is allowed the Action.",
+      "subjectAttribute": "principal"
+    },
+    {
+      "name": "capability_to_portfolio",
+      "object": "portfolio",
+      "subject": "capability",
+      "displayName": "Capability to Portfolio (context)",
+      "objectAttribute": "",
+      "shortDescription": "A Capability references the Portfolio that provides its execution context via the `context` attribute.",
+      "subjectAttribute": "context"
+    },
+    {
+      "name": "placeholderuser_to_group",
+      "object": "group",
+      "subject": "placeholderuser",
+      "displayName": "PlaceholderUser to Group (membership)",
+      "objectAttribute": "members",
+      "shortDescription": "PlaceholderUser receives membership in a Group; the Group's `members` attribute lists its users.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "placeholder_user_to_membership",
+      "object": "membership",
+      "subject": "placeholderuser",
+      "displayName": "PlaceholderUser to Membership (membership assignment)",
+      "objectAttribute": "principal",
+      "shortDescription": "PlaceholderUser instances reference their Membership assignments via the multi‑valued 'memberships' attribute, while Membership objects reference the associated user via the 'principal' attribute.",
+      "subjectAttribute": "memberships"
+    },
+    {
+      "name": "placeholderuser_to_project",
+      "object": "project",
+      "subject": "placeholderuser",
+      "displayName": "PlaceholderUser to Project (membership)",
+      "objectAttribute": "",
+      "shortDescription": "PlaceholderUser's memberships link them to Projects via the Membership link object.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "portfolio_to_user_customfield456",
+      "object": "user",
+      "subject": "portfolio",
+      "displayName": "Portfolio to User (customField456)",
+      "objectAttribute": "",
+      "shortDescription": "Portfolios reference a User via the customField456 attribute.",
+      "subjectAttribute": "customField456"
+    },
+    {
+      "name": "portfolio_to_portfolio_ancestors",
+      "object": "portfolio",
+      "subject": "portfolio",
+      "displayName": "Portfolio to Portfolio (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "Portfolio instances list all ancestor Portfolios in a hierarchy.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "portfolio_to_portfolio_parent",
+      "object": "portfolio",
+      "subject": "portfolio",
+      "displayName": "Portfolio to Portfolio (parent)",
+      "objectAttribute": "",
+      "shortDescription": "Portfolio instances reference their direct parent Portfolio.",
+      "subjectAttribute": "parent"
+    },
+    {
+      "name": "portfolio_to_version",
+      "object": "version",
+      "subject": "portfolio",
+      "displayName": "Portfolio to Version (versions)",
+      "objectAttribute": "",
+      "shortDescription": "Portfolio instances list their associated Version instances via the 'versions' attribute.",
+      "subjectAttribute": "versions"
+    },
+    {
+      "name": "program_to_user",
+      "object": "user",
+      "subject": "program",
+      "displayName": "Program to User (custom field reference)",
+      "objectAttribute": "",
+      "shortDescription": "Program instances reference a User via the customField456 attribute.",
+      "subjectAttribute": "customField456"
+    },
+    {
+      "name": "program_to_portfolio_ancestors",
+      "object": "portfolio",
+      "subject": "program",
+      "displayName": "Program to Portfolio (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "Program lists all ancestor Portfolios in its hierarchy.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "program_to_portfolio_parent",
+      "object": "portfolio",
+      "subject": "program",
+      "displayName": "Program to Portfolio (parent)",
+      "objectAttribute": "",
+      "shortDescription": "Program references its immediate parent Portfolio.",
+      "subjectAttribute": "parent"
+    },
+    {
+      "name": "program_to_version",
+      "object": "version",
+      "subject": "program",
+      "displayName": "Program to Version (versions)",
+      "objectAttribute": "",
+      "shortDescription": "Program instances expose a sub‑resource listing their Versions.",
+      "subjectAttribute": "versions"
+    },
+    {
+      "name": "projectphase_to_project",
+      "object": "project",
+      "subject": "projectphase",
+      "displayName": "ProjectPhase to Project (reference)",
+      "objectAttribute": "",
+      "shortDescription": "Each ProjectPhase references the Project it belongs to.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "project_phase_to_project_phase_definition",
+      "object": "projectphasedefinition",
+      "subject": "projectphase",
+      "displayName": "ProjectPhase to ProjectPhaseDefinition (definition)",
+      "objectAttribute": "",
+      "shortDescription": "ProjectPhase references its ProjectPhaseDefinition via the definition attribute.",
+      "subjectAttribute": "definition"
+    },
+    {
+      "name": "projectstorage_to_project",
+      "object": "project",
+      "subject": "projectstorage",
+      "displayName": "ProjectStorage to Project (reference)",
+      "objectAttribute": "",
+      "shortDescription": "ProjectStorage instances reference a Project via the 'project' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "projectstorage_to_storage",
+      "object": "storage",
+      "subject": "projectstorage",
+      "displayName": "ProjectStorage to Storage (reference)",
+      "objectAttribute": "projectStorages",
+      "shortDescription": "ProjectStorage instances reference a Storage via the 'storage' attribute; Storage lists related ProjectStorage entries via 'projectStorages'.",
+      "subjectAttribute": "storage"
+    },
+    {
+      "name": "query_to_project",
+      "object": "project",
+      "subject": "query",
+      "displayName": "Query to Project (project reference)",
+      "objectAttribute": "",
+      "shortDescription": "Queries reference the Project they operate on via the 'project' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "query_to_user",
+      "object": "user",
+      "subject": "query",
+      "displayName": "Query to User (ownership)",
+      "objectAttribute": "",
+      "shortDescription": "A Query records the User that owns it.",
+      "subjectAttribute": "user"
+    },
+    {
+      "name": "query_to_workspace",
+      "object": "workspace",
+      "subject": "query",
+      "displayName": "Query to Workspace (default query)",
+      "objectAttribute": "",
+      "shortDescription": "Retrieves the default query configuration for a workspace via a virtual endpoint.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "query_to_query",
+      "object": "query",
+      "subject": "query",
+      "displayName": "Query to Query (self reference)",
+      "objectAttribute": "",
+      "shortDescription": "Query instances hold a reference to another Query via the 'self' attribute.",
+      "subjectAttribute": "self"
+    },
+    {
+      "name": "query_to_schema",
+      "object": "schema",
+      "subject": "query",
+      "displayName": "Query to Schema (schema reference)",
+      "objectAttribute": "",
+      "shortDescription": "Query instances reference a Schema that defines their structure.",
+      "subjectAttribute": "schema"
+    },
+    {
+      "name": "query_to_workpackage_creation",
+      "object": "workpackage",
+      "subject": "query",
+      "displayName": "Query to WorkPackage (creation)",
+      "objectAttribute": "",
+      "shortDescription": "Query provides a virtual endpoint to create a WorkPackage.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "query_to_workpackage_results",
+      "object": "workpackage",
+      "subject": "query",
+      "displayName": "Query to WorkPackage (results)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage instances returned as results of a Query.",
+      "subjectAttribute": "results"
+    },
+    {
+      "name": "schema_to_schema_allowedvaluesschemas",
+      "object": "schema",
+      "subject": "schema",
+      "displayName": "Schema to Schema (allowed values schemas)",
+      "objectAttribute": "",
+      "shortDescription": "Schema instances reference other schemas that define allowed values via the 'allowedValuesSchemas' attribute.",
+      "subjectAttribute": "allowedValuesSchemas"
+    },
+    {
+      "name": "schema_to_schema_self",
+      "object": "schema",
+      "subject": "schema",
+      "displayName": "Schema to Schema (self reference)",
+      "objectAttribute": "",
+      "shortDescription": "Schema instances reference themselves via the 'self' attribute.",
+      "subjectAttribute": "self"
+    },
+    {
+      "name": "activity_to_principal",
+      "object": "principal",
+      "subject": "activity",
+      "displayName": "Activity to Principal (author)",
+      "objectAttribute": "",
+      "shortDescription": "Each Activity records the Principal who authored it.",
+      "subjectAttribute": "user"
+    },
+    {
+      "name": "activity_to_user_reactingusers",
+      "object": "user",
+      "subject": "activity",
+      "displayName": "Activity to User (reactingUsers)",
+      "objectAttribute": "",
+      "shortDescription": "Activities list the users who reacted via the multi‑valued `reactingUsers` attribute.",
+      "subjectAttribute": "reactingUsers"
+    },
+    {
+      "name": "activity_to_user_user",
+      "object": "user",
+      "subject": "activity",
+      "displayName": "Activity to User (user)",
+      "objectAttribute": "",
+      "shortDescription": "Activities reference the user that created them via the `user` attribute.",
+      "subjectAttribute": "user"
+    },
+    {
+      "name": "activity_to_attachment",
+      "object": "attachment",
+      "subject": "activity",
+      "displayName": "Activity to Attachment",
+      "objectAttribute": "container",
+      "shortDescription": "Activity instances list their Attachments, and each Attachment references its containing Activity.",
+      "subjectAttribute": "attachments"
+    },
+    {
+      "name": "activity_to_emojireaction",
+      "object": "emojireaction",
+      "subject": "activity",
+      "displayName": "Activity to EmojiReaction (reactions)",
+      "objectAttribute": "reactable",
+      "shortDescription": "Activity instances list their EmojiReaction objects, and each EmojiReaction references its parent Activity.",
+      "subjectAttribute": "emojiReactions"
+    },
+    {
+      "name": "activity_to_workpackage_emoji_reaction",
+      "object": "workpackage",
+      "subject": "activity",
+      "displayName": "Activity to WorkPackage (via EmojiReaction)",
+      "objectAttribute": "",
+      "shortDescription": "EmojiReaction objects link Activities with their WorkPackage, adding reaction details.",
+      "subjectAttribute": "reactable"
+    },
+    {
+      "name": "attachment_to_user",
+      "object": "user",
+      "subject": "attachment",
+      "displayName": "Attachment to User (author)",
+      "objectAttribute": "",
+      "shortDescription": "Attachment records the User who uploaded it via the 'author' attribute.",
+      "subjectAttribute": "author"
+    },
+    {
+      "name": "attachment_to_attachment_self",
+      "object": "attachment",
+      "subject": "attachment",
+      "displayName": "Attachment to Attachment (self reference)",
+      "objectAttribute": "",
+      "shortDescription": "Attachment instances contain a 'self' reference to their own resource.",
+      "subjectAttribute": "self"
+    },
+    {
+      "name": "attachment_to_meeting",
+      "object": "meeting",
+      "subject": "attachment",
+      "displayName": "Attachment to Meeting (container)",
+      "objectAttribute": "attachments",
+      "shortDescription": "Attachments reference their Meeting via the container attribute, and Meetings list attached files via the attachments attribute.",
+      "subjectAttribute": "container"
+    },
+    {
+      "name": "attachment_to_wikipage",
+      "object": "wikipage",
+      "subject": "attachment",
+      "displayName": "Attachment to WikiPage (container)",
+      "objectAttribute": "attachments",
+      "shortDescription": "Attachment references the WikiPage it is attached to; the WikiPage lists its attachments.",
+      "subjectAttribute": "container"
+    },
+    {
+      "name": "attachment_to_workpackage",
+      "object": "workpackage",
+      "subject": "attachment",
+      "displayName": "Attachment to WorkPackage (container)",
+      "objectAttribute": "attachments",
+      "shortDescription": "Attachment instances reference their containing WorkPackage, and WorkPackage instances list their attachments.",
+      "subjectAttribute": "container"
+    },
+    {
+      "name": "document_to_project",
+      "object": "project",
+      "subject": "document",
+      "displayName": "Document to Project (reference)",
+      "objectAttribute": "",
+      "shortDescription": "Document references the Project it belongs to.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "emojireaction_to_user",
+      "object": "user",
+      "subject": "emojireaction",
+      "displayName": "EmojiReaction to User (reacting users)",
+      "objectAttribute": "",
+      "shortDescription": "EmojiReaction records the Users who reacted with the emoji.",
+      "subjectAttribute": "reactingUsers"
+    },
+    {
+      "name": "emoji_reaction_to_work_package",
+      "object": "workpackage",
+      "subject": "emojireaction",
+      "displayName": "EmojiReaction to WorkPackage (virtual endpoint)",
+      "objectAttribute": "",
+      "shortDescription": "Emoji reactions can be retrieved for a work package via a virtual endpoint that lists reactions of its activities.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "file_to_storage",
+      "object": "storage",
+      "subject": "file",
+      "displayName": "File to Storage (containment)",
+      "objectAttribute": "",
+      "shortDescription": "File instances reside in a Storage.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "filelink_to_storage_storage",
+      "object": "storage",
+      "subject": "filelink",
+      "displayName": "FileLink to Storage (storage reference)",
+      "objectAttribute": "",
+      "shortDescription": "FileLink references a Storage resource via its 'storage' attribute.",
+      "subjectAttribute": "storage"
+    },
+    {
+      "name": "filelink_to_storage_storageurl",
+      "object": "storage",
+      "subject": "filelink",
+      "displayName": "FileLink to Storage (storage URL)",
+      "objectAttribute": "",
+      "shortDescription": "FileLink provides a hypermedia link 'storageUrl' pointing to a Storage resource.",
+      "subjectAttribute": "storageUrl"
+    },
+    {
+      "name": "filelink_to_workpackage",
+      "object": "workpackage",
+      "subject": "filelink",
+      "displayName": "FileLink to WorkPackage (container)",
+      "objectAttribute": "fileLinks",
+      "shortDescription": "FileLinks are attached to the WorkPackage that contains them.",
+      "subjectAttribute": "container"
+    },
+    {
+      "name": "grid_to_gridwidget",
+      "object": "gridwidget",
+      "subject": "grid",
+      "displayName": "Grid to GridWidget (widgets)",
+      "objectAttribute": "",
+      "shortDescription": "The Grid contains an array of GridWidget objects via the 'widgets' attribute.",
+      "subjectAttribute": "widgets"
+    },
+    {
+      "name": "grid_to_workpackage",
+      "object": "workpackage",
+      "subject": "grid",
+      "displayName": "Grid to WorkPackage (filter)",
+      "objectAttribute": "",
+      "shortDescription": "Grid instances can be filtered by WorkPackage via a virtual endpoint.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "gridwidget_to_workpackage",
+      "object": "workpackage",
+      "subject": "gridwidget",
+      "displayName": "GridWidget to WorkPackage (via Grid)",
+      "objectAttribute": "",
+      "shortDescription": "GridWidget instances are associated with WorkPackages through Grid objects.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "groupmodel_to_membership",
+      "object": "membership",
+      "subject": "groupmodel",
+      "displayName": "GroupModel to Membership (membership)",
+      "objectAttribute": "principal",
+      "shortDescription": "GroupModel lists its Memberships via the 'memberships' attribute, and each Membership references its GroupModel through the 'principal' attribute.",
+      "subjectAttribute": "memberships"
+    },
+    {
+      "name": "groupmodel_to_membershipreadmodel",
+      "object": "membershipreadmodel",
+      "subject": "groupmodel",
+      "displayName": "GroupModel to MembershipReadModel (membership)",
+      "objectAttribute": "principal",
+      "shortDescription": "GroupModel instances are linked to MembershipReadModel entries via the membership's principal attribute.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "hierarchyitem_to_hierarchyitem_parent",
+      "object": "hierarchyitem",
+      "subject": "hierarchyitem",
+      "displayName": "HierarchyItem to HierarchyItem (parent)",
+      "objectAttribute": "",
+      "shortDescription": "HierarchyItem instances referencing their parent HierarchyItem.",
+      "subjectAttribute": "parent"
+    },
+    {
+      "name": "meeting_to_user",
+      "object": "user",
+      "subject": "meeting",
+      "displayName": "Meeting to User (attachment link)",
+      "objectAttribute": "",
+      "shortDescription": "Meeting instances are linked to User instances through Attachments that reference the Meeting as a container and the User as the author.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "meeting_to_wikipage",
+      "object": "wikipage",
+      "subject": "meeting",
+      "displayName": "Meeting to WikiPage (attachment)",
+      "objectAttribute": "",
+      "shortDescription": "Meeting is linked to a WikiPage through an Attachment that references both.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "meeting_to_workpackage",
+      "object": "workpackage",
+      "subject": "meeting",
+      "displayName": "Meeting to WorkPackage (link object)",
+      "objectAttribute": "",
+      "shortDescription": "Attachment objects associate Meetings with WorkPackages.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "membershipreadmodel_to_role",
+      "object": "role",
+      "subject": "membershipreadmodel",
+      "displayName": "MembershipReadModel to Role (assigned roles)",
+      "objectAttribute": "",
+      "shortDescription": "MembershipReadModel instances list assigned Role(s).",
+      "subjectAttribute": "roles"
+    },
+    {
+      "name": "membershipreadmodel_to_workspace",
+      "object": "workspace",
+      "subject": "membershipreadmodel",
+      "displayName": "MembershipReadModel to Workspace (project reference)",
+      "objectAttribute": "",
+      "shortDescription": "A MembershipReadModel references the Workspace it belongs to via the `project` attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "membershipreadmodel_to_portfoliomodel",
+      "object": "portfoliomodel",
+      "subject": "membershipreadmodel",
+      "displayName": "MembershipReadModel to PortfolioModel",
+      "objectAttribute": "",
+      "shortDescription": "MembershipReadModel references a PortfolioModel via the 'project' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "membershipreadmodel_to_programmodel",
+      "object": "programmodel",
+      "subject": "membershipreadmodel",
+      "displayName": "MembershipReadModel to ProgramModel (membership)",
+      "objectAttribute": "",
+      "shortDescription": "MembershipReadModel instances reference the ProgramModel they belong to via the 'project' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "membershipreadmodel_to_projectmodel",
+      "object": "projectmodel",
+      "subject": "membershipreadmodel",
+      "displayName": "MembershipReadModel to ProjectModel (membership)",
+      "objectAttribute": "",
+      "shortDescription": "MembershipReadModel instances reference a ProjectModel, indicating the project to which the membership applies.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "membershipreadmodel_to_rolemodel",
+      "object": "rolemodel",
+      "subject": "membershipreadmodel",
+      "displayName": "MembershipReadModel to RoleModel (role assignment)",
+      "objectAttribute": "",
+      "shortDescription": "MembershipReadModel lists the roles assigned to a membership.",
+      "subjectAttribute": "roles"
+    },
+    {
+      "name": "newsmodel_to_user",
+      "object": "user",
+      "subject": "newsmodel",
+      "displayName": "NewsModel to User (author)",
+      "objectAttribute": "",
+      "shortDescription": "NewsModel instances reference the User who authored the news entry.",
+      "subjectAttribute": "author"
+    },
+    {
+      "name": "newsmodel_to_workspace",
+      "object": "workspace",
+      "subject": "newsmodel",
+      "displayName": "NewsModel to Workspace (project reference)",
+      "objectAttribute": "",
+      "shortDescription": "NewsModel references the Workspace it belongs to via the project attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "notificationmodel_to_project",
+      "object": "project",
+      "subject": "notificationmodel",
+      "displayName": "NotificationModel to Project",
+      "objectAttribute": "",
+      "shortDescription": "A NotificationModel references the Project it was created in via the 'project' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "notificationmodel_to_user",
+      "object": "user",
+      "subject": "notificationmodel",
+      "displayName": "NotificationModel to User (author)",
+      "objectAttribute": "",
+      "shortDescription": "NotificationModel records the user who authored the notification.",
+      "subjectAttribute": "author"
+    },
+    {
+      "name": "notificationmodel_to_workspace",
+      "object": "workspace",
+      "subject": "notificationmodel",
+      "displayName": "NotificationModel to Workspace (project reference)",
+      "objectAttribute": "",
+      "shortDescription": "NotificationModel references the Workspace it originated from via the 'project' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "notificationmodel_to_portfoliomodel",
+      "object": "portfoliomodel",
+      "subject": "notificationmodel",
+      "displayName": "NotificationModel to PortfolioModel (reference)",
+      "objectAttribute": "",
+      "shortDescription": "NotificationModel references PortfolioModel via the 'project' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "notificationmodel_to_programmodel",
+      "object": "programmodel",
+      "subject": "notificationmodel",
+      "displayName": "NotificationModel to ProgramModel (project reference)",
+      "objectAttribute": "",
+      "shortDescription": "NotificationModel includes a project attribute that references the associated ProgramModel.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "notificationmodel_to_projectmodel",
+      "object": "projectmodel",
+      "subject": "notificationmodel",
+      "displayName": "NotificationModel to ProjectModel (project reference)",
+      "objectAttribute": "",
+      "shortDescription": "NotificationModel instances contain a reference to the ProjectModel they belong to.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "notificationmodel_to_usermodel_actor",
+      "object": "usermodel",
+      "subject": "notificationmodel",
+      "displayName": "NotificationModel to UserModel (actor)",
+      "objectAttribute": "",
+      "shortDescription": "NotificationModel references the User that caused the notification.",
+      "subjectAttribute": "actor"
+    },
+    {
+      "name": "oauthapplicationreadmodel_to_user_owner",
+      "object": "user",
+      "subject": "oauthapplicationreadmodel",
+      "displayName": "OAuthApplicationReadModel to User (owner)",
+      "objectAttribute": "",
+      "shortDescription": "OAuth applications record the User that created them via the 'owner' attribute.",
+      "subjectAttribute": "owner"
+    },
+    {
+      "name": "oauthapplicationreadmodel_to_storage",
+      "object": "storage",
+      "subject": "oauthapplicationreadmodel",
+      "displayName": "OAuthApplicationReadModel to Storage (integration)",
+      "objectAttribute": "oauthApplication",
+      "shortDescription": "OAuth applications are integrated into a storage integration via the 'integration' attribute, while storage references its OAuth application through the 'oauthApplication' attribute.",
+      "subjectAttribute": "integration"
+    },
+    {
+      "name": "oauth_application_read_model_to_user_model",
+      "object": "usermodel",
+      "subject": "oauthapplicationreadmodel",
+      "displayName": "OAuthApplicationReadModel to UserModel (owner)",
+      "objectAttribute": "",
+      "shortDescription": "OAuth applications record the user that created them as the owner.",
+      "subjectAttribute": "owner"
+    },
+    {
+      "name": "oauthclientcredentialsreadmodel_to_storage_integration",
+      "object": "storage",
+      "subject": "oauthclientcredentialsreadmodel",
+      "displayName": "OAuthClientCredentialsReadModel to Storage (integration)",
+      "objectAttribute": "oauthClientCredentials",
+      "shortDescription": "OAuth client credentials are integrated with a storage; the storage contains the credentials.",
+      "subjectAttribute": "integration"
+    },
+    {
+      "name": "portfolio_model_to_storage",
+      "object": "storage",
+      "subject": "portfoliomodel",
+      "displayName": "PortfolioModel to Storage",
+      "objectAttribute": "",
+      "shortDescription": "PortfolioModel instances list active Storage objects via the 'storages' attribute.",
+      "subjectAttribute": "storages"
+    },
+    {
+      "name": "portfoliomodel_to_portfoliomodel_ancestors",
+      "object": "portfoliomodel",
+      "subject": "portfoliomodel",
+      "displayName": "PortfolioModel to PortfolioModel (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "Reference from a PortfolioModel to its ancestor PortfolioModels.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "portfoliomodel_to_portfoliomodel_parent",
+      "object": "portfoliomodel",
+      "subject": "portfoliomodel",
+      "displayName": "PortfolioModel to PortfolioModel (parent)",
+      "objectAttribute": "",
+      "shortDescription": "Reference from a PortfolioModel to its parent PortfolioModel.",
+      "subjectAttribute": "parent"
+    },
+    {
+      "name": "programmodel_to_workspace",
+      "object": "workspace",
+      "subject": "programmodel",
+      "displayName": "ProgramModel to Workspace (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "ProgramModel instances reference their ancestor Workspace(s) via the 'ancestors' attribute.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "programmodel_to_portfolio_ancestors",
+      "object": "portfolio",
+      "subject": "programmodel",
+      "displayName": "ProgramModel to Portfolio (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "ProgramModel lists its ancestor Portfolios.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "programmodel_to_portfolio_parent",
+      "object": "portfolio",
+      "subject": "programmodel",
+      "displayName": "ProgramModel to Portfolio (parent)",
+      "objectAttribute": "",
+      "shortDescription": "ProgramModel references its parent Portfolio.",
+      "subjectAttribute": "parent"
+    },
+    {
+      "name": "programmodel_to_storage",
+      "object": "storage",
+      "subject": "programmodel",
+      "displayName": "ProgramModel to Storage (active storage)",
+      "objectAttribute": "",
+      "shortDescription": "ProgramModel objects list the Storage resources active for the program.",
+      "subjectAttribute": "storages"
+    },
+    {
+      "name": "projectmodel_to_workspace_ancestors",
+      "object": "workspace",
+      "subject": "projectmodel",
+      "displayName": "ProjectModel to Workspace (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "ProjectModel lists its ancestor Workspaces.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "projectmodel_to_workspace_parent",
+      "object": "workspace",
+      "subject": "projectmodel",
+      "displayName": "ProjectModel to Workspace (parent)",
+      "objectAttribute": "",
+      "shortDescription": "ProjectModel references its parent Workspace.",
+      "subjectAttribute": "parent"
+    },
+    {
+      "name": "projectmodel_to_storage",
+      "object": "storage",
+      "subject": "projectmodel",
+      "displayName": "ProjectModel to Storage (link object)",
+      "objectAttribute": "projectStorages",
+      "shortDescription": "ProjectModel references storages and Storage references projects through the link object ProjectStorageModel.",
+      "subjectAttribute": "storages"
+    },
+    {
+      "name": "relation_to_schema",
+      "object": "schema",
+      "subject": "relation",
+      "displayName": "Relation to Schema",
+      "objectAttribute": "",
+      "shortDescription": "Relations reference a Schema via the 'schema' attribute.",
+      "subjectAttribute": "schema"
+    },
+    {
+      "name": "relation_to_workpackage_from",
+      "object": "workpackage",
+      "subject": "relation",
+      "displayName": "Relation to WorkPackage (from)",
+      "objectAttribute": "",
+      "shortDescription": "A Relation references its originating WorkPackage via the 'from' attribute.",
+      "subjectAttribute": "from"
+    },
+    {
+      "name": "relation_to_workpackage_to",
+      "object": "workpackage",
+      "subject": "relation",
+      "displayName": "Relation to WorkPackage (to)",
+      "objectAttribute": "relations",
+      "shortDescription": "A Relation references its target WorkPackage via the 'to' attribute.",
+      "subjectAttribute": "to"
+    },
+    {
+      "name": "storagefilemodel_to_storage",
+      "object": "storage",
+      "subject": "storagefilemodel",
+      "displayName": "StorageFileModel to Storage (virtual endpoint)",
+      "objectAttribute": "",
+      "shortDescription": "StorageFileModel objects are accessed via the '/v3/storages/{id}/folders' sub‑resource of Storage, representing a virtual association where files belong to a storage.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_model_to_membership_read_model",
+      "object": "membershipreadmodel",
+      "subject": "usermodel",
+      "displayName": "UserModel to MembershipReadModel (membership)",
+      "objectAttribute": "principal",
+      "shortDescription": "UserModel instances are referenced as the principal in MembershipReadModel records, indicating a user’s assigned memberships.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "user_preferences_model_to_user",
+      "object": "user",
+      "subject": "userpreferencesmodel",
+      "displayName": "UserPreferencesModel to User",
+      "objectAttribute": "",
+      "shortDescription": "UserPreferencesModel references its owning User via the 'user' attribute.",
+      "subjectAttribute": "user"
+    },
+    {
+      "name": "values_property_model_to_schema",
+      "object": "schema",
+      "subject": "valuespropertymodel",
+      "displayName": "ValuesPropertyModel to Schema (schema reference)",
+      "objectAttribute": "",
+      "shortDescription": "ValuesPropertyModel instances reference the Schema that defines their typed property value.",
+      "subjectAttribute": "schema"
+    },
+    {
+      "name": "valuespropertymodel_to_storage",
+      "object": "storage",
+      "subject": "valuespropertymodel",
+      "displayName": "ValuesPropertyModel to Storage (self)",
+      "objectAttribute": "",
+      "shortDescription": "ValuesPropertyModel instances reference a Storage resource via the 'self' attribute.",
+      "subjectAttribute": "self"
+    },
+    {
+      "name": "version_to_project_available_in_projects",
+      "object": "project",
+      "subject": "version",
+      "displayName": "Version to Project (availability)",
+      "objectAttribute": "",
+      "shortDescription": "A Version lists the Projects where it is available via the 'availableInProjects' attribute.",
+      "subjectAttribute": "availableInProjects"
+    },
+    {
+      "name": "version_to_project_defining_project",
+      "object": "project",
+      "subject": "version",
+      "displayName": "Version to Project (defining)",
+      "objectAttribute": "versions",
+      "shortDescription": "A Version references its defining Project via the 'definingProject' attribute, while a Project lists its Versions in the 'versions' attribute.",
+      "subjectAttribute": "definingProject"
+    },
+    {
+      "name": "version_to_user",
+      "object": "user",
+      "subject": "version",
+      "displayName": "Version to User (custom field reference)",
+      "objectAttribute": "",
+      "shortDescription": "Version instances reference a User via the customField23 attribute.",
+      "subjectAttribute": "customField23"
+    },
+    {
+      "name": "version_to_workspace_availableinprojects",
+      "object": "workspace",
+      "subject": "version",
+      "displayName": "Version to Workspace (availableInProjects)",
+      "objectAttribute": "",
+      "shortDescription": "Workspaces where a version can be used.",
+      "subjectAttribute": "availableInProjects"
+    },
+    {
+      "name": "version_to_workspace_definingproject",
+      "object": "workspace",
+      "subject": "version",
+      "displayName": "Version to Workspace (definingProject)",
+      "objectAttribute": "",
+      "shortDescription": "Workspace that defines the version.",
+      "subjectAttribute": "definingProject"
+    },
+    {
+      "name": "version_to_schema",
+      "object": "schema",
+      "subject": "version",
+      "displayName": "Version to Schema (reference)",
+      "objectAttribute": "",
+      "shortDescription": "Version references the Schema that defines its structure.",
+      "subjectAttribute": "schema"
+    },
+    {
+      "name": "wiki_page_to_project",
+      "object": "project",
+      "subject": "wikipage",
+      "displayName": "WikiPage to Project",
+      "objectAttribute": "",
+      "shortDescription": "WikiPage references the Project it belongs to.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "wiki_page_to_wiki_page",
+      "object": "wikipage",
+      "subject": "wikipage",
+      "displayName": "WikiPage to WikiPage (self reference)",
+      "objectAttribute": "",
+      "shortDescription": "A WikiPage references another WikiPage via its 'self' attribute.",
+      "subjectAttribute": "self"
+    },
+    {
+      "name": "workpackage_to_project_membership",
+      "object": "project",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to Project (membership)",
+      "objectAttribute": "workPackages",
+      "shortDescription": "WorkPackage records its parent Project via the 'project' attribute, and Project lists its WorkPackages via the 'workPackages' collection attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "workpackage_to_user_assignee",
+      "object": "user",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to User (assignee)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage references the user assigned to work on the package.",
+      "subjectAttribute": "assignee"
+    },
+    {
+      "name": "workpackage_to_user_author",
+      "object": "user",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to User (author)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage records the author of the work package.",
+      "subjectAttribute": "author"
+    },
+    {
+      "name": "workpackage_to_user_availablewatchers",
+      "object": "user",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to User (availableWatchers)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage lists users that can be added as watchers.",
+      "subjectAttribute": "availableWatchers"
+    },
+    {
+      "name": "workpackage_to_user_customfield3",
+      "object": "user",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to User (customField3)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage references a user via custom field 3.",
+      "subjectAttribute": "customField3"
+    },
+    {
+      "name": "workpackage_to_user_responsible",
+      "object": "user",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to User (responsible)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage references the user responsible for the overall outcome.",
+      "subjectAttribute": "responsible"
+    },
+    {
+      "name": "workpackage_to_user_watchers",
+      "object": "user",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to User (watchers)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage lists users currently watching the work package.",
+      "subjectAttribute": "watchers"
+    },
+    {
+      "name": "workpackage_to_workspace",
+      "object": "workspace",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to Workspace (belongs to)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackages reference the Workspace they belong to via the 'project' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "workpackage_to_portfolio",
+      "object": "portfolio",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to Portfolio (membership)",
+      "objectAttribute": "workPackages",
+      "shortDescription": "WorkPackage references its containing Portfolio via the 'project' attribute, and Portfolio lists its WorkPackages via the multi-valued 'workPackages' attribute.",
+      "subjectAttribute": "project"
+    },
+    {
+      "name": "workpackage_to_program",
+      "object": "program",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to Program (virtual endpoint)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackages are reachable via the Program's 'workPackages' link, indicating they belong to a Program.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "workpackage_to_projectphase",
+      "object": "projectphase",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to ProjectPhase (assignment)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage instances reference the ProjectPhase they belong to.",
+      "subjectAttribute": "projectPhase"
+    },
+    {
+      "name": "workpackage_to_projectphasedefinition",
+      "object": "projectphasedefinition",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to ProjectPhaseDefinition",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage references the ProjectPhaseDefinition that defines its phase.",
+      "subjectAttribute": "projectPhaseDefinition"
+    },
+    {
+      "name": "work_package_to_schema",
+      "object": "schema",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to Schema (schema reference)",
+      "objectAttribute": "",
+      "shortDescription": "WorkPackage records a reference to its Schema resource.",
+      "subjectAttribute": "schema"
+    },
+    {
+      "name": "workpackage_to_storage",
+      "object": "storage",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to Storage (link)",
+      "objectAttribute": "",
+      "shortDescription": "Links a WorkPackage to a Storage via FileLink objects.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "workpackage_to_version_target_versions",
+      "object": "version",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to Version (targetVersions)",
+      "objectAttribute": "",
+      "shortDescription": "The WorkPackage references multiple Versions via the `targetVersions` attribute.",
+      "subjectAttribute": "targetVersions"
+    },
+    {
+      "name": "workpackage_to_version_version",
+      "object": "version",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to Version (version)",
+      "objectAttribute": "",
+      "shortDescription": "The WorkPackage references a single Version via the `version` attribute.",
+      "subjectAttribute": "version"
+    },
+    {
+      "name": "workpackage_to_workpackage_relation",
+      "object": "workpackage",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to WorkPackage (relation creation)",
+      "objectAttribute": "",
+      "shortDescription": "API endpoint to list candidates and create relations between two work packages.",
+      "subjectAttribute": ""
+    },
+    {
+      "name": "workpackage_to_workpackage_ancestors",
+      "object": "workpackage",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to WorkPackage (ancestors)",
+      "objectAttribute": "",
+      "shortDescription": "Each WorkPackage holds a multi‑valued 'ancestors' collection referencing all visible ancestor work packages.",
+      "subjectAttribute": "ancestors"
+    },
+    {
+      "name": "workpackage_to_workpackage_parent",
+      "object": "workpackage",
+      "subject": "workpackage",
+      "displayName": "WorkPackage to WorkPackage (parent/children)",
+      "objectAttribute": "children",
+      "shortDescription": "WorkPackage instances reference their immediate parent via the 'parent' attribute, while the parent lists its children through the multi‑valued 'children' attribute.",
+      "subjectAttribute": "parent"
+    }
+  ]
+}

@@ -114,11 +114,10 @@ When a digester or codegen job needs a single protocol, it resolves it via
 
 1. If a protocol-aware request carries an explicit `apiType` *query parameter*,
    that value wins. The override is available on digester `classes`,
-   `endpoints`, and `attributes`, and on codegen `authorization`,
-   `native-schema`, `search`, `create`, `update`, and `delete`. Since
+   `endpoints`, `attributes`, and `relations`, and on codegen `authorization`,
+   `native-schema`, `search`, `create`, `update`, `delete`, and `relations`. Since
    `native-schema` also emits the ConnID mapping, this override governs that
-   mapping too. Relation generation is protocol-independent and does not accept
-   it.
+   mapping too.
 2. Otherwise the stored `apiType` list from the session metadata is used. When
    several protocols are stored, the single protocol is picked in the order
    *SQL → SCIM → REST*.

@@ -33,6 +33,10 @@ from src.modules.codegen.prompts.scim.native_schema_prompts import (
     get_scim_native_schema_system_prompt,
     get_scim_native_schema_user_prompt,
 )
+from src.modules.codegen.prompts.scim.relation_prompts import (
+    get_scim_relation_system_prompt,
+    get_scim_relation_user_prompt,
+)
 from src.modules.codegen.prompts.scim.search_prompts import (
     get_scim_search_all_system_prompt,
     get_scim_search_filter_system_prompt,
@@ -45,6 +49,10 @@ from src.modules.codegen.prompts.sql.delete_prompts import get_sql_delete_system
 from src.modules.codegen.prompts.sql.native_schema_prompts import (
     get_sql_native_schema_system_prompt,
     get_sql_native_schema_user_prompt,
+)
+from src.modules.codegen.prompts.sql.relation_prompts import (
+    get_sql_relation_system_prompt,
+    get_sql_relation_user_prompt,
 )
 from src.modules.codegen.prompts.sql.search_prompts import (
     get_sql_search_all_system_prompt,
@@ -156,8 +164,10 @@ PROMPT_MAP: Mapping[str, Mapping[ApiType, OperationAssets]] = {
     },
     "relationship": {
         ApiType.REST: _assets("relationship", ApiType.REST, get_relation_system_prompt, get_relation_user_prompt),
-        ApiType.SCIM: _assets("relationship", ApiType.SCIM, get_relation_system_prompt, get_relation_user_prompt),
-        ApiType.SQL: _assets("relationship", ApiType.SQL, get_relation_system_prompt, get_relation_user_prompt),
+        ApiType.SCIM: _assets(
+            "relationship", ApiType.SCIM, get_scim_relation_system_prompt, get_scim_relation_user_prompt
+        ),
+        ApiType.SQL: _assets("relationship", ApiType.SQL, get_sql_relation_system_prompt, get_sql_relation_user_prompt),
     },
 }
 

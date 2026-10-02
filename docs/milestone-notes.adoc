@@ -17,6 +17,77 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-10-02 Relation analysis job snapshots and companion outputs
+
+Author: Alexander Brecko
+
+Description: Relation extraction now snapshots the effective `apiType` and
+per-class attribute/endpoint outputs in `jobs.input.classSchemaSnapshot`.
+Its worker publishes `relationsOutput` and the internal
+`relationsAnalysisOutput` together, guarded by `relationsJobId`. Relation
+codegen snapshots matching analysis as `jobs.input.relationContext`.
+Queued relation jobs from the previous milestone are not executable by the
+new worker signatures, and new jobs must not be executed by old workers.
+The public seven-field relation records remain unchanged. Manual relation
+overrides clear the associated analysis; codegen then uses the supplied
+records without machine analysis.
+
+`DIGESTER__RELATION_GENERIC_ATTRIBUTE_TOKENS` has been removed. Relation
+extraction uses evidence and configured per-stage limits instead of generic
+attribute tokens. SQL codegen interprets the analysis within the current
+framework's discovery-only relationship support; it does not emit unsupported
+Groovy relationship overrides.
+
+No database schema change, database recreation or data backup is required
+for this relation change. Other entries in this milestone still apply when
+upgrading from a snapshot preceding their changes.
+
+Required Upgrade Steps
+. Block new client requests at the gateway while the previous workers finish
+their work. In the application PostgreSQL database, repeat the following
+query until it returns `0` before stopping any API or worker process:
++
+[source,sql]
+----
+SELECT count(*) FROM jobs WHERE status IN ('queued', 'running');
+----
+. Remove `DIGESTER__RELATION_GENERIC_ATTRIBUTE_TOKENS` from `.env` and deployment
+environment overrides. Review the `DIGESTER__RELATION_*` limits documented in
+`docs/pipeline/relations.adoc`; the staged pipeline can perform more LLM calls
+than the previous extraction. Existing concurrency settings still apply.
+. Stop the previous processes and deploy the new revision with
+`docker compose up -d --build midpilot-connector-gen`, or start the host
+installation with `uv run python server.py`. Start standalone workers with
+`uv run python -m src.jobs.runtime` only after all processes use this revision.
+. For retained sessions, complete attribute and endpoint extraction before
+requesting `POST /api/v1/digester/{sessionId}/relations?skipCache=true`.
+Poll `GET /api/v1/digester/{sessionId}/relations?jobId={jobId}` until finished.
+Then regenerate each selected relationship with
+`POST /api/v1/codegen/{sessionId}/relations/{relationName}?skipCache=true`
+and poll its corresponding GET endpoint. These are authenticated API requests
+using the deployment's existing gateway configuration. Regeneration replaces
+old relation artifacts, including SQL Groovy overrides from development builds.
+. Validate with `uv run poe qa` using the configured test database. Confirm
+that the relation status response retains its seven-field records and does
+not expose `_sessionCompanionOutputs` or the internal analysis.
+
+Rollback Procedure (If Upgrade Fails)
+. Block new requests and drain queued/running jobs with the same SQL query;
+the previous worker cannot consume the new relation snapshots.
+. Stop all API and worker processes, restore the previous source revision and
+environment configuration, and restart with the same commands above.
+. Rerun relation extraction and relation codegen with `skipCache=true` using
+the endpoints above. No database restore is needed for this change. Validate
+`GET /health` and poll the regenerated relation jobs before reopening traffic.
+
+Notes & References
+* Related task: 11417. Related PR: the existing
+`feature/assisted-advanced-relationships` merge request into `dev`.
+* Docs: `docs/pipeline/relations.adoc`, `docs/pipeline/codegen.adoc`.
+* Affected configuration: removed `DIGESTER__RELATION_GENERIC_ATTRIBUTE_TOKENS`;
+new per-stage `DIGESTER__RELATION_*` settings in `src/config/digester.py`.
+* Affected job types: `digester.getRelations`, `codegen.getRelation`.
+
 === 2026-10-02 Stored documentation selection, job-type policies and session key contract
 
 Author: Alexander Brecko

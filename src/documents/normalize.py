@@ -28,6 +28,28 @@ def canonical_object_class_key(name: str) -> str:
     return "".join(normalize_object_class_name(name).split())
 
 
+_REFERENCE_TYPE_MARKERS = frozenset({"reference", "references"})
+
+
+def dereference_attribute_type(raw_type: Any) -> str:
+    """Strip the reference marker REST attribute extraction writes in front of a ``$ref`` target.
+
+    The REST prompts encode an OpenAPI ``$ref: '#/components/schemas/NAME'`` as
+    ``type="reference NAME"``, while the attribute schema itself documents the bare object
+    class name. Consumers that resolve ``type`` against extracted object classes therefore
+    have to accept both spellings; this returns the class name a reference type points at,
+    and the input unchanged when there is no marker.
+
+    Callers must try the raw value first and use this only as a fallback, so a class whose
+    own name starts with the marker keeps winning on an exact match.
+    """
+    text = str(raw_type or "").strip()
+    marker, _, target = text.partition(" ")
+    if marker.lower() in _REFERENCE_TYPE_MARKERS and target.strip():
+        return target.strip()
+    return text
+
+
 def canonicalize_scim_path(scim_path: Any) -> str:
     """Convert quoted bracket property access to canonical SCIM dot notation."""
     normalized = str(scim_path or "").strip()

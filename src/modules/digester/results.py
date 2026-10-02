@@ -48,6 +48,7 @@ from src.shared.session_keys import (
     METADATA,
     OBJECT_CLASSES,
     RELATIONS,
+    RELATIONS_ANALYSIS_OUTPUT,
     attributes_keys,
     endpoints_keys,
 )
@@ -301,7 +302,9 @@ async def store_relations_override(
     session_id: UUID,
     payload: Dict[str, Any],
 ) -> None:
-    await repo.update_session(session_id, {RELATIONS.output: payload})
+    # A manual contract override has no machine analysis. Clear the old companion in the
+    # same session-row transaction so codegen can never attach another run's analysis.
+    await repo.update_session(session_id, {RELATIONS.output: payload, RELATIONS_ANALYSIS_OUTPUT: None})
 
 
 async def store_metadata_output(

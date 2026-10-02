@@ -4,15 +4,12 @@
 
 import asyncio
 import logging
-import os
-from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-import pytest_asyncio
-from sqlalchemy import delete, func, select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.errors import LLMUnavailableError
 from src.core.job_execution import (
@@ -20,7 +17,7 @@ from src.core.job_execution import (
     reset_current_execution,
     set_current_execution,
 )
-from src.database.models import Base, DocumentationChunk, Job, JobProgress, Session
+from src.database.models import DocumentationChunk, Job, JobProgress, Session
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import ClaimedJob, JobRepository
 from src.database.repositories.session_repository import SessionRepository
@@ -59,31 +56,6 @@ def _execution_payload(value: str) -> dict:
         dynamic_input_provider=None,
         session_result_key=None,
     )
-
-
-@pytest_asyncio.fixture
-async def postgres_session_factory() -> AsyncIterator[SessionFactory]:
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL repository integration tests")
-
-    schema_name = f"test_job_worker_{uuid4().hex}"
-    engine = create_async_engine(
-        database_url,
-        execution_options={"schema_translate_map": {None: schema_name}},
-    )
-    schema_created = False
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
-            schema_created = True
-            await connection.run_sync(Base.metadata.create_all)
-        yield async_sessionmaker(engine, expire_on_commit=False)
-    finally:
-        if schema_created:
-            async with engine.begin() as connection:
-                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
-        await engine.dispose()
 
 
 async def _create_session(session_factory: SessionFactory) -> UUID:
@@ -248,6 +220,40 @@ async def test_stale_job_cannot_overwrite_newer_session_pointer(
         await db.commit()
 
     assert persisted is False
+
+
+@pytest.mark.asyncio
+async def test_relation_outputs_publish_together_and_reject_stale_jobs(
+    postgres_session_factory: SessionFactory,
+) -> None:
+    session_id = await _create_session(postgres_session_factory)
+    current_job_id, newer_job_id = uuid4(), uuid4()
+    outputs = {"relationsOutput": {"relations": []}, "relationsAnalysisOutput": {"outputFingerprint": "current"}}
+
+    async with postgres_session_factory() as db:
+        repo = SessionRepository(db)
+        await repo.update_session(session_id, {"relationsJobId": str(current_job_id)})
+        await db.commit()
+        assert await repo.update_results_if_current_job(
+            session_id=session_id, result_key="relationsOutput", job_id=current_job_id, values=outputs
+        )
+        await db.commit()
+
+    async with postgres_session_factory() as db:
+        repo = SessionRepository(db)
+        assert await repo.get_session_values(session_id, list(outputs)) == outputs
+        await repo.update_session(session_id, {"relationsJobId": str(newer_job_id)})
+        await db.commit()
+        assert not await repo.update_results_if_current_job(
+            session_id=session_id,
+            result_key="relationsOutput",
+            job_id=current_job_id,
+            values={"relationsOutput": {"stale": True}, "relationsAnalysisOutput": {"stale": True}},
+        )
+        await db.commit()
+
+    async with postgres_session_factory() as db:
+        assert await SessionRepository(db).get_session_values(session_id, list(outputs)) == outputs
 
 
 @pytest.mark.asyncio

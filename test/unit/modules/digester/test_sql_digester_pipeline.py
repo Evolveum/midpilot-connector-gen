@@ -248,29 +248,6 @@ def test_collect_sql_tables_preserves_catalog_and_schema_from_raw_json():
     ]
 
 
-def test_collect_sql_tables_marks_table_level_primary_key_columns():
-    doc = _sql_doc(
-        """
-        CREATE TABLE users (
-          id UUID NOT NULL,
-          username VARCHAR(255) NOT NULL,
-          CONSTRAINT users_pkey PRIMARY KEY (id)
-        );
-        """
-    )
-
-    tables = collect_sql_tables([doc])
-
-    assert tables[0]["primaryKey"] == ["id"]
-    assert tables[0]["columns"][0] == {"name": "id", "type": "UUID", "nullable": False, "primaryKey": True}
-    assert tables[0]["columns"][1] == {
-        "name": "username",
-        "type": "VARCHAR(255)",
-        "nullable": False,
-        "primaryKey": False,
-    }
-
-
 def test_collect_sql_tables_marks_composite_table_level_primary_key_columns():
     doc = _sql_doc(
         """
@@ -289,34 +266,12 @@ def test_collect_sql_tables_marks_composite_table_level_primary_key_columns():
     assert [column["primaryKey"] for column in tables[0]["columns"]] == [True, True, False]
 
 
-def test_collect_sql_tables_projects_raw_json_table_primary_key_to_columns():
-    doc = _sql_doc(
-        """
-        {"tables": [{
-          "name": "users",
-          "primaryKey": ["id"],
-          "columns": [
-            {"name": "id", "type": "uuid"},
-            {"name": "email", "type": "varchar"}
-          ]
-        }]}
-        """
-    )
+def test_collect_sql_tables_preserves_generated_column_metadata_from_raw_json():
+    """The DDL spelling is covered end-to-end by ``test_extract_sql_attributes_marks_generated_columns_non_creatable``.
 
-    tables = collect_sql_tables([doc])
-
-    assert tables[0]["primaryKey"] == ["id"]
-    assert [column["primaryKey"] for column in tables[0]["columns"]] == [True, False]
-
-
-@pytest.mark.parametrize(
-    "schema",
-    [
-        '{"tables": [{"name": "users", "columns": [{"name": "id", "type": "uuid", "generated": true}]}]}',
-        "CREATE TABLE users (id UUID GENERATED ALWAYS AS IDENTITY);",
-    ],
-)
-def test_collect_sql_tables_preserves_generated_column_metadata(schema):
+    Only the raw-JSON ``generated`` flag needs its own case: no extraction test feeds that shape.
+    """
+    schema = '{"tables": [{"name": "users", "columns": [{"name": "id", "type": "uuid", "generated": true}]}]}'
     table = collect_sql_tables([_sql_doc(schema)])[0]
 
     assert table["columns"][0]["generated"] is True

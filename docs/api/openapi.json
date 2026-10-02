@@ -2177,6 +2177,24 @@
               "title": "Skipcache"
             },
             "description": "Whether to skip cached data"
+          },
+          {
+            "name": "apiType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ApiType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Override the integration protocol (REST/SCIM/SQL); uses detected apiType when omitted.",
+              "title": "Apitype"
+            },
+            "description": "Override the integration protocol (REST/SCIM/SQL); uses detected apiType when omitted."
           }
         ],
         "responses": {
@@ -4418,6 +4436,24 @@
               "title": "Skipcache"
             },
             "description": "Whether to skip cached data for generation"
+          },
+          {
+            "name": "apiType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ApiType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Override the integration protocol (REST/SCIM/SQL); uses relation analysis or detection.",
+              "title": "Apitype"
+            },
+            "description": "Override the integration protocol (REST/SCIM/SQL); uses relation analysis or detection."
           }
         ],
         "responses": {

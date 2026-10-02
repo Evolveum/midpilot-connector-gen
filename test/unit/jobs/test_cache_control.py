@@ -16,7 +16,7 @@ from src.jobs.errors import JobClaimLostError
 from src.modules.discovery.schema import CandidateLinksInput
 from src.modules.scrape.schema import ScrapeRequest
 from src.shared.job_types import JobCachePolicy, JobType, job_type_policy
-from src.shared.normalize import normalize_input
+from src.shared.normalize import normalize_input, normalized_input_fingerprint
 
 
 def _cache_policy(job_type: JobType) -> JobCachePolicy:
@@ -74,6 +74,35 @@ def test_normalize_input_handles_missing_relevant_documentations() -> None:
         {"name": "Group"},
         {"name": "Role"},
     ]
+
+
+def test_relation_schema_changes_produce_distinct_cache_fingerprints() -> None:
+    def relation_input(*, attribute_type: str, endpoint_path: str, api_type: str = "rest") -> dict:
+        return {
+            "documentationItems": [{"content": "User and Group schemas"}],
+            "relevantObjectClasses": {"objectClasses": [{"name": "User"}, {"name": "Group"}]},
+            "classSchemaSnapshot": {
+                "attributesByClass": {
+                    "user": {"attributes": {"groups": {"type": attribute_type, "format": "reference"}}}
+                },
+                "endpointsByClass": {"user": {"endpoints": {"groups": {"method": "GET", "path": endpoint_path}}}},
+            },
+            "apiType": api_type,
+            "skipCache": False,
+        }
+
+    original = normalized_input_fingerprint(relation_input(attribute_type="Group", endpoint_path="/Users/{id}/Groups"))
+    changed_attribute = normalized_input_fingerprint(
+        relation_input(attribute_type="Role", endpoint_path="/Users/{id}/Groups")
+    )
+    changed_endpoint = normalized_input_fingerprint(
+        relation_input(attribute_type="Group", endpoint_path="/Users/{id}/Roles")
+    )
+    changed_protocol = normalized_input_fingerprint(
+        relation_input(attribute_type="Group", endpoint_path="/Users/{id}/Groups", api_type="scim")
+    )
+
+    assert len({original, changed_attribute, changed_endpoint, changed_protocol}) == 4
 
 
 @pytest.mark.asyncio
@@ -188,6 +217,40 @@ async def test_unexpected_cache_reuse_failure_does_not_trigger_expensive_worker(
             )
 
     run_normal_worker.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cache_without_required_companion_runs_worker_instead_of_reusing_partial_state() -> None:
+    latest_job = SimpleNamespace(
+        job_id=uuid4(),
+        session_id=uuid4(),
+        result={"result": {"relations": []}},
+        created_at=datetime.now(),
+    )
+    job_repo = MagicMock()
+    job_repo.get_job_by_input = AsyncMock(return_value=latest_job)
+    fresh = {
+        "result": {"relations": []},
+        "_sessionCompanionOutputs": {"relationsAnalysisOutput": {"pairs": []}},
+    }
+    run_normal_worker = AsyncMock(return_value=fresh)
+
+    with (
+        patch("src.jobs.cache.async_session_maker", return_value=_AsyncSessionContext(MagicMock())),
+        patch("src.jobs.cache.JobRepository", return_value=job_repo),
+    ):
+        result = await reuse_or_run(
+            job_type=JobType.DIGESTER_RELATIONS,
+            cache_policy=_cache_policy(JobType.DIGESTER_RELATIONS),
+            job_id=uuid4(),
+            session_id=uuid4(),
+            input_payload={"documentationItems": []},
+            run_normal_worker=run_normal_worker,
+            required_companion_keys=("relationsAnalysisOutput",),
+        )
+
+    assert result == fresh
+    run_normal_worker.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio

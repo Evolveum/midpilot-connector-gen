@@ -41,6 +41,12 @@ native schema; see ``codegen.enums``)
                                                             ``{operationKey}Output`` rows it changed
 ======================================  ==================  =========================================
 
+``relationsAnalysisOutput`` (:data:`RELATIONS_ANALYSIS_OUTPUT`) is a companion of the
+``relations`` family: the relation worker publishes it in the same transaction as
+``relationsOutput``, guarded by ``relationsJobId``. It holds the relation pipeline's
+working state (``RelationsAnalysis``), is read by relation codegen and is never
+returned by an endpoint.
+
 ``discoveryInput`` and ``scrapeInput`` are read back (application name/version for
 uploads and scraping); every other ``*Input`` is diagnostic metadata only.
 
@@ -92,6 +98,9 @@ AUTH = JobSessionKeys("auth")
 METADATA = JobSessionKeys("metadata")
 AUTHORIZATION = JobSessionKeys("authorization")
 
+RELATIONS_ANALYSIS_OUTPUT = "relationsAnalysisOutput"
+"""Companion of :data:`RELATIONS`, published atomically with ``relationsOutput``."""
+
 
 def attributes_keys(object_class: str) -> JobSessionKeys:
     """Attribute extraction of one (normalized) object class."""
@@ -123,9 +132,14 @@ def upload_job_pointer_key(doc_id: object) -> str:
     return f"documentation.processUpload_{doc_id}_job_id"
 
 
+def is_output_key(key: str) -> bool:
+    """True for a ``{prefix}Output`` key with a non-empty prefix."""
+    return key.endswith(_OUTPUT_SUFFIX) and key != _OUTPUT_SUFFIX
+
+
 def job_pointer_key_for_output(output_key: str) -> str:
     """Return the ``JobId`` pointer guarding an ``Output`` key of the same family."""
-    if not output_key.endswith(_OUTPUT_SUFFIX) or output_key == _OUTPUT_SUFFIX:
+    if not is_output_key(output_key):
         raise ValueError(f"Session result key {output_key!r} does not follow the *Output convention")
     return f"{output_key[: -len(_OUTPUT_SUFFIX)]}{_JOB_ID_SUFFIX}"
 

@@ -11,7 +11,12 @@ from src.modules.codegen.core.base import (
     endpoints_to_records,
 )
 from src.modules.codegen.enums import SearchIntent
-from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, OperationConfig
+from src.modules.codegen.schema import (
+    AttributesPayload,
+    EndpointsPayload,
+    OperationConfig,
+    RelationCodegenContext,
+)
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
 from src.modules.codegen.utils.operation_defaults import normalize_operation_defaults
 from src.modules.codegen.utils.prompt_records import (
@@ -258,10 +263,15 @@ class DeleteGenerator(_OperationGenerator):
 class RelationGenerator(BaseGroovyGenerator):
     def __init__(
         self,
+        *,
+        relation_name: str,
         docs_text: str,
         declarative_docs_text: str,
         system_prompt: str,
         user_prompt: str,
+        protocol: ApiType,
+        relation_context: Optional[RelationCodegenContext] = None,
+        context_only_for_conndev: bool = False,
         extra_prompt_vars: Optional[Dict[str, Any]] = None,
     ):
         config = OperationConfig(
@@ -271,10 +281,18 @@ class RelationGenerator(BaseGroovyGenerator):
             default_scaffold="{}",
             logger_prefix="[Codegen:Relation]",
             extra_prompt_vars=extra_prompt_vars or {},
+            context_only_for_conndev=context_only_for_conndev,
         )
         config.extra_prompt_vars["relation_docs"] = docs_text
+        config.extra_prompt_vars["relation_context_json"] = json.dumps(
+            relation_context.prompt_payload() if relation_context is not None else {},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         config.extra_prompt_vars["declarative_docs"] = declarative_docs_text
         super().__init__(config)
+        self.protocol = protocol
+        self.relation_name = relation_name
 
     def prepare_input_data(self, **kwargs: Any) -> Dict[str, str]:
         relations = kwargs.get("relations")
@@ -291,7 +309,9 @@ class RelationGenerator(BaseGroovyGenerator):
         return {"relation_json": relation_json, "relation_name": relation_name}
 
     def get_initial_result(self, **kwargs: Any) -> str:
-        return ""
+        if self.protocol is ApiType.SQL:
+            return "{}"
+        return f"relationship({json.dumps(self.relation_name)}) {{\n}}\n"
 
 
 def build_other_authorization_scaffold(protocol: ApiType) -> str:

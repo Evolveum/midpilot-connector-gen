@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Integration tests for codegen create/update/delete endpoints."""
+"""Unit tests for the codegen create/update/delete routes and their job scheduling."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4

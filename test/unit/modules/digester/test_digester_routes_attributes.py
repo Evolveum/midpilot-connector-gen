@@ -2,7 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""Integration tests for digester class-attributes endpoints."""
+"""Unit tests for the digester class-attributes routes and their job scheduling."""
 
 from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4

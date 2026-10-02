@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.filtering.filter import filter_documentation_items
 from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
+from src.modules.digester.entities.relation_candidates import ObjectClassIndex
 from src.modules.digester.errors import EndpointExtractionNotSupportedError, ObjectClassesNotFoundError
 from src.modules.digester.extractors.attributes import extract_attributes
 from src.modules.digester.extractors.auth import extract_auth
@@ -30,9 +31,10 @@ from src.modules.digester.extractors.connectivity_endpoint import extract_connec
 from src.modules.digester.extractors.endpoints import extract_endpoints
 from src.modules.digester.extractors.info import extract_info_metadata
 from src.modules.digester.extractors.object_class import extract_object_classes
+from src.modules.digester.extractors.rest import relation_context
 from src.modules.digester.extractors.rest.relations import extract_relations
 from src.modules.digester.selection import (
-    DEFAULT_CRITERIA,
+    RELATION_CRITERIA,
     DocumentationSelector,
     auth_input,
     build_object_class_extraction_input,
@@ -49,6 +51,7 @@ from src.shared.session_keys import (
     METADATA,
     OBJECT_CLASSES,
     RELATIONS,
+    RELATIONS_ANALYSIS_OUTPUT,
     attributes_keys,
     endpoints_keys,
 )
@@ -237,16 +240,25 @@ async def schedule_relations_extraction(
     repo: SessionRepository,
     session_id: UUID,
     skip_cache: bool,
+    api_type: Optional[ApiType],
 ) -> UUID:
     """
     Schedule relation extraction and persist ``relationsJobId`` /
     ``relationsInput``.
     """
-    doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id, db=db)
+    protocol = await resolve_effective_api_type(session_id, api_type)
+    doc_items = await filter_documentation_items(RELATION_CRITERIA, session_id, db=db)
 
     relevant = await repo.get_session_data(session_id, OBJECT_CLASSES.output)
     if not relevant:
         raise ObjectClassesNotFoundError(session_id)
+
+    object_class_index, _ = ObjectClassIndex.from_payload(relevant)
+    schema_values = await repo.get_session_values(
+        session_id,
+        relation_context.relation_schema_output_keys(object_class_index),
+    )
+    class_schema_snapshot = relation_context.build_relation_schema_snapshot(object_class_index, schema_values)
 
     job_id = await schedule_coroutine_job(
         db=repo.db,
@@ -254,21 +266,27 @@ async def schedule_relations_extraction(
         input_payload={
             "documentationItems": doc_items,
             "relevantObjectClasses": relevant,
+            "classSchemaSnapshot": class_schema_snapshot,
+            "apiType": protocol.value,
             "skipCache": skip_cache,
         },
         worker=extract_relations,
         worker_args=(
             job_input_reference("documentationItems"),
             job_input_reference("relevantObjectClasses"),
+            job_input_reference("classSchemaSnapshot"),
+            job_input_reference("apiType"),
+            session_id,
         ),
         initial_stage="chunking",
         initial_message="Preparing and splitting documentation",
         session_id=session_id,
         session_result_key=RELATIONS.output,
+        session_companion_result_keys=(RELATIONS_ANALYSIS_OUTPUT,),
     )
 
     # The object classes travel in the job input; the pointer keeps request metadata only.
-    await persist_job_pointer(repo, session_id, RELATIONS, {"skipCache": skip_cache}, job_id)
+    await persist_job_pointer(repo, session_id, RELATIONS, {"apiType": protocol.value, "skipCache": skip_cache}, job_id)
     return job_id
 
 

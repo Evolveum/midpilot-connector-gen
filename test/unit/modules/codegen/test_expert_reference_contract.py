@@ -46,6 +46,7 @@ def test_every_operation_renders_its_expert_reference_and_only_known_inputs(name
             "protocol",
             "relation_name",
             "relation_json",
+            "relation_context_json",
             "authentication_container",
             "preferred_authorizations_json",
             "scim_protocol_schema_json",

@@ -15,7 +15,7 @@ the worker runs via the provided ``run_normal_worker`` callback.
 import copy
 import logging
 from datetime import timedelta
-from typing import Any, Awaitable, Callable, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Sequence
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -35,6 +35,7 @@ from src.documents.relevance import (
 from src.documents.selection import DocumentationSelection, build_selection_chunk_remap
 from src.jobs import lifecycle
 from src.jobs.errors import JobClaimLostError
+from src.jobs.result_envelope import missing_session_companion_outputs
 from src.shared.clock import utc_now
 from src.shared.enums import JobStage
 from src.shared.job_types import CacheReuse, CacheWindow, JobCachePolicy, JobType
@@ -66,6 +67,7 @@ async def reuse_or_run(
     session_id: UUID,
     input_payload: Dict[str, Any],
     run_normal_worker: RunNormalWorker,
+    required_companion_keys: Sequence[str] = (),
 ) -> Dict[str, Any]:
     """Return a cached/reused result for the job, or the freshly computed worker result.
 
@@ -89,6 +91,15 @@ async def reuse_or_run(
             "[Jobs:Cache] %s: No previous finished job found with same input since %s",
             job_type,
             created_at_limit.isoformat(),
+        )
+        return await run_normal_worker()
+
+    missing_companions = missing_session_companion_outputs(latest_job.result, required_companion_keys)
+    if missing_companions:
+        logger.info(
+            "[Jobs:Cache] %s: Cached result lacks required companion output(s) %s; running the worker",
+            job_type,
+            ", ".join(missing_companions),
         )
         return await run_normal_worker()
 
