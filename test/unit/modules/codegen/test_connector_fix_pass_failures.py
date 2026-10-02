@@ -46,6 +46,7 @@ async def _run_with_chain_response(response: object, errors: AsyncMock) -> None:
             dsl_documentation="DSL reference",
             extracted_attributes='[{"name": "Username", "scimAttribute": "userName"}]',
             extracted_endpoints="",
+            sql_context=None,
             job_id=uuid4(),
         )
 

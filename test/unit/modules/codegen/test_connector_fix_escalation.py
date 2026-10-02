@@ -4,6 +4,8 @@
 
 """Unit tests for the one-round documentation escalation of the connector fix."""
 
+import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -31,6 +33,31 @@ SCRIPTS = [
     {"operationKey": "userUpdate", "kind": "update", "objectClass": "user", "code": UPDATE_CODE},
 ]
 
+SQL_ATTRIBUTES = {
+    "attributes": {
+        "username": {
+            "type": "string",
+            "databaseType": "VARCHAR",
+            "table": "app_user",
+            "column": "username",
+        }
+    },
+    "sqlContext": {
+        "physicalTable": {
+            "databaseCatalog": "connector_project_db",
+            "databaseSchema": "public",
+            "table": "app_user",
+        },
+        "connectorObjectClass": {
+            "name": "app_user",
+            "attributes": [
+                {"name": "__NAME__", "connIdType": "string", "column": None},
+                {"name": "login", "connIdType": "string", "column": "username"},
+            ],
+        },
+    },
+}
+
 
 def _llm(**kwargs) -> ConnectorFixLLMResponse:
     return ConnectorFixLLMResponse.model_validate(kwargs)
@@ -42,7 +69,13 @@ def _reported(errors: AsyncMock) -> str:
     return message % tuple(args) if args else message
 
 
-async def _run(pass_results, *, documentation="chunk text"):
+async def _run(
+    pass_results,
+    *,
+    documentation="chunk text",
+    protocol=ApiType.REST,
+    attributes=None,
+):
     with (
         patch("src.modules.codegen.connector_fix.run_connector_fix_pass", new_callable=AsyncMock) as pass_mock,
         patch("src.modules.codegen.connector_fix.store_fixed_connector_scripts", new_callable=AsyncMock) as store,
@@ -64,10 +97,10 @@ async def _run(pass_results, *, documentation="chunk text"):
         result = await fix_connector_code(
             scripts=SCRIPTS,
             midpoint_errors=["unsupported filter"],
-            attributes={"attributes": {"Username": {"type": "string", "scimAttribute": "userName"}}},
+            attributes=attributes or {"attributes": {"Username": {"type": "string", "scimAttribute": "userName"}}},
             session_id=uuid4(),
             job_id=uuid4(),
-            protocol=ApiType.REST,
+            protocol=protocol,
         )
     return result, pass_mock, store, errors
 
@@ -207,6 +240,30 @@ async def test_the_first_pass_carries_the_extracted_native_attribute_names():
 
 
 @pytest.mark.asyncio
+async def test_sql_context_stays_separate_and_is_reused_for_escalation():
+    first = _llm(fixedScripts=[], needsDocumentation=True, documentationQuery="How is login mapped?")
+    second = _llm(fixedScripts=[])
+
+    _, pass_mock, _, _ = await _run(
+        [first, second],
+        protocol=ApiType.SQL,
+        attributes=SQL_ATTRIBUTES,
+    )
+
+    first_kwargs = pass_mock.await_args_list[0].kwargs
+    second_kwargs = pass_mock.await_args_list[1].kwargs
+    assert '"name": "username"' in first_kwargs["extracted_attributes"]
+    assert '"column": "username"' in first_kwargs["extracted_attributes"]
+    assert '"name": "login"' not in first_kwargs["extracted_attributes"]
+    assert '"name": "__NAME__"' not in first_kwargs["extracted_attributes"]
+    assert first_kwargs["sql_context"] == second_kwargs["sql_context"]
+    assert '"table":"app_user"' in first_kwargs["sql_context"]["sql_physical_table_json"]
+    projection = first_kwargs["sql_context"]["sql_connector_object_class_json"]
+    assert '"name":"login"' in projection
+    assert '"name":"__NAME__"' in projection
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "second_failure",
     [
@@ -301,3 +358,75 @@ async def test_escalation_loads_every_relevant_chunk_by_id_and_excludes_conndev(
         [second_chunk_id, first_chunk_id, conndev_chunk_id],
     )
     assert result == "second\n\n---\n\nfirst"
+
+
+@pytest.mark.asyncio
+async def test_dsl_documentation_is_assembled_off_the_event_loop():
+    """Reading and slicing the bundled references must not stall coroutines sharing the loop."""
+    released = threading.Event()
+
+    def blocking_load(artifacts, protocol) -> str:
+        # Only an independent coroutine can release this; on the event loop it would time out.
+        assert released.wait(timeout=5), "DSL documentation loading blocked the event loop"
+        return "dsl reference"
+
+    async def independent_coroutine() -> None:
+        await asyncio.sleep(0)
+        released.set()
+
+    fixed = _llm(fixedScripts=[{"operationKey": "userUpdate", "code": FIXED_UPDATE, "reason": "fix"}])
+    with (
+        patch(
+            "src.modules.codegen.connector_fix.run_connector_fix_pass", new_callable=AsyncMock, return_value=fixed
+        ) as pass_mock,
+        patch("src.modules.codegen.connector_fix.store_fixed_connector_scripts", new_callable=AsyncMock),
+        patch("src.modules.codegen.connector_fix.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.modules.codegen.connector_fix.get_session_connection_target",
+            new_callable=AsyncMock,
+            return_value=("https://api.example.test", ""),
+        ),
+        patch("src.modules.codegen.connector_fix._load_dsl_documentation", side_effect=blocking_load),
+    ):
+        result, _ = await asyncio.gather(
+            fix_connector_code(
+                scripts=SCRIPTS,
+                midpoint_errors=["unsupported filter"],
+                attributes={"attributes": {"Username": {"type": "string"}}},
+                session_id=uuid4(),
+                job_id=uuid4(),
+                protocol=ApiType.REST,
+            ),
+            independent_coroutine(),
+        )
+
+    assert [change.operation_key for change in result.changed_operations] == ["userUpdate"]
+    assert pass_mock.await_args.kwargs["dsl_documentation"] == "dsl reference"
+
+
+@pytest.mark.asyncio
+async def test_dsl_documentation_failure_propagates_before_any_llm_pass():
+    with (
+        patch("src.modules.codegen.connector_fix.run_connector_fix_pass", new_callable=AsyncMock) as pass_mock,
+        patch("src.modules.codegen.connector_fix.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.modules.codegen.connector_fix.get_session_connection_target",
+            new_callable=AsyncMock,
+            return_value=("https://api.example.test", ""),
+        ),
+        patch(
+            "src.modules.codegen.connector_fix._load_dsl_documentation",
+            side_effect=FileNotFoundError("Required codegen documentation resource not found"),
+        ),
+    ):
+        with pytest.raises(FileNotFoundError, match="documentation resource not found"):
+            await fix_connector_code(
+                scripts=SCRIPTS,
+                midpoint_errors=["unsupported filter"],
+                attributes={"attributes": {"Username": {"type": "string"}}},
+                session_id=uuid4(),
+                job_id=uuid4(),
+                protocol=ApiType.REST,
+            )
+
+    pass_mock.assert_not_awaited()

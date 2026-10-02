@@ -142,7 +142,7 @@ async def _run_pregenerate(
     connid_classes: dict | None = None,
     service_provider_config: ScimServiceProviderConfigDefinition | None = None,
 ) -> dict | None:
-    """Invoke pregenerate_scim_endpoints with baseline loading stubbed out."""
+    """Invoke pregenerate_scim_endpoints with the baseline a worker builds from its stored selection."""
     bundle = build_scim_baseline_bundle(
         BASELINE_SCHEMAS if schemas is None else schemas,
         resources,
@@ -153,14 +153,9 @@ async def _run_pregenerate(
     with (
         patch("src.modules.digester.extractors.scim.endpoints.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.endpoints.increment_processed_documents", new_callable=AsyncMock),
-        patch(
-            "src.modules.digester.extractors.scim.endpoints.load_session_scim_baseline",
-            new_callable=AsyncMock,
-            return_value=bundle,
-        ),
     ):
         return await scim_endpoints.pregenerate_scim_endpoints(
-            session_id=uuid4(),
+            baseline_bundle=bundle,
             object_class=object_class,
             job_id=uuid4(),
             object_class_flags=object_class_flags,

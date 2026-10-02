@@ -12,6 +12,15 @@ class DigesterSettings(BaseModel):
     Configuration for Digester module.
     """
 
+    documentation_page_size: int = Field(10, ge=1, description="Default source documentation page size in chunks.")
+    documentation_max_page_size: int = Field(50, ge=1, description="Maximum source documentation page size in chunks.")
+
+    @model_validator(mode="after")
+    def _validate_documentation_page_sizes(self) -> "DigesterSettings":
+        if self.documentation_page_size > self.documentation_max_page_size:
+            raise ValueError("documentation_page_size must not exceed documentation_max_page_size")
+        return self
+
     digester_input_check_interval: timedelta = Field(
         timedelta(weeks=4),
         description="Time interval for checking if the same digester input has been processed before.",

@@ -30,6 +30,7 @@ from src.documents.relevance import (
 from src.jobs import lifecycle
 from src.jobs.errors import JobClaimLostError
 from src.jobs.result_envelope import get_session_companion_outputs, missing_session_companion_outputs
+from src.shared.session_keys import JobSessionKeys
 
 logger = logging.getLogger(__name__)
 
@@ -37,23 +38,23 @@ logger = logging.getLogger(__name__)
 async def persist_job_pointer(
     repo: SessionRepository,
     session_id: UUID,
-    key_prefix: str,
+    keys: JobSessionKeys,
     session_input: Dict[str, Any],
     job_id: UUID,
 ) -> None:
     """
-    Persist a scheduled job's pointer using the shared naming convention:
-    ``{key_prefix}JobId`` (stringified job id) and ``{key_prefix}Input``.
+    Persist a scheduled job's pointer: ``keys.job_id`` (stringified job id) and ``keys.input``.
 
-    The job row and pointer remain in the caller's transaction so HTTP request dependencies can
-    commit them together after response validation and non-HTTP callers can choose their own
-    transaction boundary.
+    ``session_input`` holds identifiers and caller-supplied metadata only; the complete
+    job input stays in ``jobs.input``. The job row and pointer remain in the caller's
+    transaction so HTTP request dependencies can commit them together after response
+    validation and non-HTTP callers can choose their own transaction boundary.
     """
     await repo.update_session(
         session_id,
         {
-            f"{key_prefix}JobId": str(job_id),
-            f"{key_prefix}Input": session_input,
+            keys.job_id: str(job_id),
+            keys.input: session_input,
         },
     )
 
@@ -139,11 +140,11 @@ async def persist_result_to_session(
         raise
     except Exception as e:
         error_msg = f"Session persistence failed for job {job_id} in session {session_id}: {e}"
-        logger.error(error_msg, exc_info=e)
+        logger.exception("[Jobs:SessionPersistence] Session persistence failed for result key %s", session_result_key)
         try:
             await lifecycle._append_job_error_now(job_id, error_msg)
         except JobClaimLostError:
             raise
         except Exception:
-            logger.exception("Failed to record session persistence error for job %s", job_id)
+            logger.exception("[Jobs:SessionPersistence] Failed to record the session persistence error")
         raise

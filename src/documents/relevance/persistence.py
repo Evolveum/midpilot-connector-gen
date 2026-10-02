@@ -19,6 +19,7 @@ from src.documents.relevance.transforms import (
 )
 from src.shared.auth import auth_entity_key
 from src.shared.coerce import as_dict_list
+from src.shared.session_keys import AUTH, OBJECT_CLASSES
 
 
 async def load_relevance_map_for_result(
@@ -26,14 +27,17 @@ async def load_relevance_map_for_result(
     session_id: UUID,
     result_key: str,
 ) -> Dict[str, list[Dict[str, Any]]]:
-    try:
-        repo = RelevantChunkRepository(db)
-        by_entity = await repo.get_relevant_chunks_grouped_by_entity(
-            session_id=session_id,
-            result_key=result_key,
-        )
-    except Exception:
-        return {}
+    """Return the stored relevance references grouped by entity key.
+
+    Database failures propagate: an empty map means the result genuinely has no
+    relevance rows, and callers that want to degrade on an outage decide that
+    themselves rather than being handed an indistinguishable empty result.
+    """
+    repo = RelevantChunkRepository(db)
+    by_entity = await repo.get_relevant_chunks_grouped_by_entity(
+        session_id=session_id,
+        result_key=result_key,
+    )
 
     normalized: Dict[str, list[Dict[str, Any]]] = {}
     for entity_key, refs in by_entity.items():
@@ -64,7 +68,7 @@ async def load_object_class_relevance_map(
     db: AsyncSession,
     session_id: UUID,
 ) -> Dict[str, list[Dict[str, Any]]]:
-    by_entity = await load_relevance_map_for_result(db, session_id, "objectClassesOutput")
+    by_entity = await load_relevance_map_for_result(db, session_id, OBJECT_CLASSES.output)
     return {entity_key: refs for entity_key, refs in by_entity.items() if entity_key}
 
 
@@ -158,7 +162,7 @@ async def hydrate_auth_sequences_from_relevance(
     if not isinstance(auth_items, list):
         return auth_payload
 
-    by_entity = await load_relevance_map_for_result(db, session_id, "authOutput")
+    by_entity = await load_relevance_map_for_result(db, session_id, AUTH.output)
     hydrated = dict(auth_payload)
     hydrated_auth_items: list[dict[str, Any]] = []
     for auth_item in auth_items:

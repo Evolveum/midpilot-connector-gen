@@ -18,3 +18,4 @@ patch.setenv("LLM__OPENAI_API_BASE", "invalid")
 patch.setenv("LLM__MODEL_NAME", "invalid")
 # Tracing stays off: test runs must not appear in the Langfuse project.
 patch.setenv("LANGFUSE__TRACING_ENABLED", "false")
+patch.setenv("AUTH__MODE", "dev")

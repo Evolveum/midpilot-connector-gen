@@ -1,28 +1,15 @@
 # Copyright (C) 2010-2026 Evolveum and contributors
-#
 # Licensed under the EUPL-1.2 or later.
 
-"""SCIM relation code-generation prompts."""
+"""SCIM relation generation with logical attributes and wire bindings kept separate."""
 
-import textwrap
+from src.modules.codegen.prompts.operation_prompts import build_operation_system_prompt
+from src.modules.codegen.prompts.relation_prompts import RELATION_RULES, get_relation_user_prompt
 
-from src.modules.codegen.prompts.relation_prompts import get_relation_user_prompt
-
-get_scim_relation_system_prompt = textwrap.dedent(
-    """\
-You generate one final midPoint connector `relationship` Groovy block for a SCIM integration.
-
-Inputs contain the selected seven-field relation record, relevant SCIM/vendor documentation,
-the previous iteration, and optional relation analysis. The analysis can include:
-- `kind`, `linkObjectClass`, and `linkAttributes` describing how the relation is carried;
-- `scimEvidence` entries with separate `applicationAttribute` and `scimPath` values;
-- `apiType`, which must be `scim` for this prompt.
-
-Use the reference DSL exactly as documented here:
-
-<relation_docs>
-{relation_docs}
-</relation_docs>
+get_scim_relation_system_prompt = build_operation_system_prompt(
+    "relation",
+    rules=RELATION_RULES
+    + r"""
 
 SCIM-SPECIFIC REQUIREMENTS:
 - Preserve the logical application/ConnId attribute from the selected relation. Never replace
@@ -53,9 +40,7 @@ SCIM-SPECIFIC REQUIREMENTS:
 - Represent both directions of one association in one `relationship` block. Keep distinct
   associations between the same classes separate.
 
-Return the complete final `relationship(\"...\")` Groovy block only. No prose, Markdown fence,
-diff, or second relation block. If a chunk adds no evidence, retain the previous valid result.
-"""
+""",
 )
 
 get_scim_relation_user_prompt = get_relation_user_prompt

@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -17,11 +18,11 @@ from src.modules.codegen.core.operations import (
     build_other_authorization_scaffold,
 )
 from src.modules.codegen.enums import SearchIntent
-from src.modules.codegen.prompts.connid_prompts import get_connID_system_prompt, get_connID_user_prompt
 from src.modules.codegen.schema import (
     AttributesPayload,
     AuthPayload,
     CodegenRepairContext,
+    ConnectorCodeOutput,
     EndpointsPayload,
     RelationCodegenContext,
 )
@@ -30,20 +31,25 @@ from src.modules.codegen.selection.authorization import (
     is_single_other_authorization,
     prepare_preferred_authorizations_for_generation,
 )
-from src.modules.codegen.selection.docs_loader import load_required_adoc_text
-from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
+from src.modules.codegen.selection.docs_loader import load_operation_documentation, load_required_adoc_text
+from src.modules.codegen.selection.protocol_selectors import (
+    get_operation_assets,
+    get_search_operation_assets,
+)
 from src.modules.codegen.selection.relation_analysis import relation_documentation_classes
 from src.modules.codegen.selection.relevant_chunks import (
     _collect_authorization_relevant_chunks,
     _collect_relation_object_class_pairs,
     _collect_relevant_chunks,
 )
+from src.modules.codegen.utils.code_output import build_connector_code_output
 from src.modules.codegen.utils.prompt_records import (
-    build_attribute_mapping_records,
-    build_connid_attribute_mapping_records,
+    build_complete_attribute_mapping_records,
     build_scim_contract_prompt_vars,
-    build_sql_attribute_mapping_records,
+    build_sql_context_prompt_vars,
+    extract_sql_context,
 )
+from src.modules.digester.errors import SqlPhysicalSchemaNotFoundError
 from src.modules.digester.schemas import RelationsResponse
 from src.session.info_metadata import (
     get_session_base_api_url,
@@ -68,22 +74,36 @@ async def generate_native_schema_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
-    Generate Groovy for native schema mapping from attributes.
+    Generate Groovy for the native schema, including the object class's ConnID mapping.
+
+    One script carries both: the attribute definitions written against the protocol's
+    schema DSL, and the ConnID built-in mapping. They used to be generated separately
+    and had to agree on every native attribute name or the connector was rejected.
     """
 
     assets = get_operation_assets("native_schema", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    if assets.connid_docs_path is None:
+        raise ValueError(f"Native-schema assets for {protocol.value} are missing their ConnID reference document")
 
-    records = (
-        build_sql_attribute_mapping_records(attributes_payload)
-        if protocol == ApiType.SQL
-        else build_attribute_mapping_records(attributes_payload)
-    )
-    extra_prompt_vars = {"user_schema_docs": docs_text}
+    docs_package = __package__ + ".documentations"
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
+    records = build_complete_attribute_mapping_records(attributes_payload)
+    extra_prompt_vars = {
+        "protocol_schema_docs": docs_text,
+        "declarative_docs": declarative_docs_text,
+        "connid_attribute_docs": await asyncio.to_thread(
+            load_required_adoc_text, docs_package, assets.connid_docs_path
+        ),
+    }
     if protocol == ApiType.SCIM:
         extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))
+
+    if protocol == ApiType.SQL:
+        if not extract_sql_context(attributes_payload).get("physicalTable"):
+            raise SqlPhysicalSchemaNotFoundError(object_class, stale_payload=True)
+        extra_prompt_vars.update(build_sql_context_prompt_vars(attributes_payload))
 
     code = await generate_groovy(
         records=records,
@@ -95,7 +115,7 @@ async def generate_native_schema_code(
         job_id=job_id,
         repair_context=repair_context,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_authorization_code(
@@ -106,7 +126,7 @@ async def generate_authorization_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate connector-level Groovy for authentication/authorization configuration.
     """
@@ -117,10 +137,10 @@ async def generate_authorization_code(
             "[Codegen:Authorization:%s] Returning static scaffold for custom 'other' authorization",
             protocol.value,
         )
-        return {"code": build_other_authorization_scaffold(protocol)}
+        return await build_connector_code_output(build_other_authorization_scaffold(protocol))
 
     assets = get_operation_assets("authorization", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url = await get_session_base_api_url(session_id, protocol=protocol)
 
     generator_preferred_authorizations = prepare_preferred_authorizations_for_generation(
@@ -131,6 +151,7 @@ async def generate_authorization_code(
     generator = AuthorizationGenerator(
         preferred_authorizations=generator_preferred_authorizations,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol=protocol,
@@ -150,36 +171,7 @@ async def generate_authorization_code(
         repair_context=repair_context,
         auth_payload=auth_payload,
     )
-    return {"code": code}
-
-
-async def generate_conn_id_code(
-    attributes_payload: AttributesPayload,
-    object_class: str,
-    *,
-    job_id: UUID,
-    repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
-    """
-    Generate Groovy for ConnID attribute mapping from attributes.
-    """
-    docs_text = load_required_adoc_text(
-        __package__ + ".documentations" + ".rest", "30-attribute-to-connid-attributes.adoc"
-    )
-
-    records = build_connid_attribute_mapping_records(attributes_payload)
-
-    code = await generate_groovy(
-        records=records,
-        object_class=object_class,
-        system_prompt=get_connID_system_prompt,
-        user_prompt=get_connID_user_prompt,
-        logger_prefix="ConnID",
-        extra_prompt_vars={"connID_docs": docs_text},
-        job_id=job_id,
-        repair_context=repair_context,
-    )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_search_code(
@@ -193,13 +185,13 @@ async def generate_search_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate the Groovy `search {}` block using relevant chunks + docs.
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_search_operation_assets(protocol, intent)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = SearchGenerator(
@@ -207,6 +199,7 @@ async def generate_search_code(
         intent=intent,
         preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.value.upper(),
@@ -228,7 +221,7 @@ async def generate_search_code(
         attributes=attributes,
         endpoints=endpoints,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_create_code(
@@ -241,19 +234,20 @@ async def generate_create_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate the Groovy `create {}` block using relevant chunks + docs.
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("create", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = CreateGenerator(
         object_class=object_class,
         preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.value.upper(),
@@ -275,7 +269,7 @@ async def generate_create_code(
         attributes=attributes,
         endpoints=endpoints,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_update_code(
@@ -288,19 +282,20 @@ async def generate_update_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate the Groovy `update {}` block using relevant chunks + docs.
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("update", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = UpdateGenerator(
         object_class=object_class,
         preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.value.upper(),
@@ -322,7 +317,7 @@ async def generate_update_code(
         attributes=attributes,
         endpoints=endpoints,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_delete_code(
@@ -335,19 +330,20 @@ async def generate_delete_code(
     job_id: UUID,
     protocol: ApiType,
     repair_context: Optional[CodegenRepairContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
     Generate the Groovy `delete {}` block using relevant chunks + docs.
     Uses the protocol-specific prompts and documentation for the resolved api_type.
     """
     assets = get_operation_assets("delete", protocol)
-    docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
 
     generator = DeleteGenerator(
         object_class=object_class,
         preferred_endpoints=preferred_endpoints,
         docs_text=docs_text,
+        declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol_label=protocol.value.upper(),
@@ -369,7 +365,7 @@ async def generate_delete_code(
         attributes=attributes,
         endpoints=endpoints,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)
 
 
 async def generate_relation_code(
@@ -380,17 +376,17 @@ async def generate_relation_code(
     job_id: UUID,
     protocol: ApiType,
     relation_context: Optional[RelationCodegenContext] = None,
-) -> Dict[str, str]:
+) -> ConnectorCodeOutput:
     """
-    Generate the Groovy relation block using relevant chunks + docs.
+    Generate a relationship artifact using protocol references and stored analysis.
 
     ``relation_context`` carries what the midPoint-facing record cannot: how the association
     is carried and, when a third class carries it, which class that is. That class's
     documentation is selected alongside the subject's and the object's, because the endpoints
     implementing such an association are documented on it and nowhere else.
     """
-    assets = get_operation_assets("relation", protocol)
-    relation_docs_text = load_required_adoc_text(__package__ + ".documentations", assets.docs_path)
+    assets = get_operation_assets("relationship", protocol)
+    relation_docs_text, declarative_docs_text = await asyncio.to_thread(load_operation_documentation, assets)
 
     selected_relation = relations.relations[0] if relations.relations else None
     documentation_classes = (
@@ -416,6 +412,8 @@ async def generate_relation_code(
     generator = RelationGenerator(
         relation_name=relation_name,
         docs_text=relation_docs_text,
+        declarative_docs_text=declarative_docs_text,
+        extra_prompt_vars={"protocol": protocol.value},
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
         protocol=protocol,
@@ -429,4 +427,4 @@ async def generate_relation_code(
         relations=relations,
         relation_name=relation_name,
     )
-    return {"code": code}
+    return await build_connector_code_output(code)

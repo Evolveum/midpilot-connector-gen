@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.documents.selection import DocumentationSelection, SelectionRole
 from src.jobs import job_input_reference
 from src.modules.digester.enums import EndpointMethod
 from src.modules.digester.errors import EndpointExtractionNotSupportedError
@@ -24,13 +25,18 @@ from src.shared.enums import ApiType, JobStatus
 # CLASS ENDPOINTS
 @pytest.mark.asyncio
 async def test_extract_class_endpoints_success():
-    """Test successful extraction of endpoints for object class."""
+    """The job input stores the selection, the protocol, the base URL and the structural flags."""
     session_id = uuid4()
     job_id = uuid4()
+    spec = {
+        "docId": "page-1",
+        "chunkId": "doc-1",
+        "url": "https://docs.example.com/users",
+        "summary": "User endpoints",
+        "content": "fake content for testing",
+        "@metadata": {"category": "spec_yaml", "tags": ["user", "endpoint"], "num_endpoints": 2},
+    }
 
-    fake_docs = [{"docId": "page-1", "chunkId": "doc-1", "content": "fake content for testing"}]
-
-    # Mock objectClassesOutput with relevant chunks for the User class
     mock_object_classes_output = {
         "objectClasses": [
             {
@@ -40,10 +46,7 @@ async def test_extract_class_endpoints_success():
                 "abstract": False,
                 "embedded": False,
                 "description": "Represents a user",
-                "relevantDocumentations": [
-                    {"docId": "page-1", "chunkId": "doc-1"},
-                    {"docId": "page-1", "chunkId": "doc-1"},
-                ],
+                "relevantDocumentations": [{"docId": "page-1", "chunkId": "doc-1"}],
                 "endpoints": [],
             }
         ]
@@ -57,9 +60,9 @@ async def test_extract_class_endpoints_success():
     with (
         patch("src.modules.digester.routes.endpoints.SessionRepository", return_value=mock_repo),
         patch(
-            "src.modules.digester.selection.documentation_selector.get_session_api_types",
+            "src.modules.digester.orchestration.resolve_effective_api_type",
             new_callable=AsyncMock,
-            return_value=["scim"],
+            return_value=ApiType.SCIM,
         ),
         patch(
             "src.modules.digester.selection.documentation_selector.get_session_base_api_url",
@@ -67,13 +70,8 @@ async def test_extract_class_endpoints_success():
             return_value="https://api.example.com",
         ),
         patch(
-            "src.modules.digester.selection.documentation_selector.filter_documentation_items",
-            new_callable=AsyncMock,
-            return_value=[{"docId": "page-1", "chunkId": "doc-1"}],
-        ),
-        patch(
-            "src.modules.digester.selection.documentation_selector.get_session_documentation",
-            new=AsyncMock(return_value=fake_docs),
+            "src.modules.digester.selection.documentation_selector.load_documentation_items",
+            new=AsyncMock(return_value=[spec]),
         ),
         patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
     ):
@@ -86,21 +84,26 @@ async def test_extract_class_endpoints_success():
             api_type=None,
         )
 
-        assert response.jobId == job_id
-        mock_repo.session_exists.assert_awaited_once_with(session_id)
-        mock_schedule.assert_awaited_once()
-        schedule_kwargs = mock_schedule.call_args.kwargs
-        assert schedule_kwargs["input_payload"]["objectClass"] == "user"
-        assert schedule_kwargs["input_payload"]["objectClassFlags"] == {
-            "embedded": False,
-            "abstract": False,
-        }
-        assert schedule_kwargs["worker_args"][1] == "user"
-        assert schedule_kwargs["worker_args"][0] == job_input_reference("documentationItems")
-        assert schedule_kwargs["worker_args"][3] == job_input_reference("relevantDocumentations")
-        assert schedule_kwargs["worker_kwargs"]["object_class_flags"] == job_input_reference("objectClassFlags")
-        assert schedule_kwargs["session_result_key"] == "userEndpointsOutput"
-        mock_repo.update_session.assert_awaited_once()
+    assert response.jobId == job_id
+    mock_repo.session_exists.assert_awaited_once_with(session_id)
+    schedule_kwargs = mock_schedule.call_args.kwargs
+    input_payload = schedule_kwargs["input_payload"]
+    assert input_payload["objectClass"] == "user"
+    assert input_payload["apiType"] == "scim"
+    assert input_payload["baseApiUrl"] == "https://api.example.com"
+    assert input_payload["objectClassFlags"] == {"embedded": False, "abstract": False}
+    selection = DocumentationSelection.model_validate(input_payload["documentationSelection"])
+    assert selection.relevant_chunks(SelectionRole.PRIMARY) == [{"doc_id": "page-1", "chunk_id": "doc-1"}]
+    assert schedule_kwargs["worker_kwargs"] == {
+        "selection": job_input_reference("documentationSelection"),
+        "object_class": "user",
+        "session_id": session_id,
+        "protocol": ApiType.SCIM,
+        "base_api_url": job_input_reference("baseApiUrl"),
+        "object_class_flags": job_input_reference("objectClassFlags"),
+    }
+    assert schedule_kwargs["session_result_key"] == "userEndpointsOutput"
+    mock_repo.update_session.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -177,6 +180,11 @@ async def test_get_class_endpoints_status_found():
             new_callable=AsyncMock,
             return_value=fake_status,
         ) as mock_status_builder,
+        patch(
+            "src.modules.digester.results.hydrate_endpoints_with_relevance",
+            new_callable=AsyncMock,
+            side_effect=lambda _db, _session_id, _result_key, payload: payload,
+        ),
     ):
         session_id = uuid4()
         response = await get_class_endpoints_status(

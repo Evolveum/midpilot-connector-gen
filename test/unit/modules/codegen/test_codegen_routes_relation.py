@@ -25,9 +25,20 @@ def _session_values_reader(**payloads):
     return AsyncMock(side_effect=read)
 
 
+@pytest.fixture(autouse=True)
+def _relation_protocol():
+    with patch(
+        "src.modules.codegen.orchestration.resolve_effective_api_type",
+        new_callable=AsyncMock,
+        side_effect=lambda _session_id, override: override or ApiType.REST,
+    ) as resolver:
+        yield resolver
+
+
 # RELATION
 @pytest.mark.asyncio
-async def test_generate_relation_code_success():
+@pytest.mark.parametrize("protocol", [ApiType.REST, ApiType.SCIM, ApiType.SQL])
+async def test_generate_relation_code_success(protocol):
     """Test successful generation of relation code."""
     mock_repo = MagicMock()
     mock_repo.session_exists = AsyncMock(return_value=True)
@@ -58,7 +69,7 @@ async def test_generate_relation_code_success():
         response = await generate_relation_code(
             session_id,
             "user_to_group",
-            api_type=ApiType.REST,
+            api_type=protocol,
             db=MagicMock(),
         )
 
@@ -70,8 +81,9 @@ async def test_generate_relation_code_success():
         )
         mock_schedule.assert_awaited_once()
         schedule_kwargs = mock_schedule.await_args.kwargs
+        assert schedule_kwargs["input_payload"]["apiType"] == protocol.value
+        assert schedule_kwargs["worker_kwargs"]["protocol"] is protocol
         assert schedule_kwargs["input_payload"]["relationName"] == "user_to_group"
-        assert schedule_kwargs["input_payload"]["apiType"] == "rest"
         assert [item["name"] for item in schedule_kwargs["input_payload"]["relations"]["relations"]] == [
             "user_to_group"
         ]
@@ -80,8 +92,13 @@ async def test_generate_relation_code_success():
         assert schedule_kwargs["worker_kwargs"]["relations"] == job_input_reference("relations")
         assert schedule_kwargs["worker_kwargs"]["relation_name"] == "user_to_group"
         assert schedule_kwargs["worker_kwargs"]["relation_context"] == job_input_reference("relationContext")
-        assert schedule_kwargs["worker_kwargs"]["protocol"] == ApiType.REST
-        mock_repo.update_session.assert_awaited_once()
+        mock_repo.update_session.assert_awaited_once_with(
+            session_id,
+            {
+                "user_to_groupCodeJobId": str(job_id),
+                "user_to_groupCodeInput": {"relationName": "user_to_group", "apiType": protocol.value},
+            },
+        )
 
 
 @pytest.mark.asyncio

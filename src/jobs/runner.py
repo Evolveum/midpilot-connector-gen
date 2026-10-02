@@ -35,6 +35,7 @@ from src.jobs.payload import (
     validate_execution_payload,
 )
 from src.shared.enums import JobStage
+from src.shared.job_types import JobType, job_type_policy, parse_job_type
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 async def schedule_coroutine_job(
     *,
     db: AsyncSession,
-    job_type: str,
+    job_type: JobType,
     input_payload: Dict[str, Any],
     dynamic_input_enabled: bool = False,
     dynamic_input_provider: Optional[Callable[..., Awaitable[Any]]] = None,
@@ -64,6 +65,7 @@ async def schedule_coroutine_job(
     the job only after both records commit, which removes the schedule/pointer
     race present in the former process-local task implementation.
     """
+    job_type_policy(job_type)  # Reject a type without a declared policy before anything is persisted.
     if dynamic_input_enabled and dynamic_input_provider is None:
         raise ValueError("dynamic_input_provider is required when dynamic_input_enabled is true")
     if await_documentation and await_documentation_timeout is None:
@@ -76,8 +78,6 @@ async def schedule_coroutine_job(
         dynamic_input_provider=dynamic_input_provider if dynamic_input_enabled else None,
         session_result_key=session_result_key,
         session_companion_result_keys=session_companion_result_keys,
-        await_documentation=await_documentation,
-        await_documentation_timeout=await_documentation_timeout,
         binary_artifacts=binary_artifacts,
     )
     repo = JobRepository(db)
@@ -140,6 +140,9 @@ async def _resolve_dynamic_input(
 
 
 async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
+    # A row of a removed or unknown type fails here, before any worker code runs.
+    job_type = parse_job_type(claimed_job.job_type)
+    policy = job_type_policy(job_type)
     payload = validate_execution_payload(claimed_job.execution_payload)
     input_payload = dict(claimed_job.input_payload)
 
@@ -183,9 +186,10 @@ async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
         else ()
     )
 
-    if "scrape" not in claimed_job.job_type and not input_payload.get("skipCache", False):
+    if policy.cache is not None and not input_payload.get("skipCache", False):
         result_dict = await cache.reuse_or_run(
-            job_type=claimed_job.job_type,
+            job_type=job_type,
+            cache_policy=policy.cache,
             job_id=claimed_job.job_id,
             session_id=claimed_job.session_id,
             input_payload=input_payload,
@@ -208,7 +212,7 @@ async def _run_claimed_job(claimed_job: ClaimedJob) -> None:
             message = (
                 f"Result from job {claimed_job.job_id} was not published because the session points to a newer job."
             )
-            logger.info(message)
+            logger.info("[Jobs:Runner] Result was not published because the session points to a newer job")
             await lifecycle.append_job_error(claimed_job.job_id, message)
 
     job_result = result_dict.copy()
@@ -231,7 +235,7 @@ async def _heartbeat(claimed_job: ClaimedJob) -> None:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Failed to refresh claim for job %s", claimed_job.job_id)
+            logger.exception("[Jobs:Runner] Failed to refresh the job claim")
             continue
         if not refreshed:
             raise JobClaimLostError(claimed_job.job_id)
@@ -262,19 +266,14 @@ async def _release_interrupted_claim(claimed_job: ClaimedJob) -> None:
     if not done:
         release_task.cancel()
         logger.error(
-            "Timed out after %ss returning interrupted job %s to the queue, its claim expires after %ss",
+            "[Jobs:Runner] Timed out after %ss returning the interrupted job to the queue, its claim expires after %ss",
             config.jobs.claim_release_timeout_seconds,
-            claimed_job.job_id,
             config.jobs.claim_timeout_seconds,
         )
         return
     error = release_task.exception()
     if error is not None:
-        logger.error(
-            "Failed to return interrupted job %s to the queue",
-            claimed_job.job_id,
-            exc_info=error,
-        )
+        logger.error("[Jobs:Runner] Failed to return the interrupted job to the queue", exc_info=error)
 
 
 async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
@@ -291,7 +290,7 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
     llm_usage, usage_token = start_llm_usage_tracking()
     started = time.monotonic()
     outcome = "interrupted"
-    logger.info("Started job %s (attempt %s)", claimed_job.job_type, claimed_job.attempt_count)
+    logger.info("[Jobs:Runner] Started job %s (attempt %s)", claimed_job.job_type, claimed_job.attempt_count)
     execution_task = asyncio.create_task(_run_claimed_job(claimed_job))
     heartbeat_task = asyncio.create_task(_heartbeat(claimed_job))
     try:
@@ -314,25 +313,25 @@ async def execute_claimed_job(claimed_job: ClaimedJob) -> None:
         outcome = "claim lost"
         execution_task.cancel()
         await asyncio.gather(execution_task, return_exceptions=True)
-        logger.warning("Stopped stale execution after the job claim was lost")
+        logger.warning("[Jobs:Runner] Stopped stale execution after the job claim was lost")
     except Exception as exc:
         outcome = "failed"
         if isinstance(exc, AppError) and exc.status_code < 500:
             # An expected client/domain outcome, not a crash: the message is the
             # whole story, and a stack trace would only bury it in the log.
-            logger.error("Job failed: %s", exc)
+            logger.error("[Jobs:Runner] Job failed: %s", exc)
         else:
-            logger.exception("Job failed during execution")
+            logger.exception("[Jobs:Runner] Job failed during execution")
         try:
             await lifecycle.set_failed(claimed_job.job_id, error=str(exc))
         except JobClaimLostError:
-            logger.warning("Could not fail the job because its claim was already lost")
+            logger.warning("[Jobs:Runner] Could not fail the job because its claim was already lost")
     finally:
         heartbeat_task.cancel()
         await asyncio.gather(heartbeat_task, return_exceptions=True)
         elapsed = time.monotonic() - started
         logger.info(
-            "Finished job %s: %s in %.1fs (%s)",
+            "[Jobs:Runner] Finished job %s: %s in %.1fs (%s)",
             claimed_job.job_type,
             outcome,
             elapsed,

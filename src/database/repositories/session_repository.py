@@ -4,7 +4,6 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 from uuid import UUID
 
@@ -13,6 +12,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import Session, SessionData
+from src.shared.clock import utc_now
+from src.shared.session_keys import is_output_key, job_pointer_key_for_output
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ class SessionOwner:
     """Existence + ownership snapshot of a session used for access checks."""
 
     session_id: UUID
-    api_key_id: Optional[UUID]
+    owner_key_hash: Optional[str]
 
 
 class SessionRepository:
@@ -36,30 +37,29 @@ class SessionRepository:
         """
         self.db = db
 
-    async def create_session(self, api_key_id: Optional[UUID] = None) -> UUID:
+    async def create_session(self, owner_key_hash: Optional[str] = None) -> UUID:
         """
         Create a new session and return its unique ID.
 
-        :param api_key_id: Owning API key, or None for an ownerless session
-            (accessible only with the master key when auth is enforced)
+        :param owner_key_hash: SHA-256 fingerprint of the owning API key, or None for development
         :return: Session ID (UUID)
         """
-        session = Session(api_key_id=api_key_id)
+        session = Session(owner_key_hash=owner_key_hash)
         self.db.add(session)
         await self.db.flush()
         logger.info("Created new session: %s", session.session_id)
         return session.session_id
 
-    async def create_session_with_id(self, session_id: UUID, api_key_id: Optional[UUID] = None) -> UUID:
+    async def create_session_with_id(self, session_id: UUID, owner_key_hash: Optional[str] = None) -> UUID:
         """
         Create a new session with a provided ID.
-        If the session already exists, raises ValueError.
+        If the session already exists, the flush raises ``IntegrityError``.
 
         :param session_id: The UUID to use for the session
-        :param api_key_id: Owning API key, or None for an ownerless session
+        :param owner_key_hash: SHA-256 fingerprint of the owning API key, or None for development
         :return: Session ID
         """
-        session = Session(session_id=session_id, api_key_id=api_key_id)
+        session = Session(session_id=session_id, owner_key_hash=owner_key_hash)
         self.db.add(session)
         await self.db.flush()
         logger.info("Created new session with provided ID: %s", session_id)
@@ -115,7 +115,7 @@ class SessionRepository:
             return False
 
         # Update session timestamp
-        session.updated_at = datetime.now(timezone.utc)
+        session.updated_at = utc_now()
 
         # Atomic PostgreSQL upserts avoid unique-key races when multiple jobs
         # update different or identical session fields concurrently.
@@ -133,7 +133,7 @@ class SessionRepository:
 
     async def update_locked_session(self, session_id: UUID, data: Dict[str, Any]) -> bool:
         """Update data after the caller has already locked the session row."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         result = await self.db.execute(update(Session).where(Session.session_id == session_id).values(updated_at=now))
         if not bool(getattr(result, "rowcount", 0)):
             return False
@@ -143,7 +143,7 @@ class SessionRepository:
         return True
 
     async def _upsert_session_data(self, session_id: UUID, key: str, value: Any) -> None:
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         statement = (
             insert(SessionData)
             .values(
@@ -193,14 +193,12 @@ class SessionRepository:
         are written under the same locks and transaction, so consumers can never
         observe the primary result paired with another run's companion state.
         """
-        if not result_key.endswith("Output"):
-            raise ValueError(f"Session result key {result_key!r} does not follow the *Output convention")
+        pointer_key = job_pointer_key_for_output(result_key)
         if result_key not in values:
             raise ValueError(f"Primary session result {result_key!r} is missing from the result values")
-        invalid_keys = [key for key in values if not key.endswith("Output")]
+        invalid_keys = [key for key in values if not is_output_key(key)]
         if invalid_keys:
             raise ValueError(f"Session result keys do not follow the *Output convention: {invalid_keys!r}")
-        pointer_key = f"{result_key[: -len('Output')]}JobId"
         session = (
             await self.db.execute(select(Session).where(Session.session_id == session_id).with_for_update())
         ).scalar_one_or_none()
@@ -216,7 +214,7 @@ class SessionRepository:
 
         for key, value in values.items():
             await self._upsert_session_data(session_id, key, value)
-        session.updated_at = datetime.now(timezone.utc)
+        session.updated_at = utc_now()
         await self.db.flush()
         return True
 
@@ -343,15 +341,15 @@ class SessionRepository:
         Fetch existence and ownership of a session in a single query.
 
         :param session_id: The session ID to look up
-        :return: SessionOwner (api_key_id is None for ownerless sessions),
+        :return: SessionOwner (owner_key_hash is None for ownerless sessions),
             or None if the session does not exist
         """
-        query = select(Session.session_id, Session.api_key_id).where(Session.session_id == session_id)
+        query = select(Session.session_id, Session.owner_key_hash).where(Session.session_id == session_id)
         result = await self.db.execute(query)
         row = result.one_or_none()
         if row is None:
             return None
-        return SessionOwner(session_id=row.session_id, api_key_id=row.api_key_id)
+        return SessionOwner(session_id=row.session_id, owner_key_hash=row.owner_key_hash)
 
     async def session_exists(self, session_id: UUID) -> bool:
         """

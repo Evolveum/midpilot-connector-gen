@@ -1,0 +1,289 @@
+= Declarative YAML
+
+The SCIMREST framework supports a declarative YAML form for schema definitions, operation handlers, and authentication, in addition to (and instead of) Groovy scripts.
+
+YAML documents and Groovy scripts are two front-ends over the *same* builders — a YAML document drives the same live builders the Groovy DSL does, so both forms can be mixed per connector and a connector can migrate a script to YAML without changing the manifest.
+
+This document is part of the SCIMREST connector tutorial. See xref:../index.adoc[] for other topics.
+
+== Groovy to YAML fallback
+
+The loader resolves each manifest script resource with a YAML fallback: when the referenced `.groovy` file is missing from the bundle, a `.yaml` / `.yml` file with the same base name is loaded instead.
+
+Parsing is strict: a file must contain exactly one document, and unknown keys fail fast.
+
+== Schema documents
+
+A YAML schema document describes object classes under the `objectClasses` root (one entry per object class; a file may describe several classes). Documents naming the same object class merge into one definition, so a native definition and a ConnId overlay can stay in separate files.
+
+[source,yaml]
+----
+objectClasses:
+  User:
+    # SCIM-specific mapping for the whole object class
+    scim:
+      extensions:
+        enterprise: "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+    attributes:
+      givenName:
+        scim:
+          path: name.givenName
+      primaryEmail:
+        scim:
+          path: emails[primary eq true].value
+      employeeNumber:
+        scim:
+          path: urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber
+  Office:
+    attributes:
+      name:
+        connId:
+          name: NAME
+----
+
+SCIM extensions bind aliases to schema URIs. An alias may instead map to `{ uri, flatten }` to flatten selected complex extension attributes; see xref:scim/attribute-flattening.adoc[].
+
+Keys:
+
+`objectClasses.<name>`::
+  One object class (the counterpart of `objectClass("...") { ... }`)
+
+`description` / `embedded`::
+  The corresponding object-class flags
+
+`connId` (object-class level)::
+  Built-in attribute aliases, e.g. `connId: { UID: user_id }` binds `__UID__` to the `user_id` attribute
+
+`scim` (object-class level)::
+  `schemaUri`, `name` (the SCIM resource name), `onlyExplicitlyListed`; `flatten` (a complex attribute name or list of names); `extensions` (alias → schema URI or `{ uri, flatten }` mapping). Flattening is additive to connector configuration; see xref:scim/attribute-flattening.adoc[].
+
+`attributes.<name>`::
+  One attribute — see the attribute keys below
+
+`references.<name>`::
+  A reference attribute (memberships, foreign keys): `objectClass`, `role` (`subject` / `object`), `subtype`
+
+`relationships`::
+  Not supported in YAML yet: the schema loader rejects a `relationships` block. Declare relationships with the Groovy `relationship("...")` builder (see xref:rest/relationship.adoc[relationships])
+
+Attribute keys (all optional — only present keys are applied, so the defaults stay untouched):
+
+`description`, `required`, `multiValued`, `creatable`, `updateable` / `updatable`, `readable`, `returnedByDefault`, `emulated`::
+  The regular attribute settings (see xref:rest/native-schema.adoc[user schema])
+
+`jsonType`, `openApiFormat`, `complexType`::
+  JSON wire type (`string`, `integer`, `number`, `boolean`, or `binary`; an array uses the type of its items with `multiValued`), OpenAPI format, and the embedded object class for structured attributes
+
+`json: { name, type, openApiFormat, path }`::
+  The JSON wire mapping block; `path` maps the attribute to a (nested) JSON location — see the attribute paths below
+
+`connId: { name, type }`::
+  The ConnId-side name (including the `__UID__` / `__NAME__` built-ins; the names `UID`, `NAME`, `PASSWORD`, `ENABLE`, `ENABLE_DATE`, `DISABLE_DATE`, and `LOCK_OUT` resolve to the corresponding built-in) and value type, written as the case-sensitive Java class name: `String`, `Integer`, `Long`, `Boolean`, `Double`, `Float`, `Character`, `Byte`, `Binary`, `BigDecimal`, `BigInteger`, `GuardedString`, `GuardedByteArray`, `ZonedDateTime`, `Map`, `ConnectorObjectReference`, or `EmbeddedObject`
+
+`scim: { name, type, path }`::
+  The SCIM wire name, SCIM type, and SCIM attribute path (a path string such as `name.givenName`, `emails[0].value`, `emails[primary eq true].value`, or a full extension URI) — see the attribute paths below
+
+Custom value mapping (an `implementation { ... }` block with `deserialize` / `serialize`) is Groovy-only: neither the `scim` nor the `json` block accepts an `implementation` key in YAML.
+
+A bare `attr:` (no keys) declares the attribute with defaults — the counterpart of `attribute("x")` with an empty closure.
+
+=== Attribute paths
+
+The `path` key of the `json:` and `scim:` blocks maps the attribute to a (nested) wire location. A scalar uses the block's default format: `json.path` is a basic JSONPath expression (`$.name.givenName`, `$.emails[?(@.primary == true)].value`) and `scim.path` is a SCIM attribute path (`name.givenName`, `emails[primary eq true].value`, or a full extension URI). An explicit format is supported via a `{ type, value }` mapping (the `type` is case-insensitive):
+
+[source,yaml]
+----
+attributes:
+  primaryEmail:
+    json:
+      path:
+        type: JSON_POINTER   # JSON_PATH | JSON_POINTER | SCIM
+        value: /emails/0/value
+----
+
+The counterpart of the Groovy `json { path { type JSON_POINTER; value "/emails/0/value" } }` / `scim { path "..." }` DSL. The expression is parsed lazily, so an invalid expression fails at schema build time with the file location.
+
+The YAML schema is fully literal: the builder deliberately gets no runtime context, so context-dependent Groovy fails fast at load time.
+
+== Operation documents
+
+An operation document covers one or more of `search`, `create`, `update`, or `delete` per object class, under the same `objectClasses` root; a top-level `authentication` block may be added in the same file. One file may carry several object classes.
+
+=== Search
+
+[source,yaml]
+----
+objectClasses:
+  User:
+    search:
+      endpoints:
+        - path: /users/search
+          method: POST
+          responseFormat: JSON_OBJECT
+          emptyFilterSupported: true
+          objectExtractor:
+            value: $.users
+          # objectExtractor: |
+          #   response.body().get("users")  // Groovy alternative for arbitrary logic
+          pagingSupport:
+            parameters:
+              pageSize:
+                in: query
+                name: size
+              page:
+                in: query
+          # pagingSupport: |
+          #   request.queryParameter("size", paging.pageSize)  // Groovy alternative
+          supportedFilters:
+            - spec: attribute("login").eq().anySingleValue()
+              request: |
+                request.queryParameter("login", value)
+        - path: /users/{id}
+          singleResult: true
+          supportedFilters:
+            - spec: attribute("id").eq().anySingleValue()
+              request: |
+                request.pathParameter("id", value)
+      attributeResolvers:
+        - attribute: team
+          resolutionType: PER_OBJECT
+          implementation: |
+            // Resolve the team attribute for each result object
+      # Alternative to the list endpoint above: enable only one empty-filter handler.
+      custom:
+        emptyFilterSupported: false
+        supportedFilters:
+          - spec: attribute("login").eq().anySingleValue()
+        implementation: |
+          // Custom search logic — see the custom search guide
+----
+
+`search.endpoints[].path`::
+  The search / list endpoint path (required)
+
+`search.endpoints[].method`::
+  The HTTP method of the search endpoint (case-insensitive): `GET` (default), `POST` for APIs that search via a POST request with a (form or JSON) body, or another HTTP method (`PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`) the API documents for search
+
+`search.endpoints[].responseFormat`::
+  Whether the response is a JSON array or a JSON object: `JSON_ARRAY` / `JSON_OBJECT`; default `JSON_OBJECT`
+
+`search.endpoints[].objectExtractor`::
+  How the list of objects is extracted from the response, in one of two forms. A *path mapping* `{ type, value }` (the same `{ type, value }` shape as the attribute `path` keys) resolves a JSON Pointer (`/_embedded/elements`) or a basic JSONPath (`$._embedded.elements`) against the response body — a resolved array yields its elements, a resolved object yields the single object, and a missing path yields no objects; `type` is case-insensitive and defaults to `JSON_PATH` (so `value:` alone is a JSONPath expression). A *Groovy block* (variable `response`) keeps arbitrary extraction logic. Any scalar value is the Groovy block, so a JSONPath or JSON Pointer must be written as the mapping (`objectExtractor: { value: $.data }`), never as a bare scalar (`objectExtractor: $.data` is compiled as Groovy). The default (no `objectExtractor`) handles a JSON array or a single object
+
+`search.endpoints[].pagingSupport`::
+  How paging information is mapped onto the request, in one of two forms. A *mapping* declares the paging declaratively: `pageSize` (the requested page size, default 25) and/or `parameters` — a mapping of paging tokens to where they are sent. Each token entry takes `in` — `query`, `header`, or `body` (a request body; requires `method: POST`) — and an optional `name` (the request parameter name, defaulting to the token). The tokens are `pageSize` (the requested page size), `page` (the page number, starting with 1), and `offset` (the zero-based object offset, `(page - 1) * pageSize`). Example: `parameters: { pageSize: { in: query, name: size }, page: { in: query } }`. A *Groovy block* (variables `request`, `paging` with `pageSize` and `pageOffset`) keeps arbitrary mapping logic. One endpoint uses exactly one of the two forms; a mapping with `pageSize` alone only sets the requested page size
+
+`search.endpoints[].singleResult`::
+  The endpoint returns exactly one object
+
+`search.endpoints[].emptyFilterSupported`::
+  The endpoint supports the empty (list-all) filter
+
+`search.endpoints[].supportedFilters[].spec`::
+  A filter specification as a build-time Groovy expression, e.g. `attribute("id").eq().anySingleValue()` (see the xref:scim/advanced-filters.adoc[filter specification API])
+
+`search.endpoints[].supportedFilters[].request`::
+  Groovy block mapping the filter onto the request (variables `request`, `value`)
+
+`search.normalize`::
+  UID/NAME rewriting for reference attributes: `toSingleValue` (attribute name) plus the `rewriteUid`, `rewriteName`, `restoreUid`, `restoreName` Groovy blocks (variables `original`, `value`)
+
+`search.attributeResolvers[]`::
+  One resolver per entry: `attribute`, `resolutionType` (`PER_OBJECT` / `BATCH`), and the `implementation` Groovy block
+
+`search.custom`::
+  Custom search: `supportedFilters` (each a `spec` expression), `emptyFilterSupported`, and the `implementation` Groovy block (see xref:implement-custom-search/[custom search])
+
+=== Create / update / delete
+
+[source,yaml]
+----
+objectClasses:
+  User:
+    create:
+      endpoints:
+        - method: POST
+          path: users
+          request:
+            contentType: application/json
+    update:
+      endpoints:
+        - method: PATCH
+          path: /users/{id}
+          request:
+            contentType: application/json
+          supportedAttributes:
+            - firstName
+            - lastName
+            - email
+        # Dedicated endpoint — no body required
+        # (the transition filter is accepted but not enforced yet)
+        - method: POST
+          path: /users/{id}/lock
+          request:
+            body: EMPTY
+          supportedAttributes:
+            - name: status
+              transition:
+                from: active
+                to: locked
+    delete:
+      endpoints:
+        - method: DELETE
+          path: /users/{id}
+----
+
+`enabled`::
+  Per-operation switch, e.g. `create: { enabled: false }`
+
+`endpoints[].method`::
+  HTTP method, case-insensitive (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`); default `POST`
+
+`endpoints[].path`::
+  The endpoint path (required); `{name}` path parameters are replaced from the object
+
+`endpoints[].request.contentType`::
+  The request content type — a literal media type (`application/json`) or one of the built-in
+  constant names (`APPLICATION_JSON`, `APPLICATION_XML`, `APPLICATION_YAML`, `APPLICATION_HAL_JSON`),
+  which resolve to the corresponding media type the same way as in the Groovy DSL
+
+`endpoints[].request.body`::
+  Groovy block producing the request body, or `EMPTY` for no body; the default serializes the `creatable` / `updateable` attributes into a JSON body
+
+`endpoints[].supportedAttributes`::
+  Update endpoints only (a create endpoint rejects the key in YAML): plain attribute names, a fixed value (`{ name, value }`), or a value transition (`{ name, transition: { from, to } }` — accepted but not enforced yet; a transition-only entry matches no requests)
+
+See xref:rest/create.adoc[create], xref:rest/update.adoc[update], and xref:rest/delete.adoc[delete] for the operation semantics.
+
+== Authentication
+
+An `authentication` block (top-level, not per object class) configures the authentication methods of the `rest` and/or `scim` namespace:
+
+[source,yaml]
+----
+authentication:
+  rest:
+    bearer:
+      implementation: |
+        request.header("Authorization", "token " + decrypt(configuration.restTokenValue))
+    apiKey:
+      implementation: |
+        request.header("Authorization", "token " + decrypt(configuration.restTokenValue))
+    preference:
+      - bearer
+      - apiKey
+----
+
+`authentication.rest` / `authentication.scim`::
+  The per-namespace channel blocks
+
+`apiKey`, `basic`, `bearer`, `jwtBearer`::
+  Each accepts an `implementation` Groovy block that customizes the request
+
+`oauth2ClientCredentials`, `oauth2JwtBearer`, `oauth2Password`, `oauth2Saml`::
+  The OAuth 2.0 flavors; each accepts the hooks `buildTokenRequest`, `parseTokenResponse`, `validateToken`, `applyToken`, `onResponse` (Groovy blocks) and an `implementation` block
+
+`preference`::
+  Ordered list of method names (`apiKey`, `basic`, `bearer`, `jwtBearer`, the `oauth2*` flavors, `awsSignature`)
+
+See xref:authentication.adoc[authentication & authorization] for the properties each method consumes.

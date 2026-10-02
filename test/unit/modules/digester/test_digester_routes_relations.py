@@ -8,7 +8,10 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 
+from src.app import create_api
+from src.core.db import get_db
 from src.jobs import job_input_reference
 from src.modules.digester.errors import ObjectClassesNotFoundError
 from src.modules.digester.routes.relations import extract_relations, get_relations_status, override_relations
@@ -176,3 +179,25 @@ async def test_override_relations_success():
     )
     assert response["message"].startswith("Relations overridden successfully")
     assert response["sessionId"] == session_id
+
+
+def test_session_removed_while_documentation_is_loaded_keeps_the_session_not_found_contract():
+    """The documents layer reports a missing session with the same 404 body as the session layer."""
+    app = create_api()
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+    session_id = uuid4()
+    route_repo = MagicMock()
+    route_repo.session_exists = AsyncMock(return_value=True)
+    filter_repo = MagicMock()
+    filter_repo.session_exists = AsyncMock(return_value=False)
+
+    with (
+        patch("src.modules.digester.routes.relations.SessionRepository", return_value=route_repo),
+        patch("src.documents.filtering.filter.SessionRepository", return_value=filter_repo),
+        patch("src.modules.digester.orchestration.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+    ):
+        response = TestClient(app).post(f"/api/v1/digester/{session_id}/relations")
+
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "session_not_found", "message": f"Session {session_id} not found"}}
+    mock_schedule.assert_not_awaited()

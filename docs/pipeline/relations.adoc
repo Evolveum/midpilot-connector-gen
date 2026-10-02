@@ -232,7 +232,7 @@ transaction as it.
 === Where it lives
 
 Stored as a session key, never exposed over HTTP
-(`src/modules/digester/results.py`, `RELATIONS_ANALYSIS_RESULT_KEY`):
+(`src/shared/session_keys.py`, `RELATIONS_ANALYSIS_OUTPUT`):
 
 [source,sql]
 ----
@@ -782,6 +782,12 @@ is never attached to the current relation list. When the analysis is missing,
 unreadable or does not contain the relation, generation falls back to the record
 alone — and logs that it did, because a `link_object` relation generated without
 the context is quietly ungrounded.
+
+SQL analysis supplies evidence for the framework's automatic relationship discovery.
+SQL scripted relationship overrides are unsupported: codegen returns `{}` when
+discovery suffices, or `{}` with a YAML TODO when a requirement cannot be met.
+REST and SCIM use documented Groovy relationship blocks and preserve automatic
+framework mappings where they already resolve the selected association.
 
 See link:codegen.adoc[Codegen] for the generation side.
 

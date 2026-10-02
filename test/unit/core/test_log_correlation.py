@@ -97,6 +97,14 @@ async def _nested_emit() -> str:
     return _emit()
 
 
+@pytest.mark.asyncio
+async def test_correlation_is_inherited_by_work_offloaded_to_a_thread(job_context):
+    """CPU-bound job work runs in ``asyncio.to_thread``; its records must keep both ids."""
+    expected = _columns(str(job_context.session_id)[:8], str(job_context.job_id)[:8])
+
+    assert expected in await asyncio.to_thread(_emit)
+
+
 def test_access_filter_drops_successful_requests_to_excluded_paths():
     log_filter = AccessLogPathFilter(("/api/v1/scrape",))
 

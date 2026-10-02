@@ -74,7 +74,6 @@ from src.modules.digester.extraction.metadata_helper import build_doc_metadata_m
 from src.modules.digester.extractors.rest import relation_context, relation_passes
 from src.modules.digester.extractors.rest.relation_context import LOG_SCOPE
 from src.modules.digester.prompts.relation_profiles import RelationPromptSet, get_relation_prompt_set
-from src.modules.digester.results import RELATIONS_ANALYSIS_RESULT_KEY
 from src.modules.digester.schemas import RelationRecord, RelationsResponse
 from src.modules.digester.schemas.relation_analysis import (
     DETERMINISTIC_EVIDENCE_KINDS,
@@ -88,6 +87,7 @@ from src.modules.digester.schemas.relation_analysis import (
     RelationVerdict,
 )
 from src.shared.enums import ApiType, JobStage
+from src.shared.session_keys import RELATIONS_ANALYSIS_OUTPUT
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +375,7 @@ def _result_with_analysis(
     return {
         "result": relation_payload,
         "relevantDocumentations": relevant_documentations,
-        SESSION_COMPANION_OUTPUTS_KEY: {RELATIONS_ANALYSIS_RESULT_KEY: analysis_payload},
+        SESSION_COMPANION_OUTPUTS_KEY: {RELATIONS_ANALYSIS_OUTPUT: analysis_payload},
     }
 
 

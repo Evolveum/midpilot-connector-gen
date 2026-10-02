@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from src.documents.relevance import (
     extract_attribute_relevance_rows,
     extract_relevant_rows_for_storage,
     hydrate_auth_sequences_from_relevance,
+    load_relevance_map_for_result,
 )
 
 
@@ -135,3 +137,16 @@ async def test_auth_relevance_hydration_matches_equivalent_name_and_type_variant
             "end_sequence": "JWT validation",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_load_relevance_map_propagates_database_failures():
+    """A database outage must not look like a result that simply has no relevance rows."""
+    repo = MagicMock()
+    repo.get_relevant_chunks_grouped_by_entity = AsyncMock(side_effect=OperationalError("SELECT", {}, Exception()))
+
+    with (
+        patch("src.documents.relevance.persistence.RelevantChunkRepository", return_value=repo),
+        pytest.raises(OperationalError),
+    ):
+        await load_relevance_map_for_result(MagicMock(), uuid4(), "attributesOutput")

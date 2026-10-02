@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import logging
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -18,12 +19,16 @@ from src.session.documentation_upload import (
     chunk_uploaded_documentation,
     queue_documentation_upload_job,
 )
+from src.shared.session_keys import upload_job_pointer_key
 
 
 class _FakeSessionRepository:
     def __init__(self) -> None:
         self.db = object()
         self.updated_session_payloads: list[tuple[object, dict[str, str]]] = []
+
+    async def get_session_data(self, session_id: object, key: str) -> None:
+        return None
 
     async def update_session(self, session_id: object, data: dict[str, str]) -> None:
         self.updated_session_payloads.append((session_id, data))
@@ -45,7 +50,7 @@ def test_chunk_uploaded_documentation_preserves_schema_as_single_item():
         preserve_as_single_item=True,
     )
 
-    chunks = chunk_uploaded_documentation(uuid4(), uploaded)
+    chunks = chunk_uploaded_documentation(uploaded)
 
     assert len(chunks) == 1
     assert chunks[0][0] == text
@@ -70,7 +75,7 @@ def test_chunk_uploaded_documentation_splits_oversized_single_item_schema():
         "src.session.documentation_upload.config.scrape_and_process.single_item_schema_max_tokens",
         max_tokens,
     ):
-        chunks = chunk_uploaded_documentation(uuid4(), uploaded)
+        chunks = chunk_uploaded_documentation(uploaded)
 
     assert len(chunks) > 1
     assert all(token_count <= max_tokens for _, token_count in chunks)
@@ -83,7 +88,6 @@ def test_processed_chunk_metadata_uses_token_count_name():
         num_endpoints=0,
         tags=["SQL"],
         category="reference_other",
-        different_app_name=False,
     )
     metadata = build_chunk_metadata(
         chunk_number=0,
@@ -93,14 +97,23 @@ def test_processed_chunk_metadata_uses_token_count_name():
         filename="schema.sql",
     )
 
-    assert metadata["token_count"] == 42
-    assert metadata["character_count"] == 17
-    assert metadata["chunk_number"] == 0
-    assert "length" not in metadata
+    assert metadata == {
+        "chunk_number": 0,
+        "token_count": 42,
+        "character_count": 17,
+        "num_endpoints": 0,
+        "tags": ["SQL"],
+        "category": "reference_other",
+        "filename": "schema.sql",
+    }
 
 
 @pytest.mark.asyncio
-async def test_queue_documentation_upload_job_schedules_raw_upload_without_storing_bytes_in_input():
+@pytest.mark.parametrize("document_exists", [False, True])
+async def test_queue_documentation_upload_job_schedules_raw_upload_without_storing_bytes_in_input(
+    document_exists, caplog
+):
+    caplog.set_level(logging.WARNING)
     session_id = uuid4()
     doc_id = uuid4()
     job_id = uuid4()
@@ -116,10 +129,14 @@ async def test_queue_documentation_upload_job_schedules_raw_upload_without_stori
     )
     repo = _FakeSessionRepository()
 
-    with patch(
-        "src.session.documentation_upload.schedule_coroutine_job",
-        new_callable=AsyncMock,
-    ) as mock_schedule:
+    with (
+        patch("src.session.documentation_upload.schedule_coroutine_job", new_callable=AsyncMock) as mock_schedule,
+        patch(
+            "src.session.documentation_upload.DocumentationRepository.has_document",
+            new_callable=AsyncMock,
+            return_value=document_exists,
+        ),
+    ):
         mock_schedule.return_value = job_id
 
         returned_job_id = await queue_documentation_upload_job(
@@ -146,6 +163,11 @@ async def test_queue_documentation_upload_job_schedules_raw_upload_without_stori
         "content_hash": raw_upload.content_hash,
     }
     assert "chunks" not in worker_kwargs
-    assert repo.updated_session_payloads == [
-        (session_id, {f"documentation.processUpload_{doc_id}_job_id": str(job_id)})
-    ]
+    assert repo.updated_session_payloads == [(session_id, {upload_job_pointer_key(doc_id): str(job_id)})]
+
+    if document_exists:
+        assert f"Another upload uses document ID {doc_id}" in caplog.text
+        assert "deleted and replaced only after this upload succeeds" in caplog.text
+        assert "If processing fails, the existing content will be preserved" in caplog.text
+    else:
+        assert "Another upload uses document ID" not in caplog.text

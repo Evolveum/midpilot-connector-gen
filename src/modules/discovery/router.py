@@ -15,6 +15,7 @@ from src.jobs.schema import JobCreateResponse, JobStatusStageResponse
 from src.modules.discovery import orchestration
 from src.modules.discovery.schema import CandidateLinksInput
 from src.session.access import ensure_session_exists, resolve_session_job_id
+from src.shared.session_keys import DISCOVERY
 
 router = APIRouter()
 
@@ -67,7 +68,7 @@ async def get_discovery_status(
         repo,
         session_id,
         jobId,
-        session_key="discoveryJobId",
+        session_key=DISCOVERY.job_id,
         job_label="discovery",
     )
     return await build_stage_status_response(jobId)

@@ -19,6 +19,7 @@ from src.modules.codegen.orchestration import schedule_connector_fix_job
 from src.modules.codegen.schema import ConnectorFixInput, ConnectorFixResult
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
+from src.shared.session_keys import connector_fix_keys
 
 router = APIRouter(tags=["Codegen: Fix"])
 
@@ -46,8 +47,9 @@ async def fix_connector(
     """
     Fix faulty Groovy scripts for one object class from the errors midPoint reported.
 
-    Loads generated search, create, update, delete, native-schema, and ConnID code only for the selected
-    object class. The model receives those scripts and the reported errors, and only
+    Loads generated search, create, update, delete and native-schema code only for the selected
+    object class; the native-schema script carries that class's ConnID attribute mapping.
+    The model receives those scripts and the reported errors, and only
     changed scripts are written back. Optional scripts in the body must also belong
     to this object class. The session is updated only if the fix succeeds.
     """
@@ -92,7 +94,7 @@ async def get_connector_fix_status(
         repo,
         session_id,
         jobId,
-        session_key=f"{object_class}ConnectorFixJobId",
+        session_key=connector_fix_keys(object_class).job_id,
         job_label=f"{object_class} connector fix",
         not_found_detail=f"No connector fix job found for object class {object_class} in session {session_id}",
     )

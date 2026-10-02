@@ -4,7 +4,7 @@
 
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -109,18 +109,6 @@ class PySearchPrompts(CamelCaseModel):
         default_factory=list,
         description="List of search queries to run.",
         min_length=1,
-    )
-
-
-class PyScrapeFetchReferences(CamelCaseModel):
-    name: str = Field(..., description="Name of the scraping batch or target.")
-    urls_to_crawl: List[str] = Field(
-        default_factory=list,
-        description="A list of links containing all URLs mentioned in the message.",
-    )
-    text_output: Optional[str] = Field(
-        default=None,
-        description="Optional notes or free-form text returned by the evaluator.",
     )
 
 

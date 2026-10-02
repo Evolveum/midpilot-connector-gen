@@ -23,7 +23,6 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
     - num_endpoints: int - number of documented endpoints in this chunk
     - tags: list of strings - relevant tags describing the content
     - category: string - one of "spec_yaml", "spec_json", "reference_api", "reference_other", "overview", "index", "tutorial", "non-technical", "other"
-    - different_app_name: bool - true only if chunk is clearly about a different product than {app}
     - num_defined_object_classes: Optional[int] - number of clearly defined object classes, otherwise null
 
     TAGGING RULES:
@@ -43,7 +42,6 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
       "num_endpoints": 2,
       "tags": ["SCIM", "provisioning", "User", "Group"],
       "category": "reference_api",
-      "different_app_name": false,
       "num_defined_object_classes": 2
     }}
 
@@ -53,7 +51,6 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
       "num_endpoints": 5,
       "tags": ["REST", "endpoints", "user management", "provisioning", "User", "Group"],
       "category": "reference_api",
-      "different_app_name": false,
       "num_defined_object_classes": null
     }}
     """

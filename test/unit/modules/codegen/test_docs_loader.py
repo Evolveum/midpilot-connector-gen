@@ -2,11 +2,87 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from importlib import resources
+from unittest.mock import patch
+
 import pytest
 
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 
+_REST_DOCS_PACKAGE = "src.modules.codegen.documentations.rest"
+_EXISTING_DOC = "relationship.adoc"
+
+
+@pytest.fixture(autouse=True)
+def _clear_docs_cache():
+    load_required_adoc_text.cache_clear()
+    yield
+    load_required_adoc_text.cache_clear()
+
 
 def test_load_required_adoc_text_raises_for_missing_resource() -> None:
     with pytest.raises(FileNotFoundError, match="Required codegen documentation resource not found"):
-        load_required_adoc_text("src.modules.codegen.documentations.rest", "missing-doc.adoc")
+        load_required_adoc_text(_REST_DOCS_PACKAGE, "missing-doc.adoc")
+
+
+def test_load_required_adoc_text_reads_each_resource_once() -> None:
+    """Packaged references are immutable, and every codegen job pulls the same ones."""
+    with patch(
+        "src.modules.codegen.selection.docs_loader.resources.files",
+        wraps=resources.files,
+    ) as spy:
+        first = load_required_adoc_text(_REST_DOCS_PACKAGE, _EXISTING_DOC)
+        second = load_required_adoc_text(_REST_DOCS_PACKAGE, _EXISTING_DOC)
+
+    assert first == second
+    assert first.strip()
+    spy.assert_called_once_with(_REST_DOCS_PACKAGE)
+
+
+def test_load_required_adoc_text_keeps_retrying_a_missing_resource() -> None:
+    """``cache`` stores return values, not exceptions: a missing file must not be
+    remembered as a permanent failure that outlives a fixed deployment."""
+    with patch(
+        "src.modules.codegen.selection.docs_loader.resources.files",
+        side_effect=FileNotFoundError("boom"),
+    ) as spy:
+        for _ in range(2):
+            with pytest.raises(FileNotFoundError):
+                load_required_adoc_text(_REST_DOCS_PACKAGE, "missing-doc.adoc")
+
+    assert spy.call_count == 2
+
+
+def test_create_prompt_includes_only_the_crud_yaml_sections():
+    from src.modules.codegen.selection.docs_loader import load_operation_documentation
+    from src.modules.codegen.selection.protocol_selectors import get_operation_assets
+    from src.shared.enums import ApiType
+
+    _, declarative = load_operation_documentation(get_operation_assets("create", ApiType.REST))
+    assert "=== Create / update / delete" in declarative
+    assert "endpoints[].request.body" in declarative
+    assert "not enforced yet" in declarative
+    assert "== Authentication" not in declarative
+    assert "=== Search" not in declarative
+
+
+def test_fix_reference_unions_requested_sections_without_loading_whole_yaml_guide():
+    from src.modules.codegen.connector_fix import _load_dsl_documentation
+    from src.modules.codegen.enums import ArtifactKind, SearchIntent
+    from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact
+    from src.shared.enums import ApiType
+
+    artifacts = [
+        ConnectorArtifact(operation_key="userCreate", kind=ArtifactKind.CREATE, code="{}"),
+        ConnectorArtifact(operation_key="userUpdate", kind=ArtifactKind.UPDATE, code="{}"),
+        ConnectorArtifact(operation_key="userSearchAll", kind=ArtifactKind.SEARCH, intent=SearchIntent.ALL, code="{}"),
+        ConnectorArtifact(operation_key="userSearchId", kind=ArtifactKind.SEARCH, intent=SearchIntent.ID, code="{}"),
+    ]
+    docs = _load_dsl_documentation(artifacts, ApiType.REST)
+    assert docs.count("=== Create / update / delete") == 1
+    assert docs.count("=== Search\n") == 1
+    assert "== Authentication" not in docs
+    assert "== Schema documents" not in docs
+    assert "== GET /users/search" not in docs
+    assert "supportedFilters" in docs
+    assert "endpoints[].request.body" in docs

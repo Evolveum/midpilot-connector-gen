@@ -7,7 +7,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_stage_status_response
@@ -15,11 +15,14 @@ from src.core.db import DbSession
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.jobs.schema import JobCreateResponse, JobStatusStageResponse
+from src.modules.codegen.enums import ArtifactKind, build_object_class_operation_key
 from src.modules.codegen.orchestration import schedule_native_schema_job
 from src.modules.codegen.persistence import store_object_class_output_override
+from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import CodegenRepairContext, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
+from src.shared.session_keys import codegen_operation_keys
 
 router = APIRouter(tags=["Codegen: Native Schema"])
 
@@ -84,7 +87,9 @@ async def get_native_schema_status(
         repo,
         session_id,
         jobId,
-        session_key=f"{object_class}NativeSchemaJobId",
+        session_key=codegen_operation_keys(
+            build_object_class_operation_key(object_class, ArtifactKind.NATIVE_SCHEMA)
+        ).job_id,
         job_label="native schema",
         not_found_detail=f"No native schema job found for {object_class} in session {session_id}",
     )
@@ -99,7 +104,7 @@ async def get_native_schema_status(
 async def override_native_schema(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
-    native_schema: GroovyCodePayload = Body(..., description="Native schema code as JSON"),
+    native_schema: GroovyCodePayload = Depends(validated_connector_code),
     db: AsyncSession = DbSession,
 ):
     """
@@ -108,7 +113,7 @@ async def override_native_schema(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-    await store_object_class_output_override(repo, session_id, object_class, "NativeSchema", native_schema)
+    await store_object_class_output_override(repo, session_id, object_class, ArtifactKind.NATIVE_SCHEMA, native_schema)
 
     return {
         "message": f"Native schema for {object_class} overridden successfully",

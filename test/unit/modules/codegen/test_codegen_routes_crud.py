@@ -103,6 +103,10 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
     inputs = update_args[1]
     assert inputs[session_input_key]["preferredEndpoints"] == preferred_endpoints
     assert "mode" not in inputs[session_input_key]
+    # Stored outputs travel in the job input only.
+    assert "attributes" not in inputs[session_input_key]
+    assert "endpoints" not in inputs[session_input_key]
+    assert "attributes" in schedule_kwargs["input_payload"]
 
 
 @pytest.mark.asyncio

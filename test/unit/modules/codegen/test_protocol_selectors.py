@@ -34,7 +34,7 @@ def test_get_operation_assets_selects_complete_scim_delete_assets():
     assets = get_operation_assets("delete", ApiType.SCIM)
 
     assert assets.system_prompt == get_scim_delete_system_prompt
-    assert assets.docs_path == "scim/70-delete.adoc"
+    assert assets.docs_path == "scim/delete.adoc"
 
 
 def test_native_schema_assets_keep_rest_and_scim_prompts_separate():
@@ -48,11 +48,11 @@ def test_native_schema_assets_keep_rest_and_scim_prompts_separate():
 
 
 def test_relation_assets_are_protocol_specific():
-    scim_assets = get_operation_assets("relation", ApiType.SCIM)
-    sql_assets = get_operation_assets("relation", ApiType.SQL)
+    scim_assets = get_operation_assets("relationship", ApiType.SCIM)
+    sql_assets = get_operation_assets("relationship", ApiType.SQL)
 
     assert scim_assets.system_prompt == get_scim_relation_system_prompt
-    assert scim_assets.docs_path == "scim/90-relationship-support.adoc"
+    assert scim_assets.docs_path == "scim/relationship-support.adoc"
     assert "Username" in scim_assets.system_prompt
     assert "userName" in scim_assets.system_prompt
     assert "groups.$ref" in scim_assets.system_prompt
@@ -66,11 +66,14 @@ def test_relation_assets_are_protocol_specific():
 def test_relation_codegen_prompt_profiles_render(api_type: ApiType):
     from langchain_core.prompts import ChatPromptTemplate
 
-    assets = get_operation_assets("relation", api_type)
+    assets = get_operation_assets("relationship", api_type)
     template = ChatPromptTemplate.from_messages([("system", assets.system_prompt), ("human", assets.user_prompt)])
 
     messages = template.format_messages(
         relation_docs="relationship DSL",
+        declarative_docs="declarative reference",
+        protocol=api_type.value,
+        repair_system_suffix="",
         relation_name="account_to_role",
         relation_json='{"relations":[]}',
         relation_context_json="{}",

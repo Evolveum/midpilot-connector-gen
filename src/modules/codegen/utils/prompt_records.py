@@ -19,6 +19,11 @@ _SQL_ATTRIBUTE_BINDING_FIELDS = (
     "column",
     "primaryKey",
     "foreignKey",
+    "databaseType",
+    "nullable",
+    "unique",
+    "generated",
+    "defaultValue",
 )
 
 
@@ -56,6 +61,10 @@ def build_attribute_context_records(payload: AttributesPayload) -> List[Dict[str
     return records
 
 
+def _flag_or_default(value: Any, default: bool) -> bool:
+    return default if value is None else bool(value)
+
+
 def _build_attribute_mapping_records(
     payload: AttributesPayload,
     *,
@@ -70,12 +79,12 @@ def _build_attribute_mapping_records(
             "jsonType": data.get("type") or "",
             "openApiFormat": data.get("format") or "",
             "description": data.get("description") or "",
-            "mandatory": bool(data.get("mandatory", False)),
-            "updateable": bool(data.get("updatable", data.get("updateable", False))),
-            "creatable": bool(data.get("creatable", False)),
-            "readable": bool(data.get("readable", True)),
-            "multivalue": bool(data.get("multivalue", False)),
-            "returnedByDefault": bool(data.get("returnedByDefault", True)),
+            "mandatory": _flag_or_default(data.get("mandatory"), False),
+            "updateable": _flag_or_default(data.get("updatable", data.get("updateable")), True),
+            "creatable": _flag_or_default(data.get("creatable"), True),
+            "readable": _flag_or_default(data.get("readable"), True),
+            "multiValued": _flag_or_default(data.get("multivalue"), False),
+            "returnedByDefault": _flag_or_default(data.get("returnedByDefault"), True),
         }
         for optional_key in optional_fields:
             if optional_key in data:
@@ -97,19 +106,35 @@ def build_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str
     )
 
 
-def build_sql_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
-    """Convert attributes into native-schema records that retain physical SQL bindings."""
-    return _build_attribute_mapping_records(
-        payload,
-        optional_fields=_ATTRIBUTE_MAPPING_OPTIONAL_FIELDS + _SQL_ATTRIBUTE_BINDING_FIELDS,
-    )
-
-
 def extract_scim_context(payload: AttributesPayload) -> Dict[str, Any]:
     """Return class-specific SCIM context persisted beside the extracted attributes."""
     if isinstance(payload, AttributeResponse):
         return dict(payload.scimContext)
     return dict(as_mapping(payload.get("scimContext")))
+
+
+def extract_sql_context(payload: AttributesPayload) -> Dict[str, Any]:
+    """Return class-specific SQL physical identity and ConnId projection context."""
+    if isinstance(payload, AttributeResponse):
+        if payload.sqlContext is None:
+            return {}
+        return payload.sqlContext.model_dump(by_alias=True, mode="json")
+    return dict(as_mapping(payload.get("sqlContext")))
+
+
+def build_sql_context_prompt_vars(payload: AttributesPayload) -> Dict[str, str]:
+    """Serialize physical table identity and projection into distinct prompt variables."""
+    context = extract_sql_context(payload)
+    physical_table = dict(as_mapping(context.get("physicalTable")))
+    connector_object_class = dict(as_mapping(context.get("connectorObjectClass")))
+    return {
+        "sql_physical_table_json": json.dumps(physical_table, ensure_ascii=False, separators=(",", ":")),
+        "sql_connector_object_class_json": json.dumps(
+            connector_object_class,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    }
 
 
 def build_scim_contract_prompt_vars(
@@ -217,13 +242,15 @@ def build_connid_attribute_mapping_records(payload: AttributesPayload) -> List[D
     return build_attribute_mapping_records({"attributes": projected_attributes})
 
 
-def build_fix_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
+def build_complete_attribute_mapping_records(payload: AttributesPayload) -> List[Dict[str, Any]]:
     """
     Every extracted attribute, plus the identifiers only the ConnID projection knows.
 
-    A fix reasons about the whole native schema, so the projection-filtered ConnID
-    record set is not enough on its own: it drops every attribute the connector does
-    not already expose, and that is exactly where a wrong native name hides. The
+    The record set for any prompt that reasons about a whole object class: native
+    schema generation, which writes the attribute definitions and the ConnID mapping
+    into one script, and the object-class fix. The projection-filtered ConnID record
+    set is not enough on its own - it drops every attribute the connector does not
+    already expose, and that is exactly where a wrong native name hides. The
     projection is merged in only where it can contribute something new - ``UID`` maps
     to ``id``, which the extracted attributes do not carry - which is the SCIM path,
     since :func:`build_connid_attribute_mapping_records` otherwise just rebuilds the

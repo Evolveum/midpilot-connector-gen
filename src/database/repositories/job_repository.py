@@ -5,7 +5,7 @@
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Union
 from uuid import UUID, uuid4
 
@@ -16,7 +16,15 @@ from sqlalchemy.orm import aliased, defer, load_only
 
 from src.core.errors import ExecutionOwnershipLostError
 from src.database.models import Job, JobArtifact, JobProgress, Session
+from src.shared.clock import utc_now
 from src.shared.enums import JobStage, JobStatus
+from src.shared.job_types import (
+    DOCUMENTATION_PRODUCER_JOB_TYPES,
+    JobType,
+    ProgressCounters,
+    job_type_policy,
+    parse_job_type,
+)
 from src.shared.json_values import to_jsonable
 from src.shared.normalize import normalized_input_fingerprint
 
@@ -76,7 +84,7 @@ class JobRepository:
     async def create_job(
         self,
         input_payload: Dict[str, Any],
-        job_type: str,
+        job_type: JobType,
         session_id: UUID,
         *,
         execution_payload: Dict[str, Any],
@@ -98,7 +106,7 @@ class JobRepository:
 
         json_input = to_jsonable(input_payload)
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         documentation_wait_until = (
             now + timedelta(seconds=documentation_wait_timeout_seconds)
             if documentation_wait_timeout_seconds is not None
@@ -106,7 +114,7 @@ class JobRepository:
         )
         job = Job(
             session_id=session_id,
-            job_type=job_type,
+            job_type=parse_job_type(job_type).value,
             status=JobStatus.queued.value,
             input=json_input,
             normalized_input_hash=normalized_input_fingerprint(json_input),
@@ -146,9 +154,13 @@ class JobRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
+    async def get_job_input(self, job_id: UUID) -> Optional[Dict[str, Any]]:
+        """Load only a job's input payload, e.g. a reuse candidate found by :meth:`get_job_by_input`."""
+        return (await self.db.execute(select(Job.input).where(Job.job_id == job_id))).scalar_one_or_none()
+
     async def get_job_by_input(
         self,
-        job_type: str,
+        job_type: JobType,
         input_payload: Dict[str, Any],
         date_since: datetime,
         *,
@@ -161,27 +173,27 @@ class JobRepository:
         :param date_since: Earliest acceptable job creation time
         :param requesting_session_id: Session requesting reuse. Sessions reuse
             jobs from other sessions with the same API-key owner. Ownerless
-            sessions (``api_key_id`` NULL) form a single tenant and reuse each
-            other's jobs; when ``AUTH__API_KEY_REQUIRED`` is off every session
+            sessions (``owner_key_hash`` NULL) form a single tenant and reuse each
+            other's jobs; when ``AUTH__MODE=dev`` every new session
             is ownerless, so this yields deployment-wide reuse.
         :return: Job model or None
         """
         candidate_session = aliased(Session)
         requesting_session = aliased(Session)
         requesting_owner_id = (
-            select(requesting_session.api_key_id)
+            select(requesting_session.owner_key_hash)
             .where(requesting_session.session_id == requesting_session_id)
             .scalar_subquery()
         )
         tenant_scope = or_(
             Job.session_id == requesting_session_id,
-            candidate_session.api_key_id.is_not_distinct_from(requesting_owner_id),
+            candidate_session.owner_key_hash.is_not_distinct_from(requesting_owner_id),
         )
         query = (
             select(Job)
             .join(candidate_session, candidate_session.session_id == Job.session_id)
             .where(
-                Job.job_type == job_type,
+                Job.job_type == parse_job_type(job_type).value,
                 Job.normalized_input_hash == normalized_input_fingerprint(to_jsonable(input_payload)),
                 Job.created_at >= date_since,
                 Job.status == "finished",
@@ -291,7 +303,7 @@ class JobRepository:
         :param job_id: Job ID
         :param message: Error message to append
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         await self._fence_claimed_write(job_id, worker_id=worker_id, execution_token=execution_token, now=now)
         job = await self.get_job(job_id)
         if job is None:
@@ -326,7 +338,7 @@ class JobRepository:
         :param total_processing: Total number of documents
         :param processing_completed: Number of processed documents
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         fenced = await self._fence_claimed_write(
             job_id,
             worker_id=worker_id,
@@ -400,7 +412,7 @@ class JobRepository:
                             job_id,
                             worker_id=worker_id,
                             execution_token=execution_token,
-                            now=datetime.now(timezone.utc),
+                            now=utc_now(),
                         )
                     )
                     .with_for_update()
@@ -417,7 +429,7 @@ class JobRepository:
 
         job.input = json_input
         job.normalized_input_hash = normalized_input_fingerprint(json_input)
-        job.updated_at = datetime.now(timezone.utc)
+        job.updated_at = utc_now()
 
         await self.db.flush()
         logger.info("Updated input for job %s", job_id)
@@ -437,7 +449,7 @@ class JobRepository:
         :param delta: Number to increment by
         """
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         if not await self._fence_claimed_write(
             job_id,
             worker_id=worker_id,
@@ -500,7 +512,7 @@ class JobRepository:
             if progress.message:
                 progress_dict["message"] = progress.message
 
-            if job.job_type == "scrape.getRelevantDocumentation":
+            if job_type_policy(job.job_type).progress_counters is ProgressCounters.ITERATIONS:
                 if progress.total_processing is not None:
                     progress_dict["totalIterations"] = progress.total_processing
                 if progress.processing_completed is not None:
@@ -527,14 +539,14 @@ class JobRepository:
         *,
         worker_id: str,
         claim_timeout_seconds: float,
-        job_type: Optional[str] = None,
+        job_type: Optional[JobType] = None,
     ) -> Optional[ClaimedJob]:
         """Atomically claim one queued or abandoned job.
 
         PostgreSQL row locking with ``SKIP LOCKED`` guarantees that concurrent
         worker processes cannot receive the same execution token.
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         claimable_state = or_(
             Job.status == JobStatus.queued.value,
             and_(
@@ -544,12 +556,13 @@ class JobRepository:
             ),
         )
         documentation_job = aliased(Job)
+        documentation_producers = [producer.value for producer in DOCUMENTATION_PRODUCER_JOB_TYPES]
         pending_documentation_exists = (
             select(documentation_job.job_id)
             .where(
                 documentation_job.session_id == Job.session_id,
                 documentation_job.job_id != Job.job_id,
-                documentation_job.job_type.in_(("scrape.getRelevantDocumentation", "documentation.processUpload")),
+                documentation_job.job_type.in_(documentation_producers),
                 documentation_job.status.not_in((JobStatus.finished.value, JobStatus.failed.value)),
             )
             .exists()
@@ -573,7 +586,7 @@ class JobRepository:
             .limit(1)
         )
         if job_type:
-            query = query.where(Job.job_type == job_type)
+            query = query.where(Job.job_type == parse_job_type(job_type).value)
 
         job = (await self.db.execute(query)).scalar_one_or_none()
         if job is None or job.execution_payload is None:
@@ -586,9 +599,7 @@ class JobRepository:
                     .where(
                         documentation_job.session_id == job.session_id,
                         documentation_job.job_id != job.job_id,
-                        documentation_job.job_type.in_(
-                            ("scrape.getRelevantDocumentation", "documentation.processUpload")
-                        ),
+                        documentation_job.job_type.in_(documentation_producers),
                         documentation_job.status.not_in((JobStatus.finished.value, JobStatus.failed.value)),
                     )
                     .limit(1)
@@ -654,7 +665,7 @@ class JobRepository:
         claim_timeout_seconds: float,
     ) -> bool:
         """Refresh a live claim if and only if this execution still owns it."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         statement = (
             update(Job)
             .where(
@@ -686,7 +697,7 @@ class JobRepository:
                 job_id,
                 worker_id=worker_id,
                 execution_token=execution_token,
-                now=datetime.now(timezone.utc),
+                now=utc_now(),
             )
         )
         return (await self.db.execute(query)).scalar_one_or_none() is not None
@@ -707,7 +718,7 @@ class JobRepository:
                     job_id,
                     worker_id=worker_id,
                     execution_token=execution_token,
-                    now=datetime.now(timezone.utc),
+                    now=utc_now(),
                 )
             )
             .with_for_update()
@@ -716,7 +727,7 @@ class JobRepository:
         if job is None:
             return None
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         job.status = JobStatus.finished.value
         job.updated_at = now
         job.finished_at = now
@@ -754,7 +765,7 @@ class JobRepository:
                     job_id,
                     worker_id=worker_id,
                     execution_token=execution_token,
-                    now=datetime.now(timezone.utc),
+                    now=utc_now(),
                 )
             )
             .with_for_update()
@@ -763,7 +774,7 @@ class JobRepository:
         if job is None:
             return None
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         lines = [line for line in str(error).splitlines() if line.strip()]
         errors = list(job.errors or [])
         errors.extend(line for line in lines if line not in errors)
@@ -801,7 +812,7 @@ class JobRepository:
         must still hand its job back after the claim deadline has passed, so this
         is the one ownership check that intentionally omits ``claim_expires_at``.
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         statement = (
             update(Job)
             .where(
@@ -828,7 +839,7 @@ class JobRepository:
 
     async def fail_expired_exhausted_jobs(self) -> int:
         """Fail abandoned jobs whose crash-retry budget is exhausted."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         query = (
             select(Job)
             .where(
@@ -864,7 +875,7 @@ class JobRepository:
 
     async def fail_invalid_queued_jobs(self) -> int:
         """Fail queued rows that cannot be deserialized by any worker."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         jobs = (
             (
                 await self.db.execute(

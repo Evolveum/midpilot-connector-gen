@@ -36,9 +36,10 @@ async def build_stage_status_response(job_id: UUID | None) -> JobStatusStageResp
 
 async def build_multi_doc_status_response(job_id: UUID | None) -> JobStatusMultiDocResponse:
     """
-    Build a multi-document aware status response for codegen jobs.
-    It forwards the progress dict as-is so multi-doc fields (processedDocuments,
-    totalDocuments, currentDocument{docId, processedChunks, totalChunks}) are preserved.
+    Build a typed job status response with document progress counters.
+
+    Progress is validated against MultiDocProgress, retaining stage, message,
+    processedDocuments, and totalDocuments. Unknown progress fields are ignored.
     """
     status = await get_job_status(job_id)
     raw_status = status.get("status", JobStatus.not_found.value)
@@ -83,6 +84,10 @@ async def build_typed_job_status_response(job_id: UUID, model_cls: type[BaseMode
             return JobStatusMultiDocResponse(
                 jobId=status.get("jobId", job_id),
                 status=JobStatus.failed,
+                createdAt=status.get("createdAt"),
+                startedAt=status.get("startedAt"),
+                updatedAt=status.get("updatedAt"),
+                progress=status.get("progress"),
                 errors=[f"Corrupted result payload: {str(exc)}"],
             )
 

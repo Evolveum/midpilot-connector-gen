@@ -25,7 +25,7 @@ from src.core.errors import LLMUnavailableError
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.jobs import append_job_error, report_job_error, update_job_progress
 from src.modules.codegen.core.base import ChunkProcessor, endpoints_to_records
-from src.modules.codegen.core.fix_connector import run_connector_fix_pass
+from src.modules.codegen.core.fix_connector import extract_script_tag_blocks, run_connector_fix_pass
 from src.modules.codegen.errors import (
     ConnectorFixContextTooLargeError,
     ConnectorFixEscalationFailedError,
@@ -39,15 +39,22 @@ from src.modules.codegen.schema import (
     ConnectorFixLLMResponse,
     ConnectorFixRejection,
     ConnectorFixResult,
+    ConnectorFixScriptUpdate,
     ConnectorScript,
     EndpointsPayload,
-    GroovyCodePayload,
+    ScriptTagBlock,
 )
-from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, resolve_artifact_docs_paths
-from src.modules.codegen.selection.docs_loader import load_required_adoc_text
+from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, resolve_artifact_docs_sections
+from src.modules.codegen.selection.docs_loader import load_required_adoc_text, select_adoc_sections
 from src.modules.codegen.selection.relevant_chunks import collect_connector_relevant_chunks
-from src.modules.codegen.utils.groovy_validation import normalize_groovy_code, validate_groovy_code
-from src.modules.codegen.utils.prompt_records import build_fix_attribute_mapping_records, render_prompt_records
+from src.modules.codegen.utils.code_output import build_connector_code_output
+from src.modules.codegen.utils.connector_code_validation import validate_connector_code
+from src.modules.codegen.utils.postprocess import strip_markdown_fences
+from src.modules.codegen.utils.prompt_records import (
+    build_complete_attribute_mapping_records,
+    build_sql_context_prompt_vars,
+    render_prompt_records,
+)
 from src.session.info_metadata import get_session_connection_target
 from src.shared.enums import ApiType, JobStage
 
@@ -101,9 +108,11 @@ async def fix_connector_code(
 
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
     connection_target = base_api_url or database_name
-    dsl_documentation = _load_dsl_documentation(artifacts, protocol)
-    extracted_attributes = render_prompt_records(build_fix_attribute_mapping_records(attributes))
+    # Reading and slicing the bundled references is synchronous file and regex work.
+    dsl_documentation = await asyncio.to_thread(_load_dsl_documentation, artifacts, protocol)
+    extracted_attributes = render_prompt_records(build_complete_attribute_mapping_records(attributes))
     extracted_endpoints = render_prompt_records(endpoints_to_records(endpoints)) if endpoints is not None else ""
+    sql_context = build_sql_context_prompt_vars(attributes) if protocol is ApiType.SQL else None
 
     async def run_pass(
         *,
@@ -119,6 +128,7 @@ async def fix_connector_code(
             dsl_documentation=dsl_documentation,
             extracted_attributes=extracted_attributes,
             extracted_endpoints=extracted_endpoints,
+            sql_context=sql_context,
             job_id=job_id,
             documentation_query=documentation_query,
             documentation_chunks=documentation_chunks,
@@ -201,13 +211,16 @@ async def fix_connector_code(
             escalation_failure_detail,
         )
 
+    final_outputs = {
+        artifact.operation_key: await build_connector_code_output(
+            accepted[artifact.operation_key].code if artifact.operation_key in accepted else artifact.code
+        )
+        for artifact in artifacts
+    }
     if accepted:
         await store_fixed_connector_scripts(
             session_id,
-            {
-                by_operation_key[key].session_key: GroovyCodePayload.model_construct(code=accepted_script.code)
-                for key, accepted_script in accepted.items()
-            },
+            {by_operation_key[key].session_key: final_outputs[key] for key in accepted},
             job_id=job_id,
         )
     else:
@@ -218,7 +231,7 @@ async def fix_connector_code(
             ConnectorScript(
                 operation_key=artifact.operation_key,
                 session_key=artifact.session_key,
-                code=(accepted[artifact.operation_key].code if artifact.operation_key in accepted else artifact.code),
+                **final_outputs[artifact.operation_key],
             )
             for artifact in artifacts
         ],
@@ -259,7 +272,10 @@ async def _validate_proposed_scripts(
     Keep the proposed scripts that are usable; report the rest.
 
     One unusable script must not sink the others, and an operation key the
-    connector does not have never becomes a new session row.
+    connector does not have never becomes a new session row. A ``fixed_scripts``
+    entry whose ``code`` echoes one or more input ``<script>`` tags (see
+    ``render_script_bundle``) is expanded into one candidate per tag first, each
+    validated against the operation its own tag names - see ``_resolve_proposed_blocks``.
 
     :return: (accepted by resolved operation key, rejections, count of *unusable*
         proposals - a proposal identical to the stored script is reported but is
@@ -270,33 +286,40 @@ async def _validate_proposed_scripts(
     unusable_count = 0
 
     for script in response.fixed_scripts:
-        operation_key = _resolve_operation_key(script.operation_key, by_operation_key)
-        if operation_key is None:
-            rejections.append(
-                ConnectorFixRejection(
-                    operation_key=script.operation_key,
-                    reason="No such operation in this connector.",
+        for block in _resolve_proposed_blocks(script):
+            operation_key = _resolve_operation_key(block.operation_key, by_operation_key)
+            if operation_key is None:
+                rejections.append(
+                    ConnectorFixRejection(
+                        operation_key=block.operation_key,
+                        reason="No such operation in this connector.",
+                    )
                 )
-            )
-            unusable_count += 1
-            continue
-        candidates.append((operation_key, script.code, script.reason))
+                unusable_count += 1
+                continue
+            mismatch = _describe_tag_mismatch(block, by_operation_key[operation_key])
+            if mismatch is not None:
+                rejections.append(ConnectorFixRejection(operation_key=operation_key, reason=mismatch))
+                unusable_count += 1
+                continue
+            candidates.append((operation_key, block.code, script.reason))
 
-    # groovy-parser is CPU-bound; validating a full object class inline would stall the loop.
+    # YAML parsing and groovy-parser are both CPU-bound; validating a full object class inline
+    # would stall the loop.
     validation_errors = await asyncio.to_thread(
-        lambda: [validate_groovy_code(code) for _, code, _ in candidates],
+        lambda: [validate_connector_code(code) for _, code, _ in candidates],
     )
 
     accepted: Dict[str, AcceptedScript] = {}
     for (operation_key, code, reason), validation_error in zip(candidates, validation_errors):
         if validation_error is not None:
             rejections.append(
-                ConnectorFixRejection(operation_key=operation_key, reason=f"Invalid Groovy: {validation_error}")
+                ConnectorFixRejection(operation_key=operation_key, reason=f"Invalid code: {validation_error}")
             )
             unusable_count += 1
             continue
-        normalized = normalize_groovy_code(code)
-        if normalized == normalize_groovy_code(by_operation_key[operation_key].code):
+        normalized = strip_markdown_fences(code)
+        if normalized == strip_markdown_fences(by_operation_key[operation_key].code):
             rejections.append(
                 ConnectorFixRejection(
                     operation_key=operation_key, reason="Proposed script is identical to the stored one."
@@ -317,6 +340,36 @@ async def _validate_proposed_scripts(
     return accepted, rejections, unusable_count
 
 
+def _resolve_proposed_blocks(script: ConnectorFixScriptUpdate) -> List[ScriptTagBlock]:
+    """
+    One block per ``<script>`` tag ``script.code`` echoes back from the input bundle, or
+    the script's own code untouched when it echoes no tag - the expected, well-behaved case.
+    """
+    blocks = extract_script_tag_blocks(script.code)
+    if blocks:
+        return blocks
+    return [ScriptTagBlock(operation_key=script.operation_key, kind=None, object_class=None, code=script.code)]
+
+
+def _describe_tag_mismatch(block: ScriptTagBlock, artifact: ConnectorArtifact) -> str | None:
+    """None when the block's own tag attributes, if any, agree with the resolved artifact."""
+    if block.kind is not None and block.kind != artifact.kind.value:
+        return (
+            f"<script> tag kind '{block.kind}' does not match operation {artifact.operation_key}'s "
+            f"artifact kind '{artifact.kind.value}'."
+        )
+    if (
+        block.object_class is not None
+        and artifact.object_class is not None
+        and block.object_class != artifact.object_class
+    ):
+        return (
+            f"<script> tag objectClass '{block.object_class}' does not match operation "
+            f"{artifact.operation_key}'s object class '{artifact.object_class}'."
+        )
+    return None
+
+
 def _resolve_operation_key(proposed: str, by_operation_key: Mapping[str, ConnectorArtifact]) -> str | None:
     """Exact match first, then one case-insensitive lookup; object-class keys are lowercased."""
     candidate = proposed.strip()
@@ -332,8 +385,9 @@ def _resolve_operation_key(proposed: str, by_operation_key: Mapping[str, Connect
 
 def _load_dsl_documentation(artifacts: Sequence[ConnectorArtifact], protocol: ApiType) -> str:
     sections: List[str] = []
-    for docs_path in resolve_artifact_docs_paths(artifacts, protocol):
-        sections.append(f"== {docs_path}\n\n{load_required_adoc_text(_DOCUMENTATIONS_PACKAGE, docs_path)}")
+    for docs_path, headings in resolve_artifact_docs_sections(artifacts, protocol).items():
+        text = select_adoc_sections(load_required_adoc_text(_DOCUMENTATIONS_PACKAGE, docs_path), headings)
+        sections.append(f"== {docs_path}\n\n{text}")
     return "\n\n".join(sections)
 
 

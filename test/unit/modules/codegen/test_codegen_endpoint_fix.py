@@ -25,6 +25,7 @@ from src.modules.digester.errors import (
     ObjectClassNotFoundError,
 )
 from src.shared.enums import ApiType
+from src.shared.job_types import job_type_policy
 
 CREATE_CODE = 'objectClass("user") {\n    create {\n    }\n}'
 UPDATE_CODE = 'objectClass("user") {\n    update {\n    }\n}'
@@ -106,8 +107,10 @@ async def test_fix_schedules_an_uncached_job_carrying_the_object_class_scripts()
     assert kwargs["worker_kwargs"]["scripts"] == job_input_reference("scripts")
     assert kwargs["worker_kwargs"]["midpoint_errors"] == job_input_reference("midpointErrors")
 
-    # The write-back lives in the worker, so a cache hit would skip it entirely.
-    assert kwargs["input_payload"]["skipCache"] is True
+    # The write-back lives in the worker, so a cache hit would skip it entirely: the job
+    # type's policy declares it non-cacheable instead of a per-request skipCache flag.
+    assert job_type_policy(kwargs["job_type"]).cache is None
+    assert "skipCache" not in kwargs["input_payload"]
     # Many {key}Output rows are published by the worker; the job contract carries only one.
     assert "session_result_key" not in kwargs
 

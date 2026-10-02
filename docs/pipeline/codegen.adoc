@@ -3,7 +3,7 @@
 
 link:index.adoc[← Pipeline overview] | link:../index.adoc[Documentation index]
 
-Codegen generates the Groovy code of the midPoint connector, one operation at
+Codegen generates declarative YAML or Groovy code for the midPoint connector, one operation at
 a time, from the API model extracted by the link:digester.adoc[digester] plus
 the relevant documentation chunks.
 
@@ -11,7 +11,7 @@ Module: `src/modules/codegen/`
 
 == Endpoints
 
-All paths are prefixed with `/api/codegen` and follow the
+All paths are prefixed with `/api/v1/codegen` and follow the
 link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 `PUT` overwrite the stored code manually).
 
@@ -24,10 +24,9 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
   output and the preferred authorization methods.
 
 | `/{sessionId}/classes/{objectClass}/native-schema`
-| The native schema definition for one object class.
-
-| `/{sessionId}/classes/{objectClass}/connid`
-| The ConnId schema mapping for one object class.
+| The native schema definition for one object class, including its ConnId
+  attribute mapping (`UID` / `NAME`). Both live in the same artifact
+  (declarative YAML or Groovy).
 
 | `/{sessionId}/classes/{objectClass}/search/{intent}`
 | Search operation; `intent` is `all` (list all), `filter` (query by
@@ -43,30 +42,121 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
   `apiType` query override.
 
 | `/{sessionId}/classes/{objectClass}/fix`
-| Fixes all generated CRUD, search, native-schema, and ConnID scripts of one
-  object class from midPoint runtime errors. `POST` enqueues and `GET` polls.
+| Fixes all generated CRUD, search and native-schema scripts of one object class
+  from midPoint runtime errors. `POST` enqueues and `GET` polls.
 |===
 
 == How generation works
 
+See link:codegen-references.adoc[Reference documentation] for the operation/protocol
+registry and manual update instructions.
+
 1. *Context assembly* — for each operation, `selection/` gathers the digester
    outputs (attributes, auth, and endpoints where available) and the chunks
    recorded as relevant for the operation's result key, plus required midPoint
-   connector-development reference material (`selection/docs_loader.py`). SQL
-   CRUD/search generation requires attributes but not endpoints.
+   connector-development reference material (`selection/docs_loader.py`),
+   including the bundled declarative-YAML reference for the resolved protocol
+   (`OperationAssets.declarative_docs_path` in `selection/protocol_selectors.py`
+   — a shared REST/SCIM reference and a separate SQL one). SQL CRUD/search
+   generation requires attributes but not endpoints.
 2. *Protocol-specific prompts* — prompts live under `prompts/`, split by
-   protocol (`rest/`, `scim/`, `sql/`) and operation. The protocol is chosen
+   protocol (`rest/`, `scim/`, `sql/`) and operation. Every operation prompt
+   splices in the shared YAML-vs-Groovy policy
+   (`prompts/declarative_format_prompts.py`): the LLM prefers declarative YAML
+   whenever the bundled reference documents it as sufficient, and falls back to
+   Groovy — or YAML with the documented scripting hooks embedded — only where
+   the reference shows Groovy is required. The protocol is chosen
    by the effective link:../api-type.adoc[apiType]; SCIM additionally injects
    a shared SCIM context so generated code follows the fixed SCIM baseline
    contracts. The connection target is read per protocol: REST and SCIM get the
    base API URL, SQL gets `databaseName` and no URL at all.
 3. *Generation and validation* — the LLM output goes through post-processing
-   and Groovy validation (`utils/groovy_validation.py`,
-   `utils/postprocess.py`). Validation failures feed a *repair* loop
-   (`repair.py`, `prompts/repair_prompts.py`) that asks the LLM to fix the
-   specific problem instead of regenerating blindly.
-4. The final script is persisted in the session under the operation's result
-   key.
+   and format-aware validation (`utils/connector_code_validation.py`, which
+   detects YAML vs. Groovy and checks known YAML fields with strict types plus the existing
+   Groovy parser for documented script fields; `utils/postprocess.py`). Unknown nested
+   YAML options are preserved and logged as `[Codegen:Validation]` warnings, not job
+   errors: the connector runtime may support options missing from the local model.
+   Their values and scripts are not validated locally. Unknown root keys, malformed
+   structures, duplicate keys and invalid known scripts still block acceptance. Worker
+   validation runs in a thread without executing the embedded code. New generation
+   sends an empty `<result>` until the first valid artifact is accepted; subsequent
+   chunks receive that artifact. Invalid responses leave the previous result intact.
+   A repair starts with `currentScript` and preserves its format according to the
+   repair instructions (`repair.py`, `prompts/repair_prompts.py`). No extra LLM call
+   is introduced by validation.
+4. The final artifact is persisted in the session under the operation's result
+   key as `{"format": "YAML", "code": "..."}` or
+   `{"format": "GROOVY", "code": "..."}`. Format detection uses the final accepted
+   code without an additional LLM call. YAML containing embedded Groovy remains
+   `YAML`, because the whole artifact must be loaded as YAML.
+
+=== Code result contract
+
+All code-generation status endpoints retain the existing job envelope, including
+`jobId`, `status`, `progress`, `errors`, and `result`. For a finished generation,
+the `result` payload contains:
+
+[source,json]
+----
+{
+  "format": "YAML",
+  "code": "objectClasses: {user: {create: {enabled: true}}}"
+}
+----
+
+`format` is always present: `YAML` or `GROOVY` for code, and JSON `null` when no
+code was accepted. The `code` field remains a string. For an empty generation,
+`result` is `{"format": null, "code": ""}` and the existing `errors` array explains
+the outcome. YAML `{}` is a nonempty valid artifact and has format `YAML`.
+
+For SQL and SCIM CRUD/search generation, recognized empty default artifacts are
+normalized before validation, including after cleanup. The result names the target
+object class and operation and explains that the framework defaults apply:
+
+[source,yaml]
+----
+# No changes needed. Use framework defaults.
+objectClasses:
+  "user":
+    create: {}
+----
+
+An equivalent empty Groovy artifact keeps Groovy format:
+
+[source,groovy]
+----
+objectClass("user") {
+    create {
+        // No changes needed. Use framework defaults.
+    }
+}
+----
+
+This adds no executable handler or extra LLM call. Customizations and comments about
+unmet requirements remain intact. Missing model output still follows the failure
+contract above; it is never converted into a successful defaults result. Stored
+artifacts and manual overrides are not rewritten.
+
+This contract covers authorization, native schema, every search intent, create,
+update, delete, and relations. Single-operation repairs report the
+format of the returned code, including the original artifact if no repair was accepted.
+
+Object-class fix results retain their existing fields. Each item in `result.scripts`
+includes its own format, for example:
+
+[source,json]
+----
+{
+  "operationKey": "userUpdate",
+  "sessionKey": "userUpdateOutput",
+  "format": "GROOVY",
+  "code": "objectClass(\"user\") { update {} }"
+}
+----
+
+Unchanged scripts also include their format. Manual override requests still accept
+`{"code": "..."}`; the server determines and stores the format alongside the validated
+code. Override acknowledgements and generation enqueue responses are unchanged.
 
 === Protocol coverage
 
@@ -74,11 +164,11 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 |===
 | Endpoint | `rest` | `scim` | `sql`
 
-| `native-schema` | yes | yes | yes (REST prompt, SQL reference doc)
-| `connid` | yes | yes | yes (protocol-independent)
+| `native-schema` | yes | yes | yes (SQL context and SQL reference)
 | `search/{intent}` | yes | yes | yes
 | `create` / `update` / `delete` | yes | yes | yes
-| `relations/{relationName}` | yes | yes | yes
+| `relations/{relationName}` | Groovy (YAML `relationships` is rejected by the connector) | Groovy, respecting automatic SCIM mappings
+| discovery only; scripted relationship overrides are unsupported
 | `authorization` | yes | yes | *not supported*
 |===
 
@@ -95,10 +185,10 @@ case the per-operation repair cannot serve: midPoint rejected that object class
 and you do not know which of its operations is at fault. `objectClass` is a
 required path parameter and must identify a class in `objectClassesOutput`.
 
-1. *Collect* - generated Create, Search All/Filter/ID, Update, Delete,
-   NativeSchema, and ConnID scripts are loaded only for the selected object
-   class. Authorization, relation scripts, and scripts of all other object
-   classes are intentionally outside the fix scope. A class removed from
+1. *Collect* - generated Create, Search All/Filter/ID, Update, Delete and
+   NativeSchema scripts are loaded only for the selected object class.
+   Authorization, relation scripts, and scripts of all other object classes are
+   intentionally outside the fix scope. A class removed from
    `objectClassesOutput` cannot be fixed through this endpoint.
 2. *Fix* - all scripts plus the midPoint errors go to the LLM in one call,
    together with the bundled midPoint DSL reference for the operations present.
@@ -140,8 +230,9 @@ Complete the digester sequence for the class first — `endpoints` →
 NOTE: Protocol-specific generation endpoints accept an `apiType` query
 parameter that overrides the detected protocol for that request. Relation
 generation first uses the explicit override, then a matching
-`relationsAnalysisOutput.apiType`, then the detected session protocol. ConnID
-generation remains protocol-independent.
+`relationsAnalysisOutput.apiType`, then the detected session protocol. Since the
+ConnID mapping is part of `native-schema`, that endpoint's `apiType` override
+governs it too.
 
 NOTE: Relation codegen receives the accepted seven-field relation record plus a
 compact internal context. SCIM context keeps application attributes (for

@@ -13,7 +13,8 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.database.models.base import Base, utc_now
+from src.database.models.base import Base
+from src.shared.clock import utc_now
 
 if TYPE_CHECKING:
     from src.database.models.job import Job

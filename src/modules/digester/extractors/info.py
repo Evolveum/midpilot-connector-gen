@@ -147,91 +147,26 @@ async def extract_info_metadata(doc_items: List[dict], application_name: str, jo
         lookup_rest_web_search(application_name),
     )
 
-    for raw_infos, has_relevant_data, chunk_id in info_results:
-        normalized_infos: List[InfoMetadataExtraction] = []
-
-        if isinstance(raw_infos, list):
-            for item in raw_infos:
-                if isinstance(item, InfoMetadataExtraction):
-                    normalized_infos.append(item)
-                    continue
-                if isinstance(item, InfoExtractionResponse):
-                    if item.info_metadata is not None:
-                        normalized_infos.append(item.info_metadata)
-                    continue
-                if isinstance(item, dict):
-                    try:
-                        parsed_info = InfoExtractionResponse.model_validate(item).info_metadata
-                        if parsed_info is not None:
-                            normalized_infos.append(parsed_info)
-                        continue
-                    except Exception as response_exc:
-                        try:
-                            normalized_infos.append(InfoMetadataExtraction.model_validate(item))
-                        except Exception as metadata_exc:
-                            logger.warning(
-                                "[Digester:InfoMetadata] Dropping invalid metadata item from chunk %s after "
-                                "InfoExtractionResponse and InfoMetadataExtraction validation failed. errors=%s/%s",
-                                chunk_id,
-                                type(response_exc).__name__,
-                                type(metadata_exc).__name__,
-                            )
-                            continue
-        elif isinstance(raw_infos, InfoMetadataExtraction):
-            normalized_infos.append(raw_infos)
-        elif isinstance(raw_infos, InfoExtractionResponse):
-            if raw_infos.info_metadata is not None:
-                normalized_infos.append(raw_infos.info_metadata)
-        elif isinstance(raw_infos, dict):
-            try:
-                parsed_info = InfoExtractionResponse.model_validate(raw_infos).info_metadata
-                if parsed_info is not None:
-                    normalized_infos.append(parsed_info)
-            except Exception as response_exc:
-                try:
-                    normalized_infos.append(InfoMetadataExtraction.model_validate(raw_infos))
-                except Exception as metadata_exc:
-                    logger.warning(
-                        "[Digester:InfoMetadata] Dropping invalid metadata payload from chunk %s after "
-                        "InfoExtractionResponse and InfoMetadataExtraction validation failed. errors=%s/%s",
-                        chunk_id,
-                        type(response_exc).__name__,
-                        type(metadata_exc).__name__,
-                    )
-
+    # Both extractors declare their parse_fn output, so each result is already the
+    # validated model list; no shape negotiation is needed here.
+    for infos, has_relevant_data, chunk_id in info_results:
         logger.info(
             "[Digester:InfoMetadata] Chunk %s: extracted %s metadata candidates",
             chunk_id,
-            len(normalized_infos),
+            len(infos),
         )
-        all_info_candidates.extend(normalized_infos)
+        all_info_candidates.extend(infos)
 
         if has_relevant_data:
             track_relevant_chunk(chunk_id)
 
-    for raw_api_types, has_relevant_data, chunk_id in api_type_results:
-        normalized_api_types: List[ApiTypeResponse] = []
-
-        candidates = raw_api_types if isinstance(raw_api_types, list) else [raw_api_types]
-        for item in candidates:
-            if isinstance(item, ApiTypeResponse):
-                normalized_api_types.append(item)
-            elif isinstance(item, dict):
-                try:
-                    normalized_api_types.append(ApiTypeResponse.model_validate(item))
-                except Exception as exc:
-                    logger.warning(
-                        "[Digester:ApiType] Dropping invalid apiType payload from chunk %s: %s",
-                        chunk_id,
-                        type(exc).__name__,
-                    )
-
+    for api_type_candidates, has_relevant_data, chunk_id in api_type_results:
         logger.info(
             "[Digester:ApiType] Chunk %s: extracted %s apiType candidates",
             chunk_id,
-            len(normalized_api_types),
+            len(api_type_candidates),
         )
-        all_api_type_candidates.extend(normalized_api_types)
+        all_api_type_candidates.extend(api_type_candidates)
 
         if has_relevant_data:
             track_relevant_chunk(chunk_id)

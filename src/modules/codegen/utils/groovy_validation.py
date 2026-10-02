@@ -8,15 +8,6 @@ from typing import Any, Optional
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
 
 
-class GroovyValidationError(ValueError):
-    """Raised when Groovy code cannot be validated or parsed."""
-
-
-def normalize_groovy_code(code: str) -> str:
-    """Strip Markdown fences and surrounding whitespace from Groovy code."""
-    return strip_markdown_fences(code).strip()
-
-
 def validate_groovy_code(code: str) -> Optional[str]:
     """
     Validate Groovy syntax using the python `groovy-parser` package.
@@ -24,7 +15,7 @@ def validate_groovy_code(code: str) -> Optional[str]:
     Returns:
         None when the code is valid, otherwise a human-readable error message.
     """
-    normalized = normalize_groovy_code(code)
+    normalized = strip_markdown_fences(code)
     if not normalized:
         return "Groovy code cannot be empty"
 
@@ -36,15 +27,6 @@ def validate_groovy_code(code: str) -> Optional[str]:
         return _clean_validation_message(str(exc)) or "groovy-parser rejected the Groovy code"
 
     return None
-
-
-def ensure_valid_groovy_code(code: str) -> str:
-    """Return normalized Groovy code or raise with validation details."""
-    normalized = normalize_groovy_code(code)
-    error = validate_groovy_code(normalized)
-    if error is not None:
-        raise GroovyValidationError(error)
-    return normalized
 
 
 @lru_cache(maxsize=1)

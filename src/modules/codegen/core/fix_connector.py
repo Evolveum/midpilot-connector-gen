@@ -13,7 +13,8 @@ must not touch the session repository or the job scheduler.
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+import re
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -33,7 +34,11 @@ from src.modules.codegen.prompts.fix_prompts import (
     get_connector_fix_system_prompt,
     get_connector_fix_user_prompt,
 )
-from src.modules.codegen.schema import ConnectorFixLLMResponse
+from src.modules.codegen.prompts.sql.fix_prompts import (
+    get_sql_connector_fix_system_prompt,
+    get_sql_connector_fix_user_prompt,
+)
+from src.modules.codegen.schema import ConnectorFixLLMResponse, ScriptTagBlock
 from src.shared.enums import ApiType
 
 logger = logging.getLogger(__name__)
@@ -58,6 +63,38 @@ def render_script_bundle(artifact_payloads: Sequence[Dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
+_SCRIPT_TAG_PATTERN = re.compile(r"<script\s+([^>]*)>\n?(.*?)\n?</script>", re.DOTALL)
+_SCRIPT_TAG_ATTRIBUTE_PATTERN = re.compile(r'(\w+)="([^"]*)"')
+
+
+def extract_script_tag_blocks(code: str) -> List[ScriptTagBlock]:
+    """
+    Recover ``<script>`` blocks the model echoed back from :func:`render_script_bundle`'s
+    input tags instead of returning bare code for the one operation it was asked to fix.
+
+    The fix prompt asks for bare code, but the model does not always comply, and when it
+    does not it can quote more than one block - e.g. by copying several unmodified inputs
+    alongside the one it actually changed. Returns one block per well-formed
+    ``<script operationKey="..." ...>`` tag found, in document order; an empty list means
+    ``code`` carries no such wrapper and must be used exactly as given.
+    """
+    blocks: List[ScriptTagBlock] = []
+    for match in _SCRIPT_TAG_PATTERN.finditer(code):
+        attributes = dict(_SCRIPT_TAG_ATTRIBUTE_PATTERN.findall(match.group(1)))
+        operation_key = attributes.get("operationKey")
+        if not operation_key:
+            continue
+        blocks.append(
+            ScriptTagBlock(
+                operation_key=operation_key,
+                kind=attributes.get("kind"),
+                object_class=attributes.get("objectClass"),
+                code=match.group(2),
+            )
+        )
+    return blocks
+
+
 def render_previous_attempt(response: ConnectorFixLLMResponse) -> str:
     lines = [f"- {script.operation_key}: {script.reason}" for script in response.fixed_scripts]
     if response.analysis:
@@ -67,13 +104,15 @@ def render_previous_attempt(response: ConnectorFixLLMResponse) -> str:
 
 async def _enforce_prompt_token_budget(
     *,
+    system_prompt: str,
+    user_prompt: str,
     partial_variables: Dict[str, Any],
     prompt_vars: Dict[str, Any],
 ) -> None:
     """Estimate the complete rendered chat input before invoking the provider."""
     parser: PydanticOutputParser[Any] = PydanticOutputParser(pydantic_object=ConnectorFixLLMResponse)
-    system_text = get_connector_fix_system_prompt.format(**partial_variables)
-    user_text = get_connector_fix_user_prompt.format(**prompt_vars)
+    system_text = system_prompt.format(**partial_variables)
+    user_text = user_prompt.format(**prompt_vars)
     rendered_input = f"{system_text}\n\n{parser.get_format_instructions()}\n\n{user_text}"
     input_tokens = await asyncio.to_thread(count_tokens, rendered_input)
     limit = config.codegen.fix_max_input_tokens
@@ -90,6 +129,7 @@ async def run_connector_fix_pass(
     dsl_documentation: str,
     extracted_attributes: str,
     extracted_endpoints: str,
+    sql_context: Mapping[str, str] | None,
     job_id: UUID,
     documentation_query: str | None = None,
     documentation_chunks: str = "",
@@ -136,11 +176,26 @@ async def run_connector_fix_pass(
         "documentation_context": documentation_context,
         "previous_attempt": previous_attempt_section,
     }
-    await _enforce_prompt_token_budget(partial_variables=partial_variables, prompt_vars=prompt_vars)
+    if protocol is ApiType.SQL:
+        if sql_context is None:
+            raise ValueError("SQL connector fix requires physical table and ConnID projection context")
+        prompt_vars.update(sql_context)
+        system_prompt = get_sql_connector_fix_system_prompt
+        user_prompt = get_sql_connector_fix_user_prompt
+    else:
+        system_prompt = get_connector_fix_system_prompt
+        user_prompt = get_connector_fix_user_prompt
+
+    await _enforce_prompt_token_budget(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        partial_variables=partial_variables,
+        prompt_vars=prompt_vars,
+    )
 
     chain = build_structured_chain(
-        get_connector_fix_system_prompt,
-        get_connector_fix_user_prompt,
+        system_prompt,
+        user_prompt,
         ConnectorFixLLMResponse,
         partial_variables=partial_variables,
     )

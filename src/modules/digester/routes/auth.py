@@ -17,6 +17,7 @@ from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.digester import orchestration
 from src.modules.digester.schemas import AuthInfo, AuthResponse
 from src.session.access import ensure_session_exists, resolve_session_job_id
+from src.shared.session_keys import AUTH
 
 router = APIRouter(tags=["Digester: Auth"])
 
@@ -66,7 +67,7 @@ async def get_auth_status(
         repo,
         session_id,
         jobId,
-        session_key="authJobId",
+        session_key=AUTH.job_id,
         job_label="auth",
     )
 

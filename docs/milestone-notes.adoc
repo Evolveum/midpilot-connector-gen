@@ -17,6 +17,1082 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-10-02 Relation analysis job snapshots and companion outputs
+
+Author: Alexander Brecko
+
+Description: Relation extraction now snapshots the effective `apiType` and
+per-class attribute/endpoint outputs in `jobs.input.classSchemaSnapshot`.
+Its worker publishes `relationsOutput` and the internal
+`relationsAnalysisOutput` together, guarded by `relationsJobId`. Relation
+codegen snapshots matching analysis as `jobs.input.relationContext`.
+Queued relation jobs from the previous milestone are not executable by the
+new worker signatures, and new jobs must not be executed by old workers.
+The public seven-field relation records remain unchanged. Manual relation
+overrides clear the associated analysis; codegen then uses the supplied
+records without machine analysis.
+
+`DIGESTER__RELATION_GENERIC_ATTRIBUTE_TOKENS` has been removed. Relation
+extraction uses evidence and configured per-stage limits instead of generic
+attribute tokens. SQL codegen interprets the analysis within the current
+framework's discovery-only relationship support; it does not emit unsupported
+Groovy relationship overrides.
+
+No database schema change, database recreation or data backup is required
+for this relation change. Other entries in this milestone still apply when
+upgrading from a snapshot preceding their changes.
+
+Required Upgrade Steps
+. Block new client requests at the gateway while the previous workers finish
+their work. In the application PostgreSQL database, repeat the following
+query until it returns `0` before stopping any API or worker process:
++
+[source,sql]
+----
+SELECT count(*) FROM jobs WHERE status IN ('queued', 'running');
+----
+. Remove `DIGESTER__RELATION_GENERIC_ATTRIBUTE_TOKENS` from `.env` and deployment
+environment overrides. Review the `DIGESTER__RELATION_*` limits documented in
+`docs/pipeline/relations.adoc`; the staged pipeline can perform more LLM calls
+than the previous extraction. Existing concurrency settings still apply.
+. Stop the previous processes and deploy the new revision with
+`docker compose up -d --build midpilot-connector-gen`, or start the host
+installation with `uv run python server.py`. Start standalone workers with
+`uv run python -m src.jobs.runtime` only after all processes use this revision.
+. For retained sessions, complete attribute and endpoint extraction before
+requesting `POST /api/v1/digester/{sessionId}/relations?skipCache=true`.
+Poll `GET /api/v1/digester/{sessionId}/relations?jobId={jobId}` until finished.
+Then regenerate each selected relationship with
+`POST /api/v1/codegen/{sessionId}/relations/{relationName}?skipCache=true`
+and poll its corresponding GET endpoint. These are authenticated API requests
+using the deployment's existing gateway configuration. Regeneration replaces
+old relation artifacts, including SQL Groovy overrides from development builds.
+. Validate with `uv run poe qa` using the configured test database. Confirm
+that the relation status response retains its seven-field records and does
+not expose `_sessionCompanionOutputs` or the internal analysis.
+
+Rollback Procedure (If Upgrade Fails)
+. Block new requests and drain queued/running jobs with the same SQL query;
+the previous worker cannot consume the new relation snapshots.
+. Stop all API and worker processes, restore the previous source revision and
+environment configuration, and restart with the same commands above.
+. Rerun relation extraction and relation codegen with `skipCache=true` using
+the endpoints above. No database restore is needed for this change. Validate
+`GET /health` and poll the regenerated relation jobs before reopening traffic.
+
+Notes & References
+* Related task: 11417. Related PR: the existing
+`feature/assisted-advanced-relationships` merge request into `dev`.
+* Docs: `docs/pipeline/relations.adoc`, `docs/pipeline/codegen.adoc`.
+* Affected configuration: removed `DIGESTER__RELATION_GENERIC_ATTRIBUTE_TOKENS`;
+new per-stage `DIGESTER__RELATION_*` settings in `src/config/digester.py`.
+* Affected job types: `digester.getRelations`, `codegen.getRelation`.
+
+=== 2026-10-02 Stored documentation selection, job-type policies and session key contract
+
+Author: Alexander Brecko
+
+Description: Attribute (`digester.getObjectClassSchema`) and endpoint
+(`digester.getEndpoints`) jobs no longer store the whole session documentation
+(`documentationItems`) and a separate `relevantDocumentations` list in
+`jobs.input`. They store a `documentationSelection`: each selected chunk once
+plus `primary`, `fallback`, `scimBaseline` and `sqlSchema` reference lists, the
+effective protocol as `apiType`, and the existing request parameters. The
+fallback attempt and the SCIM baseline are captured when the job is scheduled
+and no longer read the session's documentation at run time, so documentation
+added after the request does not change a queued job. Job inputs and worker
+arguments of these two job types are therefore incompatible with the previous
+milestone in both directions.
+
+The cache identity of these jobs now covers the selected documentation (text,
+content type, tags, the attempt each chunk belongs to and, for the SCIM
+baseline and SQL schema chunks, their order), the protocol and the request
+parameters, but not chunk UUIDs or documentation outside the selection. Results cached by the previous milestone for these two job types are
+not reused; the first request after the upgrade runs the extraction again.
+Cached relevance is remapped between the stored selections of the source and
+the reusing job.
+
+Every job type now has an explicit policy (`src/shared/job_types.py`). A job
+row whose type has no policy, e.g. `codegen.getConnID`, fails explicitly when it
+is claimed, and a status request for it returns HTTP 500. `codegen.fixConnector`
+is non-cacheable by policy and its job input no longer carries `skipCache`.
+
+Session `*Input` keys keep identifiers and caller-supplied metadata only:
+`{operationKey}Input` (create, update, delete, search) no longer copies
+`attributes` and `endpoints`, `{objectClass}NativeSchemaInput` no longer copies
+`attributes`, `{relationName}CodeInput` holds `relationName` instead of the
+relations payload, and `relationsInput` no longer copies the object classes.
+Nothing reads these keys back; key names are unchanged.
+
+The midPoint-facing HTTP contract is unchanged: `/openapi.json` is identical,
+and empty uploads (422) and session-creation failures (500) still answer with
+`{"detail": "..."}`. A failed `documentation.processUpload` job now records the
+rejection message without the former `415: ` / `422: ` status prefix in its
+`errors` list, and is logged without a stack trace. A digester job whose session
+disappears while it prepares its documentation now records
+`Session {sessionId} not found` instead of
+`Session with ID {sessionId} does not exist.`; the HTTP 404 body of the same
+condition is unchanged.
+
+No database schema change, Alembic migration, backfill or database recreation
+is required.
+
+Required Upgrade Steps
+. Stop new work from reaching the service while its workers keep running: block
+client traffic at the gateway (or stop the midPoint wizard and other callers),
+but do not stop the API/worker processes yet.
+. Let the previous milestone finish every queued and running job, because the
+new workers cannot execute attribute or endpoint jobs scheduled by the old
+version. Repeat until the count is `0`:
++
+[source,shell]
+----
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM jobs WHERE status IN ('"'"'queued'"'"', '"'"'running'"'"');"'
+----
++
+For externally managed PostgreSQL, run
+`SELECT count(*) FROM jobs WHERE status IN ('queued', 'running');` in the
+application database.
+. Check that no job row has a type without a policy. The query must return no
+rows:
++
+[source,sql]
+----
+SELECT job_type, count(*) FROM jobs
+WHERE job_type NOT IN (
+  'discovery.getCandidateLinks', 'scrape.getRelevantDocumentation',
+  'documentation.processUpload', 'digester.getObjectClass',
+  'digester.getObjectClassSchema', 'digester.getEndpoints',
+  'digester.getRelations', 'digester.getConnectivityEndpoint',
+  'digester.getAuth', 'digester.getInfoMetadata', 'codegen.getAuthorization',
+  'codegen.getNativeSchema', 'codegen.getSearch', 'codegen.getCreate',
+  'codegen.getUpdate', 'codegen.getDelete', 'codegen.getRelation',
+  'codegen.fixConnector')
+GROUP BY job_type;
+----
++
+If `codegen.getConnID` rows remain, run the cleanup from the 2026-09-30 note
+*Removal of the deprecated connid codegen endpoints*. Remove rows of any other
+listed type only after confirming nobody needs their history.
+. Stop the API and all worker processes, deploy this revision and start them
+the usual way: `docker compose up -d --build midpilot-connector-gen`, or
+`uv run python server.py` (and `python -m src.jobs.runtime` for standalone
+workers) for a host installation. No configuration change is needed.
+. Re-open client traffic. Verify `/health`, then request attributes and
+endpoints for one object class per protocol and confirm the new job input
+holds the selection:
++
+[source,sql]
+----
+SELECT job_type, input ? 'documentationSelection' AS has_selection,
+       input ? 'documentationItems' AS has_corpus
+FROM jobs
+WHERE job_type IN ('digester.getObjectClassSchema', 'digester.getEndpoints')
+ORDER BY created_at DESC LIMIT 5;
+----
++
+New rows must report `has_selection = true` and `has_corpus = false`.
+. Validate with `uv run poe qa` and `uv run poe test test/integration -q`
+against the test database.
+
+Rollback Procedure (If Upgrade Fails)
+. Block client traffic again and let this revision finish every queued and
+running job, using the count query from the upgrade steps; the previous
+milestone cannot execute attribute or endpoint jobs scheduled by this revision.
+. Stop the API and all workers, restore the previous source revision and start
+it with `docker compose up -d --build midpilot-connector-gen` (or
+`uv run python server.py` for a host installation).
+. No database restore is needed: the schema is unchanged, results and session
+outputs written by this revision are read unchanged by the previous milestone,
+and its cache simply does not reuse attribute or endpoint results stored by
+this revision.
+
+Notes & References
+* Related PR: Not created.
+* Docs: `docs/sessions-and-jobs.adoc` (session keys, result caching),
+`docs/pipeline/digester.adoc` (documentation captured for attributes and
+endpoints).
+* Affected job inputs: `digester.getObjectClassSchema`, `digester.getEndpoints`,
+`codegen.fixConnector`.
+* Affected session keys: `{operationKey}Input`, `{objectClass}NativeSchemaInput`,
+`{relationName}CodeInput`, `relationsInput` (content only, names unchanged).
+* Affected configs: None.
+
+=== 2026-09-30 Align connector generation with the connector runtime
+
+Author: Alexander Brecko
+
+Description: The bundled codegen references now follow `conndev`
+`b5c8205584fef90ee6bb58d06ebf60fdb081bdba`, `connector-scimrest`
+`0abab9444ee9afd807a2cd62c21e5fd5b4542ffc` and `connector-sql`
+`16762e98799345f37831ec201600c3ac733f237d`, and are corrected where the
+upstream documentation disagrees with the runtime. Generated YAML may therefore
+use syntax introduced in those revisions (`contentType: application/json` or
+the `APPLICATION_*` shortcuts, `body: EMPTY`, and `connId.name` shortcuts such
+as `NAME`) and writes `connId.type` as the case-sensitive Java class name
+(`Long`, `GuardedString`, ...). REST and SCIM relationship generation now
+produces a Groovy `relationship("...")` block, because the runtime rejects a
+YAML `relationships` block.
+
+Declarative YAML validation now rejects what the runtime rejects: a
+`connId.type` other than the Java class names; a `jsonType` or `json.type`
+other than `string`, `integer`, `number`, `boolean` or `binary`; a
+`responseFormat` other than `JSON_ARRAY` or `JSON_OBJECT`; an endpoint `method`
+that is not an HTTP method; a `resolutionType` other than `PER_OBJECT` or
+`BATCH`; a scalar `objectExtractor` that starts with `$` or `/`; a root
+`relationships` block; `supportedAttributes` on create or delete endpoints;
+and `implementation` inside the attribute `scim` or `json` block. This applies
+to generated code and to caller-supplied code: the codegen override endpoints
+(`PUT`) return 422 for such YAML, and connector-fix script overrides return
+422 `invalid_connector_script_override`. The shape of midPoint API responses is
+unchanged. Stored artifacts are neither re-validated nor rewritten.
+
+Required Upgrade Steps
+
+. Keep the previous backend version, connector bundles, and resource scripts
+for rollback. No database recreation, database backup, or configuration change
+is required.
+. Build the connector bundles used by midPoint from the revisions above or
+later; see
+xref:codegen-expert-references.adoc#_source_revisions[Source revisions].
+. Restart the backend with
+`docker compose up -d --build midpilot-connector-gen`.
+For a host installation, stop the running backend and start it with
+`uv run python server.py`.
+. List the YAML artifacts stored before the upgrade:
++
+[source,sql]
+----
+SELECT session_id, key
+FROM session_data
+WHERE key LIKE '%Output'
+  AND value ->> 'format' = 'YAML'
+  AND updated_at < '<upgrade timestamp>';
+----
++
+Regenerate every listed REST or SCIM relationship artifact
+(`{relationName}CodeOutput`), because the connector cannot load a YAML
+`relationships` block:
+`POST /api/v1/codegen/{sessionId}/relations/{relationName}?skipCache=true`
+with the operation's existing request body. Regenerate other listed artifacts
+the same way, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema?skipCache=true`,
+or submit a corrected artifact through the corresponding `PUT` endpoint, whose
+422 response names the rejected path.
+. Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen -q`.
+Load the regenerated artifacts in the target connector and verify schema
+discovery, search, and relationship resolution before replacing working
+scripts.
+
+Rollback Procedure (If Upgrade Fails)
+
+. Restore the previous backend version, connector bundles, and resource scripts,
+and restart using the applicable command above.
+. Artifacts generated with this snapshot may use syntax that older connector
+frameworks cannot load. Restore the retained scripts through the codegen `PUT`
+endpoints.
+. No database restore is needed because this change does not modify stored data.
+
+Notes & References
+
+* Related PR: Not assigned.
+* Docs: xref:codegen-expert-references.adoc[Bundled codegen expert references]
+(Source revisions, Deliberate adaptations), `docs/pipeline/codegen.adoc`.
+* Affected endpoints: codegen `PUT` override endpoints and
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix` script overrides
+(stricter YAML validation); `POST /api/v1/codegen/{sessionId}/relations/{relationName}`
+(Groovy output for REST and SCIM).
+* Affected configs: None.
+
+=== 2026-09-30 Removal of the deprecated connid codegen endpoints
+
+Author: Alexander Brecko
+
+Description: The deprecated ConnID codegen endpoints
+`POST|GET|PUT /api/v1/codegen/{sessionId}/classes/{objectClass}/connid` are
+removed. Since the 2026-09-07 change, the ConnID attribute mapping
+(`UID` / `NAME`) is generated into the native-schema script by
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema`; the
+connid endpoints only produced a redundant second script for the same mapping.
+Requests to the removed paths now return 404. All other codegen endpoints, the
+object-class fix, and the supported midPoint response contracts are unchanged.
+
+Required Upgrade Steps
+. Point every caller at the `native-schema` endpoints instead of the `connid`
+ones (generation, status polling and manual override); the 2026-09-07 note
+carries the original migration guidance, including removing any old ConnID
+script from assembled connectors.
+. Recreate the development database, or run the cleanup below. Queued or
+interrupted `codegen.getConnID` jobs reference a worker function that no
+longer exists and fail when claimed; `codegen.fixConnector` jobs persisted
+before the 2026-09-07 merge may carry a `kind=connid` script in their input
+that no longer rehydrates. Finished jobs and their results are not affected,
+and no database schema change is involved.
+. Alternative for operators who cannot recreate the database: stop the API and
+all workers, then discard only the orphaned rows:
++
+[source,shell]
+----
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+BEGIN;
+DELETE FROM session_data WHERE key LIKE '%Connid%';
+DELETE FROM jobs WHERE job_type = 'codegen.getConnID';
+DELETE FROM jobs WHERE job_type = 'codegen.fixConnector'
+  AND input->'scripts' @> '[{"kind": "connid"}]';
+COMMIT;
+SQL
+----
++
+For externally managed PostgreSQL, have its owner run the same statements in
+the application database. The removed session keys are
+`{objectClass}ConnidOutput`, `{objectClass}ConnidInput` and
+`{objectClass}ConnidJobId`; the pattern matches exactly those rows because
+generated keys are lowercase except for these fixed suffixes. Nothing else
+reads them after this change.
+. Rebuild/restart with `docker compose up -d --build midpilot-connector-gen`,
+or start the host process with `uv run python server.py`. Verify `/health` and
+confirm `/openapi.json` no longer lists the connid operations;
+`POST|GET|PUT .../connid` must now return 404.
+. Validate with `uv run poe qa` and
+`uv run poe test test/integration/modules/codegen -q`, then generate a
+`native-schema` for one object class per protocol and confirm the result is a
+single `objectClass` block containing both the attribute definitions and the
+ConnID mapping.
+
+Rollback Procedure (If Upgrade Fails)
+. Stop the updated API and all workers. Restore the previous source revision
+and rebuild/restart with
+`docker compose up -d --build midpilot-connector-gen` (or
+`uv run python server.py` for a host installation).
+. If the development database was recreated, previous sessions, jobs and
+documentation are gone and cannot be recovered without a backup; sessions that
+were retained keep working unchanged. If the cleanup SQL was run, restore the
+deleted rows from a pre-upgrade dump taken with
+`docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > /tmp/midpilot-connid-removal.dump`
+using `pg_restore`.
+. No migration to reverse; the Alembic revision is unchanged by this change.
+
+Notes & References
+* Related PR: Not assigned.
+* Docs: `docs/pipeline/codegen.adoc`, `docs/api-type.adoc`; 2026-09-07 note
+*Native schema absorbs the ConnID attribute mapping*.
+* Affected endpoints: `POST|GET|PUT /api/v1/codegen/{sessionId}/classes/{objectClass}/connid`
+(removed).
+* Affected session keys: `{objectClass}ConnidOutput`, `{objectClass}ConnidInput`,
+`{objectClass}ConnidJobId` (orphaned since 2026-09-07, removed by the cleanup).
+* Affected configs: None.
+
+=== 2026-09-28 Refresh connector-generation framework references
+
+Author: Alexander Brecko
+
+Description: Updated expert documentation and prompts can generate newer REST
+and SCIM YAML syntax that older connector frameworks cannot load, including
+the YAML `scim.extensions` and `scim.flatten` bindings. This supersedes the
+2026-09-14 guidance to declare SCIM extensions in Groovy. Existing scripts and
+midPoint API responses remain unchanged.
+
+The same snapshot changes two inputs of generation:
+
+* Attribute flags that the digester left `null` now reach the native-schema and
+connector-fix prompts with their documented defaults: `true` for `creatable`,
+`updatable`, `readable` and `returnedByDefault`, and `false` for `mandatory`
+and `multiValued`. Previously every `null` flag was rendered as `false`, so the
+same stored digester output can now produce a different
+`{objectClass}NativeSchemaOutput`.
+* Declarative YAML validation accepts unknown nested options and logs them as
+`[Codegen:Validation]` warnings instead of rejecting the artifact. Unknown root
+keys, malformed structures, duplicate keys and invalid known scripts are still
+rejected. As a result, `sql.column` and other nested options that the
+2026-09-14 entry lists as rejected are now accepted with a warning.
+
+Required Upgrade Steps
+
+. Keep the previous backend version, connector bundles, and resource scripts
+for rollback. No database recreation, database backup, or configuration change
+is required.
+. Update the connector bundles used by midPoint to the source revisions listed
+in xref:codegen-expert-references.adoc#_source_revisions[Source revisions],
+or verified compatible builds. The 2026-09-30 entry *Align connector
+generation with the connector runtime* raises these revisions.
+. Where a native schema relied on the previous `false` rendering of an
+undetermined flag, regenerate it with
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema?skipCache=true`
+using the operation's existing request body, and review the changed flags.
+. Restart the backend with
+`docker compose up -d --build midpilot-connector-gen`.
+For a host installation, stop the running backend and start it with
+`uv run python server.py`.
+. Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen -q`.
+Before replacing working scripts, verify REST search pagination and SCIM schema
+discovery with the new scripts on the target connector.
+
+Rollback Procedure (If Upgrade Fails)
+
+* Restore the previous backend version, connector bundles, and resource scripts.
+* Restart using the applicable command above and verify search and schema discovery.
+* No database restore is needed because this change does not modify stored data.
+
+Notes & References
+
+* Related PR: Not created.
+* Docs: xref:codegen-expert-references.adoc[Source revisions and documentation mapping].
+* Affected configs: Generated connector YAML only; no backend settings change.
+
+=== 2026-09-22 Delegate API keys to Gravitee and isolate sessions by fingerprint
+
+Author: Alexander Brecko
+
+Description: Gravitee now issues and validates API keys. The local key registry,
+master-key bypass and `/api/v1/apiKeys` management endpoints are removed.
+`AUTH__MODE=prod` (the default) requires `X-Gravitee-Api-Key` forwarded by a
+trusted gateway. `AUTH__MODE=dev` explicitly bypasses key and ownership
+checks. The previous `AUTH__API_KEY_REQUIRED`, `AUTH__MASTER_API_KEY` and
+`X-API-Key` settings/header no longer select an authentication mode or identity.
+
+Sessions store `owner_key_hash` instead of the `api_key_id` foreign key; job
+result reuse is scoped to that same fingerprint. Rotation creates a new owner,
+and ownerless development sessions are inaccessible in Gravitee mode. Supported
+midPoint session/pipeline success response shapes and ownership-denial 404
+semantics remain unchanged. Gateway-generated authentication errors must be
+verified with consumers. No data-preserving migration/backfill is provided:
+pre-production revisions 006 and 008 were replaced. Existing development databases
+need the explicit schema cleanup below; full database recreation is not required.
+Old keys and ownership links are discarded. Existing sessions become ownerless
+and inaccessible in `prod`, while sessions, jobs and documentation are retained.
+New sessions are isolated by their gateway key. The mode values are strictly
+`dev` and `prod`; intermediate `development` and `gravitee` values are rejected.
+
+Required Upgrade Steps
+. Stop the API and all workers. For the repository Compose deployment, run
+`docker compose stop midpilot-connector-gen`. Stop any separately launched
+`uv run python server.py` process as well.
+. No backup is required for disposable development data. If retaining old data
+for rollback is desired, before cleanup run
+`docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > /tmp/midpilot-before-gravitee.dump`
+and retain the previous source/image revision and configuration. Do not restore
+this old-schema dump into the updated application.
+. Configure and deploy a Gravitee API Key plan with key propagation using
+`X-Gravitee-Api-Key`. Remove Keyless access, disable query credentials, and
+ensure only the gateway can reach backend API routes. See
+`docs/gravitee-authentication.adoc`. Local direct access is only for isolated
+developer testing; it is not a secure hosted deployment.
+. Replace the old auth settings in `.env` and deployment secrets/config with
+`AUTH__MODE=prod`, or `AUTH__MODE=dev` for explicit local bypass.
+Remove `AUTH__API_KEY_REQUIRED` and `AUTH__MASTER_API_KEY`. Replace consumer
+`X-API-Key` headers with `X-Gravitee-Api-Key` and use Gravitee-issued keys.
+. For an existing revision-009 database that still has `api_keys` and
+`sessions.api_key_id`, run this one-time cleanup with all API/workers stopped.
+This intentionally discards only the old key registry and ownership links:
++
+[source,shell]
+----
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+LOCK TABLE sessions, api_keys IN ACCESS EXCLUSIVE MODE;
+ALTER TABLE sessions ADD COLUMN owner_key_hash VARCHAR(64);
+ALTER TABLE sessions ADD CONSTRAINT check_session_owner_key_hash_hex
+  CHECK (owner_key_hash ~ '^[0-9a-f]{64}$');
+CREATE INDEX idx_sessions_owner_key_hash ON sessions (owner_key_hash);
+ALTER TABLE sessions DROP COLUMN api_key_id;
+DROP TABLE api_keys;
+COMMIT;
+SQL
+uv run alembic current
+----
++
+For externally managed PostgreSQL, have its owner execute the same SQL in the
+application database. Do not rerun this cleanup if `owner_key_hash` is already
+present and `api_keys` is absent. No backfill, key transfer or backward-compatible
+read path exists. The Alembic revision remains `009`. Fresh empty databases use
+`uv run alembic upgrade head` instead; no cleanup is needed there. Old databases
+at earlier revisions must first be upgraded with the previous application revision.
+. Rebuild/restart with `docker compose up -d --build midpilot-connector-gen`,
+or start the host process with `uv run python server.py`. Verify `/health` and
+follow the two-key curl tests in `docs/gravitee-authentication.adoc`: own-session
+200, foreign-session 404, creation 201, and gateway rejection of missing/invalid/
+revoked credentials. Confirm direct backend access is blocked in hosted setups.
+
+Rollback Procedure (If Upgrade Fails)
+. Stop the updated API and all workers. Restore the previous application
+source/image revision and its old authentication configuration.
+. Recreate the application database with
+`docker compose exec -T db sh -c 'dropdb --force -U "$POSTGRES_USER" "$POSTGRES_DB"'`
+and `docker compose exec -T db sh -c 'createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'`.
+This rollback deletes current data; use the pre-upgrade dump to recover its
+snapshot. If a pre-upgrade dump exists, restore it with
+`docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exit-on-error' < /tmp/midpilot-before-gravitee.dump`.
+Otherwise run `uv run alembic upgrade head` from the previous source revision;
+previous sessions cannot be recovered without a backup.
+. Restart the previous API/workers. Restore the previous consumer routing and
+`X-API-Key` credentials, verify `/health`, and verify own/foreign-session access.
+Reissue local keys if no backup was restored. Do not run the rewritten downgrade
+chain against an old-schema database.
+
+Notes & References
+* Related PR: Not assigned.
+* Docs: `docs/gravitee-authentication.adoc`; `README.md` authentication section.
+* Affected configs: `AUTH__MODE`; removed `AUTH__API_KEY_REQUIRED` and
+`AUTH__MASTER_API_KEY`; Gravitee key propagation and backend network access.
+* Affected schema: `sessions.owner_key_hash`, removal of `api_keys` and
+`sessions.api_key_id`; rewritten pre-production revisions 006 and 008.
+
+
+=== 2026-09-17 Report YAML or Groovy format with connector code
+
+Author: Alexander Brecko
+
+Description: Every newly generated connector artifact now includes `format` alongside
+`code`: `{"format": "YAML", "code": "..."}` or
+`{"format": "GROOVY", "code": "..."}`. Empty generation results contain
+`{"format": null, "code": ""}`. The existing job envelope remains unchanged;
+consumers read `result.format` and `result.code`. Object-class fixes include `format`
+on each entry in `result.scripts`, including unchanged scripts. Manual overrides
+still accept code-only requests and persist the server-detected format. YAML with
+embedded Groovy is classified as YAML. This changes the result contract consumed by
+midPoint and the JSON payloads stored for codegen jobs and session outputs.
+
+Required Upgrade Steps
+. Update the midPoint consumer to accept `YAML`, `GROOVY`, or JSON `null` in
+`result.format`, and to read the format separately for each `result.scripts` entry
+in object-class fixes. Keep handling the existing job status and errors. Do not
+install an empty code string. Manual override request bodies remain `{"code": "..."}`.
+. Finish outstanding codegen jobs and stop the old backend and any separately
+managed workers before deploying the new snapshot. In the application PostgreSQL
+database, invalidate reusable codegen results with:
++
+[source,sql]
+----
+UPDATE jobs SET normalized_input_hash = NULL WHERE job_type LIKE 'codegen.%';
+----
++
+This is a cache invalidation, not a database schema migration. No database recreation,
+configuration edit, or backup is required: no code or job history is deleted.
+. From the updated checkout, run `docker compose build` followed by
+`docker compose up -d`. For local source execution, restart the backend with
+`uv run poe start` and separately managed workers with `uv run python -m src.jobs.runtime`.
+. Regenerate retained development outputs using their existing request bodies with
+`skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/id?skipCache=true`.
+Poll the new job IDs. Historical job results are not rewritten and can still lack
+`format`; polling an old object-class fix result reports `Corrupted result payload`
+because its script entries do not satisfy the new result schema. Re-submit retained
+manual edits through their existing `PUT` override
+endpoints to populate format metadata. To refresh a retained object-class fix result,
+submit its request again to `POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix`
+and poll the new job ID.
+. Validate with `uv run poe test test/unit/modules/codegen test/integration/modules/codegen test/unit/jobs/test_cache_control.py`,
+`uv run poe lint`, `uv run poe stylecheck`, `uv run poe typecheck`, and
+`uv run poe importcheck`. Verify that a new finished result contains both fields
+and that an empty result retains explicit `"format": null`.
+
+Rollback Procedure (If Upgrade Fails)
+. Finish outstanding jobs and stop the updated backend and separately managed
+workers. Restore the previous backend snapshot and matching midPoint consumer.
+. Run the cache-invalidation SQL above again so the previous snapshot does not
+reuse results with the new contract. Regenerate affected outputs and re-submit
+retained manual overrides after restart. No database downgrade or backup restore
+is required; historical results retain the shape produced by their original snapshot.
+. From the previous checkout, run `docker compose build` followed by
+`docker compose up -d`, or restart local execution with `uv run poe start` and
+separately managed workers with `uv run python -m src.jobs.runtime`.
+. Run the codegen tests above against the restored snapshot and verify that a
+new job returns the previous `result.code` contract before installing its artifact.
+
+Notes & References
+* Related PR: not yet assigned; this entry ships with the implementation.
+* Docs: `docs/pipeline/codegen.adoc`, section "Code result contract".
+* Implementation: `src/modules/codegen/utils/code_output.py` and the codegen
+generation, fix, and persistence boundaries.
+* Affected configs: none. The existing cache behavior is unchanged.
+
+=== 2026-09-16 Tighten codegen prompts against fabricated APIs and undersized search scope
+
+Author: Alexander Brecko
+
+Description: Codegen system prompts now state two additional constraints the model must apply
+when choosing between declarative YAML and Groovy, and when writing Groovy inside any scripting
+hook or custom-implementation block, for every operation (search, create, update, delete) across
+REST, SCIM and SQL: (1) a single scripting-hook value (for example `objectExtractor`,
+`pagingSupport`, a `supportedFilters[].request`, or a SCIM `scim.limitations` filter mapping)
+cannot express a loop over another object class's results, a coordinated multi-call sequence, or a
+locally-defined helper function - that logic must go into the operation's documented full
+custom-implementation block, or a complete Groovy script, instead; and (2) the model must call only
+the objects/methods a bundled reference documents for the hook or custom-implementation context it
+is writing, and must never invent an API surface (most concretely, a generic HTTP client or request
+builder) undocumented for that context. The REST and SCIM search prompts additionally require
+verifying, before declaring or accepting `emptyFilterSupported true`, that the chosen endpoint's own
+documented behavior returns the complete object-class population rather than a caller-, parent-, or
+page-scoped subset; a narrower endpoint must be composed with a broader enumeration via the
+already-documented `objectClass(name).search()`/`search(filter)`/`search(filter, resultHandler)`
+custom-search composition pattern instead of being presented as a complete list-all search. The SQL
+search prompt separately names the exact `SqlCustomQueryBuilderContext` methods the model may call
+and forbids inventing others, or a raw JDBC/HTTP client. This refines the two prompt-policy entries
+from 2026-09-11 ("Declarative YAML preferred over Groovy in connector generation") and 2026-09-14
+("Align codegen with framework references") within the same milestone. It changes no schema
+(`endpoints` and `custom` already coexist under `search` in `connector_yaml_schema.py`), no API
+contract, no configuration, and no part of the LLM call mechanism (generation remains plain-text
+with post-hoc syntax/schema validation only; no new semantic/API-fabrication detector was added to
+the validator). Only prompt text changed, in
+`src/modules/codegen/prompts/declarative_format_prompts.py`,
+`src/modules/codegen/prompts/rest/search_prompts.py`,
+`src/modules/codegen/prompts/scim/search_prompts.py`, and
+`src/modules/codegen/prompts/sql/search_prompts.py`. Every previously generated/stored connector
+artifact remains valid and is not rewritten by this change; it affects only the prompt text used
+for a new generation or an explicit regeneration.
+
+Required Upgrade Steps
+
+. No configuration, environment-variable, or database change is required; this is a
+prompt-text-only change with no schema/API/config break.
+. Rebuild and redeploy to pick up the updated prompt modules: `docker compose build` followed by
+`docker compose up -d`, or for local execution stop and restart the backend with
+`uv run poe start` and any separately managed workers with `uv run python -m src.jobs.runtime`.
+. No action is required for already-generated connectors; stored results are not rewritten. If an
+object class's search was affected by either reported failure mode (a hallucinated HTTP client
+inside `search.custom.implementation`, or a caller/parent-scoped endpoint wrongly declared
+`emptyFilterSupported: true`), regenerate it with `skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/all?skipCache=true`, and review the
+result before installing it.
+. Validate with `uv run poe test test/unit/modules/codegen`, `uv run poe lint`,
+`uv run poe typecheck`, and `uv run poe importcheck`.
+
+Rollback Procedure (If Upgrade Fails)
+
+. Finish or cancel jobs scheduled by this snapshot, then redeploy the previous application
+package (`docker compose build` and `docker compose up -d` from the previous checkout, or restart
+the previous local backend/workers).
+. No database downgrade or backup restoration is required; there is no data migration to roll
+back.
+. If a regeneration performed under this change needs to be reverted, regenerate with
+`skipCache=true` against the restored snapshot; the previous prompt wording resumes automatically
+once the previous snapshot is running.
+
+Notes & References
+* Related PR: not yet assigned; this entry ships with the implementation.
+* Docs: none new; clarifies existing `src/modules/codegen/documentations/rest/custom-search.adoc`,
+`src/modules/codegen/documentations/scim/search.adoc`, and
+`src/modules/codegen/documentations/sql/custom-search.adoc`, which already fully document the
+referenced APIs.
+* Implementation: `src/modules/codegen/prompts/declarative_format_prompts.py`,
+`src/modules/codegen/prompts/rest/search_prompts.py`,
+`src/modules/codegen/prompts/scim/search_prompts.py`,
+`src/modules/codegen/prompts/sql/search_prompts.py`.
+* Affected configs: none.
+* Related milestone entries: 2026-09-11 "Declarative YAML preferred over Groovy in connector
+generation"; 2026-09-14 "Align codegen with framework references".
+
+=== 2026-09-16 Remove application-mismatch chunk filtering
+
+Author: Alexander Brecko
+
+Description: Documentation processing no longer generates `different_app_name`,
+and chunk selection no longer supports `allow_different_app_name` or rejects
+chunks using previously stored application-mismatch flags. This removes an
+obsolete LLM classification that could discard valid API documentation, including
+uploads processed without a known application name. New chunk metadata omits
+the field. Existing metadata and imported/exported metadata remain untouched;
+historical values have no effect on selection. Other selection criteria still
+apply. Supported midPoint-facing response envelopes and HTTP statuses are unchanged.
+
+Required Upgrade Steps
+
+. Remove any custom dependency on `different_app_name` in generated chunk
+metadata and any internal caller argument named `allow_different_app_name`.
+There are no replacement fields or configuration settings.
+. Rebuild and restart container deployments with `docker compose build` and
+`docker compose up -d`. For local execution, stop the backend and restart it
+with `uv run poe start`; restart separately managed workers with
+`uv run python -m src.jobs.runtime`.
+. No database recreation, migration, backup, or documentation re-upload is
+required. To refresh an affected REST class, repeat
+`POST /api/v1/digester/{sessionId}/classes/{objectClass}/endpoints?apiType=rest&skipCache=true`
+and, where affected,
+`POST /api/v1/digester/{sessionId}/classes/{objectClass}/attributes?apiType=rest&skipCache=true`.
+After those jobs finish, regenerate affected codegen operations using the
+refreshed extraction results in the request body: for CRUD, use
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/{operation}?skipCache=true`,
+where `operation` is `create`, `update`, or `delete`. Existing cached results
+are not rewritten.
+. Validate with `uv run poe test test/unit/documents test/unit/session test/integration/modules/digester/test_digester_endpoint_documentation.py test/integration/modules/digester/test_digester_endpoint_endpoints.py`,
+`uv run poe lint`, `uv run poe stylecheck`, `uv run poe typecheck`, and
+`uv run poe importcheck`. Endpoint completeness still depends on the remaining
+selection and extraction rules; retaining a chunk does not guarantee extraction.
+
+Rollback Procedure (If Upgrade Fails)
+. Finish or cancel jobs started by the updated snapshot. From the previous
+snapshot, run `docker compose build` and `docker compose up -d`, or stop local
+processes and restart the previous backend with `uv run poe start` and separately
+managed workers with `uv run python -m src.jobs.runtime`.
+. No database downgrade or backup restoration is necessary. The previous
+filter treats metadata without the flag as eligible under this criterion.
+To regenerate the previous classification for a document processed after this
+change, submit its original file to
+`POST /api/v1/session/{sessionId}/documentation/{documentationId}?skipCache=true`.
+. Repeat affected extraction and generation requests with `skipCache=true` and
+run the validation commands above against the restored snapshot.
+
+Notes & References
+* Related PR: not yet assigned; this entry ships with the implementation.
+* Docs: `docs/pipeline/digester.adoc`.
+* Implementation: `src/documents/processing/`, `src/documents/filtering/`,
+and `src/session/documentation_processing.py`.
+* Affected configs: none. Application name and version remain prompt inputs.
+
+=== 2026-09-16 Report connector generation without accepted code
+
+Author: Alexander Brecko
+
+Description: Fresh connector generation now returns `result: {"code": ""}` when
+no code is accepted, including empty model responses and runs without usable
+documentation. Previously these paths returned synthetic scaffolds. The existing
+`errors` array includes exactly one outcome message: "No connector code was generated.
+Review the application documentation for this operation and retry with skipCache=true."
+Validation errors remain visible alongside this message. Jobs still finish normally;
+provider outages retain their existing failure behavior. Response fields, types, HTTP
+statuses, and job statuses are unchanged. Cached codegen results retain their stored
+diagnostics. A fresh empty result may replace the session's previous generated result;
+a repair without accepted replacement preserves the supplied artifact and reports that
+no repair was generated. Valid framework defaults such as YAML `{}` remain successful.
+
+Required Upgrade Steps
+
+. Update consumers to inspect `result.code` and `errors` after a finished job. Do not
+install an empty artifact; display the diagnostic and review the operation documentation.
+. From the updated checkout, run `docker compose build` followed by
+`docker compose up -d` to rebuild and recreate the application services. For local
+source execution, stop the running backend and restart it with `uv run poe start`;
+restart any separately managed consumers with `uv run python -m src.jobs.runtime`.
+No database recreation, migration, configuration edits, or data backup are required.
+. Existing cached scaffolds are not rewritten. Regenerate affected results with the
+existing request body and `skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/id?skipCache=true`.
+. Validate with `uv run poe test test/unit/modules/codegen test/integration/modules/codegen test/unit/jobs/test_cache_control.py`,
+`uv run poe lint`, `uv run poe typecheck`, and `uv run poe importcheck`.
+
+Rollback Procedure (If Upgrade Fails)
+. Finish or cancel jobs created by this snapshot. From the previous snapshot checkout,
+run `docker compose build` and `docker compose up -d`. For local source execution,
+stop the updated backend and restart the previous snapshot with `uv run poe start`;
+restart separately managed consumers with `uv run python -m src.jobs.runtime`.
+. Regenerate affected empty cached outputs using the same operation request with
+`skipCache=true`. Restore retained connector scripts through the existing override
+endpoints where needed. No database downgrade or backup restoration is required.
+. Run the codegen tests above against the restored version and verify the operation's
+status response and generated artifact before installing it.
+
+Notes & References
+* Related PR: not yet assigned; this entry ships with the implementation.
+* Docs: `docs/pipeline/codegen-references.adoc`.
+* Implementation: `src/modules/codegen/core/base.py`,
+`src/modules/codegen/core/generate_groovy.py`, and `src/jobs/cache.py`.
+* Affected configs: none.
+
+=== 2026-09-14 Align codegen with framework references
+
+Author: Alexander Brecko
+
+Description: Codegen references now follow the current EvolveumDocs SCIMREST and SQL
+documentation. Groovy authorization generation uses `authorization { ... }`, while YAML
+retains `authentication`. REST/SCIM relationship generation can produce YAML. SCIM update
+uses the documented native PUT/PATCH strategies, and SQL search preserves default behavior
+or uses Groovy for WHERE/custom queries. YAML validation accepts documented JSON/SCIM path
+mappings and rejects unsupported `scim.extensions`, `sql.column` (use `sql.name`), and
+`search.endpoints[].method`. The last restriction concerns this YAML handler, not the HTTP
+methods an application may require for search; an appropriate documented custom implementation
+is needed for behavior outside it. Existing midPoint response fields and HTTP contracts are unchanged.
+
+NOTE: Later entries supersede parts of this one. YAML `scim.extensions` is
+supported, and unknown nested options such as `sql.column` are accepted with a
+warning (2026-09-28); the connector itself still requires `sql.name`. YAML
+`search.endpoints[].method` has been accepted since 0.1.0-RC1 and takes any
+HTTP method, and REST and SCIM relationships are generated as Groovy because
+the connector rejects a YAML `relationships` block (2026-09-30).
+
+Required Upgrade Steps
+
+* Allow pending `codegen.getRelation` jobs to finish before restarting with this snapshot;
+new relationship jobs persist their resolved `apiType` and pass it to the worker.
+* Rebuild and deploy the application package, then restart the workers to load the updated
+bundled references and clear in-memory reference caches. No configuration changes or database
+recreation are required.
+* Review existing YAML that uses `sql.column` and replace it with `sql.name`. The
+former SCIM extension and search `method` restrictions no longer apply; see the NOTE above.
+* Regenerate affected outputs with `skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/id?skipCache=true`.
+Use the operation's existing request body. Stored outputs are not rewritten automatically.
+* Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen`,
+`uv run poe lint`, `uv run poe typecheck`, and `uv run poe importcheck`.
+Validate regenerated artifacts in the target connector framework before using them.
+
+Rollback Procedure (If Upgrade Fails)
+
+* Finish or cancel jobs scheduled by this snapshot before restarting the previous application.
+* Redeploy the previous application package and restart workers. Restore previously retained
+connector scripts through the existing override endpoints if regenerated scripts were installed.
+There is no database migration to roll back; a database backup is not required by this change.
+
+Notes & References
+
+* Docs: `docs/pipeline/codegen-references.adoc`.
+* Affected configs: none. Bundled reference paths are internal package resources.
+
+=== 2026-09-11 Declarative YAML preferred over Groovy in connector generation
+
+Author: Alexander Brecko
+
+Description: Every codegen generation call (native schema, create, update, delete, search,
+authorization) now lets the LLM choose between declarative YAML and Groovy for the artifact it
+produces, instead of always producing Groovy. YAML is preferred whenever the bundled
+declarative-format reference documents it as sufficient; Groovy is used automatically when the
+requirement cannot be expressed declaratively, or embedded as a scripting hook inside an otherwise
+YAML artifact where the reference documents that hook. The separate relation artifact remains Groovy-only; the shared reference also documents
+root-level YAML relationships.
+
+Two new/replaced bundled reference documents back this decision:
+`src/modules/codegen/documentations/declarative-yaml.adoc` (new, shared by REST and SCIM) and
+`src/modules/codegen/documentations/sql/declarative-yaml.adoc` (replaced - the previous version
+described an outdated, no-longer-accurate YAML shape). A handful of actively incorrect excerpts in
+existing operation/authentication references were also corrected in this change: the SCIM
+create/update/index references now carry the upstream "in development" caveat for native SCIM
+create and PATCH instead of presenting them as working; `sql/delete.adoc` no longer claims
+child-row cleanup is delegated to `ON DELETE CASCADE` (the connector deletes them explicitly); and
+the authorization prompt and its two bundled references no longer instruct the model to emit a
+non-existent generic `oauth2 { }` block (replaced with the real grant-specific keywords
+`oauth2ClientCredentials`/`oauth2Password`/`oauth2JwtBearer`/`oauth2Saml`) - this last fix corrects
+already-broken OAuth2 authorization generation independent of the YAML/Groovy decision. A full,
+lower-severity documentation-accuracy backlog from the source review was intentionally left for a
+follow-up task; it does not affect correctness of what this change generates.
+
+A new shared, format-aware validator
+(`src/modules/codegen/utils/connector_code_validation.py`) replaces the previously Groovy-only
+validators used by generation (`core/base.py`, `core/generate_groovy.py`), the final LLM cleanup
+pass (now dispatches to a YAML-specific or Groovy-specific cleanup prompt), every manual-override
+endpoint (`GroovyCodePayload`), the object-class connector fix, and per-operation repair. It
+detects the artifact's format before validating and never changes what the LLM chose.
+
+The midPoint-facing contract is unchanged: every affected endpoint still returns
+`{"code": "..."}` (and the equivalent request body shape for overrides/fixes); no format field was
+added. `code` may now contain a declarative YAML document instead of Groovy for an object class
+whose requirements are fully covered by it. This is backward compatible in both directions:
+every existing stored Groovy artifact remains valid and is never rewritten by this change, and a
+repair or fix of an existing Groovy artifact keeps it in Groovy unless the reported problem itself
+requires switching representations.
+
+Separately, this change fixes a latent packaging gap: `.adoc` reference files under
+`src/modules/codegen/documentations/` were never included in a built wheel (`uv build --wheel`
+produced zero `.adoc` files before this change), because that directory tree has no `__init__.py`
+and plain `setuptools` package discovery silently skips it. `pyproject.toml` now discovers it as an
+implicit namespace package and bundles every `*.adoc` file. This only matters when the application
+is installed from a built wheel rather than run from the source checkout (the current Docker image
+`COPY`s the source tree directly, so this specific deployment path was not exposed to the gap) -
+but the two new declarative-yaml.adoc files added by this change would otherwise have joined the
+existing files that were silently missing from any wheel-based install.
+
+No database schema change and no development-database recreation are required. Previously
+accepted YAML with invalid nested types, unknown keys, invalid embedded Groovy, or
+`objectClasses.<name>.relationships` is now rejected on manual override, generation and fix.
+Supported midPoint response shapes and error contracts are unchanged.
+
+.Required Upgrade Steps
+. Review existing YAML artifacts before editing or repairing them. Move relationships to the
+root-level `relationships` map with `subject`/`object`, each containing `class` and
+`attribute: {name, resolver}`. Correct errors reported with their YAML path, or regenerate the
+relevant operation with `skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/create?skipCache=true`.
+. Existing valid YAML and Groovy artifacts require no regeneration. To opt into YAML-preferring
+new generation, regenerate the relevant operation with `skipCache=true`.
+. Validate the deployment with `uv run poe qa`. Then generate at least one object class per
+protocol (`rest`, `scim`, `sql`) for a target with no custom search/authentication requirements and
+confirm the resulting `code` is either valid declarative YAML or valid Groovy (both are accepted),
+and that the connector still deploys and functions in midPoint.
+. If building a distributable wheel of this application (`uv build --wheel` or equivalent), rebuild
+it after this change and confirm it contains
+`modules/codegen/documentations/declarative-yaml.adoc` and
+`modules/codegen/documentations/sql/declarative-yaml.adoc` (and every other bundled `.adoc` file) -
+for example `python -m zipfile -l dist/*.whl | grep '\.adoc$'`.
+
+.Rollback Procedure (If Upgrade Fails)
+. Revert the application commit and redeploy the previous snapshot. There is no database migration
+to reverse and no backup to restore.
+. Any object class regenerated as declarative YAML after this upgrade will fail the reverted
+snapshot's Groovy-only validation if it is later repaired, fixed, or manually overridden there.
+Regenerate that operation with `skipCache=true` under the reverted snapshot before repairing it (it
+will be produced as Groovy again), or restore this snapshot first.
+. Every artifact still stored as Groovy is unaffected by the rollback.
+
+.Notes & References
+* Related PR: Not assigned.
+* Docs: `docs/pipeline/codegen.adoc`;
+`src/modules/codegen/documentations/declarative-yaml.adoc`;
+`src/modules/codegen/documentations/sql/declarative-yaml.adoc`.
+* Affected endpoints: every `POST|GET|PUT` endpoint under
+`/api/v1/codegen/{sessionId}/classes/{objectClass}/*` and
+`/api/v1/codegen/{sessionId}/authorization`, plus
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix` - request/response shapes unchanged,
+only the accepted/returned `code` content may now be declarative YAML.
+* Affected session keys: any `{key}Output` whose `code` field holds a codegen artifact - unchanged
+in structure, potentially different in content on regeneration.
+* Affected configs: `pyproject.toml` build configuration (`[tool.setuptools.packages.find]`,
+`[tool.setuptools.package-data]`) - packaging only, no environment variable or runtime
+configuration change.
+
+=== 2026-09-09 SQL columns separated from the ConnId projection
+
+Author: Alexander Brecko
+
+Description: SQL attribute extraction now treats the database table export or
+raw DDL/JSON schema as the sole authority for physical columns and SQL/JDBC
+types. The Conndev object-class export is stored separately in `sqlContext` as
+the desired ConnId projection. Projection-only names such as `__NAME__` are no
+longer emitted as database columns, and `connIdType` no longer replaces the
+database type.
+
+Existing SQL attribute and native-schema results are incompatible with this
+snapshot. SQL attribute payloads generated before this change have no
+`sqlContext`; native-schema scheduling rejects them with
+`sql_physical_schema_not_found` and requires regeneration. The successful
+midPoint-facing native-schema response remains `{"code":"..."}` and supported
+HTTP response fields, status codes, and nesting are unchanged.
+
+No database schema change and no development-database recreation are required.
+The SQL statement below invalidates reusable result fingerprints only; it does
+not delete jobs or session data.
+
+.Required Upgrade Steps
+. Invalidate cached SQL attribute-extraction and native-schema results:
++
+[source,sql]
+----
+UPDATE jobs
+SET normalized_input_hash = NULL
+WHERE job_type IN (
+    'digester.getObjectClassSchema',
+    'codegen.getNativeSchema'
+);
+----
+. For every existing SQL session, rerun
+`POST /api/v1/digester/{sessionId}/classes/{objectClass}/attributes?skipCache=true`
+for each object class. Confirm that the response contains `sqlContext.physicalTable`
+and that `attributes` is keyed only by physical column name.
+. Rerun
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema?skipCache=true`
+for each SQL object class. Replace the previously generated native-schema
+artifact with the new result.
+. Validate the deployment with `uv run poe qa`. Generate the reported
+`app_user` class and confirm that its physical attributes are exactly `id`,
+`username`, `email`, `created_at`, and `birthdate`, while `__NAME__` appears only
+under `sqlContext.connectorObjectClass.attributes`.
+
+.Rollback Procedure (If Upgrade Fails)
+. Revert the application commit and redeploy the previous snapshot. There is no
+database migration to reverse and no backup to restore.
+. Rerun SQL attribute extraction and native-schema generation with
+`skipCache=true` for sessions regenerated after this upgrade, because the
+previous snapshot expects the combined development payload.
+. The cache invalidation does not need to be reversed. It only forces a fresh
+execution and is safe to leave in place after rollback.
+
+.Notes & References
+* Related PR: Not assigned.
+* Docs: `src/modules/codegen/documentations/sql/schema-customization.adoc`
+* Affected endpoints: `POST|GET|PUT /api/v1/digester/{sessionId}/classes/{objectClass}/attributes`,
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema`, and
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix`.
+* Affected session keys: `{objectClass}AttributesOutput` and
+`{objectClass}NativeSchemaOutput`.
+* Affected configs: None.
+
+=== 2026-09-07 Native schema absorbs the ConnID attribute mapping
+
+*Author:* Alexander Brecko
+
+*Description:* The ConnID attribute mapping (`UID` / `NAME`) is now generated
+into the native-schema script instead of a separate ConnID script. One LLM call
+per object class produces one `objectClass("...")` block containing both the
+attribute definitions and the mapping.
+
+The two scripts were merged into a single object class by the ConnID connector
+at runtime, so the same native attribute name had to be spelled identically in
+both or the connector was rejected. Generating them together removes that
+cross-script contract.
+
+What changed:
+
+* `POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema` now
+  emits the ConnID mapping. `{objectClass}NativeSchemaOutput` therefore has
+  different content for the same input. The HTTP request and response contracts
+  are unchanged.
+* `POST|GET|PUT .../classes/{objectClass}/connid` still work but are marked
+  deprecated in the OpenAPI specification. Their prompt and worker are unchanged.
+* The object-class fix no longer collects `{objectClass}ConnidOutput`. That
+  script is never repaired, and a `scripts` override naming a ConnID operation in
+  a `POST .../fix` body is now rejected with `UnknownConnectorOperationError`.
+* The bundled reference moved from
+  `src/modules/codegen/documentations/rest/30-attribute-to-connid-attributes.adoc`
+  to `src/modules/codegen/documentations/connid-attributes.adoc`, because every
+  protocol now reads it.
+
+No database schema change and no development-database recreation are required.
+The step below is a data-only cache invalidation.
+
+.Required Upgrade Steps
+. Invalidate reusable native-schema job results. This is the only mandatory step
+and the only one that fails silently if skipped:
++
+[source,sql]
+----
+UPDATE jobs SET normalized_input_hash = NULL WHERE job_type = 'codegen.getNativeSchema';
+----
++
+Finished jobs are reused whenever `skipCache` is false and the normalized input
+hash matches (`src/jobs/runner.py`, `src/jobs/cache.py`). The native-schema job
+input is unchanged by this work, `skipCache` and `sessionId` are stripped from
+the fingerprint, reuse is scoped to the API-key owner - deployment-wide when
+`AUTH__API_KEY_REQUIRED` is off - and the window is
+`SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL`, which defaults to four weeks. Without
+this step a session can be handed a pre-merge script, with the job reported
+`finished` and its progress reading `Reused output from job <uuid>`. The
+connector then ships with no `UID`/`NAME` mapping and midPoint rejects the object
+class. The rows keep their status and result, so job history and `GET` polling
+are unaffected; they simply stop matching. Note this is *not* undone by rolling
+the code back - nothing recomputes the fingerprint - which is acceptable because
+the only consequence is one fresh generation.
+. Alternative for operators who cannot run SQL: regenerate each object class with
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema?skipCache=true`.
+. Regenerate `native-schema` for every object class generated before the upgrade.
+An old native schema has no `UID`/`NAME` mapping unless its old ConnID script is
+still deployed beside it.
+. Remove the old ConnID script from any assembled connector that also uses a
+regenerated native schema, or regenerate both. Two scripts declaring the mapping
+for one object class are merged by the connector; duplicate declarations are at
+best redundant and at worst rejected.
+. Validate with `uv run poe qa`, then generate a native schema for one object
+class per protocol and confirm the result is a single `objectClass` block
+containing both the attribute definitions and the ConnID mapping.
+
+.Rollback Procedure (If Upgrade Fails)
+. Revert the application commit and redeploy. No migration to reverse.
+. Regenerate `native-schema` for every object class generated after the upgrade -
+the reverted prompt no longer emits the ConnID mapping - and regenerate the
+matching `connid` script for each of them.
+. Queued `codegen.getNativeSchema` jobs stay claimable by either snapshot; their
+inputs are identical across the change.
+. The cache invalidation is not reversed and does not need to be; it only forces
+one fresh generation per input.
+
+.Notes & References
+* *Related PR:* Not assigned.
+* *Affected endpoints:* `POST|GET|PUT /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema`,
+`POST|GET|PUT /api/v1/codegen/{sessionId}/classes/{objectClass}/connid` (deprecated),
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix`.
+* *Affected session keys:* `{objectClass}NativeSchemaOutput` (content),
+`{objectClass}ConnidOutput` (orphaned).
+* *Affected configs:* None. `SEARCH__DISCOVERY_INPUT_CHECK_INTERVAL` determines
+how long stale reuse would persist if step 1 is skipped.
+* *Docs:* `docs/pipeline/codegen.adoc`, `docs/api-type.adoc`.
+
 === 2026-08-20 Security upgrade of pypdf, aiohttp, h2 and cryptography
 
 *Author:* Alexander Brecko

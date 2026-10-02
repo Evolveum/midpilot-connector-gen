@@ -9,7 +9,12 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.codegen.enums import ArtifactKind, SearchIntent
+from src.modules.codegen.enums import (
+    ArtifactKind,
+    SearchIntent,
+    build_object_class_operation_key,
+    build_search_operation_key,
+)
 from src.modules.codegen.selection.artifact_catalog import (
     ConnectorArtifact,
     ConnectorArtifactSlot,
@@ -19,6 +24,7 @@ from src.modules.codegen.selection.artifact_catalog import (
 )
 from src.modules.digester.errors import ObjectClassesNotFoundError, ObjectClassNotFoundError
 from src.shared.enums import ApiType
+from src.shared.session_keys import codegen_operation_keys
 
 
 def _slot_keys(**kwargs) -> list[str]:
@@ -28,12 +34,34 @@ def _slot_keys(**kwargs) -> list[str]:
 def test_slots_cover_every_operation_of_every_object_class():
     keys = _slot_keys(object_classes=["user", "group"])
 
-    assert len(keys) == 16
+    assert len(keys) == 14
     for object_class in ("user", "group"):
-        for suffix in ("NativeSchema", "Connid", "Create", "Update", "Delete"):
+        for suffix in ("NativeSchema", "Create", "Update", "Delete"):
             assert f"{object_class}{suffix}Output" in keys
         for suffix in ("SearchAll", "SearchFilter", "SearchId"):
             assert f"{object_class}{suffix}Output" in keys
+
+
+@pytest.mark.parametrize(
+    ("kind", "prefix"),
+    [
+        (ArtifactKind.NATIVE_SCHEMA, "userNativeSchema"),
+        (ArtifactKind.CREATE, "userCreate"),
+        (ArtifactKind.UPDATE, "userUpdate"),
+        (ArtifactKind.DELETE, "userDelete"),
+    ],
+)
+def test_object_class_operation_keys_keep_their_established_names(kind, prefix):
+    """The generate, status and override routes and the fix all address these exact rows."""
+    keys = codegen_operation_keys(build_object_class_operation_key("user", kind))
+
+    assert (keys.input, keys.job_id, keys.output) == (f"{prefix}Input", f"{prefix}JobId", f"{prefix}Output")
+
+
+def test_search_operation_keys_keep_their_established_names():
+    keys = codegen_operation_keys(build_search_operation_key("user", SearchIntent.ALL))
+
+    assert (keys.input, keys.job_id, keys.output) == ("userSearchAllInput", "userSearchAllJobId", "userSearchAllOutput")
 
 
 def test_object_class_names_are_normalized_to_the_generated_key_form():
@@ -54,7 +82,7 @@ def test_qualified_sql_object_class_is_preserved_in_artifact_keys():
 def test_slots_skip_blank_names():
     keys = _slot_keys(object_classes=["user", "", "   "])
 
-    assert len(keys) == 8
+    assert len(keys) == 7
 
 
 def test_search_slots_carry_their_intent():
@@ -86,7 +114,7 @@ async def test_load_keeps_only_generated_slots_and_uses_two_queries():
     assert artifacts[1].intent is SearchIntent.ALL
     assert repo.get_session_value.await_count == 1
     repo.get_session_values.assert_awaited_once()
-    assert len(repo.get_session_values.await_args.args[1]) == 8
+    assert len(repo.get_session_values.await_args.args[1]) == 7
 
 
 @pytest.mark.asyncio
@@ -143,14 +171,16 @@ def test_docs_paths_are_deduplicated_across_object_classes():
     paths = resolve_artifact_docs_paths(slots, ApiType.REST)
 
     assert len(paths) == len(set(paths))
-    assert "rest/50-create.adoc" in paths
-    assert "rest/30-attribute-to-connid-attributes.adoc" in paths
+    assert "rest/create.adoc" in paths
+    # Reached through the native-schema slot: the declarative reference and the ConnID mapping
+    # share its script, in that order.
+    assert paths.index("rest/native-schema.adoc") + 1 == paths.index("declarative-yaml.adoc")
+    assert paths.index("declarative-yaml.adoc") + 1 == paths.index("connid-attributes.adoc")
 
 
 @pytest.mark.parametrize(
     "artifact",
     [
-        ConnectorArtifact(operation_key="userConnid", kind=ArtifactKind.CONNID, object_class="user", code="code"),
         ConnectorArtifact(
             operation_key="userSearchFilter",
             kind=ArtifactKind.SEARCH,
@@ -160,14 +190,44 @@ def test_docs_paths_are_deduplicated_across_object_classes():
         ),
         ConnectorArtifact(operation_key="authorization", kind=ArtifactKind.AUTHORIZATION, code="code"),
     ],
-    ids=["object-class", "search-intent", "no-object-class"],
+    ids=["object-class", "no-object-class"],
 )
 def test_an_artifact_survives_the_job_input_round_trip(artifact):
     """The fix job serializes artifacts into its input and rebuilds them in the worker."""
     assert ConnectorArtifact.from_payload(artifact.to_payload()) == artifact
 
 
-def test_connid_reference_is_protocol_independent():
-    slots = [ConnectorArtifactSlot(operation_key="userConnid", kind=ArtifactKind.CONNID, object_class="user")]
+@pytest.mark.parametrize(
+    ("protocol", "schema_docs_path", "declarative_docs_path"),
+    [
+        (ApiType.REST, "rest/native-schema.adoc", "declarative-yaml.adoc"),
+        (ApiType.SCIM, "scim/native-schema.adoc", "declarative-yaml.adoc"),
+        (ApiType.SQL, "sql/native-schema.adoc", "sql/declarative-yaml.adoc"),
+    ],
+)
+def test_fix_docs_include_all_three_references_for_a_native_schema_artifact(
+    protocol, schema_docs_path, declarative_docs_path
+):
+    """
+    Order is part of the contract.
 
-    assert resolve_artifact_docs_paths(slots, ApiType.SQL) == ["rest/30-attribute-to-connid-attributes.adoc"]
+    ``_load_dsl_documentation`` concatenates these in sequence and the fix prompt tells
+    the model the protocol's own schema reference outranks the ConnID one on syntax.
+    For REST this is also the regression guard: ``rest/native-schema.adoc`` carries no
+    ConnID content of its own, so dropping the third document would leave a merged
+    native-schema script with no reference for the mapping it contains.
+    """
+    slots = [
+        ConnectorArtifactSlot(operation_key="userNativeSchema", kind=ArtifactKind.NATIVE_SCHEMA, object_class="user")
+    ]
+
+    assert resolve_artifact_docs_paths(slots, protocol) == [
+        schema_docs_path,
+        declarative_docs_path,
+        "connid-attributes.adoc",
+        *{
+            ApiType.REST: ["schema-script.adoc", "json-types.adoc"],
+            ApiType.SCIM: ["schema-script.adoc", "scim/complex-attributes.adoc", "scim/attribute-flattening.adoc"],
+            ApiType.SQL: ["sql/schema-script.adoc"],
+        }[protocol],
+    ]

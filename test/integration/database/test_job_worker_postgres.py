@@ -26,7 +26,9 @@ from src.jobs.payload import build_execution_payload
 from src.jobs.runner import execute_claimed_job
 from src.jobs.session_persistence import persist_job_pointer
 from src.shared.enums import JobStage
+from src.shared.job_types import JobType, UnknownJobTypeError
 from src.shared.normalize import normalized_input_fingerprint
+from src.shared.session_keys import JobSessionKeys
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
@@ -53,8 +55,6 @@ def _execution_payload(value: str) -> dict:
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key=None,
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
 
 
@@ -74,14 +74,14 @@ async def test_persisted_job_and_pointer_commit_together_for_status_requests(
     async with postgres_session_factory() as writer:
         job_id = await JobRepository(writer).create_job(
             {"value": "hello"},
-            "test.visible",
+            JobType.CODEGEN_FIX_CONNECTOR,
             session_id,
             execution_payload=_execution_payload("hello"),
         )
         await persist_job_pointer(
             SessionRepository(writer),
             session_id,
-            "visible",
+            JobSessionKeys("visible"),
             {"value": "hello"},
             job_id,
         )
@@ -111,7 +111,7 @@ async def _create_queued_job(
             Job(
                 job_id=job_id,
                 session_id=session_id,
-                job_type="test.worker",
+                job_type=JobType.CODEGEN_FIX_CONNECTOR,
                 status="queued",
                 input={"value": value},
                 normalized_input_hash=normalized_input_fingerprint({"value": value}),
@@ -223,6 +223,40 @@ async def test_stale_job_cannot_overwrite_newer_session_pointer(
 
 
 @pytest.mark.asyncio
+async def test_relation_outputs_publish_together_and_reject_stale_jobs(
+    postgres_session_factory: SessionFactory,
+) -> None:
+    session_id = await _create_session(postgres_session_factory)
+    current_job_id, newer_job_id = uuid4(), uuid4()
+    outputs = {"relationsOutput": {"relations": []}, "relationsAnalysisOutput": {"outputFingerprint": "current"}}
+
+    async with postgres_session_factory() as db:
+        repo = SessionRepository(db)
+        await repo.update_session(session_id, {"relationsJobId": str(current_job_id)})
+        await db.commit()
+        assert await repo.update_results_if_current_job(
+            session_id=session_id, result_key="relationsOutput", job_id=current_job_id, values=outputs
+        )
+        await db.commit()
+
+    async with postgres_session_factory() as db:
+        repo = SessionRepository(db)
+        assert await repo.get_session_values(session_id, list(outputs)) == outputs
+        await repo.update_session(session_id, {"relationsJobId": str(newer_job_id)})
+        await db.commit()
+        assert not await repo.update_results_if_current_job(
+            session_id=session_id,
+            result_key="relationsOutput",
+            job_id=current_job_id,
+            values={"relationsOutput": {"stale": True}, "relationsAnalysisOutput": {"stale": True}},
+        )
+        await db.commit()
+
+    async with postgres_session_factory() as db:
+        assert await SessionRepository(db).get_session_values(session_id, list(outputs)) == outputs
+
+
+@pytest.mark.asyncio
 async def test_documentation_retry_is_idempotent_and_preserves_other_job_links(
     postgres_session_factory: SessionFactory,
 ) -> None:
@@ -289,14 +323,14 @@ async def test_documentation_dependency_does_not_consume_an_execution_attempt(
         repo = JobRepository(db)
         dependent_job_id = await repo.create_job(
             {"value": "dependent"},
-            "digester.getAuth",
+            JobType.DIGESTER_AUTH,
             session_id,
             execution_payload=_execution_payload("dependent"),
             documentation_wait_timeout_seconds=750,
         )
         producer_job_id = await repo.create_job(
             {"value": "producer"},
-            "documentation.processUpload",
+            JobType.DOCUMENTATION_PROCESS_UPLOAD,
             session_id,
             execution_payload=_execution_payload("producer"),
         )
@@ -333,14 +367,14 @@ async def test_documentation_wait_timeout_is_recorded_when_producer_remains_pend
         repo = JobRepository(db)
         dependent_job_id = await repo.create_job(
             {"value": "dependent"},
-            "digester.getAuth",
+            JobType.DIGESTER_AUTH,
             session_id,
             execution_payload=_execution_payload("dependent"),
             documentation_wait_timeout_seconds=750,
         )
         await repo.create_job(
             {"value": "producer"},
-            "documentation.processUpload",
+            JobType.DOCUMENTATION_PROCESS_UPLOAD,
             session_id,
             execution_payload=_execution_payload("producer"),
         )
@@ -417,7 +451,7 @@ async def test_binary_artifacts_are_loaded_separately_and_deleted_on_finish(
         repo = JobRepository(db)
         artifact_job_id = await repo.create_job(
             {"value": "artifact"},
-            "test.artifact",
+            JobType.CODEGEN_FIX_CONNECTOR,
             session_id,
             execution_payload=_execution_payload("artifact"),
             binary_artifacts={"upload": b"binary-payload"},
@@ -452,13 +486,11 @@ async def test_durable_runner_deserializes_publishes_and_finalizes(
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key="echoOutput",
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
     async with postgres_session_factory() as db:
         echo_job_id = await JobRepository(db).create_job(
             {"value": "hello", "skipCache": True},
-            "test.echo",
+            JobType.CODEGEN_FIX_CONNECTOR,
             session_id,
             execution_payload=execution_payload,
         )
@@ -493,7 +525,7 @@ async def test_invalid_queued_job_is_failed_explicitly(
             Job(
                 job_id=invalid_job_id,
                 session_id=session_id,
-                job_type="test.invalid",
+                job_type=JobType.CODEGEN_FIX_CONNECTOR,
                 status="queued",
                 input={},
                 normalized_input_hash=normalized_input_fingerprint({}),
@@ -604,7 +636,7 @@ async def test_a_job_failed_by_the_reaper_also_reports_the_failed_stage(
             Job(
                 job_id=invalid_job_id,
                 session_id=session_id,
-                job_type="test.invalid",
+                job_type=JobType.CODEGEN_FIX_CONNECTOR,
                 status="queued",
                 input={},
                 normalized_input_hash=normalized_input_fingerprint({}),
@@ -641,12 +673,10 @@ async def test_an_expected_domain_failure_is_logged_without_a_stack_trace(
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key=None,
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
     async with postgres_session_factory() as db:
         job_id = await JobRepository(db).create_job(
-            {"skipCache": True}, "test.missingDocumentation", session_id, execution_payload=execution_payload
+            {"skipCache": True}, JobType.CODEGEN_FIX_CONNECTOR, session_id, execution_payload=execution_payload
         )
         await db.commit()
 
@@ -682,12 +712,10 @@ async def test_a_server_app_error_is_logged_with_its_exception_chain(
         worker_kwargs={},
         dynamic_input_provider=None,
         session_result_key=None,
-        await_documentation=False,
-        await_documentation_timeout=None,
     )
     async with postgres_session_factory() as db:
         job_id = await JobRepository(db).create_job(
-            {"skipCache": True}, "test.unavailableLlm", session_id, execution_payload=execution_payload
+            {"skipCache": True}, JobType.CODEGEN_FIX_CONNECTOR, session_id, execution_payload=execution_payload
         )
         await db.commit()
 
@@ -709,3 +737,42 @@ async def test_a_server_app_error_is_logged_with_its_exception_chain(
         job = await JobRepository(db).get_job(job_id)
     assert job is not None
     assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_a_job_of_an_unknown_type_fails_explicitly_before_its_worker_runs(
+    postgres_session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row left behind by a removed job type gets no implicit policy; it fails on claim."""
+    session_id = await _create_session(postgres_session_factory)
+    job_id = uuid4()
+    async with postgres_session_factory() as db:
+        db.add(
+            Job(
+                job_id=job_id,
+                session_id=session_id,
+                job_type="codegen.getConnID",
+                status="queued",
+                input={"value": "legacy"},
+                normalized_input_hash=normalized_input_fingerprint({"value": "legacy"}),
+                execution_payload=_execution_payload("legacy"),
+                max_attempts=3,
+            )
+        )
+        await db.commit()
+
+    claim = await _claim(postgres_session_factory, worker_id="worker-legacy")
+    assert claim is not None
+    monkeypatch.setattr("src.jobs.runner.async_session_maker", postgres_session_factory)
+    monkeypatch.setattr("src.jobs.lifecycle.async_session_maker", postgres_session_factory)
+    await execute_claimed_job(claim)
+
+    async with postgres_session_factory() as db:
+        job = await JobRepository(db).get_job(job_id)
+        assert job is not None
+        assert job.status == "failed"
+        assert job.result is None
+        assert any("Unknown job type 'codegen.getConnID'" in error for error in job.errors or [])
+        with pytest.raises(UnknownJobTypeError):
+            await JobRepository(db).get_job_status(job_id)

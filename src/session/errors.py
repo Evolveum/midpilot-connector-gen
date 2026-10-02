@@ -71,3 +71,51 @@ class DocumentationImportConflictError(AppError):
             "existing data. The most likely cause is a chunkId that is already used by another "
             "document; chunk ids must be unique across all sessions."
         )
+
+
+class SessionCreationFailedError(AppError):
+    """Raised when persisting a new session fails for a reason the caller cannot fix.
+
+    midPoint consumes this response in FastAPI's ``{"detail": ...}`` envelope; the
+    composition root registers that mapping, so the message is part of the contract.
+    """
+
+    status_code = 500
+    code = "session_creation_failed"
+
+    def __init__(self) -> None:
+        super().__init__("Unable to create session")
+
+
+class DocumentationUploadRejectedError(AppError):
+    """Base for uploaded documentation the service cannot accept.
+
+    Raised both while a request reads the upload and later, while the background
+    job parses it; the job runner then records an expected client failure without
+    a stack trace. HTTP responses keep FastAPI's ``{"detail": ...}`` envelope
+    (registered in the composition root), so subclass messages are part of the
+    contract.
+    """
+
+    status_code = 422
+    code = "documentation_upload_rejected"
+
+
+class UnsupportedDocumentationFormatError(DocumentationUploadRejectedError):
+    """Raised when no parser accepts the upload's content type or file suffix."""
+
+    status_code = 415
+    code = "unsupported_documentation_format"
+
+    def __init__(self, content_type: str, filename: str) -> None:
+        super().__init__(
+            f"Unsupported documentation content type '{content_type}' for {filename}. "
+            "Supported uploads include JSON, YAML, OpenAPI, Markdown, AsciiDoc, HTML, XML, CSV, SQL, text, PDF, and DOCX."
+        )
+
+
+class InvalidDocumentationContentError(DocumentationUploadRejectedError):
+    """Raised when an upload is empty, unreadable or yields no text."""
+
+    status_code = 422
+    code = "invalid_documentation_content"

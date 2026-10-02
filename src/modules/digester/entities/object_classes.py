@@ -3,7 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import logging
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from uuid import UUID
 
 from src.core.db import async_session_maker
@@ -12,7 +12,13 @@ from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.modules.digester.enums import ConfidenceLevel
+from src.modules.digester.errors import (
+    InvalidObjectClassesOutputError,
+    ObjectClassesNotFoundError,
+    ObjectClassNotFoundError,
+)
 from src.shared.coerce import as_dict_list, as_list
+from src.shared.session_keys import OBJECT_CLASSES, JobSessionKeys, attributes_keys, endpoints_keys
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +28,9 @@ CONFIDENCE_PRIORITY: Dict[ConfidenceLevel, int] = {
     ConfidenceLevel.LOW: 2,
 }
 ObjectClassResultField = Literal["attributes", "endpoints"]
-_POINTER_SUFFIX_BY_FIELD: dict[ObjectClassResultField, str] = {
-    "attributes": "Attributes",
-    "endpoints": "Endpoints",
+_POINTER_KEYS_BY_FIELD: dict[ObjectClassResultField, Callable[[str], JobSessionKeys]] = {
+    "attributes": attributes_keys,
+    "endpoints": endpoints_keys,
 }
 
 
@@ -63,6 +69,20 @@ def sort_object_class_dicts(object_classes: List[Any]) -> List[Any]:
         ),
     )
     return [*sorted_classes, *passthrough]
+
+
+async def resolve_object_class(repo: SessionRepository, session_id: UUID, object_class: str) -> Dict[str, Any]:
+    """Resolve a stored class using the established digester read/error contract."""
+    output = await repo.get_session_data(session_id, OBJECT_CLASSES.output)
+    if not output or not isinstance(output, dict):
+        raise ObjectClassesNotFoundError(session_id)
+    classes = output.get("objectClasses", [])
+    if not isinstance(classes, list):
+        raise InvalidObjectClassesOutputError(session_id)
+    target = find_object_class(classes, object_class)
+    if target is None:
+        raise ObjectClassNotFoundError(object_class, session_id)
+    return target
 
 
 def find_object_class(object_classes: List[Any], object_class: str) -> Optional[Dict[str, Any]]:
@@ -194,7 +214,7 @@ async def update_object_class_field_in_session(
             return False
 
         if execution is not None:
-            pointer_key = f"{object_class}{_POINTER_SUFFIX_BY_FIELD[field_name]}JobId"
+            pointer_key = _POINTER_KEYS_BY_FIELD[field_name](object_class).job_id
             if not await repo.is_current_job_pointer(
                 session_id=session_id,
                 pointer_key=pointer_key,
@@ -203,7 +223,7 @@ async def update_object_class_field_in_session(
             ):
                 return False
 
-        object_classes_output = await repo.get_session_value(session_id, "objectClassesOutput")
+        object_classes_output = await repo.get_session_value(session_id, OBJECT_CLASSES.output)
         if not isinstance(object_classes_output, dict):
             return False
 
@@ -217,7 +237,7 @@ async def update_object_class_field_in_session(
 
         target[field_name] = field_value
         object_classes_output["objectClasses"] = sort_object_class_dicts(object_classes)
-        await repo.update_locked_session(session_id, {"objectClassesOutput": object_classes_output})
+        await repo.update_locked_session(session_id, {OBJECT_CLASSES.output: object_classes_output})
         await db.commit()
         logger.info(
             "[Digester:ObjectClasses] Updated '%s' field for object class '%s'",

@@ -1,0 +1,318 @@
+= ConnId attribute mapping and value types
+
+In order to properly implement the connector, you need to identify which attributes from the resource you are connecting to should be used for the standard ConnID attributes.
+
+The ConnID framework requires attributes `UID` and `NAME` to be defined for each object class.
+
+`UID`::
+ A single-valued attribute that represents the _unique identifier_ of an object within the name-space of the target resource.
+If possible, this unique identifier also should be immutable.
+When an application creates an object on a target resource, the create operation returns as its result the Uid of the created object.
+
+`NAME`::
+A single-valued attribute that represents the _user-friendly identifier_
+of an object on a target resource.
+For instance, the name of an Account will most often be its loginName.
+The value of Name need not be unique within ObjectClass. In
+LDAP, for example, the Name could be the Common Name (CN).
+Contrast this with Uid, which is intended to be a unique identifier (and, if possible, immutable)
+
+== Mapping Script
+
+The attribute mapping is defined in a Groovy script that uses a builder pattern to describe the mapping between application attributes and ConnID attributes.
+
+[source, groovy]
+----
+objectClass("User") {
+    connIdAttribute("UID", "id")
+    connIdAttribute("NAME", "name")
+}
+----
+
+In this example, we are mapping the `id` attribute of the object class to the built-in `UID` attribute, and the `name` attribute to the `NAME` attribute.
+
+The `connIdAttribute` method takes two parameters: the first is the name of the built-in ConnID attribute (e.g., `UID`, `NAME`), and the second is the *native* name of the corresponding attribute of the object class (e.g., `id`, `name`). For SCIM-based object classes the native name is the attribute as declared in the schema script — the SCIM wire path is described separately (see the `scim { path ... }` / `scim { name ... }` blocks in xref:scim/native-schema.adoc[SCIM schema customization]). The `connIdAttribute` method accepts only the built-in ConnID attributes as the first parameter.
+
+NOTE: If `NAME` is not explicitly mapped, it is derived from the `UID` mapping by default (the same underlying attribute).
+
+
+== Built-in Attribute Catalog
+
+The complete set of built-in attributes, their required value types, flags,
+and where the framework defines them.
+
+NOTE: "Enforced" = whether the ConnId framework *rejects* a wrong type at runtime
+(see "Enforcement Tiers" below). Everything else is a *convention*: the framework
+will accept it, but midPoint (and the framework's own accessors) expects the
+documented type.
+
+=== Identification attributes
+
+[cols="2,1,1,2,2",options="header"]
+|===
+| ConnId Name | Type | Multi | Flags | Defined in
+
+| `pass:[__UID__]`
+| `String` (single value, non-blank, canonical)
+| no
+| none; never part of schema; never in `create()`
+| `Uid` (no `AttributeInfo` exists for it)
+
+| `pass:[__NAME__]`
+| `String`
+| no
+| `REQUIRED`
+| `Name.INFO`
+|===
+
+Hard rules (the framework throws):
+
+* `Uid` constructor rejects blank values (`Uid.java`, `check()`).
+* A `ConnectorObject` *must* contain a `Uid` instance and a `Name` instance —
+  plain `Attribute` objects with those names are rejected
+  (`ConnectorObject.java`, constructor).
+* `pass:[__UID__]` must not appear in the connector `Schema` nor in the attribute
+  set of a `create()` call. The `create()` result (the returned `Uid`) is the
+  only way the client learns the UID.
+* `Uid` optionally carries `revision` (MVCC string) and `nameHint` (last known
+  `Name`) — both plain strings, `nameHint` used to disambiguate/rename reliably.
+
+=== Operational attributes
+
+`OperationalAttributes` (names) + `OperationalAttributeInfos` (standard types/flags).
+"Operational" means the attribute expresses an *operation* on the object, not a
+data field — e.g. creating the object in a disabled state in one `create()` call.
+
+[cols="2,1,1,2,2",options="header"]
+|===
+| ConnId Name | Type | Multi | Flags | Semantics
+
+| `pass:[__ENABLE__]`
+| `boolean`
+| no
+| -
+| account enable/disable state
+
+| `pass:[__ENABLE_DATE__]`
+| `long` (epoch milliseconds, UTC)
+| no
+| -
+| when the account became enabled
+
+| `pass:[__DISABLE_DATE__]`
+| `long` (epoch milliseconds, UTC)
+| no
+| -
+| when the account becomes/has become disabled
+
+| `pass:[__LOCK_OUT__]`
+| `boolean`
+| no
+| -
+| whether the account is locked out
+
+| `pass:[__PASSWORD__]`
+| `GuardedString`
+| no
+| `NOT_READABLE`, `NOT_RETURNED_BY_DEFAULT`
+| write password (normally write-only)
+
+| `pass:[__CURRENT_PASSWORD__]`
+| `GuardedString`
+| no
+| `NOT_READABLE`, `NOT_RETURNED_BY_DEFAULT`
+| current password for self-service change (legacy pseudo-attribute)
+
+| `pass:[__PASSWORD_EXPIRED__]`
+| `boolean`
+| no
+| -
+| whether the password is expired
+
+| `pass:[__PASSWORD_EXPIRATION_DATE__]`
+| `long` (epoch milliseconds, UTC)
+| no
+| -
+| password expiry date
+
+| `pass:[__FORCE_PASSWORD_CHANGE__]`
+| `boolean`
+| no
+| -
+| force user to change password at next logon
+|===
+
+Date convention: the `AttributeInfo` javadoc recommends representing dates as
+`long` in UTC. The accessors in `AttributeUtil` confirm the runtime types:
+
+* `AttributeUtil.isEnabled()` / `isLockedOut()` / `getPasswordExpired()` →
+  `Boolean` (via `getBooleanValue`)
+* `AttributeUtil.getPasswordExpirationDate()` / `getEnableDate()` → `Date` built
+  from a `long` (via `getLongValue`/`getDateValue`)
+* `AttributeUtil.getPasswordValue()` / `getCurrentPasswordValue()` →
+  `GuardedString` (via `getGuardedStringValue`)
+
+=== Predefined (non-operational) attributes
+
+`PredefinedAttributes` (names) + `PredefinedAttributeInfos` (standard types/flags).
+
+[cols="2,1,1,2,2",options="header"]
+|===
+| ConnId Name | Type | Multi | Flags | Semantics
+
+| `pass:[__SHORT_NAME__]`
+| `String` (default type)
+| no
+| -
+| display label for the object
+
+| `pass:[__DESCRIPTION__]`
+| `String` (default type)
+| no
+| -
+| object description
+
+| `pass:[__LAST_PASSWORD_CHANGE_DATE__]`
+| `long` (epoch milliseconds, UTC)
+| no
+| `NOT_CREATABLE`, `NOT_UPDATEABLE`
+| read-only last password change date
+
+| `pass:[__PASSWORD_CHANGE_INTERVAL__]`
+| `long` (milliseconds)
+| no
+| -
+| password change interval policy
+
+| `pass:[__LAST_LOGIN_DATE__]`
+| `long` (epoch milliseconds, UTC)
+| no
+| `NOT_CREATABLE`, `NOT_UPDATEABLE`
+| last login date (inactivity detection)
+
+| `pass:[__GROUPS__]`
+| `String` (each value is a group `Uid`)
+| yes
+| `NOT_RETURNED_BY_DEFAULT`
+| groups the object (usually an account) belongs to
+
+| `pass:[__AUXILIARY_OBJECT_CLASS__]`
+| `String` (each value is an object class name)
+| yes
+| -
+| pseudo-attribute for auxiliary object classes
+|===
+
+
+== Date Value Types: `long` vs `ZonedDateTime`
+
+`ZonedDateTime` is a fully supported ConnId attribute type (`FrameworkUtil.ATTR_SUPPORTED_TYPES`),
+and midPoint maps it to `xsd:dateTime` in the generated resource schema
+(`XsdTypeMapper` — `ZonedDateTime.class` → `xsd:dateTime`). Whether you should
+*use* it depends on whether the attribute is a built-in one.
+
+=== Regular attributes: `ZonedDateTime` is supported end-to-end
+
+schema::
+  `ZonedDateTime` → `xsd:dateTime`; the shadow attribute is typed `XMLGregorianCalendar` — in `ConnIdTypeMapper` → `XsdTypeMapper.toXsdType`
+
+read (ConnId → shadow)::
+  `ZonedDateTime` → `XMLGregorianCalendar` (explicit conversion; passes the runtime type check) — in `ConnIdToUcfObjectConversion.convertAttributeValueFromConnId`
+
+write & filters (shadow → ConnId)::
+  `XMLGregorianCalendar` → `ZonedDateTime` — in `ConnIdUtil.convertValueToConnId`
+
+So a connector may declare custom date attributes (and even the password date/interval
+attributes below) as `ZonedDateTime` and midPoint will round-trip them.
+
+=== Special attributes: `long` (epoch millis) is mandatory
+
+midPoint does *not* support `ZonedDateTime` for the date specials it handles
+specially — `pass:[__ENABLE_DATE__]`, `pass:[__DISABLE_DATE__]` and
+`pass:[__LAST_LOGIN_DATE__]` — because their conversion is hardwired to `long`:
+
+* Read: `convertEnableDate()` / `convertDisableDate()` / `convertLastLoginDate()`
+  extract the value with `getSingleConvertedSimpleValue(attr, Long.class)`. A
+  `ZonedDateTime` value is first converted to `XMLGregorianCalendar`, and
+  `MiscUtil.castSafely(..., Long.class)` then fails with
+  `SchemaException("Expected 'java.lang.Long' but got ...XMLGregorianCalendar")` —
+  the whole object conversion fails (midPoint only produces a partial shadow with
+  an error state).
+* Write: `collectReplaceXMLGregorianCalendar()` always emits
+  `XmlTypeConverter.toMillis(...)` — a `Long` — for `pass:[__ENABLE_DATE__]` /
+  `pass:[__DISABLE_DATE__]`, no matter what the connector schema declares.
+* The ConnId framework's own accessors (`AttributeUtil.getDateValue()` /
+  `getEnableDate()` / `getPasswordExpirationDate()` via `getLongValue()`) and the
+  standard `AttributeInfo`s also declare/expect `long.class`.
+
+Declaring these specials as `ZonedDateTime` is legal at the framework level (the
+type is whitelisted), but it breaks midPoint reads and violates the midPoint write
+contract — use `long` epoch-millis (UTC) for them.
+
+=== Password date/interval attributes: generic path
+
+`pass:[__PASSWORD_EXPIRATION_DATE__]`, `pass:[__LAST_PASSWORD_CHANGE_DATE__]` and
+`pass:[__PASSWORD_CHANGE_INTERVAL__]` are *not* special-cased by midPoint (they are
+not in the `SpecialAttributes` capability list nor in the object-conversion
+switch), so they flow through the generic attribute path — where `ZonedDateTime`
+works as described above.
+
+NOTE: Even on the generic path the value type must match the declared schema type:
+a `Long` value in a `ZonedDateTime`-typed attribute (or vice versa) fails
+midPoint's type-compatibility check.
+
+.Practical rule
+`pass:[__ENABLE_DATE__]`, `pass:[__DISABLE_DATE__]`, `pass:[__LAST_LOGIN_DATE__]`::
+  `long` epoch-millis (UTC) — midPoint hard requirement
+
+`pass:[__PASSWORD_EXPIRATION_DATE__]`, `pass:[__LAST_PASSWORD_CHANGE_DATE__]`, `pass:[__PASSWORD_CHANGE_INTERVAL__]`::
+  `long` recommended (standard infos), `ZonedDateTime` works (generic path)
+
+custom date attributes::
+  `ZonedDateTime` (or `long`) — both fully supported
+
+
+== conndev Low-Code DSL
+
+The conndev base (`com.evolveum.polygon.conndev`) exposes the built-in
+attributes through a dedicated enum and type-resolution rules:
+
+* `ConnIdBuiltInAttribute` (`build/ConnIdBuiltInAttribute.java`) — enum of
+  built-in attributes with an optional *forced type*:
+** `UID` (`pass:[__UID__]`) and `NAME` (`pass:[__NAME__]`) — forced
+   `String.class` (a hard ConnId constraint).
+** `PASSWORD`, `ENABLE`, `ENABLE_DATE`, `DISABLE_DATE`, `LOCK_OUT` — no forced
+   type; the connector script must declare the correct ConnId type
+   (`GuardedString` for password, `Boolean`/`Long` for the others).
+** A Groovy `Mixin` exposes them as `ConnIdBuiltInAttribute.UID` etc. for DSL
+   scripts.
+* Mapping a protocol attribute to a built-in attribute:
+** `attribute("id").connId().name(ConnIdBuiltInAttribute.UID)` —
+   `AttributeBuilder.ConnIdMapping.name(ConnIdBuiltInAttribute)`
+** or `connIdAttribute("UID", "id")` on the object class builder
+   (`BaseObjectClassDefinitionBuilder.connIdAttribute`) — only `"UID"` and
+   `"NAME"` are supported there; it binds the built-in name to an existing
+   protocol attribute.
+* Type resolution (`rules/AttributeTypeResolutionRule.java`): the
+  `AttributeOnly` rule `UID_OR_NAME_IS_STRING` is the *first* candidate in the
+  priority chain — any attribute whose ConnId name is `pass:[__UID__]` or
+  `pass:[__NAME__]` is forced to `String` regardless of what the protocol
+  mapping suggested. This encodes the hard framework constraint.
+* `AbstractAttributeBuilder.JsonMapping.build()` applies
+  `ConnIdBuiltInAttribute.getForcedType()` when the script did not declare a
+  ConnId type, wrapping the value mapping in a `ValueTypeOverrideMapping` so
+  the JSON value is converted to the forced type.
+* SCIM-style defaults: `BaseSchemaBuilder` maps the SCIM `id` attribute to
+  `pass:[__UID__]` and `name` to `pass:[__NAME__]` (see the dummy-schema
+  initialization as a reference), and `FilterSpecification`/
+  `FilterBasedSearchDispatcher` treat `pass:[__UID__]`-equals filters as the primary
+  lookup path.
+
+NOTE:: *Known DSL gap* — `ConnIdBuiltInAttribute` currently lists only UID, NAME, PASSWORD,
+ENABLE, ENABLE_DATE, DISABLE_DATE and LOCK_OUT. `pass:[__FORCE_PASSWORD_CHANGE__]`,
+`pass:[__PASSWORD_EXPIRED__]`, `pass:[__PASSWORD_EXPIRATION_DATE__]`,
+`pass:[__GROUPS__]`, `pass:[__DESCRIPTION__]`, `pass:[__SHORT_NAME__]`,
+`pass:[__LAST_LOGIN_DATE__]` and `pass:[__AUXILIARY_OBJECT_CLASS__]` are not
+exposed as enum constants and have no forced type; scripts that need them must
+pass the special name via `connId().name(...)` (e.g. `pass:[__FORCE_PASSWORD_CHANGE__]`)
+and declare the type explicitly (per the catalog above).

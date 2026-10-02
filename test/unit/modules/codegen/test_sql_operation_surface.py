@@ -15,6 +15,8 @@ from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.digester.errors import OperationSurfaceNotFoundError
 from src.shared.enums import ApiType
+from src.shared.job_types import JobType
+from src.shared.session_keys import codegen_operation_keys
 
 _CONNDEV_SQL_EXPORT = {
     "chunkId": "conndev-chunk",
@@ -30,6 +32,7 @@ def _sql_search_generator(*, context_only_for_conndev: bool) -> SearchGenerator:
         object_class="m_user",
         intent=SearchIntent.ALL,
         docs_text="Search docs",
+        declarative_docs_text="Search docs (declarative)",
         system_prompt="System {total}",
         user_prompt="{chunk}",
         protocol_label=ApiType.SQL.value,
@@ -73,11 +76,12 @@ async def test_sql_generation_runs_context_only_pass_when_session_is_conndev_onl
 
 
 @pytest.mark.asyncio
-async def test_generation_without_context_only_pass_falls_back_to_empty_scaffold():
+async def test_generation_without_context_only_pass_returns_empty():
     """Guards the contrast: the pass is what keeps a conndev-only session from producing nothing."""
-    code = await _generate_from_conndev_only_session(_sql_search_generator(context_only_for_conndev=False))
+    with patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock):
+        code = await _generate_from_conndev_only_session(_sql_search_generator(context_only_for_conndev=False))
 
-    assert code == "search {\n}\n"
+    assert code == ""
 
 
 @pytest.mark.asyncio
@@ -120,7 +124,10 @@ async def test_search_generation_enables_context_only_pass_per_protocol(protocol
 def test_sql_search_prompts_require_the_native_sql_block(intent: SearchIntent):
     assets = get_search_operation_assets(ApiType.SQL, intent)
 
-    assert "sql {{ builtIn {{" in assets.system_prompt
+    assert "builtIn.where" in assets.system_prompt
+    flattened_system_prompt = assets.system_prompt.replace("\n", " ")
+    assert "objectClasses: {{ {object_class}: {{}} }}" in flattened_system_prompt
+    assert "never a bare `{{}}`, which names no object class at all" in flattened_system_prompt
     assert "endpoint(...)" in assets.system_prompt
     assert "<extracted_attributes>" in assets.user_prompt
     # The table listing is gone; nothing may ask for it back.
@@ -134,7 +141,8 @@ def test_sql_search_prompts_require_the_native_sql_block(intent: SearchIntent):
 def test_sql_operation_prompts_require_the_native_sql_block(operation: str):
     assets = get_operation_assets(operation, ApiType.SQL)
 
-    assert f"{operation} {{{{ sql {{{{ builtIn {{{{ enabled true }}}}" in assets.system_prompt
+    assert f"{operation} {{{{ enabled true }}}}" in assets.system_prompt
+    assert f"{operation} {{{{ sql {{{{ builtIn" not in assets.system_prompt
     assert "<extracted_attributes>" in assets.user_prompt
     assert "<sql_tables>" not in assets.user_prompt
     assert "endpoints_json" not in assets.user_prompt
@@ -179,8 +187,8 @@ async def test_sql_operation_is_scheduled_without_an_endpoint_surface():
             skip_cache=False,
             api_type=None,
             codegen_input=None,
-            key_prefix="m_userSearch",
-            job_type="codegen.getSearch",
+            keys=codegen_operation_keys("m_userSearchAll"),
+            job_type=JobType.CODEGEN_SEARCH,
             worker=AsyncMock(),
         )
 
@@ -214,7 +222,7 @@ async def test_rest_operation_still_requires_an_endpoint_surface():
             skip_cache=False,
             api_type=None,
             codegen_input=None,
-            key_prefix="userSearch",
-            job_type="codegen.getSearch",
+            keys=codegen_operation_keys("userSearchAll"),
+            job_type=JobType.CODEGEN_SEARCH,
             worker=AsyncMock(),
         )

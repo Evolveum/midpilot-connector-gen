@@ -1,3 +1,81 @@
+== 0.1.0-RC2
+
+=== 🚀 Features
+
+
+* Delegate API key authentication to Gravitee
+
+
+=== 🐛 Bug Fixes
+
+
+* Documentation deletion and upload replacement
+* Offload code validation and clarify job progress
+* Make validated attribute candidates explicit
+
+
+=== 💼 Other
+
+
+* **Route outbound web traffic through env proxy**
+* Remove deprecated connid endpoint
+
+== 0.1.0-RC1
+
+=== 🚀 Features
+
+
+* Extend codegen with connector fix support
+* Give the connector fix the extracted schema
+* Support conndev SQL-table schame exports
+* Preserve qualified SQL table identities
+* Refresh SQL codegen documentation
+* Merge ConnID mapping into native-schema codegen
+* Add object-class documentation retrieval
+* Prefer declarative YAML in connector generation
+* Align codegen with framework documentation
+
+
+=== 🐛 Bug Fixes
+
+
+* Unify Langfuse trace name casing
+* Commit DB transaction before sending response
+* Prefer ConnDev SQL metadata over raw schema
+* Separate SQL ConnId projection from physical schema
+* SQL connector repair context
+* Handle empty connector generation explicitly
+* Remove application-mismatch chunk filtering
+* Tighten codegen prompts against APIs
+* Edit validation of attributes
+* Connector-fix output handling and search method key
+* Edit prompts and format
+* Normalize SQL and SCIM default operation output
+
+
+=== 💼 Other
+
+
+* Add release-notes and some minor changes
+* Minor fix and refactor some duplicated code
+* Normalize codegen fix internals
+* Delete unnecessary test
+* Report connector code format in codegen outputs
+
+
+=== 🛡️ Security
+
+
+* Update libraries because of security and vulnerabilities issues
+
+
+=== 🚜 Refactor
+
+
+* Centralize DB session dependency
+* Remove dead code and unused models
+* Apply cleanups across the backend
+
 == 0.1.0-M6
 
 === 🚀 Features

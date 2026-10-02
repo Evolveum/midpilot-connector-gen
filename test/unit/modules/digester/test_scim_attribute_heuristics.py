@@ -134,13 +134,8 @@ async def test_extract_scim_attributes_persists_schema_context_and_provenance_wi
     with (
         patch("src.modules.digester.extractors.scim.attributes.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
-        patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
-            new_callable=AsyncMock,
-            return_value=bundle,
-        ),
     ):
-        result = await extract_scim_attributes([], "User", uuid4(), uuid4())
+        result = await extract_scim_attributes([], "User", uuid4(), bundle)
 
     expected_references = {
         (reference.doc_id, reference.chunk_id)
@@ -163,17 +158,12 @@ async def test_extract_scim_attributes_does_not_send_conndev_contracts_to_llm():
         patch("src.modules.digester.extractors.scim.attributes.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain") as build_chain,
-        patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
-            new_callable=AsyncMock,
-            return_value=BASELINE_BUNDLE,
-        ),
     ):
         result = await extract_scim_attributes(
             [json.dumps({"schemaContent": json.dumps(BASELINE_SCHEMAS["User"])})],
             "User",
             uuid4(),
-            uuid4(),
+            BASELINE_BUNDLE,
             [chunk_id],
             chunk_metadata_map={
                 chunk_id: {
@@ -217,11 +207,6 @@ async def test_extract_scim_attributes_uses_general_discovery_without_scim_basel
     with (
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain") as build_chain,
         patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
-            new_callable=AsyncMock,
-            return_value=build_scim_baseline_bundle({}),
-        ),
-        patch(
             "src.modules.digester.extractors.scim.attributes.extract_documented_attributes",
             new_callable=AsyncMock,
             return_value=documented_result,
@@ -231,7 +216,7 @@ async def test_extract_scim_attributes_uses_general_discovery_without_scim_basel
             ["connector contract", "Action attributes include actionId."],
             "Action",
             job_id,
-            uuid4(),
+            build_scim_baseline_bundle({}),
             [conndev_chunk_id, documentation_chunk_id],
             chunk_metadata_map=metadata_map,
             chunk_id_to_doc_id={documentation_chunk_id: documentation_doc_id},
@@ -255,16 +240,11 @@ async def test_extract_scim_attributes_uses_general_discovery_without_scim_basel
 async def test_extract_scim_attributes_without_baseline_or_documentation_returns_empty_result():
     with (
         patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
-            new_callable=AsyncMock,
-            return_value=build_scim_baseline_bundle({}),
-        ),
-        patch(
             "src.modules.digester.extractors.scim.attributes.extract_documented_attributes",
             new_callable=AsyncMock,
         ) as extract_documented,
     ):
-        result = await extract_scim_attributes([], "Action", uuid4(), uuid4())
+        result = await extract_scim_attributes([], "Action", uuid4(), build_scim_baseline_bundle({}))
 
     extract_documented.assert_not_awaited()
     assert result["result"]["attributes"] == {}
@@ -281,11 +261,6 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
         patch("src.modules.digester.extractors.scim.attributes.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain", return_value=object()),
-        patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
-            new_callable=AsyncMock,
-            return_value=BASELINE_BUNDLE,
-        ),
         patch(
             "src.modules.digester.extractors.scim.attributes.invoke_chunk_chain",
             new_callable=AsyncMock,
@@ -338,7 +313,7 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
             ["mapping table"],
             "User",
             uuid4(),
-            uuid4(),
+            BASELINE_BUNDLE,
             [chunk_id],
             chunk_id_to_doc_id={chunk_id: doc_id},
         )
@@ -353,9 +328,10 @@ async def test_extract_scim_attributes_merges_documented_mapping_over_schema_bas
     )
     assert attributes["Username"]["scimAttribute"] == "userName"
     assert attributes["Username"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
-    assert "Slack Profile Id" in attributes
+    assert "slackProfileId" in attributes
+    assert "Slack Profile Id" not in attributes
     assert (
-        attributes["Slack Profile Id"]["scimAttribute"] == "urn:scim:schemas:extension:slack:profile:2.0:User:profileId"
+        attributes["slackProfileId"]["scimAttribute"] == "urn:scim:schemas:extension:slack:profile:2.0:User:profileId"
     )
     assert attributes["Emails"]["type"] == "UserEmails"
     assert attributes["Emails"]["format"] == "embedded"
@@ -376,11 +352,6 @@ async def test_extract_scim_embedded_attributes_match_indexed_documented_paths_t
         patch("src.modules.digester.extractors.scim.attributes.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain", return_value=object()),
-        patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
-            new_callable=AsyncMock,
-            return_value=BASELINE_BUNDLE,
-        ),
         patch(
             "src.modules.digester.extractors.scim.attributes.invoke_chunk_chain",
             new_callable=AsyncMock,
@@ -418,19 +389,19 @@ async def test_extract_scim_embedded_attributes_match_indexed_documented_paths_t
             ["email mapping table"],
             "UserEmails",
             uuid4(),
-            uuid4(),
+            BASELINE_BUNDLE,
             [chunk_id],
             chunk_id_to_doc_id={chunk_id: doc_id},
         )
 
     attributes = result["result"]["attributes"]
-    assert set(attributes) == {"Primary Email", "Work Email Display", "type", "primary"}
-    assert attributes["Primary Email"]["description"] == "Target primary email maps to the first SCIM email value."
-    assert attributes["Primary Email"]["scimAttribute"] == "emails.value"
-    assert attributes["Primary Email"]["mandatory"] is True
-    assert attributes["Primary Email"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
-    assert attributes["Work Email Display"]["scimAttribute"] == "emails.display"
-    assert attributes["Work Email Display"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
+    assert set(attributes) == {"primaryEmail", "workEmailDisplay", "type", "primary"}
+    assert attributes["primaryEmail"]["description"] == "Target primary email maps to the first SCIM email value."
+    assert attributes["primaryEmail"]["scimAttribute"] == "emails.value"
+    assert attributes["primaryEmail"]["mandatory"] is True
+    assert attributes["primaryEmail"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
+    assert attributes["workEmailDisplay"]["scimAttribute"] == "emails.display"
+    assert attributes["workEmailDisplay"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
     assert "value" not in attributes
     assert "display" not in attributes
     mock_invoke.assert_awaited_once()
@@ -445,11 +416,6 @@ async def test_extract_scim_embedded_attributes_discards_unmatched_documented_ma
         patch("src.modules.digester.extractors.scim.attributes.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes.increment_processed_documents", new_callable=AsyncMock),
         patch("src.modules.digester.extractors.scim.attributes._build_scim_attribute_chain", return_value=object()),
-        patch(
-            "src.modules.digester.extractors.scim.attributes.load_session_scim_baseline",
-            new_callable=AsyncMock,
-            return_value=BASELINE_BUNDLE,
-        ),
         patch(
             "src.modules.digester.extractors.scim.attributes.invoke_chunk_chain",
             new_callable=AsyncMock,
@@ -487,14 +453,14 @@ async def test_extract_scim_embedded_attributes_discards_unmatched_documented_ma
             ["mapping table"],
             "UserName",
             uuid4(),
-            uuid4(),
+            BASELINE_BUNDLE,
             [chunk_id],
             chunk_id_to_doc_id={chunk_id: doc_id},
         )
 
     attributes = result["result"]["attributes"]
     assert set(attributes) == {
-        "Formatted name",
+        "formattedName",
         "familyName",
         "givenName",
         "middleName",
@@ -502,10 +468,11 @@ async def test_extract_scim_embedded_attributes_discards_unmatched_documented_ma
         "honorificSuffix",
     }
     assert (
-        attributes["Formatted name"]["description"] == "Target display name maps to the SCIM formatted name component."
+        attributes["formattedName"]["description"] == "Target display name maps to the SCIM formatted name component."
     )
-    assert attributes["Formatted name"]["scimAttribute"] == "name.formatted"
-    assert attributes["Formatted name"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
+    assert attributes["formattedName"]["scimAttribute"] == "name.formatted"
+    assert attributes["formattedName"]["relevantDocumentations"] == [{"docId": doc_id, "chunkId": chunk_id}]
+    assert "Formatted name" not in attributes
     assert "Username" not in attributes
     assert "userName" not in attributes
     mock_invoke.assert_awaited_once()

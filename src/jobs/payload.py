@@ -17,6 +17,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter
 
+from src.shared.session_keys import is_output_key
+
 _TYPE_TAG = "__midpilot_job_payload_type__"
 _BYTES_TYPE = "bytes-base64"
 _ARTIFACT_TYPE = "binary-artifact"
@@ -176,12 +178,14 @@ def build_execution_payload(
     worker_kwargs: dict[str, Any],
     dynamic_input_provider: Callable[..., Any] | None,
     session_result_key: str | None,
-    await_documentation: bool,
-    await_documentation_timeout: float | None,
     session_companion_result_keys: Sequence[str] = (),
     binary_artifacts: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
-    """Build the versioned JSONB execution contract stored with a job."""
+    """Build the versioned JSONB execution contract stored with a job.
+
+    Documentation waiting is not part of this contract: the queue derives it from the
+    job row's ``documentation_wait_until``, which is the only state the claim query reads.
+    """
     artifact_names = frozenset((binary_artifacts or {}).keys())
     return {
         "version": _PAYLOAD_VERSION,
@@ -193,8 +197,6 @@ def build_execution_payload(
         ),
         "sessionResultKey": session_result_key,
         "sessionCompanionResultKeys": list(session_companion_result_keys),
-        "awaitDocumentation": await_documentation,
-        "awaitDocumentationTimeout": await_documentation_timeout,
     }
 
 
@@ -207,7 +209,7 @@ def validate_execution_payload(payload: Mapping[str, Any] | None) -> Mapping[str
         raise InvalidJobPayloadError("Background-job execution arguments are invalid")
     companion_keys = payload.get("sessionCompanionResultKeys", [])
     if not isinstance(companion_keys, list) or any(
-        not isinstance(key, str) or not key.endswith("Output") for key in companion_keys
+        not isinstance(key, str) or not is_output_key(key) for key in companion_keys
     ):
         raise InvalidJobPayloadError("Background-job companion result keys are invalid")
     return payload
