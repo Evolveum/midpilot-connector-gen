@@ -17,6 +17,136 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-10-02 Stored documentation selection, job-type policies and session key contract
+
+Author: Alexander Brecko
+
+Description: Attribute (`digester.getObjectClassSchema`) and endpoint
+(`digester.getEndpoints`) jobs no longer store the whole session documentation
+(`documentationItems`) and a separate `relevantDocumentations` list in
+`jobs.input`. They store a `documentationSelection`: each selected chunk once
+plus `primary`, `fallback`, `scimBaseline` and `sqlSchema` reference lists, the
+effective protocol as `apiType`, and the existing request parameters. The
+fallback attempt and the SCIM baseline are captured when the job is scheduled
+and no longer read the session's documentation at run time, so documentation
+added after the request does not change a queued job. Job inputs and worker
+arguments of these two job types are therefore incompatible with the previous
+milestone in both directions.
+
+The cache identity of these jobs now covers the selected documentation (text,
+content type, tags, the attempt each chunk belongs to and, for the SCIM
+baseline and SQL schema chunks, their order), the protocol and the request
+parameters, but not chunk UUIDs or documentation outside the selection. Results cached by the previous milestone for these two job types are
+not reused; the first request after the upgrade runs the extraction again.
+Cached relevance is remapped between the stored selections of the source and
+the reusing job.
+
+Every job type now has an explicit policy (`src/shared/job_types.py`). A job
+row whose type has no policy, e.g. `codegen.getConnID`, fails explicitly when it
+is claimed, and a status request for it returns HTTP 500. `codegen.fixConnector`
+is non-cacheable by policy and its job input no longer carries `skipCache`.
+
+Session `*Input` keys keep identifiers and caller-supplied metadata only:
+`{operationKey}Input` (create, update, delete, search) no longer copies
+`attributes` and `endpoints`, `{objectClass}NativeSchemaInput` no longer copies
+`attributes`, `{relationName}CodeInput` holds `relationName` instead of the
+relations payload, and `relationsInput` no longer copies the object classes.
+Nothing reads these keys back; key names are unchanged.
+
+The midPoint-facing HTTP contract is unchanged: `/openapi.json` is identical,
+and empty uploads (422) and session-creation failures (500) still answer with
+`{"detail": "..."}`. A failed `documentation.processUpload` job now records the
+rejection message without the former `415: ` / `422: ` status prefix in its
+`errors` list, and is logged without a stack trace. A digester job whose session
+disappears while it prepares its documentation now records
+`Session {sessionId} not found` instead of
+`Session with ID {sessionId} does not exist.`; the HTTP 404 body of the same
+condition is unchanged.
+
+No database schema change, Alembic migration, backfill or database recreation
+is required.
+
+Required Upgrade Steps
+. Stop new work from reaching the service while its workers keep running: block
+client traffic at the gateway (or stop the midPoint wizard and other callers),
+but do not stop the API/worker processes yet.
+. Let the previous milestone finish every queued and running job, because the
+new workers cannot execute attribute or endpoint jobs scheduled by the old
+version. Repeat until the count is `0`:
++
+[source,shell]
+----
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM jobs WHERE status IN ('"'"'queued'"'"', '"'"'running'"'"');"'
+----
++
+For externally managed PostgreSQL, run
+`SELECT count(*) FROM jobs WHERE status IN ('queued', 'running');` in the
+application database.
+. Check that no job row has a type without a policy. The query must return no
+rows:
++
+[source,sql]
+----
+SELECT job_type, count(*) FROM jobs
+WHERE job_type NOT IN (
+  'discovery.getCandidateLinks', 'scrape.getRelevantDocumentation',
+  'documentation.processUpload', 'digester.getObjectClass',
+  'digester.getObjectClassSchema', 'digester.getEndpoints',
+  'digester.getRelations', 'digester.getConnectivityEndpoint',
+  'digester.getAuth', 'digester.getInfoMetadata', 'codegen.getAuthorization',
+  'codegen.getNativeSchema', 'codegen.getSearch', 'codegen.getCreate',
+  'codegen.getUpdate', 'codegen.getDelete', 'codegen.getRelation',
+  'codegen.fixConnector')
+GROUP BY job_type;
+----
++
+If `codegen.getConnID` rows remain, run the cleanup from the 2026-09-30 note
+*Removal of the deprecated connid codegen endpoints*. Remove rows of any other
+listed type only after confirming nobody needs their history.
+. Stop the API and all worker processes, deploy this revision and start them
+the usual way: `docker compose up -d --build midpilot-connector-gen`, or
+`uv run python server.py` (and `python -m src.jobs.runtime` for standalone
+workers) for a host installation. No configuration change is needed.
+. Re-open client traffic. Verify `/health`, then request attributes and
+endpoints for one object class per protocol and confirm the new job input
+holds the selection:
++
+[source,sql]
+----
+SELECT job_type, input ? 'documentationSelection' AS has_selection,
+       input ? 'documentationItems' AS has_corpus
+FROM jobs
+WHERE job_type IN ('digester.getObjectClassSchema', 'digester.getEndpoints')
+ORDER BY created_at DESC LIMIT 5;
+----
++
+New rows must report `has_selection = true` and `has_corpus = false`.
+. Validate with `uv run poe qa` and `uv run poe test test/integration -q`
+against the test database.
+
+Rollback Procedure (If Upgrade Fails)
+. Block client traffic again and let this revision finish every queued and
+running job, using the count query from the upgrade steps; the previous
+milestone cannot execute attribute or endpoint jobs scheduled by this revision.
+. Stop the API and all workers, restore the previous source revision and start
+it with `docker compose up -d --build midpilot-connector-gen` (or
+`uv run python server.py` for a host installation).
+. No database restore is needed: the schema is unchanged, results and session
+outputs written by this revision are read unchanged by the previous milestone,
+and its cache simply does not reuse attribute or endpoint results stored by
+this revision.
+
+Notes & References
+* Related PR: Not created.
+* Docs: `docs/sessions-and-jobs.adoc` (session keys, result caching),
+`docs/pipeline/digester.adoc` (documentation captured for attributes and
+endpoints).
+* Affected job inputs: `digester.getObjectClassSchema`, `digester.getEndpoints`,
+`codegen.fixConnector`.
+* Affected session keys: `{operationKey}Input`, `{objectClass}NativeSchemaInput`,
+`{relationName}CodeInput`, `relationsInput` (content only, names unchanged).
+* Affected configs: None.
+
 === 2026-09-30 Align connector generation with the connector runtime
 
 Author: Alexander Brecko

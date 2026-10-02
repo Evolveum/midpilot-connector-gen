@@ -116,6 +116,8 @@ async def test_generate_native_schema_uses_repair_context_only():
     update_args = mock_repo.update_session.call_args[0]
     inputs = update_args[1]["userNativeSchemaInput"]
     assert "preferredEndpoints" not in inputs
+    assert "attributes" not in inputs
+    assert inputs["objectClass"] == "user"
     assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]
 
 

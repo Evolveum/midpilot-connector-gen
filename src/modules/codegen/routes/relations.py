@@ -19,6 +19,7 @@ from src.modules.codegen.persistence import store_relation_override
 from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
+from src.shared.session_keys import relation_code_keys
 
 router = APIRouter(tags=["Codegen: Relations"])
 
@@ -72,7 +73,7 @@ async def get_relation_code_status(
         repo,
         session_id,
         jobId,
-        session_key=f"{relation_name}CodeJobId",
+        session_key=relation_code_keys(relation_name).job_id,
         job_label="relation code",
         not_found_detail=f"No relation code job found for {relation_name} in session {session_id}",
     )

@@ -72,7 +72,10 @@ async def test_generate_relation_code_success(protocol, _relation_protocol):
         ]
         assert schedule_kwargs["worker_kwargs"]["relations"] == job_input_reference("relations")
         assert schedule_kwargs["worker_kwargs"]["relation_name"] == "user_to_group"
-        mock_repo.update_session.assert_awaited_once()
+        mock_repo.update_session.assert_awaited_once_with(
+            session_id,
+            {"user_to_groupCodeJobId": str(job_id), "user_to_groupCodeInput": {"relationName": "user_to_group"}},
+        )
 
 
 @pytest.mark.asyncio

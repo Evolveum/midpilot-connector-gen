@@ -5,11 +5,13 @@
 """
 Endpoint extraction workflow.
 
-Owns the entity-level flow: resolve the effective protocol and dispatch to the
-REST/SCIM leaf extractors, retry with broader documentation criteria when the
-endpoint-focused chunks yield no endpoints, and persist the extracted endpoints back
-onto the object class. Protocol-specific leaves live under ``extractors/rest`` and
-``extractors/scim``.
+Owns the entity-level flow: dispatch to the REST/SCIM leaf extractors, retry with the
+broader fallback documentation when the endpoint-focused chunks yield no endpoints, and
+persist the extracted endpoints back onto the object class. Protocol-specific leaves live
+under ``extractors/rest`` and ``extractors/scim``.
+
+Every attempt reads the documentation selection stored in the job input when the job was
+scheduled; the worker never reloads the session's documentation.
 
 SQL has no endpoints at all - a database connector reaches its data through the table
 and column mapping declared by the native schema, and code generation reads that from
@@ -22,23 +24,16 @@ from collections.abc import Mapping
 from typing import Any, Dict, List
 from uuid import UUID
 
-from src.documents.filtering.filter import filter_documentation_items
+from src.documents.selection import DocumentationSelection, SelectionRole
 from src.jobs import update_job_progress
 from src.modules.digester.entities.object_classes import build_endpoint_result, extract_endpoints_from_result
 from src.modules.digester.errors import EndpointExtractionNotSupportedError
 from src.modules.digester.extraction.metadata_helper import build_doc_metadata_map
 from src.modules.digester.extractors.rest.endpoints import extract_endpoints as _extract_rest_endpoints
+from src.modules.digester.extractors.scim.baseline import build_scim_baseline_from_documents
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
 from src.modules.digester.persistence import persist_object_class_field
-from src.modules.digester.selection import (
-    DEFAULT_CRITERIA,
-    build_chunk_id_to_doc_id,
-    build_relevant_chunks_from_doc_items,
-    chunk_ids_from_relevant_chunks,
-    exclude_doc_items_by_chunk_id,
-    select_doc_chunks,
-)
-from src.session.info_metadata import resolve_effective_api_type
+from src.modules.digester.selection import build_chunk_id_to_doc_id, chunk_texts_and_ids
 from src.shared.content_types import is_conndev_documentation_item
 from src.shared.enums import ApiType
 
@@ -49,30 +44,21 @@ def _endpoint_result_has_items(extraction_result: Dict[str, Any]) -> bool:
     return len(extract_endpoints_from_result(extraction_result)) > 0
 
 
-async def _extract_rest_endpoints_from_relevant_chunks(
+async def _extract_rest_endpoints_from_chunks(
     doc_items: List[dict],
     object_class: str,
-    relevant_chunks: List[Dict[str, Any]],
     job_id: UUID,
     base_api_url: str,
-    *,
-    exclude_conndev: bool = False,
 ) -> Dict[str, Any] | None:
-    if exclude_conndev:
-        doc_items = _exclude_conndev_documents(doc_items)
-
-    selected_content, chunk_ids = select_doc_chunks(doc_items, relevant_chunks, "Digester:Endpoints")
-
-    if not selected_content:
+    """Run the REST leaf over the given chunks; ``None`` when there is nothing to read."""
+    if not doc_items:
         return None
 
-    chunk_metadata_map = build_doc_metadata_map(doc_items)
-    chunk_id_to_doc_id = build_chunk_id_to_doc_id(doc_items)
+    selected_content, chunk_ids = chunk_texts_and_ids(doc_items)
 
-    total_chunks = len(selected_content)
     logger.info(
         "[Digester:Endpoints] Processing %d pre-selected chunks for %s (chunk IDs: %s)",
-        total_chunks,
+        len(selected_content),
         object_class,
         chunk_ids,
     )
@@ -83,28 +69,25 @@ async def _extract_rest_endpoints_from_relevant_chunks(
         job_id,
         base_api_url,
         chunk_ids,
-        chunk_metadata_map,
-        chunk_id_to_doc_id,
+        build_doc_metadata_map(doc_items),
+        build_chunk_id_to_doc_id(doc_items),
     )
 
 
-async def _retry_rest_endpoints_with_default_criteria(
+async def _retry_rest_endpoints_with_fallback(
     primary_result: Dict[str, Any],
+    selection: DocumentationSelection,
     object_class: str,
-    session_id: UUID,
-    relevant_chunks: List[Dict[str, Any]],
     job_id: UUID,
     base_api_url: str,
-    *,
-    exclude_conndev: bool = False,
 ) -> Dict[str, Any]:
+    """Retry over the stored fallback chunks (never a primary chunk) when the primary attempt found nothing."""
     if _endpoint_result_has_items(primary_result):
         return primary_result
 
     logger.info(
-        "[Digester:Endpoints] Endpoint-focused chunks produced empty final endpoints for session %s, object class %s; "
-        "retrying with DEFAULT_CRITERIA",
-        session_id,
+        "[Digester:Endpoints] Endpoint-focused chunks produced empty final endpoints for %s; "
+        "retrying with fallback chunks",
         object_class,
     )
     await update_job_progress(
@@ -113,48 +96,19 @@ async def _retry_rest_endpoints_with_default_criteria(
         message=f"No endpoints found in endpoint-focused chunks for {object_class}; retrying with broader filter",
     )
 
-    fallback_doc_items = await filter_documentation_items(DEFAULT_CRITERIA, session_id)
-    if exclude_conndev:
-        fallback_doc_items = _exclude_conndev_documents(fallback_doc_items)
+    fallback_doc_items = selection.documentation_items(SelectionRole.FALLBACK)
     if not fallback_doc_items:
         logger.info(
-            "[Digester:Endpoints] DEFAULT_CRITERIA matched no documentation for session %s; keeping empty endpoint result",
-            session_id,
-        )
-        return primary_result
-
-    primary_chunk_ids = chunk_ids_from_relevant_chunks(relevant_chunks)
-    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
-    fallback_chunk_ids = chunk_ids_from_relevant_chunks(fallback_relevant_chunks)
-    if primary_chunk_ids and primary_chunk_ids == fallback_chunk_ids:
-        logger.info(
-            "[Digester:Endpoints] DEFAULT_CRITERIA matched same chunks for session %s, object class %s; skipping retry",
-            session_id,
+            "[Digester:Endpoints] Fallback criteria produced no new chunks for %s; keeping empty endpoint result",
             object_class,
         )
         return primary_result
 
-    fallback_doc_items = exclude_doc_items_by_chunk_id(fallback_doc_items, primary_chunk_ids)
-    fallback_relevant_chunks = build_relevant_chunks_from_doc_items(fallback_doc_items)
-    if not fallback_relevant_chunks:
-        logger.info(
-            "[Digester:Endpoints] DEFAULT_CRITERIA produced no new chunks for session %s; keeping empty endpoint result",
-            session_id,
-        )
-        return primary_result
-
-    fallback_result = await _extract_rest_endpoints_from_relevant_chunks(
-        fallback_doc_items,
-        object_class,
-        fallback_relevant_chunks,
-        job_id,
-        base_api_url,
-        exclude_conndev=exclude_conndev,
-    )
+    fallback_result = await _extract_rest_endpoints_from_chunks(fallback_doc_items, object_class, job_id, base_api_url)
     if fallback_result is None:
         logger.info(
-            "[Digester:Endpoints] DEFAULT_CRITERIA chunks could not be selected for session %s; keeping empty endpoint result",
-            session_id,
+            "[Digester:Endpoints] Fallback chunks could not be selected for %s; keeping empty endpoint result",
+            object_class,
         )
         return primary_result
 
@@ -167,42 +121,38 @@ def _exclude_conndev_documents(doc_items: List[dict]) -> List[dict]:
 
 
 async def extract_endpoints(
-    doc_items: List[dict],
+    selection: DocumentationSelection,
     object_class: str,
     session_id: UUID,
-    relevant_chunks: List[Dict[str, Any]],
     job_id: UUID,
+    protocol: ApiType,
     base_api_url: str = "",
-    api_type_override: ApiType | None = None,
     object_class_flags: Mapping[str, Any] | None = None,
 ):
     """
-    Extract endpoints from only the relevant chunks of documentation and update the specific object class
-    in objectClassesOutput with the extracted endpoints.
-
-    The extraction protocol (REST/SCIM/SQL) is taken from ``api_type_override`` when provided,
-    otherwise it is derived from the apiType stored in the session ``infoMetadata``.
+    Extract endpoints from the stored documentation selection and update the specific
+    object class in objectClassesOutput with the extracted endpoints.
 
     Args:
-        doc_items: Full documentation items
+        selection: Documentation captured when the job was scheduled (primary, fallback
+            and, for SCIM, the conndev baseline chunks)
         object_class: Name of the object class
         session_id: Session ID
-        relevant_chunks: List of {doc_id, chunk_id} dicts indicating which chunks to process
         job_id: Job ID for progress tracking
+        protocol: Effective protocol resolved when the job was scheduled
         base_api_url: Base API URL for endpoint extraction
-        api_type_override: Explicit protocol override; falls back to detected apiType when None
         object_class_flags: Structural flags loaded during request orchestration for SCIM endpoint routing
     """
-
-    protocol = await resolve_effective_api_type(session_id, api_type_override)
     if protocol == ApiType.SQL:
         raise EndpointExtractionNotSupportedError(object_class, protocol.value)
 
-    is_scim = protocol == ApiType.SCIM
+    primary_doc_items = selection.documentation_items(SelectionRole.PRIMARY)
 
-    if is_scim:
+    if protocol == ApiType.SCIM:
         deterministic_result = await pregenerate_scim_endpoints(
-            session_id=session_id,
+            baseline_bundle=build_scim_baseline_from_documents(
+                selection.documentation_items(SelectionRole.SCIM_BASELINE)
+            ),
             object_class=object_class,
             job_id=job_id,
             object_class_flags=object_class_flags,
@@ -210,48 +160,26 @@ async def extract_endpoints(
         if deterministic_result is not None:
             result = deterministic_result
         else:
-            documented_result = await _extract_rest_endpoints_from_relevant_chunks(
-                doc_items,
+            documented_result = await _extract_rest_endpoints_from_chunks(
+                _exclude_conndev_documents(primary_doc_items),
                 object_class,
-                relevant_chunks,
                 job_id,
                 base_api_url,
-                exclude_conndev=True,
             )
-            if documented_result is None:
-                documented_result = build_endpoint_result()
-
-            result = await _retry_rest_endpoints_with_default_criteria(
-                documented_result,
+            result = await _retry_rest_endpoints_with_fallback(
+                documented_result if documented_result is not None else build_endpoint_result(),
+                selection,
                 object_class,
-                session_id,
-                relevant_chunks,
                 job_id,
                 base_api_url,
-                exclude_conndev=True,
             )
     else:
-        rest_result = await _extract_rest_endpoints_from_relevant_chunks(
-            doc_items,
-            object_class,
-            relevant_chunks,
-            job_id,
-            base_api_url,
-        )
+        rest_result = await _extract_rest_endpoints_from_chunks(primary_doc_items, object_class, job_id, base_api_url)
         if rest_result is None:
-            if not relevant_chunks:
-                logger.warning("[Digester:Endpoints] No relevant chunks found for %s", object_class)
-                return build_endpoint_result()
-            rest_result = build_endpoint_result()
+            logger.warning("[Digester:Endpoints] No relevant chunks found for %s", object_class)
+            return build_endpoint_result()
 
-        result = await _retry_rest_endpoints_with_default_criteria(
-            rest_result,
-            object_class,
-            session_id,
-            relevant_chunks,
-            job_id,
-            base_api_url,
-        )
+        result = await _retry_rest_endpoints_with_fallback(rest_result, selection, object_class, job_id, base_api_url)
 
     endpoints_list = extract_endpoints_from_result(result)
     logger.info("[Digester:Endpoints] Extracted %d endpoints for %s", len(endpoints_list), object_class)

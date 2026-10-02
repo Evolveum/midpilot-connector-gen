@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.documents.filtering.filter import filter_documentation_items
+from src.documents.errors import DocumentationSessionNotFoundError
+from src.documents.filtering.filter import filter_documentation_items, select_documentation_items
 from src.documents.filtering.schema import ChunkFilterCriteria
 
 
@@ -101,3 +102,26 @@ async def test_override_tag_still_respects_excluded_categories():
     result = await _run_filter(criteria, items)
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_missing_session_raises_documents_domain_error_with_session_not_found_contract():
+    session_id = uuid4()
+    with patch("src.documents.filtering.filter.SessionRepository") as session_repo_cls:
+        session_repo_cls.return_value.session_exists = AsyncMock(return_value=False)
+        with pytest.raises(DocumentationSessionNotFoundError) as exc_info:
+            await filter_documentation_items(ChunkFilterCriteria(), session_id, db=AsyncMock())
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.code == "session_not_found"
+    assert exc_info.value.message == f"Session {session_id} not found"
+
+
+def test_select_documentation_items_applies_criteria_without_loading_anything():
+    criteria = ChunkFilterCriteria(min_length=None, min_endpoints_num=None, allowed_categories=["spec_yaml"])
+    items = [
+        {"chunkId": "keep", "@metadata": {"category": "spec_yaml"}},
+        {"chunkId": "drop", "@metadata": {"category": "overview"}},
+    ]
+
+    assert [item["chunkId"] for item in select_documentation_items(items, criteria)] == ["keep"]

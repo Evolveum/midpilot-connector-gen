@@ -83,7 +83,13 @@ async def process_scraped_documentation(
     """
 
     logger.debug("[Documents:Process] Processing documentation: %s", documentation.url)
-    chunks = split_text_with_token_overlap(documentation.content, max_tokens=chunk_length, overlap_ratio=0.05)
+    # Tokenization is CPU-bound; keep it off the event loop shared with the API.
+    chunks = await asyncio.to_thread(
+        split_text_with_token_overlap,
+        documentation.content,
+        max_tokens=chunk_length,
+        overlap_ratio=0.05,
+    )
     logger.debug("[Documents:Process] Generated %s chunks for documentation: %s", len(chunks), documentation.url)
 
     async def process_chunk(idx: int, chunk: tuple[str, int]) -> tuple[int, DocumentationItem]:

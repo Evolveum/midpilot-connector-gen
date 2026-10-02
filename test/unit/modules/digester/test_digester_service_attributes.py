@@ -7,8 +7,10 @@ from uuid import uuid4
 
 import pytest
 
+from src.documents.selection import DocumentationSelection, SelectionRole
 from src.modules.digester.aggregation.merges import merge_attribute_candidates
 from src.modules.digester.extractors.attributes import extract_attributes
+from src.modules.digester.extractors.scim.baseline import ScimBaselineBundle
 from src.modules.digester.schemas import (
     AttributeInfoRest,
     DocProcessingSequenceItem,
@@ -53,258 +55,108 @@ async def test_merge_attribute_candidates_reuses_validated_sequence_text(mock_di
     mock_extract_sequence.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_extract_attributes_updates_session_success(mock_llm, mock_digester_update_job_progress):
-    """
-    Test extract_attributes successfully extracts attributes and updates the session.
-    Validates chunk selection, attribute extraction, and session update.
-    """
-    session_id = uuid4()
-    job_id = uuid4()
-    doc_uuid = str(uuid4())
+def _doc(content: str, *, tags: list[str] | None = None, content_type: str | None = None) -> dict:
+    metadata: dict = {"tags": tags or []}
+    if content_type is not None:
+        metadata["content_type"] = content_type
+    return {
+        "docId": str(uuid4()),
+        "chunkId": str(uuid4()),
+        "url": None,
+        "summary": f"summary: {content}",
+        "content": content,
+        "@metadata": metadata,
+    }
 
-    fake_doc_items = [
+
+def _selection(*, primary=(), fallback=(), scim_baseline=(), sql_schema=()) -> DocumentationSelection:
+    corpus = [*primary, *fallback, *scim_baseline, *sql_schema]
+    unique = list({item["chunkId"]: item for item in corpus}.values())
+    return DocumentationSelection.from_corpus(
+        unique,
         {
-            "uuid": doc_uuid,
-            "content": "User schema documentation",
-            "summary": "User attributes",
-            "@metadata": {"source": "schema"},
-        }
-    ]
+            SelectionRole.PRIMARY: list(primary),
+            SelectionRole.FALLBACK: list(fallback),
+            SelectionRole.SCIM_BASELINE: list(scim_baseline),
+            SelectionRole.SQL_SCHEMA: list(sql_schema),
+        },
+    )
 
-    relevant_chunks = [
-        {"doc_id": doc_uuid, "chunk_id": doc_uuid},
-    ]
+
+def _attributes_result(*names: str, doc: dict | None = None) -> dict:
+    refs = [{"doc_id": doc["docId"], "chunk_id": doc["chunkId"]}] if doc else []
+    return {
+        "result": {
+            "attributes": {
+                name: AttributeInfoRest(type="string", description=name, relevant_sequences=[]).model_dump()
+                for name in names
+            }
+        },
+        "relevantDocumentations": refs,
+    }
+
+
+_EMPTY = {"result": {"attributes": {}}, "relevantDocumentations": []}
+
+
+@pytest.mark.asyncio
+async def test_extract_attributes_reads_primary_chunks_from_the_stored_selection(mock_digester_update_job_progress):
+    primary = _doc("User schema documentation", tags=["user"])
+    fallback = _doc("Unrelated reference")
 
     with (
-        patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.extractors.attributes._extract_rest_attributes") as mock_extract_attrs,
+        patch(
+            "src.modules.digester.extractors.attributes._extract_rest_attributes",
+            new_callable=AsyncMock,
+            return_value=_attributes_result("id", "username", doc=primary),
+        ) as mock_rest,
         patch(
             "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=True,
-        ) as mock_update_object_class,
-        patch(
-            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ),
+        ) as mock_persist,
     ):
-        mock_extract_chunks.return_value = (
-            ["chunk-0 text", "chunk-2 text"],
-            [(0, doc_uuid), (2, doc_uuid)],
+        result = await extract_attributes(
+            _selection(primary=[primary], fallback=[fallback]), "User", uuid4(), uuid4(), ApiType.REST
         )
 
-        mock_extract_attrs.return_value = {
-            "result": {
-                "attributes": {
-                    "id": AttributeInfoRest(
-                        type="string",
-                        description="Unique identifier",
-                        mandatory=True,
-                        readable=True,
-                        updatable=False,
-                        creatable=True,
-                        multivalue=False,
-                        returnedByDefault=True,
-                        relevant_sequences=[],
-                    ).model_dump(),
-                    "username": AttributeInfoRest(
-                        type="string",
-                        description="User login name",
-                        mandatory=True,
-                        readable=True,
-                        updatable=True,
-                        creatable=True,
-                        multivalue=False,
-                        returnedByDefault=True,
-                        relevant_sequences=[],
-                    ).model_dump(),
-                }
-            },
-            "relevantDocumentations": relevant_chunks,
-        }
-
-        result = await extract_attributes(fake_doc_items, "User", session_id, relevant_chunks, job_id)
-
-        # Verify result structure
-        assert "result" in result
-        assert "attributes" in result["result"]
-        assert "id" in result["result"]["attributes"]
-        assert "username" in result["result"]["attributes"]
-
-        # Verify chunk extraction was called correctly
-        mock_extract_chunks.assert_called_once_with(fake_doc_items, relevant_chunks, "Digester:Attributes")
-
-        # Verify attribute extraction was called
-        mock_extract_attrs.assert_called_once()
-        mock_update_object_class.assert_awaited_once()
+    assert set(result["result"]["attributes"]) == {"id", "username"}
+    mock_rest.assert_awaited_once()
+    contents, object_class, _, chunk_ids, metadata_map, id_map = mock_rest.await_args.args
+    assert (contents, object_class, chunk_ids) == ([primary["content"]], "User", [primary["chunkId"]])
+    assert metadata_map == {primary["chunkId"]: {"summary": primary["summary"], "@metadata": {"tags": ["user"]}}}
+    assert id_map == {primary["chunkId"]: primary["docId"]}
+    mock_persist.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_extract_attributes_no_relevant_chunks(mock_llm, mock_digester_update_job_progress):
-    """Test extract_attributes when no relevant chunks are found."""
-    session_id = uuid4()
-    job_id = uuid4()
-
+async def test_extract_attributes_without_primary_chunks_returns_empty_result(mock_digester_update_job_progress):
     with (
-        patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_extract_chunks,
+        patch("src.modules.digester.extractors.attributes._extract_rest_attributes", new_callable=AsyncMock) as rest,
         patch(
-            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ) as mock_api_types,
+            "src.modules.digester.persistence.update_object_class_field_in_session", new_callable=AsyncMock
+        ) as persist,
     ):
-        result = await extract_attributes([], "User", session_id, [], job_id)
+        result = await extract_attributes(_selection(), "User", uuid4(), uuid4(), ApiType.REST)
 
-        assert result["result"]["attributes"] == {}
-        assert result["relevantDocumentations"] == []
-        mock_extract_chunks.assert_not_called()
-        mock_api_types.assert_awaited_once_with(session_id, None)
-
-
-@pytest.mark.asyncio
-async def test_extract_attributes_scim_preserves_doc_maps_when_relevance_is_empty(
-    mock_llm, mock_digester_update_job_progress
-):
-    session_id = uuid4()
-    job_id = uuid4()
-    doc_id = str(uuid4())
-    chunk_id = str(uuid4())
-    doc_items = [
-        {
-            "docId": doc_id,
-            "chunkId": chunk_id,
-            "content": "Slack maps primary email to emails[0].value.",
-            "summary": "SCIM user email mappings",
-            "@metadata": {"tags": ["scim", "attributes"]},
-        }
-    ]
-    retry_result = {
-        "result": {
-            "attributes": {
-                "Primary Email": {
-                    "type": "string",
-                    "format": "email",
-                    "description": "Primary email mapping.",
-                    "mandatory": True,
-                    "scimAttribute": "emails.value",
-                    "relevantDocumentations": [{"docId": doc_id, "chunkId": chunk_id}],
-                }
-            }
-        },
-        "relevantDocumentations": [{"doc_id": doc_id, "chunk_id": chunk_id}],
-    }
-
-    with (
-        patch(
-            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.SCIM,
-        ),
-        patch(
-            "src.modules.digester.extractors.attributes.filter_documentation_items",
-            new_callable=AsyncMock,
-            return_value=doc_items,
-        ),
-        patch(
-            "src.modules.digester.extractors.attributes.extract_scim_attributes",
-            new_callable=AsyncMock,
-            side_effect=[
-                {"result": {"attributes": {}}, "relevantDocumentations": []},
-                retry_result,
-            ],
-        ) as mock_extract_scim_attributes,
-        patch(
-            "src.modules.digester.persistence.update_object_class_field_in_session",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_update_object_class,
-    ):
-        result = await extract_attributes(doc_items, "UserEmails", session_id, [], job_id)
-
-    assert result == retry_result
-    assert mock_extract_scim_attributes.await_count == 2
-
-    first_call_args = mock_extract_scim_attributes.await_args_list[0].args
-    assert first_call_args[0] == []
-    assert first_call_args[3] == session_id
-    assert first_call_args[4] == []
-    assert first_call_args[6] == {chunk_id: doc_id}
-
-    retry_call_args = mock_extract_scim_attributes.await_args_list[1].args
-    assert retry_call_args[0] == ["Slack maps primary email to emails[0].value."]
-    assert retry_call_args[3] == session_id
-    assert retry_call_args[4] == [chunk_id]
-    assert retry_call_args[5] == {
-        chunk_id: {
-            "summary": "SCIM user email mappings",
-            "@metadata": {"tags": ["scim", "attributes"]},
-        }
-    }
-    assert retry_call_args[6] == {chunk_id: doc_id}
-    mock_update_object_class.assert_awaited_once()
+    assert result["result"]["attributes"] == {}
+    assert result["relevantDocumentations"] == []
+    rest.assert_not_awaited()
+    persist.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_extract_attributes_scim_retry_rebuilds_context_from_new_fallback_chunks(
-    mock_llm, mock_digester_update_job_progress
-):
-    session_id = uuid4()
-    job_id = uuid4()
-    primary_doc_id = str(uuid4())
-    primary_chunk_id = str(uuid4())
-    fallback_doc_id = str(uuid4())
-    fallback_chunk_id = str(uuid4())
-    primary_doc_item = {
-        "docId": primary_doc_id,
-        "chunkId": primary_chunk_id,
-        "content": "Primary SCIM documentation without attribute mappings.",
-        "summary": "Primary SCIM documentation",
-        "@metadata": {"tags": ["scim", "overview"]},
-    }
-    fallback_doc_item = {
-        "docId": fallback_doc_id,
-        "chunkId": fallback_chunk_id,
-        "content": "Fallback maps work email to emails[0].value.",
-        "summary": "Fallback SCIM attribute mappings",
-        "@metadata": {"tags": ["scim", "attributes"]},
-    }
-    relevant_chunks = [{"doc_id": primary_doc_id, "chunk_id": primary_chunk_id}]
-    retry_result = {
-        "result": {
-            "attributes": {
-                "Work Email": {
-                    "type": "string",
-                    "format": "email",
-                    "description": "Work email mapping.",
-                    "scimAttribute": "emails.value",
-                    "relevantDocumentations": [{"docId": fallback_doc_id, "chunkId": fallback_chunk_id}],
-                }
-            }
-        },
-        "relevantDocumentations": [{"doc_id": fallback_doc_id, "chunk_id": fallback_chunk_id}],
-    }
+async def test_extract_attributes_retries_once_over_stored_fallback_chunks(mock_digester_update_job_progress):
+    primary = _doc("Overview without attributes", tags=["user"])
+    fallback = _doc("Fallback reference with attributes")
+    fallback_result = _attributes_result("email", doc=fallback)
 
     with (
         patch(
-            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
+            "src.modules.digester.extractors.attributes._extract_rest_attributes",
             new_callable=AsyncMock,
-            return_value=ApiType.SCIM,
-        ),
-        patch(
-            "src.modules.digester.extractors.attributes.filter_documentation_items",
-            new_callable=AsyncMock,
-            return_value=[primary_doc_item, fallback_doc_item],
-        ),
-        patch(
-            "src.modules.digester.extractors.attributes.extract_scim_attributes",
-            new_callable=AsyncMock,
-            side_effect=[
-                {"result": {"attributes": {}}, "relevantDocumentations": []},
-                retry_result,
-            ],
-        ) as mock_extract_scim_attributes,
+            side_effect=[_EMPTY, fallback_result],
+        ) as mock_rest,
         patch(
             "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
@@ -312,62 +164,138 @@ async def test_extract_attributes_scim_retry_rebuilds_context_from_new_fallback_
         ),
     ):
         result = await extract_attributes(
-            [primary_doc_item],
-            "User",
-            session_id,
-            relevant_chunks,
-            job_id,
+            _selection(primary=[primary], fallback=[fallback]), "User", uuid4(), uuid4(), ApiType.REST
         )
 
-    assert result == retry_result
-    assert mock_extract_scim_attributes.await_count == 2
-
-    primary_call_args = mock_extract_scim_attributes.await_args_list[0].args
-    assert primary_call_args[0] == [primary_doc_item["content"]]
-    assert primary_call_args[4] == [primary_chunk_id]
-    assert primary_call_args[6] == {primary_chunk_id: primary_doc_id}
-
-    retry_call_args = mock_extract_scim_attributes.await_args_list[1].args
-    assert retry_call_args[0] == [fallback_doc_item["content"]]
-    assert retry_call_args[4] == [fallback_chunk_id]
-    assert retry_call_args[5] == {
-        fallback_chunk_id: {
-            "summary": fallback_doc_item["summary"],
-            "@metadata": fallback_doc_item["@metadata"],
-        }
-    }
-    assert retry_call_args[6] == {fallback_chunk_id: fallback_doc_id}
+    assert result == fallback_result
+    assert [call.args[0] for call in mock_rest.await_args_list] == [[primary["content"]], [fallback["content"]]]
 
 
 @pytest.mark.asyncio
-async def test_extract_attributes_session_not_found(mock_llm, mock_digester_update_job_progress):
-    """Test extract_attributes handles missing session gracefully."""
-    session_id = uuid4()
-    job_id = uuid4()
-    doc_uuid = str(uuid4())
+async def test_extract_attributes_does_not_retry_when_primary_found_attributes(mock_digester_update_job_progress):
+    primary = _doc("User schema", tags=["user"])
+    with (
+        patch(
+            "src.modules.digester.extractors.attributes._extract_rest_attributes",
+            new_callable=AsyncMock,
+            return_value=_attributes_result("id", doc=primary),
+        ) as mock_rest,
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        await extract_attributes(
+            _selection(primary=[primary], fallback=[_doc("Fallback")]), "User", uuid4(), uuid4(), ApiType.REST
+        )
 
-    fake_doc_items = [{"uuid": doc_uuid, "content": "test"}]
-    relevant_chunks = [{"doc_id": doc_uuid, "chunk_id": doc_uuid}]
+    mock_rest.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_extract_attributes_without_stored_fallback_keeps_empty_result(mock_digester_update_job_progress):
+    primary = _doc("Overview without attributes", tags=["user"])
+    with (
+        patch(
+            "src.modules.digester.extractors.attributes._extract_rest_attributes",
+            new_callable=AsyncMock,
+            return_value=_EMPTY,
+        ) as mock_rest,
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_persist,
+    ):
+        result = await extract_attributes(_selection(primary=[primary]), "User", uuid4(), uuid4(), ApiType.REST)
+
+    assert result == _EMPTY
+    mock_rest.assert_awaited_once()
+    mock_persist.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scim_extract_attributes_uses_heuristics_then_fallback_with_the_stored_baseline(
+    mock_digester_update_job_progress,
+):
+    conndev = _doc(
+        '{"schemaContent": "{\\"id\\": \\"urn:ietf:params:scim:schemas:core:2.0:User\\", \\"name\\": \\"User\\", '
+        '\\"attributes\\": []}"}',
+        tags=["scim", "schema", "conndev"],
+        content_type="application/com.evolveum.conndev+json",
+    )
+    fallback = _doc("Slack maps primary email to emails[0].value.", tags=["scim", "attributes"])
+    retry_result = _attributes_result("Primary Email", doc=fallback)
 
     with (
-        patch("src.modules.digester.extractors.attributes.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.extractors.attributes._extract_rest_attributes") as mock_extract_attrs,
+        patch(
+            "src.modules.digester.extractors.attributes.extract_scim_attributes",
+            new_callable=AsyncMock,
+            side_effect=[_EMPTY, retry_result],
+        ) as mock_scim,
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_persist,
+    ):
+        result = await extract_attributes(
+            _selection(fallback=[fallback], scim_baseline=[conndev]), "UserEmails", uuid4(), uuid4(), ApiType.SCIM
+        )
+
+    assert result == retry_result
+    first, retry = (call.args for call in mock_scim.await_args_list)
+    # SCIM tolerates no primary documentation: schema heuristics run on the stored baseline.
+    assert first[0] == [] and first[4] == []
+    assert isinstance(first[3], ScimBaselineBundle)
+    assert "User" in first[3].schemas
+    assert retry[0] == [fallback["content"]]
+    assert retry[3] is first[3]
+    assert retry[4] == [fallback["chunkId"]]
+    assert retry[6] == {fallback["chunkId"]: fallback["docId"]}
+    mock_persist.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sql_extract_attributes_reads_the_stored_schema_documentation(mock_digester_update_job_progress):
+    table = _doc("CREATE TABLE users (id UUID PRIMARY KEY);", content_type="text/sql")
+    other = _doc("Overview")
+
+    with (
+        patch(
+            "src.modules.digester.extractors.attributes.extract_sql_attributes",
+            new_callable=AsyncMock,
+            return_value=_attributes_result("id", doc=table),
+        ) as mock_sql,
+        patch(
+            "src.modules.digester.persistence.update_object_class_field_in_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        await extract_attributes(_selection(sql_schema=[table, other]), "User", uuid4(), uuid4(), ApiType.SQL)
+
+    doc_items = mock_sql.await_args.args[0]
+    assert [item["chunkId"] for item in doc_items] == [table["chunkId"], other["chunkId"]]
+
+
+@pytest.mark.asyncio
+async def test_extract_attributes_returns_result_when_session_write_back_is_skipped(mock_digester_update_job_progress):
+    primary = _doc("User schema", tags=["user"])
+    with (
+        patch(
+            "src.modules.digester.extractors.attributes._extract_rest_attributes",
+            new_callable=AsyncMock,
+            return_value=_attributes_result("id", doc=primary),
+        ),
         patch(
             "src.modules.digester.persistence.update_object_class_field_in_session",
             new_callable=AsyncMock,
             return_value=False,
-        ) as mock_update_object_class,
-        patch(
-            "src.modules.digester.extractors.attributes.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ),
+        ) as mock_persist,
     ):
-        mock_extract_chunks.return_value = (["chunk text"], [(0, doc_uuid)])
-        mock_extract_attrs.return_value = {"result": {"attributes": {"id": {}}}, "relevantDocumentations": []}
+        result = await extract_attributes(_selection(primary=[primary]), "User", uuid4(), uuid4(), ApiType.REST)
 
-        result = await extract_attributes(fake_doc_items, "User", session_id, relevant_chunks, job_id)
-
-        # Should return result even if session update fails
-        assert "result" in result
-        mock_update_object_class.assert_awaited_once()
+    assert "id" in result["result"]["attributes"]
+    mock_persist.assert_awaited_once()

@@ -35,6 +35,7 @@ from src.session.errors import (
 from src.session.schema import Documentation
 from src.session.service import build_group_documentation_response
 from src.shared.enums import JobStatus
+from src.shared.session_keys import upload_job_pointer_key
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ async def check_documentation_item(
             return Response(status_code=status.HTTP_204_NO_CONTENT)
 
         # If the item is not yet persisted, check if an upload job for this doc is queued/running.
-        job_key = f"documentation.processUpload_{documentation_id}_job_id"
+        job_key = upload_job_pointer_key(documentation_id)
         pending_job_id = await repo.get_session_data(session_id, job_key)
         if pending_job_id:
             job_repo = JobRepository(db)

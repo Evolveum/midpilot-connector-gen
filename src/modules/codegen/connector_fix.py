@@ -108,7 +108,8 @@ async def fix_connector_code(
 
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
     connection_target = base_api_url or database_name
-    dsl_documentation = _load_dsl_documentation(artifacts, protocol)
+    # Reading and slicing the bundled references is synchronous file and regex work.
+    dsl_documentation = await asyncio.to_thread(_load_dsl_documentation, artifacts, protocol)
     extracted_attributes = render_prompt_records(build_complete_attribute_mapping_records(attributes))
     extracted_endpoints = render_prompt_records(endpoints_to_records(endpoints)) if endpoints is not None else ""
     sql_context = build_sql_context_prompt_vars(attributes) if protocol is ApiType.SQL else None

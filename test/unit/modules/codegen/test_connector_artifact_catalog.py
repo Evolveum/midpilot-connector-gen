@@ -9,7 +9,12 @@ from uuid import uuid4
 
 import pytest
 
-from src.modules.codegen.enums import ArtifactKind, SearchIntent
+from src.modules.codegen.enums import (
+    ArtifactKind,
+    SearchIntent,
+    build_object_class_operation_key,
+    build_search_operation_key,
+)
 from src.modules.codegen.selection.artifact_catalog import (
     ConnectorArtifact,
     ConnectorArtifactSlot,
@@ -19,6 +24,7 @@ from src.modules.codegen.selection.artifact_catalog import (
 )
 from src.modules.digester.errors import ObjectClassesNotFoundError, ObjectClassNotFoundError
 from src.shared.enums import ApiType
+from src.shared.session_keys import codegen_operation_keys
 
 
 def _slot_keys(**kwargs) -> list[str]:
@@ -34,6 +40,28 @@ def test_slots_cover_every_operation_of_every_object_class():
             assert f"{object_class}{suffix}Output" in keys
         for suffix in ("SearchAll", "SearchFilter", "SearchId"):
             assert f"{object_class}{suffix}Output" in keys
+
+
+@pytest.mark.parametrize(
+    ("kind", "prefix"),
+    [
+        (ArtifactKind.NATIVE_SCHEMA, "userNativeSchema"),
+        (ArtifactKind.CREATE, "userCreate"),
+        (ArtifactKind.UPDATE, "userUpdate"),
+        (ArtifactKind.DELETE, "userDelete"),
+    ],
+)
+def test_object_class_operation_keys_keep_their_established_names(kind, prefix):
+    """The generate, status and override routes and the fix all address these exact rows."""
+    keys = codegen_operation_keys(build_object_class_operation_key("user", kind))
+
+    assert (keys.input, keys.job_id, keys.output) == (f"{prefix}Input", f"{prefix}JobId", f"{prefix}Output")
+
+
+def test_search_operation_keys_keep_their_established_names():
+    keys = codegen_operation_keys(build_search_operation_key("user", SearchIntent.ALL))
+
+    assert (keys.input, keys.job_id, keys.output) == ("userSearchAllInput", "userSearchAllJobId", "userSearchAllOutput")
 
 
 def test_object_class_names_are_normalized_to_the_generated_key_form():

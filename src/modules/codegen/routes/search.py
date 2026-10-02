@@ -23,6 +23,8 @@ from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import CodegenOperationInput, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
+from src.shared.job_types import JobType
+from src.shared.session_keys import codegen_operation_keys
 
 router = APIRouter(tags=["Codegen: Search"])
 
@@ -61,8 +63,8 @@ async def generate_search(
         skip_cache=skip_cache,
         api_type=api_type,
         codegen_input=codegen_input,
-        key_prefix=operation_key,
-        job_type="codegen.getSearch",
+        keys=codegen_operation_keys(operation_key),
+        job_type=JobType.CODEGEN_SEARCH,
         worker=generation.generate_search_code,
         extra_job_input={"intent": intent},
         extra_worker_kwargs={"intent": intent},
@@ -97,7 +99,7 @@ async def get_search_status(
         repo,
         session_id,
         jobId,
-        session_key=f"{operation_key}JobId",
+        session_key=codegen_operation_keys(operation_key).job_id,
         job_label="search",
         not_found_detail=f"No search job found for {object_class} intent={intent} in session {session_id}",
     )

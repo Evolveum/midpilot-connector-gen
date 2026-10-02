@@ -12,6 +12,13 @@ from src.documents.normalize import normalize_endpoint_key, normalize_object_cla
 from src.shared.auth import auth_entity_key
 from src.shared.coerce import as_dict_list, as_list, as_mapping
 from src.shared.normalize import normalize_relevant_sequence, normalize_url
+from src.shared.session_keys import (
+    AUTH,
+    CONNECTIVITY_ENDPOINT,
+    OBJECT_CLASSES,
+    is_attributes_output_key,
+    is_endpoints_output_key,
+)
 
 
 def build_endpoint_entity_key(path: Any, method: Any) -> Optional[str]:
@@ -23,7 +30,7 @@ def build_endpoint_entity_key(path: Any, method: Any) -> Optional[str]:
 
 
 def result_key_uses_endpoint_entities(result_key: str) -> bool:
-    return result_key.endswith("EndpointsOutput") or result_key == "connectivityEndpointOutput"
+    return is_endpoints_output_key(result_key) or result_key == CONNECTIVITY_ENDPOINT.output
 
 
 def unwrap_result_payload(result_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -175,6 +182,38 @@ def remap_reused_output_relevance(
     return _remap_node(payload, is_root=True)
 
 
+def collect_relevance_chunk_ids(payload: Any) -> set[str]:
+    """
+    Collect every chunk id a result payload references.
+
+    Walks exactly the places :func:`remap_reused_output_relevance` rewrites
+    (``relevantDocumentations`` and relevant sequences at any depth), so a caller can
+    verify that a remap covers the whole payload before reusing it.
+    """
+    chunk_ids: set[str] = set()
+
+    def _collect_refs(value: Any) -> None:
+        for item in as_list(value):
+            if isinstance(item, Mapping) and (chunk_id := item.get("chunk_id") or item.get("chunkId")):
+                chunk_ids.add(str(chunk_id))
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                _walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+        for key, value in node.items():
+            if key in {"relevantDocumentations", "relevant_sequences", "relevantSequences"}:
+                _collect_refs(value)
+            else:
+                _walk(value)
+
+    _walk(payload)
+    return chunk_ids
+
+
 def normalize_chunk_refs_for_storage(
     value: Any,
     *,
@@ -220,7 +259,7 @@ def extract_relevant_rows_for_storage(
     rows: List[Dict[str, Any]] = []
     payload = unwrap_result_payload(result_dict)
 
-    if result_key != "authOutput":
+    if result_key != AUTH.output:
         rows.extend(
             normalize_chunk_refs_for_storage(
                 result_dict.get("relevantDocumentations"),
@@ -228,7 +267,7 @@ def extract_relevant_rows_for_storage(
             )
         )
 
-    if result_key == "objectClassesOutput":
+    if result_key == OBJECT_CLASSES.output:
         object_classes = payload.get("objectClasses")
         if isinstance(object_classes, list):
             for obj_class in object_classes:
@@ -244,7 +283,7 @@ def extract_relevant_rows_for_storage(
                         )
                     )
 
-    if result_key == "authOutput":
+    if result_key == AUTH.output:
         auth_items = payload.get("auth")
         if isinstance(auth_items, list):
             for auth_item in auth_items:
@@ -261,7 +300,7 @@ def extract_relevant_rows_for_storage(
                     )
                 )
 
-    if result_key.endswith("AttributesOutput"):
+    if is_attributes_output_key(result_key):
         attributes = payload.get("attributes")
         if isinstance(attributes, Mapping):
             for attr_name, attr_info in attributes.items():
@@ -311,18 +350,16 @@ def strip_relevance_from_session_payload(payload: Any, *, result_key: str) -> An
     if not isinstance(payload, dict):
         return payload
 
-    cleaned = copy.deepcopy(payload)
-    cleaned.pop("relevantDocumentations", None)
-    cleaned.pop("relevant_chunk_indices", None)
+    cleaned = _strip_top_level_relevance(payload)
 
-    if result_key == "objectClassesOutput":
+    if result_key == OBJECT_CLASSES.output:
         object_classes = cleaned.get("objectClasses")
         if isinstance(object_classes, list):
             for obj_class in object_classes:
                 if isinstance(obj_class, dict):
                     obj_class.pop("relevantDocumentations", None)
 
-    if result_key == "authOutput":
+    if result_key == AUTH.output:
         auth_items = cleaned.get("auth")
         if isinstance(auth_items, list):
             for auth_item in auth_items:
@@ -330,7 +367,7 @@ def strip_relevance_from_session_payload(payload: Any, *, result_key: str) -> An
                     auth_item.pop("relevant_sequences", None)
                     auth_item.pop("relevantSequences", None)
 
-    if result_key.endswith("AttributesOutput"):
+    if is_attributes_output_key(result_key):
         attributes = cleaned.get("attributes")
         if isinstance(attributes, dict):
             for attr_info in attributes.values():
@@ -341,13 +378,24 @@ def strip_relevance_from_session_payload(payload: Any, *, result_key: str) -> An
                     attr_info.pop("relevantSequences", None)
 
     if result_key_uses_endpoint_entities(result_key):
-        endpoints = cleaned.get("endpoints")
-        if isinstance(endpoints, list):
-            for endpoint in endpoints:
-                if isinstance(endpoint, dict):
-                    endpoint.pop("relevantDocumentations", None)
+        _strip_endpoint_entities(cleaned)
 
     return cleaned
+
+
+def _strip_top_level_relevance(payload: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = copy.deepcopy(payload)
+    cleaned.pop("relevantDocumentations", None)
+    cleaned.pop("relevant_chunk_indices", None)
+    return cleaned
+
+
+def _strip_endpoint_entities(cleaned: Dict[str, Any]) -> None:
+    endpoints = cleaned.get("endpoints")
+    if isinstance(endpoints, list):
+        for endpoint in endpoints:
+            if isinstance(endpoint, dict):
+                endpoint.pop("relevantDocumentations", None)
 
 
 def attribute_entity_key(attribute_name: Any) -> Optional[str]:
@@ -422,7 +470,9 @@ def extract_attribute_relevance_rows(
 
 
 def strip_endpoints_relevance(payload: Dict[str, Any]) -> Dict[str, Any]:
-    return strip_relevance_from_session_payload(payload, result_key="EndpointsOutput")
+    cleaned = _strip_top_level_relevance(payload)
+    _strip_endpoint_entities(cleaned)
+    return cleaned
 
 
 def extract_endpoint_relevance_rows(payload: Dict[str, Any], result_key: str) -> list[Dict[str, Any]]:
@@ -449,7 +499,7 @@ def extract_object_class_relevance_rows(payload: Dict[str, Any]) -> list[Dict[st
         rows.extend(
             normalize_chunk_refs_for_storage(
                 obj_class.get("relevantDocumentations"),
-                result_key="objectClassesOutput",
+                result_key=OBJECT_CLASSES.output,
                 entity_key=normalize_object_class_name(class_name),
             )
         )
@@ -457,7 +507,7 @@ def extract_object_class_relevance_rows(payload: Dict[str, Any]) -> list[Dict[st
 
 
 def strip_object_class_relevance(payload: Dict[str, Any]) -> Dict[str, Any]:
-    return strip_relevance_from_session_payload(payload, result_key="objectClassesOutput")
+    return strip_relevance_from_session_payload(payload, result_key=OBJECT_CLASSES.output)
 
 
 def _sequence_rows(

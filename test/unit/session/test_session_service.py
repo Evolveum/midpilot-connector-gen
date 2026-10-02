@@ -18,6 +18,7 @@ async def test_list_documentation_upload_jobs_filters_by_type():
     job_repo.get_jobs_by_session = AsyncMock(
         return_value=[
             {"jobId": "1", "type": "documentation.processUpload"},
+            # A type name that merely starts with the upload type is a different type.
             {"jobId": "2", "type": "documentation.processUpload_abc_job_id"},
             {"jobId": "3", "type": "codegen.getSearch"},
             {"jobId": "4"},  # missing type -> excluded
@@ -26,7 +27,7 @@ async def test_list_documentation_upload_jobs_filters_by_type():
 
     result = await service.list_documentation_upload_jobs(job_repo, session_id)
 
-    assert [job["jobId"] for job in result] == ["1", "2"]
+    assert [job["jobId"] for job in result] == ["1"]
     job_repo.get_jobs_by_session.assert_awaited_once_with(session_id)
 
 

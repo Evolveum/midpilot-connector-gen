@@ -17,6 +17,7 @@ from src.core.db import close_db
 from src.core.llm import aclose_llm_http_client
 from src.jobs import JobWorker
 from src.router import root_router
+from src.session.errors import DocumentationUploadRejectedError, SessionCreationFailedError
 from src.session.ownership import enforce_session_ownership
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,11 @@ def create_api() -> FastAPI:
     """
     app = FastAPI(title=config.app.title, version=config.app.version, lifespan=lifespan)
 
-    register_exception_handlers(app)
+    register_exception_handlers(
+        app,
+        # midPoint parses these session responses in FastAPI's {"detail": ...} envelope.
+        detail_envelope_errors=(DocumentationUploadRejectedError, SessionCreationFailedError),
+    )
 
     app.include_router(
         root_router,

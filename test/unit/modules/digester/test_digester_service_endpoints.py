@@ -2,460 +2,271 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
+from src.documents.selection import DocumentationSelection, SelectionRole
 from src.modules.digester.enums import EndpointMethod
+from src.modules.digester.errors import EndpointExtractionNotSupportedError
 from src.modules.digester.extractors.endpoints import extract_endpoints
+from src.modules.digester.extractors.scim.baseline import ScimBaselineBundle
 from src.modules.digester.schemas import EndpointInfo
-from src.modules.digester.selection import DEFAULT_CRITERIA
 from src.shared.enums import ApiType
 
-
-# ==================== EXTRACT ENDPOINTS ====================
-@pytest.mark.asyncio
-async def test_extract_endpoints_updates_session_success(mock_llm, mock_digester_update_job_progress):
-    """
-    Test extract_endpoints successfully extracts endpoints and updates the session.
-    Validates chunk selection, endpoint extraction, and session update.
-    """
-    session_id = uuid4()
-    job_id = uuid4()
-    doc_uuid = str(uuid4())
-    base_api_url = "https://api.example.com"
-
-    fake_doc_items = [
-        {
-            "uuid": doc_uuid,
-            "content": "User endpoints documentation",
-            "summary": "User API endpoints",
-            "@metadata": {"source": "api_spec"},
-        }
-    ]
-
-    relevant_chunks = [{"doc_id": doc_uuid, "chunk_id": doc_uuid}]
-
-    with (
-        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints") as mock_extract_endpoints,
-        patch(
-            "src.modules.digester.persistence.update_object_class_field_in_session",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_update_object_class,
-        patch(
-            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ),
-    ):
-        mock_extract_chunks.return_value = (["chunk-0 text"], [(0, doc_uuid)])
-
-        mock_extract_endpoints.return_value = {
-            "result": {
-                "endpoints": [
-                    EndpointInfo(
-                        method=EndpointMethod.GET,
-                        path="/users",
-                        description="List all users",
-                        suggested_use=["getAll"],
-                    ).model_dump(),
-                    EndpointInfo(
-                        method=EndpointMethod.POST,
-                        path="/users",
-                        description="Create a new user",
-                        suggested_use=["create"],
-                    ).model_dump(),
-                    EndpointInfo(
-                        method=EndpointMethod.GET,
-                        path="/users/{id}",
-                        description="Get user by ID",
-                        suggested_use=["getById"],
-                    ).model_dump(),
-                ]
-            },
-            "relevantDocumentations": relevant_chunks,
-        }
-
-        result = await extract_endpoints(fake_doc_items, "User", session_id, relevant_chunks, job_id, base_api_url)
-
-        # Verify result structure
-        assert "result" in result
-        assert "endpoints" in result["result"]
-        assert len(result["result"]["endpoints"]) == 3
-        assert result["result"]["endpoints"][0]["path"] == "/users"
-        assert result["result"]["endpoints"][0]["method"] == "GET"
-
-        # Verify chunk extraction was called
-        mock_extract_chunks.assert_called_once_with(fake_doc_items, relevant_chunks, "Digester:Endpoints")
-
-        # Verify endpoint extraction was called with base_api_url
-        mock_extract_endpoints.assert_called_once()
-        call_args = mock_extract_endpoints.call_args
-        assert call_args[0][3] == base_api_url
-        mock_update_object_class.assert_awaited_once()
+CONNDEV = "application/com.evolveum.conndev+json"
+_EMPTY = {"result": {"endpoints": []}, "relevantDocumentations": []}
 
 
-@pytest.mark.asyncio
-async def test_extract_endpoints_no_relevant_chunks(mock_llm, mock_digester_update_job_progress):
-    """Test extract_endpoints when no relevant chunks are found."""
-    session_id = uuid4()
-    job_id = uuid4()
-
-    with (
-        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_extract_chunks,
-        patch(
-            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ),
-    ):
-        mock_extract_chunks.return_value = ([], [])
-
-        result = await extract_endpoints([], "User", session_id, [], job_id, "")
-
-        assert result["result"]["endpoints"] == []
-        assert result["relevantDocumentations"] == []
-
-
-@pytest.mark.asyncio
-async def test_extract_endpoints_with_base_url(mock_llm, mock_digester_update_job_progress):
-    """Test extract_endpoints properly passes base_api_url to extraction function."""
-    session_id = uuid4()
-    job_id = uuid4()
-    doc_uuid = str(uuid4())
-    base_api_url = "https://custom-api.example.com/v2"
-
-    fake_doc_items = [{"uuid": doc_uuid, "content": "test", "summary": "", "@metadata": {}}]
-    relevant_chunks = [{"doc_id": doc_uuid, "chunk_id": doc_uuid}]
-
-    with (
-        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_extract_chunks,
-        patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints") as mock_extract_endpoints,
-        patch(
-            "src.modules.digester.persistence.update_object_class_field_in_session",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_update_object_class,
-        patch(
-            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ),
-    ):
-        mock_extract_chunks.return_value = (["chunk"], [(0, doc_uuid)])
-        mock_extract_endpoints.return_value = {
-            "result": {
-                "endpoints": [
-                    EndpointInfo(
-                        method=EndpointMethod.GET,
-                        path="/users",
-                        description="List users",
-                    ).model_dump()
-                ]
-            },
-            "relevantDocumentations": relevant_chunks,
-        }
-
-        await extract_endpoints(fake_doc_items, "User", session_id, relevant_chunks, job_id, base_api_url)
-
-        # Verify base_api_url was passed correctly
-        call_args = mock_extract_endpoints.call_args
-        assert call_args[0][3] == base_api_url
-        mock_update_object_class.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_extract_endpoints_retries_with_default_criteria_when_primary_is_empty(
-    mock_llm, mock_digester_update_job_progress
-):
-    session_id = uuid4()
-    job_id = uuid4()
-    primary_doc_id = str(uuid4())
-    primary_chunk_id = str(uuid4())
-    fallback_doc_id = str(uuid4())
-    fallback_chunk_id = str(uuid4())
-
-    primary_doc_items = [{"docId": primary_doc_id, "chunkId": primary_chunk_id, "content": "Group overview"}]
-    fallback_only_doc_items = [
-        {"docId": fallback_doc_id, "chunkId": fallback_chunk_id, "content": "GET /groups endpoint reference"}
-    ]
-    default_doc_items = [*primary_doc_items, *fallback_only_doc_items]
-    relevant_chunks = [{"doc_id": primary_doc_id, "chunk_id": primary_chunk_id}]
-    fallback_relevant_chunks = [{"doc_id": fallback_doc_id, "chunk_id": fallback_chunk_id}]
-
-    empty_primary = {"result": {"endpoints": []}, "relevantDocumentations": []}
-    fallback_result = {
-        "result": {
-            "endpoints": [
-                EndpointInfo(
-                    method=EndpointMethod.GET,
-                    path="/groups",
-                    description="List groups",
-                ).model_dump()
-            ]
-        },
-        "relevantDocumentations": fallback_relevant_chunks,
+def _doc(content: str, *, content_type: str | None = None) -> dict:
+    metadata: dict = {"tags": []}
+    if content_type is not None:
+        metadata["content_type"] = content_type
+    return {
+        "docId": str(uuid4()),
+        "chunkId": str(uuid4()),
+        "url": None,
+        "summary": f"summary: {content}",
+        "content": content,
+        "@metadata": metadata,
     }
 
-    with (
-        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_select_chunks,
-        patch(
-            "src.modules.digester.extractors.endpoints._extract_rest_endpoints", new_callable=AsyncMock
-        ) as mock_extract_endpoints,
-        patch(
-            "src.modules.digester.extractors.endpoints.filter_documentation_items", new_callable=AsyncMock
-        ) as mock_filter,
-        patch(
-            "src.modules.digester.persistence.update_object_class_field_in_session",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_update_object_class,
-        patch(
-            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ),
-    ):
-        mock_select_chunks.side_effect = [
-            (["group overview"], [primary_chunk_id]),
-            (["GET /groups endpoint reference"], [fallback_chunk_id]),
-        ]
-        mock_extract_endpoints.side_effect = [empty_primary, fallback_result]
-        mock_filter.return_value = default_doc_items
 
-        result = await extract_endpoints(primary_doc_items, "Group", session_id, relevant_chunks, job_id, "")
+def _selection(*, primary=(), fallback=(), scim_baseline=()) -> DocumentationSelection:
+    corpus = list({item["chunkId"]: item for item in [*primary, *fallback, *scim_baseline]}.values())
+    return DocumentationSelection.from_corpus(
+        corpus,
+        {
+            SelectionRole.PRIMARY: list(primary),
+            SelectionRole.FALLBACK: list(fallback),
+            SelectionRole.SCIM_BASELINE: list(scim_baseline),
+        },
+    )
+
+
+def _endpoints_result(path: str, doc: dict) -> dict:
+    return {
+        "result": {
+            "endpoints": [EndpointInfo(method=EndpointMethod.GET, path=path, description=f"List {path}").model_dump()]
+        },
+        "relevantDocumentations": [{"doc_id": doc["docId"], "chunk_id": doc["chunkId"]}],
+    }
+
+
+def _persist(return_value: bool = True):
+    return patch(
+        "src.modules.digester.persistence.update_object_class_field_in_session",
+        new_callable=AsyncMock,
+        return_value=return_value,
+    )
+
+
+@pytest.mark.asyncio
+async def test_extract_endpoints_reads_primary_chunks_and_passes_base_url(mock_digester_update_job_progress):
+    primary = _doc("GET /users lists users")
+    expected = _endpoints_result("/users", primary)
+
+    with (
+        patch(
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
+            new_callable=AsyncMock,
+            return_value=expected,
+        ) as mock_rest,
+        _persist() as mock_persist,
+    ):
+        result = await extract_endpoints(
+            _selection(primary=[primary]),
+            "User",
+            uuid4(),
+            uuid4(),
+            ApiType.REST,
+            "https://custom-api.example.com/v2",
+        )
+
+    assert result == expected
+    contents, object_class, _, base_api_url, chunk_ids, metadata_map, id_map = mock_rest.await_args.args
+    assert (contents, object_class, base_api_url) == (
+        [primary["content"]],
+        "User",
+        "https://custom-api.example.com/v2",
+    )
+    assert chunk_ids == [primary["chunkId"]]
+    assert set(metadata_map) == {primary["chunkId"]}
+    assert id_map == {primary["chunkId"]: primary["docId"]}
+    mock_persist.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_extract_endpoints_without_primary_chunks_returns_empty_without_persisting(
+    mock_digester_update_job_progress,
+):
+    with (
+        patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints", new_callable=AsyncMock) as rest,
+        _persist() as mock_persist,
+    ):
+        result = await extract_endpoints(_selection(), "User", uuid4(), uuid4(), ApiType.REST)
+
+    assert result == _EMPTY
+    rest.assert_not_awaited()
+    mock_persist.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_extract_endpoints_retries_over_stored_fallback_when_primary_is_empty(
+    mock_digester_update_job_progress,
+):
+    primary = _doc("Endpoint overview without paths")
+    fallback = _doc("GET /groups lists groups")
+    fallback_result = _endpoints_result("/groups", fallback)
+
+    with (
+        patch(
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
+            new_callable=AsyncMock,
+            side_effect=[_EMPTY, fallback_result],
+        ) as mock_rest,
+        _persist() as mock_persist,
+    ):
+        result = await extract_endpoints(
+            _selection(primary=[primary], fallback=[fallback]), "Group", uuid4(), uuid4(), ApiType.REST
+        )
 
     assert result == fallback_result
-    mock_filter.assert_awaited_once_with(DEFAULT_CRITERIA, session_id)
-    mock_select_chunks.assert_has_calls(
-        [
-            call(primary_doc_items, relevant_chunks, "Digester:Endpoints"),
-            call(fallback_only_doc_items, fallback_relevant_chunks, "Digester:Endpoints"),
-        ]
-    )
-    assert mock_extract_endpoints.await_count == 2
+    assert [call.args[0] for call in mock_rest.await_args_list] == [[primary["content"]], [fallback["content"]]]
     mock_digester_update_job_progress.assert_awaited()
-    mock_update_object_class.assert_awaited_once()
+    mock_persist.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_extract_endpoints_does_not_retry_when_default_criteria_matches_same_chunks(
-    mock_llm, mock_digester_update_job_progress
-):
-    session_id = uuid4()
-    job_id = uuid4()
-    doc_id = str(uuid4())
-    chunk_id = str(uuid4())
-
-    doc_items = [{"docId": doc_id, "chunkId": chunk_id, "content": "Group overview"}]
-    relevant_chunks = [{"doc_id": doc_id, "chunk_id": chunk_id}]
-    empty_primary = {"result": {"endpoints": []}, "relevantDocumentations": []}
+async def test_extract_endpoints_keeps_empty_primary_when_no_fallback_was_stored(mock_digester_update_job_progress):
+    primary = _doc("Endpoint overview without paths")
 
     with (
-        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_select_chunks,
         patch(
-            "src.modules.digester.extractors.endpoints._extract_rest_endpoints", new_callable=AsyncMock
-        ) as mock_extract_endpoints,
-        patch(
-            "src.modules.digester.extractors.endpoints.filter_documentation_items", new_callable=AsyncMock
-        ) as mock_filter,
-        patch(
-            "src.modules.digester.persistence.update_object_class_field_in_session",
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
             new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_update_object_class,
-        patch(
-            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.REST,
-        ),
+            return_value=_EMPTY,
+        ) as mock_rest,
+        _persist() as mock_persist,
     ):
-        mock_select_chunks.return_value = (["group overview"], [chunk_id])
-        mock_extract_endpoints.return_value = empty_primary
-        mock_filter.return_value = doc_items
+        result = await extract_endpoints(_selection(primary=[primary]), "Group", uuid4(), uuid4(), ApiType.REST)
 
-        result = await extract_endpoints(doc_items, "Group", session_id, relevant_chunks, job_id, "")
-
-    assert result == empty_primary
-    mock_filter.assert_awaited_once_with(DEFAULT_CRITERIA, session_id)
-    mock_select_chunks.assert_called_once_with(doc_items, relevant_chunks, "Digester:Endpoints")
-    mock_extract_endpoints.assert_awaited_once()
-    mock_digester_update_job_progress.assert_awaited()
-    mock_update_object_class.assert_awaited_once()
+    assert result == _EMPTY
+    mock_rest.assert_awaited_once()
+    mock_persist.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_scim_extract_endpoints_uses_scraped_documentation_when_conndev_has_no_endpoint(
-    mock_llm, mock_digester_update_job_progress
-):
-    session_id = uuid4()
-    job_id = uuid4()
-    conndev_doc_id = str(uuid4())
-    conndev_chunk_id = str(uuid4())
-    scraped_doc_id = str(uuid4())
-    scraped_chunk_id = str(uuid4())
-    conndev_item = {
-        "docId": conndev_doc_id,
-        "chunkId": conndev_chunk_id,
-        "content": '{"schemaContent": "..."}',
-        "@metadata": {"content_type": "application/com.evolveum.conndev+json"},
-    }
-    scraped_item = {
-        "docId": scraped_doc_id,
-        "chunkId": scraped_chunk_id,
-        "content": "GET /api/actions",
-        "@metadata": {"content_type": "text/html"},
-    }
-    doc_items = [conndev_item, scraped_item]
-    relevant_chunks = [
-        {"doc_id": conndev_doc_id, "chunk_id": conndev_chunk_id},
-        {"doc_id": scraped_doc_id, "chunk_id": scraped_chunk_id},
-    ]
-    documented_result = {
-        "result": {
-            "endpoints": [
-                EndpointInfo(
-                    method=EndpointMethod.GET,
-                    path="/api/actions",
-                    description="List actions",
-                ).model_dump()
-            ]
-        },
-        "relevantDocumentations": [{"doc_id": scraped_doc_id, "chunk_id": scraped_chunk_id}],
-    }
-
+async def test_extract_endpoints_does_not_retry_when_primary_found_endpoints(mock_digester_update_job_progress):
+    primary = _doc("GET /users")
     with (
         patch(
-            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
+            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
             new_callable=AsyncMock,
-            return_value=ApiType.SCIM,
-        ),
+            return_value=_endpoints_result("/users", primary),
+        ) as mock_rest,
+        _persist(),
+    ):
+        await extract_endpoints(
+            _selection(primary=[primary], fallback=[_doc("GET /groups")]), "User", uuid4(), uuid4(), ApiType.REST
+        )
+
+    mock_rest.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scim_extract_endpoints_reads_scraped_documentation_when_conndev_has_no_endpoint(
+    mock_digester_update_job_progress,
+):
+    conndev = _doc('{"schemaContent": "..."}', content_type=CONNDEV)
+    scraped = _doc("GET /api/actions", content_type="text/html")
+    documented = _endpoints_result("/api/actions", scraped)
+    job_id = uuid4()
+
+    with (
         patch(
             "src.modules.digester.extractors.endpoints.pregenerate_scim_endpoints",
             new_callable=AsyncMock,
             return_value=None,
         ) as mock_pregenerate,
-        patch("src.modules.digester.extractors.endpoints.select_doc_chunks") as mock_select_chunks,
         patch(
             "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
             new_callable=AsyncMock,
-            return_value=documented_result,
-        ) as mock_extract_documented,
-        patch(
-            "src.modules.digester.persistence.update_object_class_field_in_session",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
+            return_value=documented,
+        ) as mock_rest,
+        _persist(),
     ):
-        mock_select_chunks.return_value = ([scraped_item["content"]], [scraped_chunk_id])
-
         result = await extract_endpoints(
-            doc_items,
+            _selection(primary=[conndev, scraped], scim_baseline=[conndev]),
             "Action",
-            session_id,
-            relevant_chunks,
+            uuid4(),
             job_id,
+            ApiType.SCIM,
             "https://example.test",
         )
 
-    assert result == documented_result
-    mock_pregenerate.assert_awaited_once_with(
-        session_id=session_id,
-        object_class="Action",
-        job_id=job_id,
-        object_class_flags=None,
-    )
-    mock_select_chunks.assert_called_once_with([scraped_item], relevant_chunks, "Digester:Endpoints")
-    mock_extract_documented.assert_awaited_once()
+    assert result == documented
+    pregenerate_kwargs = mock_pregenerate.await_args.kwargs
+    assert isinstance(pregenerate_kwargs["baseline_bundle"], ScimBaselineBundle)
+    assert pregenerate_kwargs["object_class"] == "Action"
+    assert pregenerate_kwargs["job_id"] == job_id
+    # Conndev contracts are pregeneration input, never LLM documentation.
+    assert mock_rest.await_args.args[0] == [scraped["content"]]
 
 
 @pytest.mark.asyncio
 async def test_scim_extract_endpoints_does_not_fall_back_for_terminal_non_resource(
-    mock_llm, mock_digester_update_job_progress
+    mock_digester_update_job_progress,
 ):
-    session_id = uuid4()
-    job_id = uuid4()
     terminal_result = {"result": {"endpoints": []}, "relevantDocumentations": []}
 
     with (
-        patch(
-            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.SCIM,
-        ),
         patch(
             "src.modules.digester.extractors.endpoints.pregenerate_scim_endpoints",
             new_callable=AsyncMock,
             return_value=terminal_result,
         ),
-        patch(
-            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
-            new_callable=AsyncMock,
-        ) as mock_extract_documented,
-        patch(
-            "src.modules.digester.persistence.update_object_class_field_in_session",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
+        patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints", new_callable=AsyncMock) as rest,
+        _persist(),
     ):
-        result = await extract_endpoints([], "UserName", session_id, [], job_id)
+        result = await extract_endpoints(
+            _selection(fallback=[_doc("GET /names")]),
+            "UserName",
+            uuid4(),
+            uuid4(),
+            ApiType.SCIM,
+            object_class_flags={"embedded": True, "abstract": False},
+        )
 
     assert result == terminal_result
-    mock_extract_documented.assert_not_awaited()
+    rest.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_scim_documentation_fallback_returns_empty_when_only_conndev_documents_exist(
-    mock_llm, mock_digester_update_job_progress
+    mock_digester_update_job_progress,
 ):
-    session_id = uuid4()
-    job_id = uuid4()
-    doc_id = str(uuid4())
-    chunk_id = str(uuid4())
-    conndev_item = {
-        "docId": doc_id,
-        "chunkId": chunk_id,
-        "content": '{"schemaContent": "..."}',
-        "@metadata": {"content_type": "application/com.evolveum.conndev+json"},
-    }
-    relevant_chunks = [{"doc_id": doc_id, "chunk_id": chunk_id}]
+    conndev = _doc('{"schemaContent": "..."}', content_type=CONNDEV)
 
     with (
-        patch(
-            "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
-            new_callable=AsyncMock,
-            return_value=ApiType.SCIM,
-        ),
         patch(
             "src.modules.digester.extractors.endpoints.pregenerate_scim_endpoints",
             new_callable=AsyncMock,
             return_value=None,
         ),
-        patch(
-            "src.modules.digester.extractors.endpoints._extract_rest_endpoints",
-            new_callable=AsyncMock,
-        ) as mock_extract_documented,
-        patch(
-            "src.modules.digester.extractors.endpoints.filter_documentation_items",
-            new_callable=AsyncMock,
-            return_value=[conndev_item],
-        ),
-        patch(
-            "src.modules.digester.persistence.update_object_class_field_in_session",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
+        patch("src.modules.digester.extractors.endpoints._extract_rest_endpoints", new_callable=AsyncMock) as rest,
+        _persist(),
     ):
         result = await extract_endpoints(
-            [conndev_item],
-            "Action",
-            session_id,
-            relevant_chunks,
-            job_id,
+            _selection(primary=[conndev], scim_baseline=[conndev]), "Action", uuid4(), uuid4(), ApiType.SCIM
         )
 
-    assert result == {"result": {"endpoints": []}, "relevantDocumentations": []}
-    mock_extract_documented.assert_not_awaited()
+    assert result == _EMPTY
+    rest.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sql_endpoint_extraction_is_rejected_by_the_worker(mock_digester_update_job_progress):
+    with pytest.raises(EndpointExtractionNotSupportedError):
+        await extract_endpoints(_selection(), "users", uuid4(), uuid4(), ApiType.SQL)

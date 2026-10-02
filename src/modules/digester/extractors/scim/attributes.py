@@ -27,10 +27,10 @@ from src.modules.digester.entities.object_classes import build_attribute_result
 from src.modules.digester.extraction.llm_execution import invoke_chunk_chain, parse_structured_result
 from src.modules.digester.extractors.rest.attributes import extract_attributes as extract_documented_attributes
 from src.modules.digester.extractors.scim.baseline import (
+    ScimBaselineBundle,
     build_scim_codegen_context,
     get_scim_class_document_references,
     is_scim_standard_class,
-    load_session_scim_baseline,
     map_scim_type_to_digester,
 )
 from src.modules.digester.extractors.scim.object_class import build_embedded_object_class_name
@@ -312,7 +312,7 @@ async def extract_scim_attributes(
     chunks: List[str],
     object_class: str,
     job_id: UUID,
-    session_id: UUID,
+    baseline_bundle: ScimBaselineBundle,
     chunk_details: List[str] | None = None,
     chunk_metadata_map: Dict[str, Dict[str, Any]] | None = None,
     chunk_id_to_doc_id: Dict[str, str] | None = None,
@@ -324,6 +324,7 @@ async def extract_scim_attributes(
         chunks: List of documentation chunks to analyze
         object_class: Target object class name
         job_id: Job ID for progress tracking
+        baseline_bundle: SCIM baseline built from the conndev documents stored in the job input
         chunk_details: Optional list of chunk IDs for each chunk
         chunk_metadata_map: Optional metadata mapping for chunks
         chunk_id_to_doc_id: Optional mapping of chunk ID to doc ID
@@ -355,7 +356,6 @@ async def extract_scim_attributes(
     chunks = llm_chunks
     chunk_details = llm_chunk_details
 
-    baseline_bundle = await load_session_scim_baseline(session_id)
     scim_schemas = baseline_bundle.schemas
     embedded_source = _find_embedded_source_attribute(scim_schemas, object_class)
     source_class_name = embedded_source[0] if embedded_source is not None else None

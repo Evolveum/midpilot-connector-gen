@@ -27,21 +27,19 @@ from uuid import UUID
 
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
-from src.modules.codegen.enums import ArtifactKind, SearchIntent, build_search_operation_key
+from src.modules.codegen.enums import (
+    OBJECT_CLASS_OPERATION_KINDS,
+    ArtifactKind,
+    SearchIntent,
+    build_object_class_operation_key,
+    build_search_operation_key,
+)
 from src.modules.codegen.selection.protocol_selectors import resolve_operation_docs_sections
 from src.modules.digester.errors import ObjectClassesNotFoundError, ObjectClassNotFoundError
 from src.shared.enums import ApiType
+from src.shared.session_keys import OBJECT_CLASSES, codegen_operation_keys
 
 logger = logging.getLogger(__name__)
-
-OBJECT_CLASSES_RESULT_KEY = "objectClassesOutput"
-
-_OBJECT_CLASS_OPERATIONS: Sequence[tuple[ArtifactKind, str]] = (
-    (ArtifactKind.NATIVE_SCHEMA, "NativeSchema"),
-    (ArtifactKind.CREATE, "Create"),
-    (ArtifactKind.UPDATE, "Update"),
-    (ArtifactKind.DELETE, "Delete"),
-)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -55,7 +53,7 @@ class ConnectorArtifactSlot:
 
     @property
     def session_key(self) -> str:
-        return f"{self.operation_key}Output"
+        return codegen_operation_keys(self.operation_key).output
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -115,10 +113,10 @@ def build_connector_artifact_slots(
         object_class = normalize_object_class_name(raw_name)
         if not object_class:
             continue
-        for kind, suffix in _OBJECT_CLASS_OPERATIONS:
+        for kind in OBJECT_CLASS_OPERATION_KINDS:
             slots.append(
                 ConnectorArtifactSlot(
-                    operation_key=f"{object_class}{suffix}",
+                    operation_key=build_object_class_operation_key(object_class, kind),
                     kind=kind,
                     object_class=object_class,
                 )
@@ -150,7 +148,7 @@ async def load_connector_artifacts(
     :raises ObjectClassesNotFoundError: when the session has no extracted classes
     :raises ObjectClassNotFoundError: when the selected class is not in the extraction result
     """
-    object_classes_output = await repo.get_session_value(session_id, OBJECT_CLASSES_RESULT_KEY)
+    object_classes_output = await repo.get_session_value(session_id, OBJECT_CLASSES.output)
     object_class_names = _extract_object_class_names(object_classes_output)
     if not object_class_names:
         raise ObjectClassesNotFoundError(session_id)

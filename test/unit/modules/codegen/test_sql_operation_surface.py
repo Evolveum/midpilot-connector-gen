@@ -15,6 +15,8 @@ from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.modules.digester.errors import OperationSurfaceNotFoundError
 from src.shared.enums import ApiType
+from src.shared.job_types import JobType
+from src.shared.session_keys import codegen_operation_keys
 
 _CONNDEV_SQL_EXPORT = {
     "chunkId": "conndev-chunk",
@@ -185,8 +187,8 @@ async def test_sql_operation_is_scheduled_without_an_endpoint_surface():
             skip_cache=False,
             api_type=None,
             codegen_input=None,
-            key_prefix="m_userSearch",
-            job_type="codegen.getSearch",
+            keys=codegen_operation_keys("m_userSearchAll"),
+            job_type=JobType.CODEGEN_SEARCH,
             worker=AsyncMock(),
         )
 
@@ -220,7 +222,7 @@ async def test_rest_operation_still_requires_an_endpoint_surface():
             skip_cache=False,
             api_type=None,
             codegen_input=None,
-            key_prefix="userSearch",
-            job_type="codegen.getSearch",
+            keys=codegen_operation_keys("userSearchAll"),
+            job_type=JobType.CODEGEN_SEARCH,
             worker=AsyncMock(),
         )

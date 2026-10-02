@@ -20,6 +20,7 @@ from src.modules.digester import orchestration, results
 from src.modules.digester.schemas import AttributeResponse
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
+from src.shared.session_keys import attributes_keys
 
 router = APIRouter(tags=["Digester: Attributes"])
 
@@ -95,7 +96,7 @@ async def get_class_attributes_status(
         repo,
         session_id,
         jobId,
-        session_key=f"{object_class}AttributesJobId",
+        session_key=attributes_keys(object_class).job_id,
         job_label="attributes",
         not_found_detail=f"No attributes job found for {object_class} in session {session_id}",
     )

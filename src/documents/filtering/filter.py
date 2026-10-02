@@ -2,6 +2,13 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+"""Load a session's documentation corpus and select chunks by metadata criteria.
+
+Loading and selection are separate on purpose: a caller that needs several
+selections (a primary and a fallback attempt) loads the corpus once and applies
+each criteria set to the same snapshot with :func:`select_documentation_items`.
+"""
+
 from typing import Any, Dict, List
 from uuid import UUID
 
@@ -9,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.session_repository import SessionRepository
-from src.documents.errors import NoDocumentationStoredError
+from src.documents.errors import DocumentationSessionNotFoundError, NoDocumentationStoredError
 from src.documents.filtering.schema import ChunkFilterCriteria
 
 
@@ -17,50 +24,59 @@ async def filter_documentation_items(
     criteria: ChunkFilterCriteria, session_id: UUID, db: AsyncSession | None = None
 ) -> List[Dict[str, Any]]:
     """
-    Filters documentation items based on the provided criteria.
-    Works directly with documentationItems without reconstructing PageChunk objects.
+    Load the session's documentation and keep the items that meet ``criteria``.
 
-    input: criteria - ChunkFilterCriteria object defining the filtering conditions
-           session_id - session ID to retrieve documentation items from
-           db - optional SQLAlchemy AsyncSession
-    output: list of documentationItem dicts that meet the criteria
+    :raises DocumentationSessionNotFoundError: when the session does not exist
+    :raises NoDocumentationStoredError: when the session has no documentation
+    """
+    return select_documentation_items(await load_documentation_items(session_id, db=db), criteria)
+
+
+async def load_documentation_items(session_id: UUID, db: AsyncSession | None = None) -> List[Dict[str, Any]]:
+    """
+    Load every documentation chunk of a session in the normalized item shape.
+
+    Items carry ``chunkId``, ``docId``, ``source``, ``url``, ``summary``, ``content``
+    and ``@metadata``, ordered by chunk creation time.
+
+    :raises DocumentationSessionNotFoundError: when the session does not exist
+    :raises NoDocumentationStoredError: when the session has no documentation
     """
     if db is None:
         from src.core.db import async_session_maker
 
         async with async_session_maker() as session:
-            return await _filter_documentation_items_impl(criteria, session_id, session)
-    else:
-        return await _filter_documentation_items_impl(criteria, session_id, db)
+            return await _load_documentation_items(session_id, session)
+    return await _load_documentation_items(session_id, db)
 
 
-async def _filter_documentation_items_impl(
-    criteria: ChunkFilterCriteria, session_id: UUID, db: AsyncSession
-) -> List[Dict[str, Any]]:
-    session_repo = SessionRepository(db)
-    if not await session_repo.session_exists(session_id):
-        raise ValueError(f"Session with ID {session_id} does not exist.")
+async def _load_documentation_items(session_id: UUID, db: AsyncSession) -> List[Dict[str, Any]]:
+    if not await SessionRepository(db).session_exists(session_id):
+        raise DocumentationSessionNotFoundError(session_id)
 
-    doc_repo = DocumentationRepository(db)
-    raw_items = await doc_repo.get_documentation_items_by_session(session_id)
+    raw_items = await DocumentationRepository(db).get_documentation_items_by_session(session_id)
     if not raw_items:
         raise NoDocumentationStoredError(session_id)
 
-    doc_items: List[Dict[str, Any]] = []
-    for item in raw_items:
-        doc_items.append(
-            {
-                "chunkId": item.get("chunkId"),
-                "docId": item.get("docId"),
-                "source": item.get("source"),
-                "url": item.get("url"),
-                "summary": item.get("summary"),
-                "content": item.get("content", ""),
-                "@metadata": item.get("metadata", {}) or {},
-            }
-        )
+    return [
+        {
+            "chunkId": item.get("chunkId"),
+            "docId": item.get("docId"),
+            "source": item.get("source"),
+            "url": item.get("url"),
+            "summary": item.get("summary"),
+            "content": item.get("content", ""),
+            "@metadata": item.get("metadata", {}) or {},
+        }
+        for item in raw_items
+    ]
 
-    # Filter documentation items based on criteria
+
+def select_documentation_items(
+    doc_items: List[Dict[str, Any]],
+    criteria: ChunkFilterCriteria,
+) -> List[Dict[str, Any]]:
+    """Keep the normalized documentation items that meet ``criteria`` (pure, no I/O)."""
     filtered_items: List[Dict[str, Any]] = []
     for item in doc_items:
         metadata = item.get("@metadata", {})
@@ -120,9 +136,7 @@ async def _filter_documentation_items_impl(
         filtered_items.append(item)
 
     # Post-filtering: If both spec_yaml and spec_json exist, keep only spec_yaml
-    filtered_items = _prioritize_yaml_over_json(filtered_items)
-
-    return filtered_items
+    return _prioritize_yaml_over_json(filtered_items)
 
 
 def _prioritize_yaml_over_json(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

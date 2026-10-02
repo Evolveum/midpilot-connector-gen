@@ -19,6 +19,7 @@ from src.session.documentation_upload import (
     chunk_uploaded_documentation,
     queue_documentation_upload_job,
 )
+from src.shared.session_keys import upload_job_pointer_key
 
 
 class _FakeSessionRepository:
@@ -49,7 +50,7 @@ def test_chunk_uploaded_documentation_preserves_schema_as_single_item():
         preserve_as_single_item=True,
     )
 
-    chunks = chunk_uploaded_documentation(uuid4(), uploaded)
+    chunks = chunk_uploaded_documentation(uploaded)
 
     assert len(chunks) == 1
     assert chunks[0][0] == text
@@ -74,7 +75,7 @@ def test_chunk_uploaded_documentation_splits_oversized_single_item_schema():
         "src.session.documentation_upload.config.scrape_and_process.single_item_schema_max_tokens",
         max_tokens,
     ):
-        chunks = chunk_uploaded_documentation(uuid4(), uploaded)
+        chunks = chunk_uploaded_documentation(uploaded)
 
     assert len(chunks) > 1
     assert all(token_count <= max_tokens for _, token_count in chunks)
@@ -162,9 +163,7 @@ async def test_queue_documentation_upload_job_schedules_raw_upload_without_stori
         "content_hash": raw_upload.content_hash,
     }
     assert "chunks" not in worker_kwargs
-    assert repo.updated_session_payloads == [
-        (session_id, {f"documentation.processUpload_{doc_id}_job_id": str(job_id)})
-    ]
+    assert repo.updated_session_payloads == [(session_id, {upload_job_pointer_key(doc_id): str(job_id)})]
 
     if document_exists:
         assert f"Another upload uses document ID {doc_id}" in caplog.text

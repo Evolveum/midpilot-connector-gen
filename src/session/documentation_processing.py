@@ -102,7 +102,8 @@ async def process_documentation_worker(
             processing_completed=0,
         )
         uploaded = await parse_uploaded_documentation(raw_upload)
-        chunks = chunk_uploaded_documentation(session_id, uploaded)
+        # Tokenization is CPU-bound; keep it off the event loop shared with the API.
+        chunks = await asyncio.to_thread(chunk_uploaded_documentation, uploaded)
         semaphore = asyncio.Semaphore(config.scrape_and_process.max_concurrent)
 
         await update_job_progress(
