@@ -16,6 +16,8 @@ from src.database.repositories.session_repository import SessionRepository
 from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
 from src.modules.scrape import service
 from src.modules.scrape.schema import ScrapeRequest
+from src.shared.job_types import JobType
+from src.shared.session_keys import DISCOVERY, SCRAPE
 
 
 async def resolve_scrape_request(
@@ -29,7 +31,7 @@ async def resolve_scrape_request(
     if isinstance(explicit_version, str) and explicit_version.strip():
         return request.model_copy(update={"application_version": explicit_version.strip()})
 
-    discovery_input = await repo.get_session_data(session_id, "discoveryInput") or {}
+    discovery_input = await repo.get_session_data(session_id, DISCOVERY.input) or {}
     if isinstance(discovery_input, dict):
         discovery_version = str(discovery_input.get("applicationVersion") or "").strip()
         if discovery_version:
@@ -53,16 +55,16 @@ async def schedule_scrape_documentation(
 
     job_id = await schedule_coroutine_job(
         db=repo.db,
-        job_type="scrape.getRelevantDocumentation",
+        job_type=JobType.SCRAPE_RELEVANT_DOCUMENTATION,
         input_payload=input_payload,
         worker=service.fetch_relevant_documentation,
         worker_args=(job_input_reference(), session_id),
         initial_stage="queue",
         initial_message="Queued scraping job",
         session_id=session_id,
-        session_result_key="scrapeOutput",
+        session_result_key=SCRAPE.output,
     )
 
-    await persist_job_pointer(repo, session_id, "scrape", input_payload, job_id)
+    await persist_job_pointer(repo, session_id, SCRAPE, input_payload, job_id)
 
     return job_id

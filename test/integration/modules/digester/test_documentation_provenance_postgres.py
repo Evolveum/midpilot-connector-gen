@@ -31,9 +31,11 @@ from src.database.repositories.documentation_repository import DocumentationRepo
 from src.database.repositories.session_repository import SessionRepository
 from src.jobs.session_persistence import persist_result_to_session
 from src.modules.digester.enums import ConfidenceLevel
+from src.modules.digester.extractors.scim.baseline import build_scim_baseline_from_documents
 from src.modules.digester.extractors.scim.endpoints import pregenerate_scim_endpoints
 from src.modules.digester.extractors.scim.object_class import extract_scim_object_classes
 from src.modules.digester.extractors.sql.object_class import extract_sql_object_classes
+from src.shared.session_keys import job_pointer_key_for_output
 
 
 @pytest_asyncio.fixture()
@@ -121,7 +123,7 @@ async def upload(store, payload, content_type, filename):
 async def persist(store, result, key="objectClassesOutput"):
     job_id = uuid4()
     async with store.factory() as db:
-        await SessionRepository(db).update_session(store.session_id, {f"{key[:-6]}JobId": str(job_id)})
+        await SessionRepository(db).update_session(store.session_id, {job_pointer_key_for_output(key): str(job_id)})
         await db.commit()
     assert await persist_result_to_session(
         job_id=job_id,
@@ -262,7 +264,10 @@ async def test_scim_schema_extension_embedded_class_and_endpoint_sources(protoco
     await panel(store, "GroupMembers", [group, extension, resource])
     await panel(store, "EnterpriseGroup", [extension, resource])
 
-    endpoints = await pregenerate_scim_endpoints(session_id=store.session_id, object_class="Group", job_id=uuid4())
+    # The endpoint job builds its baseline from the conndev documents stored in its input.
+    endpoints = await pregenerate_scim_endpoints(
+        baseline_bundle=build_scim_baseline_from_documents(docs), object_class="Group", job_id=uuid4()
+    )
     assert endpoints is not None
     await persist(store, endpoints, "groupEndpointsOutput")
     body = await panel(store, "Group", [resource], method="POST", path="/Groups")

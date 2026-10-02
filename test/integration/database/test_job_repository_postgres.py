@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.database.models import Base, Job, Session
 from src.database.repositories.job_repository import JobRepository
+from src.shared.job_types import JobType
 from src.shared.normalize import normalized_input_fingerprint
 
 
@@ -44,7 +45,7 @@ async def test_job_lookup_enforces_session_and_tenant_boundaries() -> None:
         owner_a_job_id = uuid4()
         owner_b_job_id = uuid4()
         ownerless_job_id = uuid4()
-        job_type = "discovery.getCandidateLinks"
+        job_type = JobType.DISCOVERY_CANDIDATE_LINKS
         normalized_input = {"applicationName": "Demo"}
         now = datetime.now(timezone.utc)
         session_factory = async_sessionmaker(engine, expire_on_commit=False)

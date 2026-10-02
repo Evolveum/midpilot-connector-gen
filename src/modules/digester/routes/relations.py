@@ -17,6 +17,7 @@ from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.digester import orchestration, results
 from src.modules.digester.schemas import RelationsResponse
 from src.session.access import ensure_session_exists, resolve_session_job_id
+from src.shared.session_keys import RELATIONS
 
 router = APIRouter(tags=["Digester: Relations"])
 
@@ -70,7 +71,7 @@ async def get_relations_status(
         repo,
         session_id,
         jobId,
-        session_key="relationsJobId",
+        session_key=RELATIONS.job_id,
         job_label="relations",
     )
 

@@ -21,6 +21,7 @@ from src.database.repositories.documentation_repository import DocumentationRepo
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.errors import DocumentationUploadSupersededError
 from src.documents.processing.persistence import publish_uploaded_documentation
+from src.shared.session_keys import upload_job_pointer_key
 
 
 @pytest_asyncio.fixture
@@ -39,7 +40,7 @@ async def upload_database(monkeypatch):
         factory = async_sessionmaker(engine, expire_on_commit=False)
         monkeypatch.setattr("src.documents.processing.persistence.async_session_maker", factory)
         session_id, doc_id, other_doc_id, job_id, newer_job_id = (uuid4() for _ in range(5))
-        pointer = f"documentation.processUpload_{doc_id}_job_id"
+        pointer = upload_job_pointer_key(doc_id)
         async with factory() as db:
             db.add(Session(session_id=session_id))
             await db.flush()

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Mapping, Optional
 from src.modules.codegen.schema import AuthPayload, PreferredAuthorizations
 from src.shared.auth import auth_match_key, normalize_auth_type_value
 from src.shared.coerce import as_list, as_mapping
+from src.shared.session_keys import AUTH
 
 ANALYSIS_SUPPORT_FIELD = "analysisSupport"
 ANALYSIS_SUPPORT_SUPPORTED = "supported"
@@ -185,7 +186,7 @@ def select_authorization_chunk_refs(
 ) -> List[Dict[str, Any]]:
     relevant_documentations = as_mapping(relevant_documentations)
 
-    auth_pairs = _normalize_chunk_refs(relevant_documentations.get("authOutput"))
+    auth_pairs = _normalize_chunk_refs(relevant_documentations.get(AUTH.output))
     if not auth_pairs:
         return []
 

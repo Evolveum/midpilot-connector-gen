@@ -20,6 +20,7 @@ from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import AuthorizationCodegenInput, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
+from src.shared.session_keys import AUTHORIZATION
 
 router = APIRouter(tags=["Codegen: Authorization"])
 
@@ -78,7 +79,7 @@ async def get_authorization_status(
         repo,
         session_id,
         jobId,
-        session_key="authorizationJobId",
+        session_key=AUTHORIZATION.job_id,
         job_label="authorization",
         not_found_detail=f"No authorization job found in session {session_id}",
     )

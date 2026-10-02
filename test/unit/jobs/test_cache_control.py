@@ -10,11 +10,19 @@ from uuid import uuid4
 import pytest
 
 from src.documents.errors import DocumentationUploadSupersededError
+from src.documents.selection import DocumentationSelection, SelectionRole
 from src.jobs.cache import reuse_or_run
 from src.jobs.errors import JobClaimLostError
 from src.modules.discovery.schema import CandidateLinksInput
 from src.modules.scrape.schema import ScrapeRequest
+from src.shared.job_types import JobCachePolicy, JobType, job_type_policy
 from src.shared.normalize import normalize_input
+
+
+def _cache_policy(job_type: JobType) -> JobCachePolicy:
+    policy = job_type_policy(job_type).cache
+    assert policy is not None
+    return policy
 
 
 class _AsyncSessionContext:
@@ -83,7 +91,8 @@ async def test_cache_lookup_is_scoped_by_requesting_session() -> None:
         patch("src.jobs.cache.JobRepository", return_value=job_repo),
     ):
         result = await reuse_or_run(
-            job_type="discovery.getCandidateLinks",
+            job_type=JobType.DISCOVERY_CANDIDATE_LINKS,
+            cache_policy=_cache_policy(JobType.DISCOVERY_CANDIDATE_LINKS),
             job_id=uuid4(),
             session_id=session_id,
             input_payload={"applicationName": "Demo"},
@@ -136,7 +145,8 @@ async def test_lost_ownership_during_cache_reuse_never_runs_full_worker_again(su
     ):
         with pytest.raises(type(error)):
             await reuse_or_run(
-                job_type="documentation.processUpload",
+                job_type=JobType.DOCUMENTATION_PROCESS_UPLOAD,
+                cache_policy=_cache_policy(JobType.DOCUMENTATION_PROCESS_UPLOAD),
                 job_id=job_id,
                 session_id=session_id,
                 input_payload={"doc_id": str(uuid4()), "filename": "doc.pdf"},
@@ -169,7 +179,8 @@ async def test_unexpected_cache_reuse_failure_does_not_trigger_expensive_worker(
     ):
         with pytest.raises(RuntimeError, match="database unavailable"):
             await reuse_or_run(
-                job_type="documentation.processUpload",
+                job_type=JobType.DOCUMENTATION_PROCESS_UPLOAD,
+                cache_policy=_cache_policy(JobType.DOCUMENTATION_PROCESS_UPLOAD),
                 job_id=uuid4(),
                 session_id=uuid4(),
                 input_payload={"doc_id": str(uuid4()), "filename": "doc.pdf"},
@@ -203,7 +214,8 @@ async def test_codegen_cache_preserves_result_and_diagnostics(code, code_format)
         patch("src.jobs.cache.lifecycle.append_job_error", new_callable=AsyncMock) as errors,
     ):
         result = await reuse_or_run(
-            job_type="codegen.getNativeSchema",
+            job_type=JobType.CODEGEN_NATIVE_SCHEMA,
+            cache_policy=_cache_policy(JobType.CODEGEN_NATIVE_SCHEMA),
             job_id=job_id,
             session_id=uuid4(),
             input_payload={},
@@ -250,7 +262,8 @@ async def test_cached_upload_publishes_complete_document_and_updates_result_iden
         patch("src.jobs.cache.publish_uploaded_documentation", new_callable=AsyncMock) as publish,
     ):
         result = await reuse_or_run(
-            job_type="documentation.processUpload",
+            job_type=JobType.DOCUMENTATION_PROCESS_UPLOAD,
+            cache_policy=_cache_policy(JobType.DOCUMENTATION_PROCESS_UPLOAD),
             job_id=job_id,
             session_id=session_id,
             input_payload={"doc_id": str(target_doc_id), "filename": "new.md"},
@@ -266,3 +279,111 @@ async def test_cached_upload_publishes_complete_document_and_updates_result_iden
     assert result == {**latest_job.result, "doc_id": str(target_doc_id), "filename": "new.md"}
     assert latest_job.result["doc_id"] == str(source_doc_id)
     worker.assert_not_awaited()
+
+
+def _selection_item(content: str) -> dict:
+    return {
+        "chunkId": str(uuid4()),
+        "docId": str(uuid4()),
+        "url": "https://docs.example.com/users",
+        "summary": content,
+        "content": content,
+        "@metadata": {"tags": ["user"]},
+    }
+
+
+def _attribute_selection(primary: dict, fallback: dict) -> DocumentationSelection:
+    return DocumentationSelection.from_corpus(
+        [primary, fallback], {SelectionRole.PRIMARY: [primary], SelectionRole.FALLBACK: [fallback]}
+    )
+
+
+def _attribute_output(primary: dict, fallback: dict) -> dict:
+    return {
+        "result": {
+            "attributes": {
+                "email": {
+                    "type": "string",
+                    "relevantDocumentations": [{"docId": fallback["docId"], "chunkId": fallback["chunkId"]}],
+                }
+            }
+        },
+        "relevantDocumentations": [{"doc_id": primary["docId"], "chunk_id": primary["chunkId"]}],
+    }
+
+
+async def _reuse_attribute_job(previous_input, latest_result, current_input):
+    latest_job = SimpleNamespace(
+        job_id=uuid4(), session_id=uuid4(), result=latest_result, errors=None, created_at=datetime.now()
+    )
+    job_repo = MagicMock()
+    job_repo.get_job_by_input = AsyncMock(return_value=latest_job)
+    job_repo.get_job_input = AsyncMock(return_value=previous_input)
+    worker = AsyncMock(return_value={"fresh": True})
+    with (
+        patch("src.jobs.cache.async_session_maker", return_value=_AsyncSessionContext(MagicMock())),
+        patch("src.jobs.cache.JobRepository", return_value=job_repo),
+        patch("src.jobs.cache.DocumentationRepository") as doc_repo_cls,
+        patch("src.jobs.cache.lifecycle.update_job_progress", new_callable=AsyncMock),
+    ):
+        result = await reuse_or_run(
+            job_type=JobType.DIGESTER_ATTRIBUTES,
+            cache_policy=_cache_policy(JobType.DIGESTER_ATTRIBUTES),
+            job_id=uuid4(),
+            session_id=uuid4(),
+            input_payload=current_input,
+            run_normal_worker=worker,
+        )
+    job_repo.get_job_input.assert_awaited_once_with(latest_job.job_id)
+    # The source job's input captured what it read: no session documentation is consulted.
+    doc_repo_cls.assert_not_called()
+    return result, worker
+
+
+@pytest.mark.asyncio
+async def test_selection_reuse_remaps_relevance_between_the_stored_inputs():
+    previous_primary, previous_fallback = _selection_item("User overview"), _selection_item("User reference")
+    current_primary = {**previous_primary, "chunkId": str(uuid4()), "docId": str(uuid4())}
+    current_fallback = {**previous_fallback, "chunkId": str(uuid4()), "docId": str(uuid4())}
+    previous_input = {
+        "documentationSelection": _attribute_selection(previous_primary, previous_fallback).to_job_input()
+    }
+    current_input = {"documentationSelection": _attribute_selection(current_primary, current_fallback).to_job_input()}
+
+    result, worker = await _reuse_attribute_job(
+        previous_input, _attribute_output(previous_primary, previous_fallback), current_input
+    )
+
+    worker.assert_not_awaited()
+    assert result["relevantDocumentations"] == [
+        {"doc_id": current_primary["docId"], "chunk_id": current_primary["chunkId"]}
+    ]
+    assert result["result"]["attributes"]["email"]["relevantDocumentations"] == [
+        {"docId": current_fallback["docId"], "chunkId": current_fallback["chunkId"]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_selection_reuse_never_publishes_references_outside_the_source_selection():
+    primary, fallback = _selection_item("User overview"), _selection_item("User reference")
+    selection_input = {"documentationSelection": _attribute_selection(primary, fallback).to_job_input()}
+    cached = _attribute_output(primary, fallback)
+    cached["relevantDocumentations"].append({"doc_id": str(uuid4()), "chunk_id": str(uuid4())})
+
+    result, worker = await _reuse_attribute_job(selection_input, cached, selection_input)
+
+    assert result == {"fresh": True}
+    worker.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_selection_reuse_runs_the_worker_when_the_source_input_is_not_a_valid_selection():
+    primary, fallback = _selection_item("User overview"), _selection_item("User reference")
+    current_input = {"documentationSelection": _attribute_selection(primary, fallback).to_job_input()}
+
+    result, worker = await _reuse_attribute_job(
+        {"documentationItems": []}, _attribute_output(primary, fallback), current_input
+    )
+
+    assert result == {"fresh": True}
+    worker.assert_awaited_once_with()

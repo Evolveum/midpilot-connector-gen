@@ -21,11 +21,12 @@ from src.modules.digester.errors import (
     InvalidDocumentationFilterError,
     InvalidEndpointsOutputError,
 )
-from src.modules.digester.results import OBJECT_CLASSES_RESULT_KEY, endpoints_result_key
+from src.modules.digester.results import endpoints_result_key
 from src.modules.digester.schemas.documentation import (
     DocumentationEndpoint,
     RelevantDocumentationResponse,
 )
+from src.shared.session_keys import OBJECT_CLASSES
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ async def get_relevant_documentation(
 
     target = await resolve_object_class(repo, session_id, object_class)
 
-    result_key = OBJECT_CLASSES_RESULT_KEY
+    result_key = OBJECT_CLASSES.output
     entity_key = normalize_object_class_name(object_class)
     endpoint = None
     if method is not None and path is not None:

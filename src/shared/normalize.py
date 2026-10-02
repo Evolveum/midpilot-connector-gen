@@ -73,6 +73,76 @@ def normalize_relevant_documentation_refs(value: Any) -> list[dict[str, str]]:
     return refs
 
 
+DOCUMENTATION_SELECTION_INPUT_KEY = "documentationSelection"
+"""Job-input key of a stored documentation selection (``src.documents.selection``)."""
+
+ORDER_SENSITIVE_SELECTION_ROLES = frozenset({"scimBaseline", "sqlSchema"})
+"""Selection roles whose consumers resolve conflicting chunks by position.
+
+The SCIM baseline lets the last definition of a schema, resource, ConnId class or
+ServiceProviderConfig win; SQL schema collection lets the first definition of a table
+win. The same chunks in another order can therefore produce a different result, so a
+chunk's position in these roles is part of its cache identity. Primary and fallback
+chunks feed independent per-chunk LLM extraction and stay order-insensitive.
+"""
+
+_SELECTION_STRUCTURE_KEYS = frozenset({"version", "chunks"})
+_SELECTION_CHUNK_IDENTIFIER_KEYS = frozenset({"chunkId", "docId"})
+
+
+def documentation_selection_chunk_identities(selection: Mapping[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """
+    Return ``(chunkId, identity)`` for every chunk of a stored documentation selection.
+
+    The identity is the stored chunk without its database identifiers, the sorted roles
+    that reference it (every key other than ``version``/``chunks`` is a role holding
+    ``{docId, chunkId}`` references) and, for :data:`ORDER_SENSITIVE_SELECTION_ROLES`,
+    its position in that role's reference list. Two chunks with equal identities are
+    interchangeable for an extraction: same text, same extraction metadata, same part
+    in the same attempts at the same position where position decides. Both the cache
+    fingerprint and the cache remap derive from this one definition, so they cannot
+    disagree about what "the same chunk" means.
+    """
+    roles_by_chunk: dict[str, set[str]] = {}
+    positions_by_chunk: dict[str, dict[str, int]] = {}
+    for role, references in selection.items():
+        if role in _SELECTION_STRUCTURE_KEYS:
+            continue
+        role_name = str(role)
+        position = 0
+        for reference in as_list(references):
+            pair = normalize_chunk_pair(reference)
+            if pair is None:
+                continue
+            roles_by_chunk.setdefault(pair[1], set()).add(role_name)
+            if role_name in ORDER_SENSITIVE_SELECTION_ROLES:
+                positions_by_chunk.setdefault(pair[1], {})[role_name] = position
+            position += 1
+
+    identities: list[tuple[str, dict[str, Any]]] = []
+    for chunk in as_dict_list(selection.get("chunks")):
+        chunk_id = str(chunk.get("chunkId") or "")
+        identity = {key: value for key, value in chunk.items() if key not in _SELECTION_CHUNK_IDENTIFIER_KEYS}
+        identity["roles"] = sorted(roles_by_chunk.get(chunk_id, set()))
+        if positions := positions_by_chunk.get(chunk_id):
+            identity["positions"] = positions
+        identities.append((chunk_id, identity))
+    return identities
+
+
+def canonical_json(value: Any) -> str:
+    """Serialize a JSON value deterministically (sorted keys, compact separators)."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _normalize_documentation_selection(selection: Mapping[str, Any]) -> dict[str, Any]:
+    identities = [identity for _, identity in documentation_selection_chunk_identities(selection)]
+    return {
+        "version": selection.get("version"),
+        "chunks": sorted(identities, key=canonical_json),
+    }
+
+
 def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize job input for better querying
@@ -123,6 +193,11 @@ def normalize_input(input_payload: dict[str, Any]) -> dict[str, Any]:
             obj_class.pop("relevant_chunk_indices", None)
     if "relevantDocumentations" in normalized_input:
         normalized_input.pop("relevantDocumentations")
+    selection = normalized_input.get(DOCUMENTATION_SELECTION_INPUT_KEY)
+    if isinstance(selection, Mapping):
+        # Chunk UUIDs differ between sessions holding the same documentation; the
+        # content and the role each chunk plays in each attempt decide reuse.
+        normalized_input[DOCUMENTATION_SELECTION_INPUT_KEY] = _normalize_documentation_selection(selection)
     return normalized_input
 
 
@@ -135,10 +210,4 @@ def normalized_input_fingerprint(input_payload: dict[str, Any]) -> str:
     semantics.
     """
     normalized = normalize_input(to_jsonable(input_payload))
-    canonical = json.dumps(
-        normalized,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json(normalized).encode("utf-8")).hexdigest()

@@ -18,9 +18,15 @@ from src.core.db import async_session_maker
 from src.core.job_execution import get_current_execution
 from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
-from src.modules.codegen.enums import SearchIntent, build_search_operation_key
+from src.modules.codegen.enums import (
+    ArtifactKind,
+    SearchIntent,
+    build_object_class_operation_key,
+    build_search_operation_key,
+)
 from src.modules.codegen.schema import ConnectorCodeOutput, GroovyCodePayload
 from src.modules.codegen.utils.code_output import build_connector_code_output
+from src.shared.session_keys import AUTHORIZATION, codegen_operation_keys, relation_code_keys
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +36,18 @@ async def store_authorization_override(
     session_id: UUID,
     code: GroovyCodePayload,
 ) -> None:
-    await repo.update_session(session_id, {"authorizationOutput": await build_connector_code_output(code.code)})
+    await repo.update_session(session_id, {AUTHORIZATION.output: await build_connector_code_output(code.code)})
 
 
 async def store_object_class_output_override(
     repo: SessionRepository,
     session_id: UUID,
     object_class: str,
-    operation_name: str,
+    kind: ArtifactKind,
     code: GroovyCodePayload,
 ) -> None:
-    await repo.update_session(
-        session_id, {f"{object_class}{operation_name}Output": await build_connector_code_output(code.code)}
-    )
+    keys = codegen_operation_keys(build_object_class_operation_key(object_class, kind))
+    await repo.update_session(session_id, {keys.output: await build_connector_code_output(code.code)})
 
 
 async def store_search_override(
@@ -53,7 +58,8 @@ async def store_search_override(
     code: GroovyCodePayload,
 ) -> None:
     operation_key = build_search_operation_key(object_class, intent)
-    await repo.update_session(session_id, {f"{operation_key}Output": await build_connector_code_output(code.code)})
+    keys = codegen_operation_keys(operation_key)
+    await repo.update_session(session_id, {keys.output: await build_connector_code_output(code.code)})
 
 
 async def store_relation_override(
@@ -62,7 +68,8 @@ async def store_relation_override(
     relation_name: str,
     code: GroovyCodePayload,
 ) -> None:
-    await repo.update_session(session_id, {f"{relation_name}CodeOutput": await build_connector_code_output(code.code)})
+    keys = relation_code_keys(relation_name)
+    await repo.update_session(session_id, {keys.output: await build_connector_code_output(code.code)})
 
 
 async def store_fixed_connector_scripts(

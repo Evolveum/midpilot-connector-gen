@@ -36,3 +36,18 @@ class NoDocumentationStoredError(AppError):
         super().__init__(
             f"Session {session_id} has no stored documentation. Please upload documentation file or run scraper."
         )
+
+
+class DocumentationSessionNotFoundError(AppError):
+    """Raised when documentation is requested for a session that does not exist.
+
+    The documents layer cannot import the session domain, so it owns this error.
+    Code and message deliberately match ``src.session.errors.SessionNotFoundError``:
+    a caller sees the same 404 whichever layer noticed the missing session.
+    """
+
+    status_code = 404
+    code = "session_not_found"
+
+    def __init__(self, session_id: UUID):
+        super().__init__(f"Session {session_id} not found")

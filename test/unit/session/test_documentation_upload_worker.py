@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -290,3 +291,96 @@ async def test_process_documentation_worker_does_not_look_up_session_protocol_fo
         )
 
     session_api_types.assert_not_awaited()
+
+
+def _conndev_upload() -> tuple[RawUploadedDocumentation, UploadedDocumentation]:
+    uploaded = UploadedDocumentation(
+        text=json.dumps({"uid": "User", "name": "User", "scim": {}}),
+        filename="conndev_ObjectClass_User.json",
+        content_type="application/com.evolveum.conndev+json",
+        metadata={"parser": "json"},
+        preserve_as_single_item=True,
+    )
+    raw_upload = RawUploadedDocumentation(
+        data=b"raw",
+        filename=uploaded.filename,
+        content_type=uploaded.content_type,
+        content_hash="hash",
+    )
+    return raw_upload, uploaded
+
+
+@pytest.mark.asyncio
+async def test_process_documentation_worker_chunks_off_the_event_loop():
+    """CPU-bound chunking must not stall coroutines sharing the API event loop."""
+    raw_upload, uploaded = _conndev_upload()
+    released = threading.Event()
+
+    def blocking_chunking(parsed: UploadedDocumentation) -> list[tuple[str, int]]:
+        # Only an independent coroutine can release this; on the event loop it would time out.
+        assert released.wait(timeout=5), "chunking blocked the event loop"
+        return [(parsed.text, 10)]
+
+    async def independent_coroutine() -> None:
+        await asyncio.sleep(0)
+        released.set()
+
+    with (
+        patch(
+            "src.session.documentation_processing.parse_uploaded_documentation",
+            new_callable=AsyncMock,
+            return_value=uploaded,
+        ),
+        patch("src.session.documentation_processing.chunk_uploaded_documentation", side_effect=blocking_chunking),
+        patch("src.session.documentation_processing.update_job_progress", new_callable=AsyncMock),
+        patch("src.session.documentation_processing.increment_processed_documents", new_callable=AsyncMock),
+        patch(
+            "src.session.documentation_processing.publish_uploaded_documentation", new_callable=AsyncMock
+        ) as persist_chunk,
+    ):
+        result, _ = await asyncio.gather(
+            process_documentation_worker(
+                session_id=uuid4(),
+                raw_upload=raw_upload,
+                doc_id=uuid4(),
+                app="Example",
+                app_version="1.0",
+                job_id=uuid4(),
+            ),
+            independent_coroutine(),
+        )
+
+    assert result["chunks_processed"] == 1
+    assert persist_chunk.await_args.kwargs["chunks"][0]["content"] == uploaded.text
+
+
+@pytest.mark.asyncio
+async def test_process_documentation_worker_propagates_chunking_failure_from_worker_thread():
+    raw_upload, uploaded = _conndev_upload()
+
+    with (
+        patch(
+            "src.session.documentation_processing.parse_uploaded_documentation",
+            new_callable=AsyncMock,
+            return_value=uploaded,
+        ),
+        patch(
+            "src.session.documentation_processing.chunk_uploaded_documentation",
+            side_effect=ValueError("broken schema"),
+        ),
+        patch("src.session.documentation_processing.update_job_progress", new_callable=AsyncMock),
+        patch(
+            "src.session.documentation_processing.publish_uploaded_documentation", new_callable=AsyncMock
+        ) as persist_chunk,
+    ):
+        with pytest.raises(ValueError, match="broken schema"):
+            await process_documentation_worker(
+                session_id=uuid4(),
+                raw_upload=raw_upload,
+                doc_id=uuid4(),
+                app="Example",
+                app_version="1.0",
+                job_id=uuid4(),
+            )
+
+    persist_chunk.assert_not_awaited()

@@ -16,12 +16,15 @@ from src.database.repositories.session_repository import SessionRepository
 from src.documents.normalize import normalize_object_class_name
 from src.jobs.schema import JobCreateResponse, JobStatusMultiDocResponse
 from src.modules.codegen import generation
+from src.modules.codegen.enums import ArtifactKind, build_object_class_operation_key
 from src.modules.codegen.orchestration import schedule_operation_job
 from src.modules.codegen.persistence import store_object_class_output_override
 from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import CodegenOperationInput, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
+from src.shared.job_types import JobType
+from src.shared.session_keys import codegen_operation_keys
 
 router = APIRouter()
 
@@ -60,8 +63,8 @@ async def generate_create(
         skip_cache=skip_cache,
         api_type=api_type,
         codegen_input=codegen_input,
-        key_prefix=f"{object_class}Create",
-        job_type="codegen.getCreate",
+        keys=codegen_operation_keys(build_object_class_operation_key(object_class, ArtifactKind.CREATE)),
+        job_type=JobType.CODEGEN_CREATE,
         worker=generation.generate_create_code,
     )
 
@@ -91,7 +94,7 @@ async def get_create_status(
         repo,
         session_id,
         jobId,
-        session_key=f"{object_class}CreateJobId",
+        session_key=codegen_operation_keys(build_object_class_operation_key(object_class, ArtifactKind.CREATE)).job_id,
         job_label="create",
         not_found_detail=f"No create job found for {object_class} in session {session_id}",
     )
@@ -116,7 +119,7 @@ async def override_create(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-    await store_object_class_output_override(repo, session_id, object_class, "Create", create_code)
+    await store_object_class_output_override(repo, session_id, object_class, ArtifactKind.CREATE, create_code)
 
     return {
         "message": f"Create code for {object_class} overridden successfully",
@@ -159,8 +162,8 @@ async def generate_update(
         skip_cache=skip_cache,
         api_type=api_type,
         codegen_input=codegen_input,
-        key_prefix=f"{object_class}Update",
-        job_type="codegen.getUpdate",
+        keys=codegen_operation_keys(build_object_class_operation_key(object_class, ArtifactKind.UPDATE)),
+        job_type=JobType.CODEGEN_UPDATE,
         worker=generation.generate_update_code,
     )
 
@@ -190,7 +193,7 @@ async def get_update_status(
         repo,
         session_id,
         jobId,
-        session_key=f"{object_class}UpdateJobId",
+        session_key=codegen_operation_keys(build_object_class_operation_key(object_class, ArtifactKind.UPDATE)).job_id,
         job_label="update",
         not_found_detail=f"No update job found for {object_class} in session {session_id}",
     )
@@ -215,7 +218,7 @@ async def override_update(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-    await store_object_class_output_override(repo, session_id, object_class, "Update", update_code)
+    await store_object_class_output_override(repo, session_id, object_class, ArtifactKind.UPDATE, update_code)
 
     return {
         "message": f"Update code for {object_class} overridden successfully",
@@ -258,8 +261,8 @@ async def generate_delete(
         skip_cache=skip_cache,
         api_type=api_type,
         codegen_input=codegen_input,
-        key_prefix=f"{object_class}Delete",
-        job_type="codegen.getDelete",
+        keys=codegen_operation_keys(build_object_class_operation_key(object_class, ArtifactKind.DELETE)),
+        job_type=JobType.CODEGEN_DELETE,
         worker=generation.generate_delete_code,
     )
 
@@ -289,7 +292,7 @@ async def get_delete_status(
         repo,
         session_id,
         jobId,
-        session_key=f"{object_class}DeleteJobId",
+        session_key=codegen_operation_keys(build_object_class_operation_key(object_class, ArtifactKind.DELETE)).job_id,
         job_label="delete",
         not_found_detail=f"No delete job found for {object_class} in session {session_id}",
     )
@@ -314,7 +317,7 @@ async def override_delete(
     object_class = normalize_object_class_name(object_class)
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
-    await store_object_class_output_override(repo, session_id, object_class, "Delete", delete_code)
+    await store_object_class_output_override(repo, session_id, object_class, ArtifactKind.DELETE, delete_code)
 
     return {
         "message": f"Delete code for {object_class} overridden successfully",

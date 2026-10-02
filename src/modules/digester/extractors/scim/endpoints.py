@@ -23,7 +23,6 @@ from src.modules.digester.extractors.scim.baseline import (
     get_scim_canonical_class_name,
     get_scim_resource_endpoint_definition,
     is_scim_extension_schema,
-    load_session_scim_baseline,
 )
 from src.modules.digester.schemas.common import ChunkReference
 from src.shared.coerce import is_true
@@ -33,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 async def pregenerate_scim_endpoints(
     *,
-    session_id: UUID,
+    baseline_bundle: ScimBaselineBundle,
     object_class: str,
     job_id: UUID,
     object_class_flags: Mapping[str, Any] | None = None,
@@ -41,6 +40,7 @@ async def pregenerate_scim_endpoints(
     """
     Resolve a terminal deterministic SCIM endpoint result.
 
+    ``baseline_bundle`` is built from the conndev documents stored in the job input.
     Returns an endpoint result when the class is a non-resource or when conndev provides
     an explicit endpoint. Returns ``None`` when scraped documentation must be inspected.
     """
@@ -50,8 +50,6 @@ async def pregenerate_scim_endpoints(
         processing_completed=0,
         message=f"Pregenerating SCIM endpoints for {object_class}",
     )
-
-    baseline_bundle = await load_session_scim_baseline(session_id)
 
     flags = object_class_flags or {}
     if is_true(flags.get("embedded")) or is_true(flags.get("abstract")):

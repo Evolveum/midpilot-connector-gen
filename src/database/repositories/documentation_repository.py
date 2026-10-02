@@ -20,6 +20,7 @@ from src.database.models import Document, DocumentationChunk, RelevantChunk
 from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.shared.content_types import CONNDEV_CONTENT_TYPES
+from src.shared.session_keys import upload_job_pointer_key
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ class DocumentationRepository:
             return False
         if not await session_repo.is_current_job_pointer(
             session_id=session_id,
-            pointer_key=f"documentation.processUpload_{doc_id}_job_id",
+            pointer_key=upload_job_pointer_key(doc_id),
             job_id=job_id,
             lock=True,
         ):

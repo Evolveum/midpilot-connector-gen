@@ -25,6 +25,7 @@ from src.session.schema import DocumentationItem
 from src.session.service import build_group_documentation_response
 from src.shared.clock import utc_now
 from src.shared.enums import JobStage
+from src.shared.job_types import JobType
 from src.shared.normalize import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ async def _run_scrape_async(
             created_at_limits = utc_now() - config.scrape_and_process.scrape_input_check_interval
             normalized_input = scrape_request.model_dump(by_alias=True, exclude={"skip_cache"})
             latest_job = await job_repo.get_job_by_input(
-                "scrape.getRelevantDocumentation",
+                JobType.SCRAPE_RELEVANT_DOCUMENTATION,
                 normalized_input,
                 created_at_limits,
                 requesting_session_id=session_id,

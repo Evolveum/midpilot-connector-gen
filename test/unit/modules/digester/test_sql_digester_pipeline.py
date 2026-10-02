@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.documents.selection import DocumentationSelection, SelectionRole
 from src.modules.digester import orchestration
 from src.modules.digester.errors import (
     EndpointExtractionNotSupportedError,
@@ -1565,13 +1566,10 @@ async def test_extract_sql_attributes_projects_raw_json_composite_primary_key(
 @pytest.mark.asyncio
 async def test_endpoint_extraction_is_rejected_for_a_sql_session():
     """A database connector has no endpoints, so the request must fail instead of extracting nothing."""
-    with patch(
-        "src.modules.digester.extractors.endpoints.resolve_effective_api_type",
-        new_callable=AsyncMock,
-        return_value=ApiType.SQL,
-    ):
-        with pytest.raises(EndpointExtractionNotSupportedError) as excinfo:
-            await extract_endpoints([_sql_doc("CREATE TABLE m_user (oid uuid);")], "m_user", uuid4(), [], uuid4())
+    table = _sql_doc("CREATE TABLE m_user (oid uuid);")
+    selection = DocumentationSelection.from_corpus([table], {SelectionRole.SQL_SCHEMA: [table]})
+    with pytest.raises(EndpointExtractionNotSupportedError) as excinfo:
+        await extract_endpoints(selection, "m_user", uuid4(), uuid4(), ApiType.SQL)
 
     assert "not applicable" in str(excinfo.value)
 

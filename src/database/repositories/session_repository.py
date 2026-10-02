@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import Session, SessionData
 from src.shared.clock import utc_now
+from src.shared.session_keys import job_pointer_key_for_output
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class SessionRepository:
     async def create_session_with_id(self, session_id: UUID, owner_key_hash: Optional[str] = None) -> UUID:
         """
         Create a new session with a provided ID.
-        If the session already exists, raises ValueError.
+        If the session already exists, the flush raises ``IntegrityError``.
 
         :param session_id: The UUID to use for the session
         :param owner_key_hash: SHA-256 fingerprint of the owning API key, or None for development
@@ -174,9 +175,7 @@ class SessionRepository:
         Locking the job-pointer row serializes a result write with a concurrent
         request scheduling a newer job for the same output key.
         """
-        if not result_key.endswith("Output"):
-            raise ValueError(f"Session result key {result_key!r} does not follow the *Output convention")
-        pointer_key = f"{result_key[: -len('Output')]}JobId"
+        pointer_key = job_pointer_key_for_output(result_key)
         session = (
             await self.db.execute(select(Session).where(Session.session_id == session_id).with_for_update())
         ).scalar_one_or_none()

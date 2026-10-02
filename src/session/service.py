@@ -18,16 +18,15 @@ from src.database.repositories.documentation_repository import DocumentationRepo
 from src.database.repositories.job_repository import JobRepository
 from src.session.errors import DocumentationItemNotFoundError, InvalidDocumentationImportError
 from src.session.schema import Documentation
+from src.shared.job_types import JobType
 
 logger = logging.getLogger(__name__)
-
-_UPLOAD_JOB_TYPE_PREFIX = "documentation.processUpload"
 
 
 async def list_documentation_upload_jobs(job_repo: JobRepository, session_id: UUID) -> List[Dict[str, Any]]:
     """Return the session's documentation-upload jobs, filtered by job type."""
     jobs = await job_repo.get_jobs_by_session(session_id)
-    return [job for job in jobs if job.get("type", "").startswith(_UPLOAD_JOB_TYPE_PREFIX)]
+    return [job for job in jobs if job.get("type") == JobType.DOCUMENTATION_PROCESS_UPLOAD]
 
 
 async def get_documentation_document(
