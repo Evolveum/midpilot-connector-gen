@@ -64,6 +64,9 @@ most likely to touch.
   link:api-type.adoc[apiType] detection signals (scim.cloud, LLM knowledge,
   web search — enable flags, thresholds, query templates), fuzzy
   sequence-matching tolerances, auth criteria threshold, debug logging.
+
+| `+CODEGEN__+` | `src/config/codegen.py`
+| Object-class fix input-token limit.
 |===
 
 NOTE: The external apiType signal settings cover REST and SCIM. SQL is selected

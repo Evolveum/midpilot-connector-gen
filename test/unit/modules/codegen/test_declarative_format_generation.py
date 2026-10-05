@@ -17,10 +17,12 @@ import pytest
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.modules.codegen.core.base import BaseGroovyGenerator, OperationConfig
+from src.modules.codegen.core.validation_feedback import GeneratedArtifact
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
+from src.modules.codegen.utils.connector_code_validation import inspect_connector_code
 from src.shared.enums import ApiType
 
 # A native-schema document that the declarative-YAML reference documents as fully sufficient:
@@ -110,7 +112,7 @@ async def _run_process_chunks(chain, *, chunks=("chunk",)):
             job_id=uuid4(),
             initial_result='objectClass("User") {}',
         )
-    return result, mock_append_job_error
+    return result.code, mock_append_job_error
 
 
 # --- Acceptance criterion 1: a connector fully representable in declarative YAML -----------------
@@ -323,7 +325,9 @@ async def test_generation_passes_only_accepted_results_to_following_chunks(curre
         patch.object(generator, "_build_chunks", return_value=(["a", "b", "c"], [None] * 3, {}, [])),
         patch.object(generator, "_initialize_progress", new_callable=AsyncMock),
         patch.object(generator, "_build_llm_chain", return_value=chain),
-        patch.object(generator, "_cleanup_generated_code", new_callable=AsyncMock, side_effect=lambda **kw: kw["code"]),
+        patch.object(
+            generator, "_cleanup_generated_code", new_callable=AsyncMock, side_effect=lambda **kw: kw["artifact"]
+        ),
         patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
     ):
@@ -346,6 +350,7 @@ async def test_invalid_embedded_groovy_cleanup_preserves_valid_yaml():
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=chain),
         patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
     ):
-        result = await generator._cleanup_generated_code(YAML_SUFFICIENT_CODE, uuid4())
-    assert result == YAML_SUFFICIENT_CODE
+        artifact = GeneratedArtifact(YAML_SUFFICIENT_CODE, inspect_connector_code(YAML_SUFFICIENT_CODE))
+        result = await generator._cleanup_generated_code(artifact, uuid4())
+    assert result is artifact
     errors.assert_awaited_once()

@@ -48,7 +48,9 @@ async def _generate_from_conndev_only_session(generator: SearchGenerator) -> str
     with (
         patch.object(SearchGenerator, "_load_documentation_items", new=AsyncMock(return_value=[_CONNDEV_SQL_EXPORT])),
         patch.object(SearchGenerator, "_build_llm_chain", return_value=chain),
-        patch.object(SearchGenerator, "_cleanup_generated_code", new=AsyncMock(side_effect=lambda code, job_id: code)),
+        patch.object(
+            SearchGenerator, "_cleanup_generated_code", new=AsyncMock(side_effect=lambda artifact, job_id: artifact)
+        ),
         patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
     ):

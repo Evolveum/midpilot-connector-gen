@@ -11,6 +11,7 @@ from uuid import UUID
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import Runnable
 from langchain_core.runnables.config import RunnableConfig
 
 from src.config import config
@@ -30,6 +31,7 @@ from src.jobs import (
     update_job_progress,
 )
 from src.jobs.errors import JobClaimLostError
+from src.modules.codegen.core.validation_feedback import GeneratedArtifact, GenerationState
 from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
@@ -37,6 +39,7 @@ from src.modules.codegen.prompts.cleanup_prompts import (
     get_yaml_cleanup_system_prompt,
     get_yaml_cleanup_user_prompt,
 )
+from src.modules.codegen.prompts.validation_feedback_prompts import VALIDATION_FEEDBACK_SYSTEM_RULES
 from src.modules.codegen.repair import (
     NO_CODE_GENERATED,
     NO_REPAIR_GENERATED,
@@ -46,7 +49,8 @@ from src.modules.codegen.repair import (
 from src.modules.codegen.schema import CodegenRepairContext, EndpointsPayload, OperationConfig
 from src.modules.codegen.utils.connector_code_validation import (
     detect_connector_code_format,
-    validate_connector_code,
+    inspect_connector_code,
+    log_validation_warnings,
 )
 from src.modules.codegen.utils.postprocess import coerce_llm_text, strip_markdown_fences
 from src.modules.codegen.utils.prompt_records import strip_relevant_documentation_refs
@@ -263,7 +267,7 @@ class BaseGroovyGenerator(ABC):
 
         # Step 4: Process chunks iteratively
         initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result="")
-        result = await self._process_chunks(
+        state = await self._process_chunks(
             chunks=chunks,
             provenance_chunk_ids=provenance_chunk_ids,
             per_chunk_counts=per_chunk_counts,
@@ -274,23 +278,20 @@ class BaseGroovyGenerator(ABC):
             initial_result=initial_result,
         )
 
-        if not result:
+        if state.pending is not None:
+            await self._repair_final_validation(
+                state=state, chain=chain, input_data=input_data, initial_result=initial_result, job_id=job_id
+            )
+
+        if state.accepted is None:
             await append_job_error(job_id, NO_REPAIR_GENERATED if repair_context else NO_CODE_GENERATED)
             return initial_result
 
-        result = await self._cleanup_generated_code(code=result, job_id=job_id)
+        # Cleanup validates changed output and otherwise returns this already-validated artifact.
+        result = await self._cleanup_generated_code(artifact=state.accepted, job_id=job_id)
+        return strip_markdown_fences(result.code)
 
-        validation_error = await asyncio.to_thread(validate_connector_code, result)
-        if validation_error is not None:
-            error_message = f"{self.config.logger_prefix} Final generated code is invalid: {validation_error}"
-            logger.warning("[Codegen:Generation] Final generated code is invalid: %s", validation_error)
-            await append_job_error(job_id, error_message)
-            await append_job_error(job_id, NO_REPAIR_GENERATED if repair_context else NO_CODE_GENERATED)
-            return initial_result
-
-        return strip_markdown_fences(result)
-
-    async def _cleanup_generated_code(self, code: str, job_id: UUID) -> str:
+    async def _cleanup_generated_code(self, artifact: GeneratedArtifact, job_id: UUID) -> GeneratedArtifact:
         """
         Run one final LLM cleanup pass to remove TODO/comment-only scaffolding.
 
@@ -299,49 +300,153 @@ class BaseGroovyGenerator(ABC):
         prompt instructs the model to retain that format. The result passes the shared format-aware
         validator. Falls back to the original code if cleanup fails or produces invalid output.
         """
-        if not code.strip():
-            return code
-
+        code = artifact.code
         is_yaml = await asyncio.to_thread(detect_connector_code_format, code) is ConnectorCodeFormat.YAML
         system_prompt = get_yaml_cleanup_system_prompt if is_yaml else get_groovy_cleanup_system_prompt
         user_prompt = get_yaml_cleanup_user_prompt if is_yaml else get_groovy_cleanup_user_prompt
         prompt_var_name = "yaml_code" if is_yaml else "groovy_code"
 
         try:
-            logger.info("%s Running final cleanup LLM pass", self.config.logger_prefix)
+            logger.info("[Codegen:Generation] Running final cleanup LLM pass for %s", self.config.operation_name)
             llm = get_default_llm()
             prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", user_prompt)])
             chain = make_basic_chain(prompt, llm, StrOutputParser())
-            response = await chain.ainvoke(
+            response = await self._invoke_generation_chain(
+                chain,
                 {prompt_var_name: code},
-                config=RunnableConfig(
-                    callbacks=[langfuse_handler],
-                    run_name=f"{self.config.logger_prefix.strip('[]')}:Cleanup",
-                ),
+                context="cleanup",
+                run_name_suffix=":Cleanup",
+                max_attempts=1,
             )
-            candidate = await asyncio.to_thread(
-                self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response).strip())
-            )
-            if not candidate:
-                logger.warning(
-                    "%s Cleanup pass returned empty output; keeping previous code", self.config.logger_prefix
-                )
-                return code
+            candidate = await self._evaluate_response(response, artifact)
+            if candidate is None:
+                logger.warning("[Codegen:Generation] Cleanup pass returned empty output; keeping previous code")
+                return artifact
 
-            validation_error = await asyncio.to_thread(validate_connector_code, candidate)
+            validation_error = candidate.validation.first_error
             if validation_error is not None:
                 error_message = f"{self.config.logger_prefix} Cleanup pass produced invalid output: {validation_error}"
-                logger.warning(error_message)
+                logger.warning("[Codegen:Generation] Cleanup pass produced invalid output: %s", validation_error)
                 await append_job_error(job_id, error_message)
-                return code
+                return artifact
 
             return candidate
 
+        except JobClaimLostError:
+            raise
         except Exception as exc:
             error_message = f"{self.config.logger_prefix} Cleanup pass failed: {exc}"
-            logger.exception(error_message)
+            logger.exception("[Codegen:Generation] Cleanup pass failed")
             await append_job_error(job_id, error_message)
-            return code
+            return artifact
+
+    async def _evaluate_response(self, response: Any, *known: GeneratedArtifact) -> GeneratedArtifact | None:
+        candidate = await asyncio.to_thread(
+            self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response))
+        )
+        if not candidate:
+            return None
+        for artifact in known:
+            if artifact.code == candidate:
+                return artifact
+        report = await asyncio.to_thread(inspect_connector_code, candidate)
+        log_validation_warnings(report)
+        return GeneratedArtifact(candidate, report)
+
+    async def _invoke_generation_chain(
+        self,
+        chain: Runnable[Dict[str, Any], str],
+        prompt_vars: Dict[str, Any],
+        *,
+        context: str,
+        run_name_suffix: str = "",
+        max_attempts: int | None = None,
+    ) -> str:
+        """Share invocation and tracing; cleanup explicitly retains its single-attempt policy."""
+        run_name = self.config.logger_prefix.strip("[]") + run_name_suffix
+        return await retry_on_transient_llm_error(
+            lambda: chain.ainvoke(
+                prompt_vars,
+                config=RunnableConfig(callbacks=[langfuse_handler], run_name=run_name),
+            ),
+            max_attempts=config.llm.transient_retry_attempts if max_attempts is None else max_attempts,
+            base_delay=config.llm.transient_retry_base_delay_seconds,
+            logger_prefix="[Codegen:Generation] ",
+            context=context,
+        )
+
+    async def _record_candidate(
+        self,
+        state: GenerationState,
+        candidate: GeneratedArtifact,
+        *,
+        chunk: str,
+        index: int,
+        context: str,
+        job_id: UUID,
+    ) -> None:
+        had_feedback = state.pending is not None
+        state.record(candidate, chunk=chunk, index=index)
+        if candidate.validation.errors:
+            error = candidate.validation.first_error
+            logger.warning("[Codegen:Generation] Invalid output after %s: %s", context, error)
+            await append_job_error(job_id, f"{self.config.logger_prefix} Invalid output after {context}: {error}")
+        elif had_feedback and state.pending is None:
+            logger.info("[Codegen:Generation] Local validation feedback resolved after %s", context)
+
+    async def _repair_final_validation(
+        self,
+        *,
+        state: GenerationState,
+        chain: Runnable[Dict[str, Any], str],
+        input_data: Dict[str, str],
+        initial_result: str,
+        job_id: UUID,
+    ) -> None:
+        feedback = state.pending
+        if feedback is None:
+            return
+        try:
+            logger.info("[Codegen:Generation] Running final validation repair for %s", self.config.operation_name)
+            prompt_vars = {
+                **input_data,
+                "idx": feedback.index,
+                "chunk": feedback.chunk,
+                "result": state.code or initial_result,
+                "validation_feedback": state.prompt_feedback(final_repair=True),
+            }
+            response = await self._invoke_generation_chain(
+                chain, prompt_vars, context="final validation repair", run_name_suffix=":ValidationRepair"
+            )
+            candidate = await self._evaluate_response(response, *state.known_artifacts())
+            if candidate is None:
+                logger.warning(
+                    "[Codegen:Generation] Final validation repair returned empty output; keeping previous code"
+                )
+                await append_job_error(
+                    job_id, f"{self.config.logger_prefix} Final validation repair returned empty output"
+                )
+                return
+            await self._record_candidate(
+                state,
+                candidate,
+                chunk=feedback.chunk,
+                index=feedback.index,
+                context="final validation repair",
+                job_id=job_id,
+            )
+            if state.pending is not None:
+                logger.warning(
+                    "[Codegen:Generation] Final validation repair left %d error(s) and %d warning(s); no further repair pass",
+                    len(candidate.validation.errors),
+                    len(candidate.validation.warnings),
+                )
+        except JobClaimLostError:
+            raise
+        except Exception as exc:
+            raise_if_llm_unavailable(exc, context="repairing generated connector code")
+            logger.exception("[Codegen:Generation] Final validation repair failed")
+            await append_job_error(job_id, f"{self.config.logger_prefix} Final validation repair failed: {exc}")
 
     async def _load_documentation_items(self, session_id: UUID) -> List[Dict[str, Any]]:
         """Load documentation items from documentation_items table."""
@@ -429,11 +534,14 @@ class BaseGroovyGenerator(ABC):
             message="Processing chunks and try to extract relevant information",
         )
 
-    def _build_llm_chain(self, total_chunks: int):
+    def _build_llm_chain(self, total_chunks: int) -> Runnable[Dict[str, Any], str]:
         """Build the LangChain chain for LLM invocation."""
         llm = get_default_llm()
         prompt = ChatPromptTemplate.from_messages(
-            [("system", self.config.system_prompt), ("human", self.config.user_prompt)]
+            [
+                ("system", self.config.system_prompt + VALIDATION_FEEDBACK_SYSTEM_RULES),
+                ("human", self.config.user_prompt + "\n{validation_feedback}"),
+            ]
         )
 
         partial_vars: Dict[str, Any] = {"total": total_chunks}
@@ -449,17 +557,17 @@ class BaseGroovyGenerator(ABC):
         per_chunk_counts: Dict[str, int],
         chunk_ids_included: List[str],
         input_data: Dict[str, str],
-        chain,
+        chain: Runnable[Dict[str, Any], str],
         job_id: UUID,
         initial_result: str,
-    ) -> str:
-        """Return accepted model output, or empty when no chunk contributes code.
+    ) -> GenerationState:
+        """Return accepted output and the latest candidate needing validation feedback.
 
         Supplied repair code remains prompt context until a replacement is accepted.
         Keeping it separate lets the caller preserve it without running cleanup when
         the model produces no replacement.
         """
-        result = ""
+        state = GenerationState()
         total_chunks = len(chunks)
         current_chunk_id: Optional[str] = None
         current_group_chunks_remaining: int = 0
@@ -478,52 +586,37 @@ class BaseGroovyGenerator(ABC):
                 # Log progress
                 if chunk_id:
                     logger.info(
-                        "%s LLM call %d/%d (chunk_id: %s)",
-                        self.config.logger_prefix,
+                        "[Codegen:Generation] LLM call %d/%d (chunk_id: %s)",
                         idx,
                         total_chunks,
                         chunk_id,
                     )
                 else:
-                    logger.info("%s LLM call %d/%d", self.config.logger_prefix, idx, total_chunks)
+                    logger.info("[Codegen:Generation] LLM call %d/%d", idx, total_chunks)
 
                 # Invoke LLM
-                prompt_vars = {"idx": idx, "chunk": chunk, "result": result or initial_result}
-                prompt_vars.update(input_data)
+                prompt_vars = {
+                    **input_data,
+                    "idx": idx,
+                    "chunk": chunk,
+                    "result": state.code or initial_result,
+                    "validation_feedback": state.prompt_feedback(),
+                }
+                context = f"chunk {idx}/{total_chunks}"
+                response = await self._invoke_generation_chain(chain, prompt_vars, context=context)
+                candidate = await self._evaluate_response(response, *state.known_artifacts())
 
-                response = await retry_on_transient_llm_error(
-                    lambda: chain.ainvoke(
-                        prompt_vars,
-                        config=RunnableConfig(
-                            callbacks=[langfuse_handler],
-                            run_name=self.config.logger_prefix.strip("[]"),
-                        ),
-                    ),
-                    max_attempts=config.llm.transient_retry_attempts,
-                    base_delay=config.llm.transient_retry_base_delay_seconds,
-                    logger_prefix=f"{self.config.logger_prefix} ",
-                    context=f"chunk {idx}/{total_chunks}",
-                )
-                candidate = await asyncio.to_thread(
-                    self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response))
-                )
+                if candidate is not None:
+                    await self._record_candidate(
+                        state, candidate, chunk=chunk, index=idx, context=context, job_id=job_id
+                    )
 
-                if candidate:
-                    validation_error = await asyncio.to_thread(validate_connector_code, candidate)
-                    if validation_error is None:
-                        result = candidate
-                    else:
-                        error_message = (
-                            f"{self.config.logger_prefix} Invalid output after chunk {idx}/{total_chunks}: "
-                            f"{validation_error}"
-                        )
-                        logger.warning(error_message)
-                        await append_job_error(job_id, error_message)
-
+            except JobClaimLostError:
+                raise
             except Exception as exc:
                 raise_if_llm_unavailable(exc, context="generating connector code")
-                error_message = f"[{self.config.logger_prefix}] Failed to process chunk {idx}/{total_chunks}: {exc}"
-                logger.exception(error_message)
+                error_message = f"{self.config.logger_prefix} Failed to process chunk {idx}/{total_chunks}: {exc}"
+                logger.exception("[Codegen:Generation] Failed to process chunk %d/%d", idx, total_chunks)
                 await append_job_error(job_id, error_message)
                 continue
 
@@ -542,12 +635,11 @@ class BaseGroovyGenerator(ABC):
                     if active_exception is None:
                         raise
                     logger.warning(
-                        "%s Job claim was lost while recording progress; preserving the active error: %s",
-                        self.config.logger_prefix,
+                        "[Codegen:Generation] Job claim was lost while recording progress; preserving the active error: %s",
                         active_exception,
                     )
 
-        return result
+        return state
 
 
 def endpoints_to_records(payload: EndpointsPayload) -> List[Dict[str, Any]]:

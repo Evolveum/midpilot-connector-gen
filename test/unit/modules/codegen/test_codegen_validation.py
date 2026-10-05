@@ -7,12 +7,15 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from langchain_core.runnables import RunnableLambda
 
 from src.config import config
 from src.core.errors import LLMUnavailableError
 from src.modules.codegen.core.base import BaseGroovyGenerator, OperationConfig
 from src.modules.codegen.core.generate_groovy import generate_groovy
+from src.modules.codegen.core.validation_feedback import GeneratedArtifact
 from src.modules.codegen.schema import CodegenRepairContext
+from src.modules.codegen.utils.connector_code_validation import inspect_connector_code
 
 
 # PyCharm's monkeypatch inspection does not resolve pydantic model fields as attribute names
@@ -132,15 +135,9 @@ class _DummyGenerator(BaseGroovyGenerator):
 async def test_base_generator_keeps_previous_result_when_chunk_validation_fails() -> None:
     generator = _DummyGenerator()
     chain = _DummyChain(['objectClass("User") { broken', 'objectClass("User") { search {} }'])
-    validation_results = [
-        "chunk syntax error",
-        None,
-    ]
-
     with (
         patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.base.validate_connector_code", side_effect=validation_results),
     ):
         result = await generator._process_chunks(
             chunks=["chunk-1", "chunk-2"],
@@ -148,12 +145,12 @@ async def test_base_generator_keeps_previous_result_when_chunk_validation_fails(
             per_chunk_counts={},
             chunk_ids_included=[],
             input_data={},
-            chain=chain,
+            chain=RunnableLambda(chain.ainvoke),
             job_id=uuid4(),
             initial_result='objectClass("User") {}',
         )
 
-    assert result == 'objectClass("User") { search {} }'
+    assert result.code == 'objectClass("User") { search {} }'
     mock_append_job_error.assert_called_once()
 
 
@@ -176,7 +173,7 @@ async def test_base_generator_fails_fast_when_llm_unreachable(monkeypatch) -> No
                 per_chunk_counts={},
                 chunk_ids_included=[],
                 input_data={},
-                chain=chain,
+                chain=RunnableLambda(chain.ainvoke),
                 job_id=uuid4(),
                 initial_result='objectClass("User") {}',
             )
@@ -224,9 +221,11 @@ async def test_base_generator_runs_repair_pass_without_documentation_chunks() ->
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=chain),
         patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.base.validate_connector_code", return_value=None),
         patch.object(
-            BaseGroovyGenerator, "_cleanup_generated_code", new_callable=AsyncMock, return_value=repaired_code
+            BaseGroovyGenerator,
+            "_cleanup_generated_code",
+            new_callable=AsyncMock,
+            side_effect=lambda **kw: kw["artifact"],
         ),
     ):
         result = await generator.generate(
@@ -253,11 +252,12 @@ async def test_base_generator_cleanup_returns_cleaned_code_when_valid() -> None:
     with (
         patch("src.modules.codegen.core.base.get_default_llm"),
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=_DummyChain([cleaned_code])),
-        patch("src.modules.codegen.core.base.validate_connector_code", return_value=None),
     ):
-        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())
+        result = await generator._cleanup_generated_code(
+            artifact=GeneratedArtifact(original_code, inspect_connector_code(original_code)), job_id=uuid4()
+        )
 
-    assert result == cleaned_code
+    assert result.code == cleaned_code
 
 
 @pytest.mark.asyncio
@@ -271,12 +271,13 @@ async def test_base_generator_cleanup_keeps_original_when_invalid() -> None:
             "src.modules.codegen.core.base.make_basic_chain",
             return_value=_DummyChain(['objectClass("User") { search { broken']),
         ),
-        patch("src.modules.codegen.core.base.validate_connector_code", return_value="syntax error"),
         patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
     ):
-        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())
+        result = await generator._cleanup_generated_code(
+            artifact=GeneratedArtifact(original_code, inspect_connector_code(original_code)), job_id=uuid4()
+        )
 
-    assert result == original_code
+    assert result.code == original_code
     mock_append_job_error.assert_called_once()
 
 
@@ -320,7 +321,7 @@ async def test_chunk_sequences_preserve_accepted_code_and_progress(responses, re
         patch.object(generator, "_initialize_progress", new_callable=AsyncMock),
         patch.object(generator, "_build_llm_chain", return_value=chain),
         patch.object(
-            generator, "_cleanup_generated_code", new_callable=AsyncMock, side_effect=lambda **kw: kw["code"]
+            generator, "_cleanup_generated_code", new_callable=AsyncMock, side_effect=lambda **kw: kw["artifact"]
         ) as cleanup,
         patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock) as progress,
@@ -348,7 +349,8 @@ async def test_empty_cleanup_preserves_artifact(response):
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=_DummyChain([response])),
         patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
     ):
-        assert await _DummyGenerator()._cleanup_generated_code("{}", uuid4()) == "{}"
+        artifact = GeneratedArtifact("{}", inspect_connector_code("{}"))
+        assert await _DummyGenerator()._cleanup_generated_code(artifact, uuid4()) is artifact
     errors.assert_not_awaited()
 
 
@@ -370,7 +372,7 @@ async def test_invalid_then_empty_retains_validation_error_and_outcome():
 
     generator = _DummyGenerator()
     job_id = uuid4()
-    chain = _RecordingChain(["objectClasses: {User: {search: {endpoints: 42}}}", "```yaml\n```"])
+    chain = _RecordingChain(["objectClasses: {User: {search: {endpoints: 42}}}", "```yaml\n```", ""])
     with (
         patch.object(generator, "_build_chunks", return_value=(["a", "b"], [], {}, [])),
         patch.object(generator, "_initialize_progress", new_callable=AsyncMock),
@@ -379,7 +381,9 @@ async def test_invalid_then_empty_retains_validation_error_and_outcome():
         patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
     ):
         assert await generator.generate(job_id=job_id) == ""
-    assert errors.await_count == 2
+    assert errors.await_count == 3
     assert "Invalid output after chunk 1/2" in errors.await_args_list[0].args[1]
-    assert errors.await_args_list[1].args == (job_id, NO_CODE_GENERATED)
+    assert "Final validation repair returned empty output" in errors.await_args_list[1].args[1]
+    assert errors.await_args_list[2].args == (job_id, NO_CODE_GENERATED)
     assert chain.calls[1][0][0]["result"] == ""
+    assert chain.calls[2][0][0]["chunk"] == "a"

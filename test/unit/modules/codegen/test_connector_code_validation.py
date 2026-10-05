@@ -10,6 +10,7 @@ from src.modules.codegen.errors import ConnectorCodeValidationError
 from src.modules.codegen.utils.connector_code_validation import (
     detect_connector_code_format,
     ensure_valid_connector_code,
+    inspect_connector_code,
     validate_connector_code,
     validate_yaml_connector_code,
 )
@@ -150,6 +151,33 @@ def test_unknown_nested_options_are_preserved_with_warning(code, path, caplog):
     assert ensure_valid_connector_code(code) == code
     assert "[Codegen:Validation] Unrecognized YAML option" in caplog.text
     assert path in caplog.text
+
+
+def test_validation_report_collects_structural_errors_without_input_values_or_logging(caplog):
+    report = inspect_connector_code("objectClasses: {User: {references: [], search: {endpoints: 42}}}")
+    assert [issue.path for issue in report.errors] == [
+        "objectClasses.User.references",
+        "objectClasses.User.search.endpoints",
+    ]
+    assert report.first_error == "objectClasses.User.references: Input should be a valid dictionary"
+    assert not report.warnings
+    assert not caplog.records
+
+
+def test_validation_report_keeps_warnings_alongside_embedded_script_errors(caplog):
+    code = "objectClasses: {User: {attributeResolvers: secret-value, search: {custom: {implementation: 'return ('}}}}"
+    report = inspect_connector_code(code)
+    assert report.errors[0].path == "objectClasses.User.search.custom.implementation"
+    assert report.warnings[0].path == "objectClasses.User.attributeResolvers"
+    assert "secret-value" not in repr(report)
+    assert not caplog.records
+
+
+def test_correct_resolver_location_has_no_diagnostics():
+    report = inspect_connector_code(
+        "objectClasses: {User: {search: {attributeResolvers: [{attribute: team, implementation: 'return []'}]}}}"
+    )
+    assert not report.has_feedback
 
 
 def test_reference_metadata_is_preserved_without_logging_values(caplog):
