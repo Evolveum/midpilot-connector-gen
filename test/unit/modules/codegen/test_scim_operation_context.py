@@ -226,7 +226,7 @@ async def test_scim_crud_runs_context_only_generation_when_selected_input_is_con
             BaseGroovyGenerator,
             "_cleanup_generated_code",
             new_callable=AsyncMock,
-            side_effect=lambda **kw: kw["artifact"],
+            side_effect=lambda **kw: kw["code"],
         ),
         patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),

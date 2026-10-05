@@ -20,7 +20,6 @@ empirical basis - no real Groovy sample tried there parses to a ``dict``.
 """
 
 import logging
-from dataclasses import dataclass
 from typing import Any, Optional
 
 import yaml
@@ -33,40 +32,6 @@ from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class ValidationDiagnostic:
-    path: str
-    message: str
-
-    def describe(self) -> str:
-        return f"{self.path}: {self.message}" if self.path else self.message
-
-
-@dataclass(frozen=True)
-class CodeValidationReport:
-    """Local diagnostics, without changing the artifact or its acceptance rules."""
-
-    errors: tuple[ValidationDiagnostic, ...] = ()
-    warnings: tuple[ValidationDiagnostic, ...] = ()
-
-    @property
-    def first_error(self) -> str | None:
-        return self.errors[0].describe() if self.errors else None
-
-    @property
-    def has_feedback(self) -> bool:
-        return bool(self.errors or self.warnings)
-
-
-def _error_report(message: str) -> CodeValidationReport:
-    return CodeValidationReport(errors=(ValidationDiagnostic("", message),))
-
-
-def log_validation_warnings(report: CodeValidationReport) -> None:
-    for warning in report.warnings:
-        logger.warning("[Codegen:Validation] %s at %s", warning.message, warning.path)
 
 
 class _RejectDuplicateKeysLoader(yaml.SafeLoader):
@@ -134,40 +99,40 @@ def validate_yaml_connector_code(code: str) -> Optional[str]:
 
     Returns None when valid, otherwise a human-readable error message.
     """
-    report = _inspect_yaml_connector_code(code)
-    log_validation_warnings(report)
-    return report.first_error
+    errors = _collect_yaml_connector_code_errors(code)
+    return errors[0] if errors else None
 
 
-def _inspect_yaml_connector_code(code: str) -> CodeValidationReport:
+def _collect_yaml_connector_code_errors(code: str) -> tuple[str, ...]:
     normalized = strip_markdown_fences(code)
     if not normalized:
-        return _error_report("Connector code cannot be empty")
+        return ("Connector code cannot be empty",)
 
     try:
         document = _load_single_yaml_document(normalized)
     except yaml.YAMLError as exc:
-        return _error_report(_clean_yaml_error_message(exc) or "Invalid YAML")
+        return (_clean_yaml_error_message(exc) or "Invalid YAML",)
 
     if not isinstance(document, dict):
-        return _error_report("Declarative connector YAML must have a mapping (key: value) document root")
+        return ("Declarative connector YAML must have a mapping (key: value) document root",)
 
     if _has_cyclic_containers(document):
-        return _error_report("Declarative connector YAML must not contain cyclic aliases")
+        return ("Declarative connector YAML must not contain cyclic aliases",)
 
     try:
         model = ConnectorYamlDocument.model_validate(document)
     except ValidationError as exc:
-        return CodeValidationReport(
-            errors=tuple(
-                ValidationDiagnostic(".".join(map(str, error["loc"])), error["msg"])
-                for error in exc.errors(include_url=False, include_input=False, include_context=False)
-            )
+        return tuple(
+            _describe_error(".".join(map(str, error["loc"])), error["msg"])
+            for error in exc.errors(include_url=False, include_input=False, include_context=False)
         )
-    errors: list[ValidationDiagnostic] = []
-    warnings: list[ValidationDiagnostic] = []
-    _inspect_embedded_scripts(model, errors, warnings)
-    return CodeValidationReport(errors=tuple(errors), warnings=tuple(warnings))
+    errors: list[str] = []
+    _collect_embedded_script_errors(model, errors)
+    return tuple(errors)
+
+
+def _describe_error(path: str, message: str) -> str:
+    return f"{path}: {message}" if path else message
 
 
 def _has_cyclic_containers(document: Any) -> bool:
@@ -195,19 +160,12 @@ def _has_cyclic_containers(document: Any) -> bool:
     return False
 
 
-def _inspect_embedded_scripts(
-    value: Any,
-    errors: list[ValidationDiagnostic],
-    warnings: list[ValidationDiagnostic],
-    path: str = "",
-) -> None:
+def _collect_embedded_script_errors(value: Any, errors: list[str], path: str = "") -> None:
     if isinstance(value, BaseModel):
         for key in value.model_extra or {}:
-            warnings.append(
-                ValidationDiagnostic(
-                    f"{path}.{key}".lstrip("."),
-                    "Unrecognized YAML option; preserved for connector runtime validation",
-                )
+            logger.warning(
+                "[Codegen:Validation] Unrecognized YAML option at %s; preserving it for connector runtime validation",
+                f"{path}.{key}".lstrip("."),
             )
         for name, field in type(value).model_fields.items():
             if name not in value.model_fields_set:
@@ -224,15 +182,15 @@ def _inspect_embedded_scripts(
                     wrapped = f"def filterSpec = (\n{child}\n)"
                 error = validate_groovy_code(wrapped)
                 if error:
-                    errors.append(ValidationDiagnostic(child_path, error))
+                    errors.append(_describe_error(child_path, error))
             else:
-                _inspect_embedded_scripts(child, errors, warnings, child_path)
+                _collect_embedded_script_errors(child, errors, child_path)
     elif isinstance(value, dict):
         for key, child in value.items():
-            _inspect_embedded_scripts(child, errors, warnings, f"{path}.{key}")
+            _collect_embedded_script_errors(child, errors, f"{path}.{key}")
     elif isinstance(value, list):
         for index, child in enumerate(value):
-            _inspect_embedded_scripts(child, errors, warnings, f"{path}[{index}]")
+            _collect_embedded_script_errors(child, errors, f"{path}[{index}]")
 
 
 def validate_connector_code(code: str) -> Optional[str]:
@@ -246,20 +204,24 @@ def validate_connector_code(code: str) -> Optional[str]:
 
     Returns None when valid, otherwise a human-readable error message.
     """
-    report = inspect_connector_code(code)
-    log_validation_warnings(report)
-    return report.first_error
+    errors = collect_connector_code_errors(code)
+    return errors[0] if errors else None
 
 
-def inspect_connector_code(code: str) -> CodeValidationReport:
-    """Collect diagnostics without logging. Run this CPU-bound check in a worker thread."""
+def collect_connector_code_errors(code: str) -> tuple[str, ...]:
+    """
+    Return every local validation error as ``"path: message"``; empty when the code is valid.
+
+    Same checks and CPU cost as :func:`validate_connector_code`, which reports only the first
+    error. Codegen forwards all errors so the next LLM call can fix them at once.
+    """
     normalized = strip_markdown_fences(code)
     if not normalized:
-        return _error_report("Connector code cannot be empty")
+        return ("Connector code cannot be empty",)
     if detect_connector_code_format(normalized) is ConnectorCodeFormat.YAML:
-        return _inspect_yaml_connector_code(normalized)
+        return _collect_yaml_connector_code_errors(normalized)
     error = validate_groovy_code(normalized)
-    return _error_report(error) if error else CodeValidationReport()
+    return (error,) if error else ()
 
 
 def ensure_valid_connector_code(code: str) -> str:

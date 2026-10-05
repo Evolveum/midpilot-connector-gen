@@ -31,7 +31,6 @@ from src.jobs import (
     update_job_progress,
 )
 from src.jobs.errors import JobClaimLostError
-from src.modules.codegen.core.validation_feedback import GeneratedArtifact, GenerationState
 from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
@@ -39,7 +38,7 @@ from src.modules.codegen.prompts.cleanup_prompts import (
     get_yaml_cleanup_system_prompt,
     get_yaml_cleanup_user_prompt,
 )
-from src.modules.codegen.prompts.validation_feedback_prompts import VALIDATION_FEEDBACK_SYSTEM_RULES
+from src.modules.codegen.prompts.validation_error_prompts import build_validation_error_block
 from src.modules.codegen.repair import (
     NO_CODE_GENERATED,
     NO_REPAIR_GENERATED,
@@ -48,9 +47,8 @@ from src.modules.codegen.repair import (
 )
 from src.modules.codegen.schema import CodegenRepairContext, EndpointsPayload, OperationConfig
 from src.modules.codegen.utils.connector_code_validation import (
+    collect_connector_code_errors,
     detect_connector_code_format,
-    inspect_connector_code,
-    log_validation_warnings,
 )
 from src.modules.codegen.utils.postprocess import coerce_llm_text, strip_markdown_fences
 from src.modules.codegen.utils.prompt_records import strip_relevant_documentation_refs
@@ -267,7 +265,7 @@ class BaseGroovyGenerator(ABC):
 
         # Step 4: Process chunks iteratively
         initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result="")
-        state = await self._process_chunks(
+        result = await self._process_chunks(
             chunks=chunks,
             provenance_chunk_ids=provenance_chunk_ids,
             per_chunk_counts=per_chunk_counts,
@@ -278,20 +276,15 @@ class BaseGroovyGenerator(ABC):
             initial_result=initial_result,
         )
 
-        if state.pending is not None:
-            await self._repair_final_validation(
-                state=state, chain=chain, input_data=input_data, initial_result=initial_result, job_id=job_id
-            )
-
-        if state.accepted is None:
+        if not result:
             await append_job_error(job_id, NO_REPAIR_GENERATED if repair_context else NO_CODE_GENERATED)
             return initial_result
 
-        # Cleanup validates changed output and otherwise returns this already-validated artifact.
-        result = await self._cleanup_generated_code(artifact=state.accepted, job_id=job_id)
-        return strip_markdown_fences(result.code)
+        # Cleanup returns either its own validated output or this already valid result.
+        result = await self._cleanup_generated_code(code=result, job_id=job_id)
+        return strip_markdown_fences(result)
 
-    async def _cleanup_generated_code(self, artifact: GeneratedArtifact, job_id: UUID) -> GeneratedArtifact:
+    async def _cleanup_generated_code(self, code: str, job_id: UUID) -> str:
         """
         Run one final LLM cleanup pass to remove TODO/comment-only scaffolding.
 
@@ -300,7 +293,9 @@ class BaseGroovyGenerator(ABC):
         prompt instructs the model to retain that format. The result passes the shared format-aware
         validator. Falls back to the original code if cleanup fails or produces invalid output.
         """
-        code = artifact.code
+        if not code.strip():
+            return code
+
         is_yaml = await asyncio.to_thread(detect_connector_code_format, code) is ConnectorCodeFormat.YAML
         system_prompt = get_yaml_cleanup_system_prompt if is_yaml else get_groovy_cleanup_system_prompt
         user_prompt = get_yaml_cleanup_user_prompt if is_yaml else get_groovy_cleanup_user_prompt
@@ -318,17 +313,21 @@ class BaseGroovyGenerator(ABC):
                 run_name_suffix=":Cleanup",
                 max_attempts=1,
             )
-            candidate = await self._evaluate_response(response, artifact)
-            if candidate is None:
+            candidate = await asyncio.to_thread(
+                self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response).strip())
+            )
+            if not candidate:
                 logger.warning("[Codegen:Generation] Cleanup pass returned empty output; keeping previous code")
-                return artifact
+                return code
+            if candidate == code:
+                return code
 
-            validation_error = candidate.validation.first_error
-            if validation_error is not None:
-                error_message = f"{self.config.logger_prefix} Cleanup pass produced invalid output: {validation_error}"
-                logger.warning("[Codegen:Generation] Cleanup pass produced invalid output: %s", validation_error)
+            errors = await asyncio.to_thread(collect_connector_code_errors, candidate)
+            if errors:
+                error_message = f"{self.config.logger_prefix} Cleanup pass produced invalid output: {errors[0]}"
+                logger.warning("[Codegen:Generation] Cleanup pass produced invalid output: %s", errors[0])
                 await append_job_error(job_id, error_message)
-                return artifact
+                return code
 
             return candidate
 
@@ -338,20 +337,7 @@ class BaseGroovyGenerator(ABC):
             error_message = f"{self.config.logger_prefix} Cleanup pass failed: {exc}"
             logger.exception("[Codegen:Generation] Cleanup pass failed")
             await append_job_error(job_id, error_message)
-            return artifact
-
-    async def _evaluate_response(self, response: Any, *known: GeneratedArtifact) -> GeneratedArtifact | None:
-        candidate = await asyncio.to_thread(
-            self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response))
-        )
-        if not candidate:
-            return None
-        for artifact in known:
-            if artifact.code == candidate:
-                return artifact
-        report = await asyncio.to_thread(inspect_connector_code, candidate)
-        log_validation_warnings(report)
-        return GeneratedArtifact(candidate, report)
+            return code
 
     async def _invoke_generation_chain(
         self,
@@ -375,78 +361,55 @@ class BaseGroovyGenerator(ABC):
             context=context,
         )
 
-    async def _record_candidate(
+    async def _generate_candidate(
         self,
-        state: GenerationState,
-        candidate: GeneratedArtifact,
+        chain: Runnable[Dict[str, Any], str],
+        prompt_vars: Dict[str, Any],
         *,
-        chunk: str,
-        index: int,
+        errors: tuple[str, ...],
         context: str,
         job_id: UUID,
-    ) -> None:
-        had_feedback = state.pending is not None
-        state.record(candidate, chunk=chunk, index=index)
-        if candidate.validation.errors:
-            error = candidate.validation.first_error
-            logger.warning("[Codegen:Generation] Invalid output after %s: %s", context, error)
-            await append_job_error(job_id, f"{self.config.logger_prefix} Invalid output after {context}: {error}")
-        elif had_feedback and state.pending is None:
-            logger.info("[Codegen:Generation] Local validation feedback resolved after %s", context)
+    ) -> tuple[str, tuple[str, ...]] | None:
+        """Run one generation call and validate its candidate.
 
-    async def _repair_final_validation(
-        self,
-        *,
-        state: GenerationState,
-        chain: Runnable[Dict[str, Any], str],
-        input_data: Dict[str, str],
-        initial_result: str,
-        job_id: UUID,
-    ) -> None:
-        feedback = state.pending
-        if feedback is None:
-            return
+        ``errors`` belong to the candidate forwarded as ``result`` and are appended to the prompt
+        for the model to fix. Returns the new candidate with its own validation errors, or None
+        when the response is empty or the call failed, so the caller keeps its previous state.
+        """
         try:
-            logger.info("[Codegen:Generation] Running final validation repair for %s", self.config.operation_name)
-            prompt_vars = {
-                **input_data,
-                "idx": feedback.index,
-                "chunk": feedback.chunk,
-                "result": state.code or initial_result,
-                "validation_feedback": state.prompt_feedback(final_repair=True),
-            }
             response = await self._invoke_generation_chain(
-                chain, prompt_vars, context="final validation repair", run_name_suffix=":ValidationRepair"
+                chain,
+                {**prompt_vars, "validation_errors": build_validation_error_block(errors)},
+                context=context,
             )
-            candidate = await self._evaluate_response(response, *state.known_artifacts())
-            if candidate is None:
+            candidate = await asyncio.to_thread(
+                self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response))
+            )
+            if not candidate:
+                return None
+
+            candidate_errors = await asyncio.to_thread(collect_connector_code_errors, candidate)
+            if candidate_errors:
                 logger.warning(
-                    "[Codegen:Generation] Final validation repair returned empty output; keeping previous code"
+                    "[Codegen:Generation] Invalid output after %s (%d error(s)): %s",
+                    context,
+                    len(candidate_errors),
+                    candidate_errors[0],
                 )
                 await append_job_error(
-                    job_id, f"{self.config.logger_prefix} Final validation repair returned empty output"
+                    job_id, f"{self.config.logger_prefix} Invalid output after {context}: {candidate_errors[0]}"
                 )
-                return
-            await self._record_candidate(
-                state,
-                candidate,
-                chunk=feedback.chunk,
-                index=feedback.index,
-                context="final validation repair",
-                job_id=job_id,
-            )
-            if state.pending is not None:
-                logger.warning(
-                    "[Codegen:Generation] Final validation repair left %d error(s) and %d warning(s); no further repair pass",
-                    len(candidate.validation.errors),
-                    len(candidate.validation.warnings),
-                )
+            elif errors:
+                logger.info("[Codegen:Generation] Validation errors resolved after %s", context)
+            return candidate, candidate_errors
+
         except JobClaimLostError:
             raise
         except Exception as exc:
-            raise_if_llm_unavailable(exc, context="repairing generated connector code")
-            logger.exception("[Codegen:Generation] Final validation repair failed")
-            await append_job_error(job_id, f"{self.config.logger_prefix} Final validation repair failed: {exc}")
+            raise_if_llm_unavailable(exc, context="generating connector code")
+            logger.exception("[Codegen:Generation] Failed to process %s", context)
+            await append_job_error(job_id, f"{self.config.logger_prefix} Failed to process {context}: {exc}")
+            return None
 
     async def _load_documentation_items(self, session_id: UUID) -> List[Dict[str, Any]]:
         """Load documentation items from documentation_items table."""
@@ -539,8 +502,9 @@ class BaseGroovyGenerator(ABC):
         llm = get_default_llm()
         prompt = ChatPromptTemplate.from_messages(
             [
-                ("system", self.config.system_prompt + VALIDATION_FEEDBACK_SYSTEM_RULES),
-                ("human", self.config.user_prompt + "\n{validation_feedback}"),
+                ("system", self.config.system_prompt),
+                # Empty unless the candidate forwarded as <result> failed validation.
+                ("human", self.config.user_prompt + "{validation_errors}"),
             ]
         )
 
@@ -560,14 +524,19 @@ class BaseGroovyGenerator(ABC):
         chain: Runnable[Dict[str, Any], str],
         job_id: UUID,
         initial_result: str,
-    ) -> GenerationState:
-        """Return accepted output and the latest candidate needing validation feedback.
+    ) -> str:
+        """Return the last valid candidate, or empty when no chunk produced one.
 
-        Supplied repair code remains prompt context until a replacement is accepted.
-        Keeping it separate lets the caller preserve it without running cleanup when
-        the model produces no replacement.
+        Each call receives the latest candidate as ``result``. A rejected candidate is forwarded
+        together with its validation errors, so the next call repairs it instead of discarding
+        it; the supplied repair code is the initial ``result``. The last chunk has no successor
+        to repair its output, so it is re-sent once with its errors.
+        Only a valid candidate is returned, which lets the caller preserve the supplied repair
+        code without running cleanup when no valid replacement exists.
         """
-        state = GenerationState()
+        result = initial_result
+        accepted = ""
+        errors: tuple[str, ...] = ()
         total_chunks = len(chunks)
         current_chunk_id: Optional[str] = None
         current_group_chunks_remaining: int = 0
@@ -594,31 +563,17 @@ class BaseGroovyGenerator(ABC):
                 else:
                     logger.info("[Codegen:Generation] LLM call %d/%d", idx, total_chunks)
 
-                # Invoke LLM
-                prompt_vars = {
-                    **input_data,
-                    "idx": idx,
-                    "chunk": chunk,
-                    "result": state.code or initial_result,
-                    "validation_feedback": state.prompt_feedback(),
-                }
-                context = f"chunk {idx}/{total_chunks}"
-                response = await self._invoke_generation_chain(chain, prompt_vars, context=context)
-                candidate = await self._evaluate_response(response, *state.known_artifacts())
-
-                if candidate is not None:
-                    await self._record_candidate(
-                        state, candidate, chunk=chunk, index=idx, context=context, job_id=job_id
-                    )
-
-            except JobClaimLostError:
-                raise
-            except Exception as exc:
-                raise_if_llm_unavailable(exc, context="generating connector code")
-                error_message = f"{self.config.logger_prefix} Failed to process chunk {idx}/{total_chunks}: {exc}"
-                logger.exception("[Codegen:Generation] Failed to process chunk %d/%d", idx, total_chunks)
-                await append_job_error(job_id, error_message)
-                continue
+                generated = await self._generate_candidate(
+                    chain,
+                    {**input_data, "idx": idx, "chunk": chunk, "result": result},
+                    errors=errors,
+                    context=f"chunk {idx}/{total_chunks}",
+                    job_id=job_id,
+                )
+                if generated is not None:
+                    result, errors = generated
+                    if not errors:
+                        accepted = result
 
             finally:
                 active_exception = sys.exception()
@@ -639,7 +594,20 @@ class BaseGroovyGenerator(ABC):
                         active_exception,
                     )
 
-        return state
+        if errors:
+            generated = await self._generate_candidate(
+                chain,
+                {**input_data, "idx": total_chunks, "chunk": chunks[-1], "result": result},
+                errors=errors,
+                context="final validation retry",
+                job_id=job_id,
+            )
+            if generated is not None:
+                result, errors = generated
+                if not errors:
+                    accepted = result
+
+        return accepted
 
 
 def endpoints_to_records(payload: EndpointsPayload) -> List[Dict[str, Any]]:

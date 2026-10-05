@@ -78,30 +78,24 @@ registry and manual update instructions.
    Their values and scripts are not validated locally. Unknown root keys, malformed
    structures, duplicate keys and invalid known scripts still block acceptance. Worker
    validation runs in a thread without executing the embedded code. New generation
-   sends an empty `<result>` until the first valid artifact is accepted; subsequent
-   chunks receive that artifact. Invalid responses leave the previous result intact;
-   the next chunk also receives the rejected draft and its local validation errors.
-   Warnings are sent as advisory feedback about the accepted artifact: the model checks
-   them against the framework reference instead of blindly deleting unknown options.
-   Feedback contains only the latest candidate and diagnostics, not the history of drafts.
-   Empty responses and failed calls retain pending feedback. Identical candidates reuse
-   their validation report within the generation, avoiding repeated parsing and warning logs.
+   sends an empty `<result>` until the first candidate is produced; each following
+   call receives the latest candidate. A rejected candidate is not discarded: it is
+   forwarded as `<result>` together with all its local validation errors
+   (`prompts/validation_error_prompts.py`), and the next chunk is asked to fix them while
+   processing its documentation. Only valid candidates are accepted; an empty response
+   keeps the previous candidate and its errors. Warnings about unknown options are only
+   logged and never reach the prompt. If the candidate is still invalid after the last
+   chunk, the last chunk is re-sent once with the errors; the retry does not count as
+   another processed document. A clean generation adds no LLM call. If no valid candidate remains, the last
+   accepted artifact is kept, and with none the existing empty-generation or
+   original-`currentScript` outcome applies. Every rejected candidate is recorded as a job
+   error. Single-pass native-schema generation and the object-class fix do not use this
+   mechanism.
    A repair starts with `currentScript` and preserves its format according to the
-   repair instructions (`repair.py`, `prompts/repair_prompts.py`).
-   After the chunks, unresolved errors *or warnings* trigger at most one final validation
-   repair pass, using the existing operation context and the problematic candidate's source
-   chunk. This final repair is always enabled when diagnostics remain and is not configurable.
-   Transport retries still follow the shared `LLM__*`
-   retry settings. A clean generation adds no repair call. Single-pass native-schema
-   generation and the object-class fix do not use this mechanism.
-   The repair does not count as another processed document. Invalid or empty repair output
-   preserves the last accepted artifact; with none, the existing empty-generation or
-   original-`currentScript` outcome applies. Infrastructure outages still fail the job.
-   Historical job errors remain visible even after recovery, which is recorded in the logs.
-   Warnings never become job errors and do not block acceptance.
-   The usual format-specific cleanup runs after repair, validates changed output and falls
-   back to the accepted artifact if cleanup fails. Validation checks local structure and
-   syntax only; it does not execute scripts or prove connector runtime behavior.
+   repair instructions (`repair.py`, `prompts/repair_prompts.py`). The format-specific
+   cleanup then validates its own changed output and falls back to the accepted artifact
+   if cleanup fails. Validation checks local structure and syntax only; it does not
+   execute scripts or prove connector runtime behavior.
 4. The final artifact is persisted in the session under the operation's result
    key as `{"format": "YAML", "code": "..."}` or
    `{"format": "GROOVY", "code": "..."}`. Format detection uses the final accepted
