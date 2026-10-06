@@ -8,6 +8,7 @@ import yaml
 from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.errors import ConnectorCodeValidationError
 from src.modules.codegen.utils.connector_code_validation import (
+    collect_connector_code_errors,
     detect_connector_code_format,
     ensure_valid_connector_code,
     validate_connector_code,
@@ -150,6 +151,34 @@ def test_unknown_nested_options_are_preserved_with_warning(code, path, caplog):
     assert ensure_valid_connector_code(code) == code
     assert "[Codegen:Validation] Unrecognized YAML option" in caplog.text
     assert path in caplog.text
+
+
+def test_collect_errors_returns_every_structural_error_without_input_values():
+    errors = collect_connector_code_errors("objectClasses: {User: {references: [], search: {endpoints: 42}}}")
+    assert [error.split(": ", 1)[0] for error in errors] == [
+        "objectClasses.User.references",
+        "objectClasses.User.search.endpoints",
+    ]
+    assert errors[0] == "objectClasses.User.references: Input should be a valid dictionary"
+    assert "42" not in errors[1]
+
+
+def test_collect_errors_reports_script_errors_and_only_logs_unknown_options(caplog):
+    code = "objectClasses: {User: {attributeResolvers: secret-value, search: {custom: {implementation: 'return ('}}}}"
+    errors = collect_connector_code_errors(code)
+    assert len(errors) == 1
+    assert errors[0].startswith("objectClasses.User.search.custom.implementation: ")
+    assert "objectClasses.User.attributeResolvers" in caplog.text
+    assert "secret-value" not in caplog.text
+
+
+def test_collect_errors_is_empty_for_valid_code():
+    assert (
+        collect_connector_code_errors(
+            "objectClasses: {User: {search: {attributeResolvers: [{attribute: team, implementation: 'return []'}]}}}"
+        )
+        == ()
+    )
 
 
 def test_reference_metadata_is_preserved_without_logging_values(caplog):

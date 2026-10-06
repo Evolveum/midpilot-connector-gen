@@ -162,16 +162,17 @@ async def test_later_chunk_switches_the_artifact_from_yaml_to_groovy_when_script
 async def test_invalid_yaml_candidate_is_rejected_and_the_last_valid_groovy_result_is_kept():
     """
     'Never silently replace rejected YAML with Groovy': an invalid YAML candidate is rejected
-    outright, not reinterpreted as Groovy or used to discard the last good result.
+    outright, not reinterpreted as Groovy or used to discard the last good result - even when
+    the final validation retry repeats it.
     """
     malformed_yaml = "objectClasses:\n  User: {}\n  User: {}\n"  # duplicate key
     result, mock_append_job_error = await _run_process_chunks(
-        _DummyChain([GROOVY_REQUIRED_CODE, malformed_yaml]),
+        _DummyChain([GROOVY_REQUIRED_CODE, malformed_yaml, malformed_yaml]),
         chunks=("chunk-1", "chunk-2"),
     )
 
     assert result == GROOVY_REQUIRED_CODE.strip()
-    mock_append_job_error.assert_called_once()
+    assert mock_append_job_error.await_count == 2
 
 
 # --- Acceptance criterion 3: every generation call receives the bundled declarative reference -----
@@ -310,12 +311,13 @@ def test_rendered_generation_prompt_contains_bundled_declarative_reference_verba
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("current_script", [None, YAML_SUFFICIENT_CODE, GROOVY_REQUIRED_CODE])
-async def test_generation_passes_only_accepted_results_to_following_chunks(current_script):
+async def test_generation_forwards_rejected_candidate_with_errors_and_returns_accepted_result(current_script):
     from src.modules.codegen.schema import CodegenRepairContext
 
     generator = _DummyGenerator()
     valid = current_script or YAML_SUFFICIENT_CODE
-    chain = _RecordingChain(["objectClasses: {User: {search: {endpoints: 42}}}", valid, valid])
+    invalid = "objectClasses: {User: {search: {endpoints: 42}}}"
+    chain = _RecordingChain([invalid, valid, valid])
     repair = (
         CodegenRepairContext(current_script=current_script, midpoint_errors=["Fix mapping"]) if current_script else None
     )
@@ -328,11 +330,9 @@ async def test_generation_passes_only_accepted_results_to_following_chunks(curre
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
     ):
         result = await generator.generate(job_id=uuid4(), repair_context=repair)
-    assert [call["result"] for call in chain.calls] == [
-        (current_script or "").strip(),
-        (current_script or "").strip(),
-        valid.strip(),
-    ]
+    assert [call["result"] for call in chain.calls] == [(current_script or "").strip(), invalid, valid.strip()]
+    assert [bool(call["validation_errors"]) for call in chain.calls] == [False, True, False]
+    assert "objectClasses.User.search.endpoints: Input should be a valid list" in chain.calls[1]["validation_errors"]
     assert result == valid.strip()
     errors.assert_awaited_once()
 
