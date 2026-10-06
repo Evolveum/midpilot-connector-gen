@@ -227,9 +227,9 @@ def test_validate_connector_code_rejects_cyclic_aliases(value: str, expected_err
 
 def test_validate_connector_code_accepts_shared_acyclic_aliases() -> None:
     code = (
-        "objectClasses: {User: {update: {endpoints: [{path: /users, "
-        "supportedAttributes: [{name: status, value: &shared [active]}, "
-        "{name: previousStatus, value: *shared}]}]}}}"
+        "objectClasses: {User: {update: {endpoints: ["
+        "{path: 'users/{id}', method: PATCH, supportedAttributes: &shared [status, {name: role, value: admin}]}, "
+        "{path: 'users/{id}/profile', method: PUT, supportedAttributes: *shared}]}}}"
     )
     assert validate_connector_code(code) is None
 
@@ -314,7 +314,8 @@ def test_nested_configuration_rejects_wrong_types_and_shapes(code, path):
         "objectClasses: {User: {attributes: {id: null, name: {}}}}",
         "objectClasses: {User: {create: {}, search: {normalize: {}}, references: {group: {}}}}",
         "authentication: {rest: {bearer: {}, oauth2Password: {}}}",
-        "objectClasses: {User: {update: {endpoints: [{path: /users, supportedAttributes: [name, {name: active, value: true}, {name: status, transition: {from: active, to: locked}}]}]}}}",
+        "objectClasses: {User: {update: {endpoints: [{path: /users, method: PATCH, supportedAttributes: [name, {name: status, value: active}, {name: status, transition: {from: active, to: locked}}]}]}}}",
+        "objectClasses: {User: {create: {endpoints: [{path: /users, supportedAttributes: [name, {name: type, value: internal}]}]}}}",
     ],
 )
 def test_documented_defaults_and_supported_attribute_variants(code):
@@ -370,7 +371,7 @@ def test_embedded_hooks_are_parsed_with_yaml_path(path, script):
 
 
 @pytest.mark.parametrize("script", ["value", "("])
-@pytest.mark.parametrize("hook", ["objectExtractor", "pagingSupport", "spec", "request", "body", "resolver"])
+@pytest.mark.parametrize("hook", ["objectExtractor", "pagingSupport", "spec", "request", "resolver"])
 def test_endpoint_filter_and_resolver_scripts(script, hook):
     import yaml
 
@@ -380,10 +381,6 @@ def test_endpoint_filter_and_resolver_scripts(script, hook):
         endpoint[hook] = script
     elif hook in ("spec", "request"):
         endpoint["supportedFilters"] = [{hook: script}]
-    elif hook == "body":
-        document = {
-            "objectClasses": {"User": {"create": {"endpoints": [{"path": "/users", "request": {"body": script}}]}}}
-        }
     else:
         document["objectClasses"]["User"]["search"]["attributeResolvers"] = [
             {"attribute": "team", "implementation": script}
@@ -453,6 +450,13 @@ def test_bundled_declarative_examples_are_valid_artifacts():
         'objectClasses: {User: {search: {endpoints: [{path: /users, objectExtractor: "// data\\nresponse"}]}}}',
         "objectClasses: {User: {search: {attributeResolvers: [{attribute: team, resolutionType: per_object}]}}}",
         "objectClasses: {User: {delete: {endpoints: [{path: /users/{id}, method: delete}]}}}",
+        "objectClasses: {User: {search: {endpoints: [{path: /users, objectsPath: $.data}]}}}",
+        "objectClasses: {User: {search: {endpoints: [{path: /users, objectsPath: {type: json_pointer, value: /data}}]}}}",
+        "objectClasses: {User: {search: {endpoints: [{path: '/users/{id}', singleResult: true, notFoundIsNoResult: true}]}}}",
+        "objectClasses: {User: {search: {endpoints: [{path: /users, request: {contentType: APPLICATION_JSON, queryParameters: {fields: 'id,name', limit: 50, archived: false, cursor: null}}}]}}}",
+        'objectClasses: {User: {search: {endpoints: [{path: /users/disabled, supportedFilters: [{spec: attribute("enabled").eq(false)}]}]}}}',
+        "objectClasses: {User: {create: {endpoints: [{path: /users, request: {queryParameters: {notify: true}}}]}}}",
+        "objectClasses: {User: {update: {endpoints: [{path: '/users/{id}', method: PATCH, request: {body: EMPTY}}]}}}",
     ],
 )
 def test_runtime_vocabulary_is_accepted(code):
@@ -543,18 +547,56 @@ def test_values_the_runtime_rejects_are_rejected(code, path):
     [
         ("relationships: {member: {subject: {class: User}}}", "relationships"),
         (
-            "objectClasses: {User: {create: {endpoints: [{path: /users, supportedAttributes: [name]}]}}}",
-            "supportedAttributes",
-        ),
-        (
-            "objectClasses: {User: {delete: {endpoints: [{path: /users, supportedAttributes: [name]}]}}}",
+            "objectClasses: {User: {delete: {endpoints: [{path: /users, method: DELETE, supportedAttributes: [name]}]}}}",
             "supportedAttributes",
         ),
         ("objectClasses: {User: {attributes: {a: {scim: {implementation: {deserialize: it}}}}}}", "implementation"),
-        ("objectClasses: {User: {attributes: {a: {json: {implementation: {serialize: it}}}}}}", "implementation"),
     ],
 )
 def test_keys_the_runtime_rejects_are_rejected_with_reason(code, key):
     error = validate_connector_code(code)
     assert error is not None
     assert f"'{key}' is not supported in declarative YAML" in error
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        (
+            "objectClasses: {User: {create: {endpoints: [{path: /users, request: {body: 'toJson(value)'}}]}}}",
+            "body",
+        ),
+        (
+            "objectClasses: {User: {update: {endpoints: [{path: /users, method: PATCH, supportedAttributes: [{name: active, value: true}]}]}}}",
+            "compared as strings",
+        ),
+        (
+            "objectClasses: {User: {create: {endpoints: [{path: /users, supportedAttributes: [{name: level, value: 3}]}]}}}",
+            "compared as strings",
+        ),
+        ("objectClasses: {User: {update: {endpoints: [{path: '/users/{id}'}]}}}", "set 'method' explicitly"),
+        ("objectClasses: {User: {delete: {endpoints: [{path: '/users/{id}'}]}}}", "set 'method' explicitly"),
+        (
+            "objectClasses: {User: {search: {endpoints: [{path: /users, request: {queryParameters: {fields: [id]}}}]}}}",
+            "queryParameters",
+        ),
+    ],
+)
+def test_yaml_bindings_reject_values_the_runtime_mishandles(code, message):
+    error = validate_connector_code(code)
+    assert error is not None
+    assert message in error
+
+
+def test_value_mapping_fragments_hoist_leading_imports_like_the_runtime():
+    def document(script: str) -> str:
+        return yaml.safe_dump(
+            {"objectClasses": {"User": {"attributes": {"team": {"json": {"implementation": {"deserialize": script}}}}}}}
+        )
+
+    hoisted = "import org.identityconnectors.framework.common.objects.ConnectorObjectReference\nreturn value"
+    assert validate_connector_code(document(hoisted)) is None
+    # The runtime only hoists the leading import block; a later import stays inside the closure.
+    error = validate_connector_code(document("def v = value\nimport java.math.BigInteger\nreturn v"))
+    assert error is not None
+    assert "json.implementation.deserialize" in error

@@ -6,13 +6,13 @@ They describe connector framework syntax; session uploads and scraped applicatio
 
 == Source revisions
 
-Snapshot reviewed on 2026-09-30 from clean local checkouts:
+Snapshot reviewed on 2026-10-06 from clean local checkouts:
 
-* `conndev`: `b5c8205584fef90ee6bb58d06ebf60fdb081bdba`
-* `connector-scimrest`: `0abab9444ee9afd807a2cd62c21e5fd5b4542ffc`
-* `connector-sql`: `16762e98799345f37831ec201600c3ac733f237d`
+* `conndev`: `27ff6e5b1ba49504f5e302cacc5fd54298136f6c`
+* `connector-scimrest`: `d99edf30d84eee51eb20385709263d7307c80392`
+* `connector-sql`: `384fe74d9adc8a5dd4135a5438176e40c67891e5`
 
-Generated YAML may use syntax that exists only from these revisions on (for example the `contentType: APPLICATION_JSON` and `connId.name: NAME` shortcuts), so connector bundles must be built from these revisions or later.
+Generated YAML may use syntax that exists only from these revisions on (for example `objectsPath`, `notFoundIsNoResult`, `request.queryParameters`, `json.implementation`, and `supportedAttributes` on create endpoints), so connector bundles must be built from these revisions or later.
 
 Paths below are relative to each source repository. Local paths are relative to `src/modules/codegen/documentations/`.
 
@@ -102,22 +102,18 @@ Paths below are relative to each source repository. Local paths are relative to 
 
 * Preserve the local REST / SCIM / SQL split. Shared SCIMREST schema and authentication pages stay at the documentation root; SQL has its own declarative reference.
 * Expand the authentication include at snapshot time and omit SQL tutorial-navigation includes. The runtime reads plain text and does not resolve AsciiDoc includes or follow cross-references.
-* Rewrite cross-references where a corresponding page is bundled under a different name. References to unbundled upstream tutorial pages retain their upstream meaning.
-* Keep the ConnId mapping introduction, built-in catalog, date-type guidance and low-code DSL section; omit generic SPI implementation and midPoint internals to control prompt size. UID omission from the final SPI schema must not suppress the native UID mapping.
-* Add schema basics only to native-schema contexts, JSON type guidance to REST schemas, and complex-attribute/flattening guidance to SCIM schemas. Operation contexts retain section selection, including exclusion of the application-specific REST search example from generation.
-* Correct the outdated SCIM YAML overview: extensions and flattening are supported by `ScimExtensionMappingHandler`, `ScimFlattenListHandler`, and `RestObjectClassDefinitionBuilder` in `connector-scimrest/common/src/main/java/com/evolveum/polygon/scimrest/`. The newer attribute-flattening guide agrees with these bindings.
-* Correct SCIM value-path grammar in `scim/complex-attributes.adoc` against `schema/ScimPathFormat.java`: zero-based indices and `eq` terms joined by `and`, not `=` or comma-separated terms.
-* Correct the REST search example to extract its documented `data` envelope and map zero-based offsets using `(page - 1) * pageSize`.
-* Use Groovy comments inside YAML scripting blocks; avoid simultaneously enabling two empty-filter search handlers in the declarative example.
-* Correct the JSON date-time example to use a string wire type, and normalize two Markdown headings in the upstream AsciiDoc schema basics.
-* Retain SQL scripted-search restrictions from `sql/develop/declarative-yaml.adoc`. The upstream `sql/yaml-builder-mapping.adoc` contains WIP examples and outdated claims (including inert SCIMREST YAML); it is not copied as a generation authority. The SQL search interfaces lack the YAML bindings needed for those scripted keys, and `sql/schema-script.adoc` no longer links to it.
-* Correct the YAML `connId.type` values in `declarative-yaml.adoc` to the case-sensitive Java class names accepted by `conndev/base/.../yaml/decl/DeclConnIdTypeParser.java`, and list the `connId.name` built-in shortcuts from `@Yaml.Shortcut` on `AttributeBuilder.ConnIdMapping.name`.
-* Restrict the JSON wire types in `declarative-yaml.adoc` and `rest/native-schema.adoc` to the base types of `conndev/base/.../json/JsonSchemaValueMapping.java` (no `array`), and fix the `json.openApiFormat` spelling.
-* Mark the root-level YAML `relationships` block as unsupported: `conndev/base/.../yaml/YamlSchemaLoader.java` rejects it, so relationships stay Groovy.
-* Mark `supportedAttributes` as update-only in YAML and drop it from the YAML create example in `rest/create.adoc`: only `RestUpdateOperationBuilder.Endpoint` carries the `@Yaml.Custom(SupportedAttributesHandler.class)` binding.
-* Mark attribute value mapping (`implementation` with `deserialize` / `serialize`) as Groovy-only: `AttributeBuilder.MappingBuilder.implementation` takes an `@Script.Initialization` closure, which the YAML binder does not bind.
-* Document the search `method` as any `HttpMethod` value (parsed case-insensitively by `SearchEndpointsHandler`), state that a scalar `objectExtractor` is always compiled as Groovy (`ObjectExtractorHandler`), and replace the contradictory `pagingSupport` sentence: `PagingSupportHandler` accepts either the mapping or the Groovy block.
-* Re-indent the declarative search and update examples, and name the ConnId reference by its bundled title. Claim "(chapter shown together with this page)" only for chapters every selecting context includes; JSON types are bundled for REST native schema only.
+* Take the upstream plain-text topic references in the SCIMREST pages. SQL pages still use cross-references; rewrite them where the corresponding page is bundled under a different name.
+* Keep the ConnId mapping introduction, built-in catalog, date-type guidance and low-code DSL section; omit generic SPI implementation and the gotchas section to control prompt size. UID omission from the final SPI schema must not suppress the native UID mapping.
+* State in `connid-attributes.adoc` that the `ConnIdBuiltInAttribute.Mixin` constants (`UID`, `NAME`, `PASSWORD`, `ENABLE`, `ENABLE_DATE`, `DISABLE_DATE`, `LOCK_OUT`) need no import inside `connId { ... }` and that `CURRENT_PASSWORD` is not among them, and that an explicitly declared ConnId type outranks the detected type chain of `AttributeTypeResolutionRule`, including the forced built-in types (`DefinitionValue.moreSpecific`: `DECLARED` beats `DETECTED`).
+* Add schema basics only to native-schema contexts, JSON type guidance to REST schemas, and complex-attribute/flattening guidance to SCIM schemas. Operation contexts retain section selection, including exclusion of the application-specific REST search example from generation. Claim "(chapter shown together with this page)" only for chapters every selecting context includes; JSON types are bundled for REST native schema only, and the ConnId reference keeps its bundled title.
+* Keep `$` in the SCIM attribute-name grammar of `scim/complex-attributes.adoc` (`ScimPathFormat.ATTR_NAME`), and the hint in `rest/native-schema.adoc` that an array uses its item type with `multiValued`.
+* Extract the documented `data` envelope in the REST search example (Groovy and YAML) and drop its undocumented `fields` query parameter.
+* Repair the declarative search example in `declarative-yaml.adoc`: consistent sequence indentation (upstream mis-indents the `/users/{id}` entry, which does not parse), `//` comments inside Groovy blocks, only one empty-filter handler, and a neutral `fields` query parameter instead of the JIRA `jql` sample. Keep the search `method` description covering every `HttpMethod` value (parsed case-insensitively by `SearchEndpointsHandler`) and the non-contradictory `pagingSupport` sentence (`PagingSupportHandler` accepts either the mapping or the Groovy block).
+* State in `declarative-yaml.adoc` that YAML write endpoints default to `POST` for every operation (`EndpointsHandler`), that only `{id}` is substituted, with the UID, on update and delete endpoints (`RestUpdateOperationBuilderImpl`, `RestDeleteOperationBuilderImpl`), and that `supportedAttributes` selector values are compared as strings (`SupportedAttributesHandler` passes the scalar text to `AttributeSupport`). Fix the YAML `apiKey` authentication example, which read the bearer token property.
+* Correct `rest/create.adoc`: without `contentType` no body is sent, and an empty 2xx response takes the UID from the `Location` header or fails (`RestCreateOperationBuilderImpl`); the upstream text claims an unknown-UID success.
+* Correct `rest/update.adoc`: the default body carries only the changed attributes, also for `PUT`, and the original state is read before every REST update (`requiresOriginalState` is always true). Use `{id}` in the activation and multi-endpoint examples, and replace the YAML activation example, whose Boolean `value` never matches, with a note.
+* Correct the `implementation` context in `authentication.adoc`: `configuration`, `request` and `ctx` are properties of `AuthImplementationContext`, not methods, and `JwtAssertionBuilder.sign` takes a `GuardedString`, key bytes, or a secret with its Base64 flag.
+* Retain SQL scripted-search restrictions from `sql/develop/declarative-yaml.adoc`. The SQL search interfaces lack the YAML bindings needed for scripted keys.
 
 == Updating the snapshot
 

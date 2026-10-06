@@ -17,6 +17,90 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-10-06 Refresh connector-generation references to the 0.2.0 framework snapshot
+
+Description: The bundled codegen references now follow `conndev`
+`27ff6e5b1ba49504f5e302cacc5fd54298136f6c`, `connector-scimrest`
+`d99edf30d84eee51eb20385709263d7307c80392` and `connector-sql`
+`384fe74d9adc8a5dd4135a5438176e40c67891e5`, corrected where the upstream
+documentation disagrees with the runtime. Generated YAML may use syntax
+introduced in those revisions: `objectsPath`, `notFoundIsNoResult` and
+`request` (`contentType`, `queryParameters`) on search endpoints,
+`request.queryParameters` on create, update and delete endpoints,
+`supportedAttributes` on create endpoints, `json.implementation` with
+`deserialize` / `serialize` fragments, and search filters without a `request`
+block (concrete-value filters).
+
+Declarative YAML validation follows the new runtime. It now accepts the keys
+listed above, and it rejects a `request.body` other than `EMPTY`, a non-string
+`supportedAttributes` selector `value` (the runtime compares selector values as
+strings, so `value: true` never matches), and update or delete endpoints
+without `method` (YAML write endpoints default to `POST`). `supportedAttributes`
+on delete endpoints and `implementation` inside the attribute `scim` block stay
+rejected. This applies to generated code and to caller-supplied code: the
+codegen override endpoints (`PUT`) return 422 for such YAML, and connector-fix
+script overrides return 422 `invalid_connector_script_override`. The shape of
+midPoint API responses is unchanged. Stored artifacts are neither re-validated
+nor rewritten.
+
+`connector-scimrest` `d99edf3` itself does not compile:
+`RestCreateOperationBuilderImpl.EndpointHandler` declares the record component
+`objectClass` twice. Connector bundles need the first later
+`connector-scimrest` revision that fixes it.
+
+Required Upgrade Steps
+
+. Keep the previous backend version, connector bundles, and resource scripts
+for rollback. No database recreation, database backup, or configuration change
+is required.
+. Build the connector bundles used by midPoint from `conndev` and
+`connector-sql` at the revisions above or later, and from the first
+`connector-scimrest` revision after `d99edf3` that compiles; see
+xref:codegen-expert-references.adoc#_source_revisions[Source revisions].
+. Restart the backend with
+`docker compose up -d --build midpilot-connector-gen`.
+For a host installation, stop the running backend and start it with
+`uv run python server.py`.
+. List the YAML update and delete artifacts stored before the upgrade:
++
+[source,sql]
+----
+SELECT session_id, key
+FROM session_data
+WHERE (key LIKE '%UpdateOutput' OR key LIKE '%DeleteOutput')
+  AND value ->> 'format' = 'YAML'
+  AND updated_at < '<upgrade timestamp>';
+----
++
+An endpoint without `method` in these artifacts is sent as `POST` by the
+connector. Regenerate each listed artifact with
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/update?skipCache=true`
+or `.../delete?skipCache=true` and the operation's existing request body, or
+submit a corrected artifact through the corresponding `PUT` endpoint, whose 422
+response names the rejected path.
+. Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen -q`.
+Load the regenerated artifacts in the target connector and verify search,
+create, update and delete before replacing working scripts.
+
+Rollback Procedure (If Upgrade Fails)
+
+. Restore the previous backend version, connector bundles, and resource scripts,
+and restart using the applicable command above.
+. Artifacts generated with this snapshot may use syntax that older connector
+frameworks cannot load. Restore the retained scripts through the codegen `PUT`
+endpoints.
+. No database restore is needed because this change does not modify stored data.
+
+Notes & References
+
+* Related PR: Not assigned.
+* Docs: xref:codegen-expert-references.adoc[Bundled codegen expert references]
+(Source revisions, Deliberate adaptations).
+* Affected endpoints: codegen `PUT` override endpoints and
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/fix` script overrides
+(changed YAML validation).
+* Affected configs: None.
+
 === 2026-10-02 Stored documentation selection, job-type policies and session key contract
 
 Author: Alexander Brecko

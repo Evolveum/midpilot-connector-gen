@@ -267,4 +267,4 @@ def test_relationship_prompt_uses_groovy_because_yaml_relationships_are_rejected
     assert 'complete Groovy relationship("...") block' in assets.system_prompt
     assert "prefer the documented root-level relationships YAML map" not in assets.system_prompt
     _, declarative = load_operation_documentation(assets)
-    assert "the schema loader rejects a `relationships` block" in declarative
+    assert "`relationships` is not available in YAML" in declarative

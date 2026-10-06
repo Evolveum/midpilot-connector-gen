@@ -29,7 +29,7 @@ Paths starting with `/` are resolved as classpath resources from the root of the
 
 == Native YAML schema documents
 
-A schema document named `*.native.schema.yaml` (or `*.connid.schema.yaml`) is a flat YAML description of object classes under the `objectClasses` root (one entry per object class; a file may describe several classes). Both file names are accepted and loaded identically.
+A schema document named `*.native.schema.yaml` is a flat YAML description of object classes under the `objectClasses` root (one entry per object class; a file may describe several classes).
 
 [source,yaml]
 ----
@@ -94,7 +94,7 @@ Attribute-level `sql` keys:
   The SQL column when it differs from the attribute name
 
 `type`::
-  The SQL column type (`INT`, `BIGINT`, `SMALLINT`, `TINYINT`, `BOOLEAN`, `VARCHAR(n)`, `NUMBER(p)`, `NUMBER(p, s)`, `VARCHAR2(n)`, `TIMESTAMP(p)`, `INTEGER`, ...)
+  The SQL column type — matched exactly (case-insensitive) against the built-in type names and the common database-specific aliases: `INT`/`INT4`/`INTEGER`, `INT2`/`SMALLINT`, `INT8`/`BIGINT`, `TINYINT`, `MEDIUMINT`, `SERIAL`/`SERIAL4`, `SERIAL2`/`SMALLSERIAL`, `SERIAL8`/`BIGSERIAL`, `IDENTITY` (integers); `DEC`/`DECIMAL`, `NUMERIC`/`NUMBER`, `MONEY`/`SMALLMONEY` (exact numerics); `FLOAT`/`FLOAT4`/`REAL`, `FLOAT8`/`DOUBLE`/`DOUBLE PRECISION` (approximate numerics); `BOOLEAN`/`BOOL`; `BIT`/`VARBIT`; `DATE`; `TIME`/`TIME WITH TIME ZONE`; `TIMESTAMP`/`DATETIME`/`TIMESTAMP WITHOUT TIME ZONE`, `TIMESTAMP WITH TIME ZONE`/`TIMESTAMPTZ`; `VARCHAR`/`VARCHAR2`/`CHAR`/`CHARACTER`/`CHARACTER VARYING`/`CHAR VARYING`/`NCHAR`/`NVARCHAR`/`NVARCHAR2`/`NCHAR VARYING`/`NATIONAL CHARACTER`/`LONG VARCHAR`/`LONGNVARCHAR`/`UUID` (characters); `BLOB`/`BINARY`/`VARBINARY`/`LONGVARBINARY`/`BINARY VARYING`/`BYTEA`/`RAW`/`LONG RAW`/`TINYBLOB`/`MEDIUMBLOB`/`LONGBLOB` (binary); `CLOB`/`NCLOB`/`NTEXT`/`TEXT`/`TINYTEXT`/`MEDIUMTEXT`/`LONGTEXT`/`XML`/`JSON` (large characters). A size/precision in parentheses is accepted but ignored (the type specifications are size-agnostic, like the Groovy `type VARCHAR(n)` constants) — e.g. `VARCHAR(100)`, `NUMBER(10, 2)`, `TIMESTAMP(6)`. An unrecognized name fails at schema evaluation with `Unknown SQL type '…'` (there is no silent fallback)
 
 `notNull`::
   The column is not nullable
@@ -110,7 +110,7 @@ Attribute-level `sql` keys:
 
 YAML schema documents bind directly into the same live schema builder as Groovy scripts, so they merge with auto-discovered columns exactly like xref:native-schema.adoc[Groovy customizations] do — including correlation with discovery and the built-in mapping rules.
 
-Yes — Groovy and YAML customizations can target the same table (object class): both are applied to the same builder and are merged. The only limit is that a property set explicitly in *both* forms (or set twice, in any combination of Groovy and YAML) is a conflict and fails at script evaluation — declare each property in exactly one place.
+Yes — Groovy and YAML customizations can target the same table (object class): both are applied to the same builder and are merged. The limit is that a property declared explicitly in *both* forms with *different* values is a conflict and fails at script evaluation — declare each property in exactly one place. A repeated declaration of the *same* value is tolerated.
 
 Parsing is strict: a file must contain exactly one document, and unknown keys fail fast.
 
@@ -134,7 +134,7 @@ Search works out of the box for discovered tables; Groovy remains the front-end 
 
 == Groovy to YAML fallback
 
-If a manifest entry references a `.groovy` resource that is not bundled, the loader transparently falls back to a `.yaml`/`.yml` resource with the same base name:
+If a **schema** manifest entry references a `.groovy` resource that is not bundled, the loader transparently falls back to a `.yaml`/`.yml` resource with the same base name (operation scripts do **not** fall back — a missing `.groovy` is skipped):
 
 [source,yaml]
 ----
@@ -145,4 +145,4 @@ connector:
 
 This makes it possible to migrate a script to YAML incrementally without changing the manifest.
 
-The granularity of combining the two forms is per script resource, per object class, per attribute, and per operation — the manifest lists `.groovy` and `.yaml` resources side by side, and each is applied to the same builder. The only limit is the one described above: do not declare the same property explicitly in both (a table and attributes in YAML plus a search customization in Groovy is fine; the same table property in both is not).
+The granularity of combining the two forms is per script resource, per object class, per attribute, and per operation — the manifest lists `.groovy` and `.yaml` resources side by side, and each is applied to the same builder. The limit is the one described above: do not declare the same property explicitly in both forms with *different* values (a table and attributes in YAML plus a search customization in Groovy is fine; the same table property in both is not).
