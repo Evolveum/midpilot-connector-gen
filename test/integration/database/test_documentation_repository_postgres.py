@@ -12,6 +12,90 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.database.models import Base, Document, DocumentationChunk, RelevantChunk, Session
 from src.database.repositories.documentation_repository import DocumentationRepository
+from src.session.service import delete_documentation_document
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["upload", "scraper"])
+async def test_delete_documentation_preserves_other_documents_and_job_links(source):
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL repository integration tests")
+
+    schema_name = f"test_documentation_delete_{uuid4().hex}"
+    engine = create_async_engine(database_url, execution_options={"schema_translate_map": {None: schema_name}})
+    schema_created = False
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
+            schema_created = True
+            await connection.run_sync(Base.metadata.create_all)
+
+        session_id, other_session_id = uuid4(), uuid4()
+        deleted_doc_id, retained_doc_id = uuid4(), uuid4()
+        job_ids = [str(uuid4()), str(uuid4())]
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as db:
+            db.add_all([Session(session_id=session_id), Session(session_id=other_session_id)])
+            await db.flush()
+            db.add_all(
+                [
+                    Document(session_id=session_id, doc_id=deleted_doc_id, source=source),
+                    Document(session_id=session_id, doc_id=retained_doc_id, source=source),
+                    Document(session_id=other_session_id, doc_id=deleted_doc_id, source=source),
+                ]
+            )
+            await db.flush()
+            deleted_chunk_ids = [uuid4(), uuid4()]
+            db.add_all(
+                [
+                    *(
+                        DocumentationChunk(
+                            session_id=session_id,
+                            doc_id=deleted_doc_id,
+                            chunk_id=chunk_id,
+                            content="document to delete",
+                            scrape_job_ids=job_ids,
+                        )
+                        for chunk_id in deleted_chunk_ids
+                    ),
+                    DocumentationChunk(
+                        session_id=session_id,
+                        doc_id=retained_doc_id,
+                        content="retained document",
+                        scrape_job_ids=job_ids,
+                    ),
+                    DocumentationChunk(
+                        session_id=other_session_id,
+                        doc_id=deleted_doc_id,
+                        content="other session document",
+                        scrape_job_ids=job_ids,
+                    ),
+                ]
+            )
+            await db.commit()
+            repo = DocumentationRepository(db)
+            retained_before = await repo.get_documentation_items_by_doc_id(session_id, retained_doc_id)
+            other_session_before = await repo.get_documentation_items_by_doc_id(other_session_id, deleted_doc_id)
+
+            deleted_count = await delete_documentation_document(repo, session_id, deleted_doc_id)
+            await db.commit()
+
+        async with session_factory() as db:
+            repo = DocumentationRepository(db)
+            assert deleted_count == 2
+            assert await db.get(Document, (session_id, deleted_doc_id)) is None
+            for chunk_id in deleted_chunk_ids:
+                assert await db.get(DocumentationChunk, chunk_id) is None
+            assert await repo.get_documentation_items_by_doc_id(session_id, retained_doc_id) == retained_before
+            assert (
+                await repo.get_documentation_items_by_doc_id(other_session_id, deleted_doc_id) == other_session_before
+            )
+    finally:
+        if schema_created:
+            async with engine.begin() as connection:
+                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

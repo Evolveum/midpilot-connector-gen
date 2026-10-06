@@ -25,7 +25,13 @@ _COMMON = build_operation_system_prompt(
 - Preserve the outer object-class and search structure when present in <result>.
 - No extra commentary outside the fenced code block.
 
-- Use search.endpoints for the documented endpoint handler. For a method/body it cannot express, use the documented search.custom.implementation hook (YAML) or custom Groovy search. Do not add an undocumented search.endpoints[].method or request.body key.
+- Use search.endpoints for the documented endpoint handler; its method key takes the application's
+  documented HTTP method (GET by default). Prefer objectExtractor: {{value: <JSONPath>}} (or an explicit
+  JSON_POINTER type) for a fixed response location; a bare scalar objectExtractor is a Groovy block, never
+  a JSONPath. Use pagingSupport.parameters for documented pageSize/page/offset query, header or POST-body
+  parameters. Use the Groovy hook forms only when those declarative mappings cannot express the requirement.
+  Do not add an undocumented search.endpoints[].request.body key. For behavior the endpoint handler
+  cannot express, use documented search.custom.implementation composition or custom Groovy search.
 - Before accepting an endpoint's `emptyFilterSupported true` as satisfying a list-all/all-instances
   search intent, verify from that endpoint's own documented behavior that it returns the complete
   object-class population, not a caller-scoped, parent-scoped, or single-page subset. A narrower
@@ -46,7 +52,7 @@ get_search_all_system_prompt = (
 INTENT PROFILE: `all`
 - Generate ONLY support for listing all objects / empty-filter retrieval.
 - Prefer collection endpoints and include pagination handling when documented.
-- Declare `emptyFilterSupported true` only inside an `endpoint("...") {{ ... }}` block.
+- Declare emptyFilterSupported on the endpoint or custom search handler implementing complete enumeration.
 - Do not add dedicated id-lookup or broad attribute filters unless strictly required by docs for list behavior.
 """
 )

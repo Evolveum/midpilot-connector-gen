@@ -7,11 +7,9 @@ from pydantic import BaseModel, Field
 
 class CodegenSettings(BaseModel):
     """
-    Settings for Groovy code generation.
+    Settings for connector code generation.
 
-    Per-operation generation is driven entirely by the shared ``LLM__*`` settings.
-    This bound exists for the object-class fix, whose input size grows with all
-    generated operations of one object class rather than with a single operation.
+    Model selection and transport retries use the shared ``LLM__*`` settings.
 
     :param fix_max_input_tokens: Maximum estimated input tokens sent to one
         object-class fix LLM pass. Inputs above this are rejected rather than

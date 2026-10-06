@@ -54,7 +54,6 @@ async def test_output_preserves_code_and_classifies_off_event_loop(code, expecte
     "operation",
     [
         "native_schema",
-        "conn_id",
         "authorization",
         "search_all",
         "search_filter",
@@ -69,10 +68,8 @@ async def test_output_preserves_code_and_classifies_off_event_loop(code, expecte
     ("code", "expected_format"), [("{}", "YAML"), ('objectClass("user") {}', "GROOVY"), ("", None)]
 )
 async def test_every_generation_worker_reports_final_format(operation, code, expected_format):
-    kwargs = {"job_id": uuid4()}
-    if operation != "conn_id":
-        kwargs.update(session_id=uuid4(), protocol=ApiType.REST)
-    if operation in {"native_schema", "conn_id"}:
+    kwargs = {"job_id": uuid4(), "session_id": uuid4(), "protocol": ApiType.REST}
+    if operation == "native_schema":
         kwargs.update(attributes_payload={}, object_class="user")
         model_target = "generate_groovy"
     elif operation == "authorization":

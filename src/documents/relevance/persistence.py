@@ -19,6 +19,7 @@ from src.documents.relevance.transforms import (
 )
 from src.shared.auth import auth_entity_key
 from src.shared.coerce import as_dict_list
+from src.shared.session_keys import AUTH, OBJECT_CLASSES
 
 
 async def load_relevance_map_for_result(
@@ -67,7 +68,7 @@ async def load_object_class_relevance_map(
     db: AsyncSession,
     session_id: UUID,
 ) -> Dict[str, list[Dict[str, Any]]]:
-    by_entity = await load_relevance_map_for_result(db, session_id, "objectClassesOutput")
+    by_entity = await load_relevance_map_for_result(db, session_id, OBJECT_CLASSES.output)
     return {entity_key: refs for entity_key, refs in by_entity.items() if entity_key}
 
 
@@ -161,7 +162,7 @@ async def hydrate_auth_sequences_from_relevance(
     if not isinstance(auth_items, list):
         return auth_payload
 
-    by_entity = await load_relevance_map_for_result(db, session_id, "authOutput")
+    by_entity = await load_relevance_map_for_result(db, session_id, AUTH.output)
     hydrated = dict(auth_payload)
     hydrated_auth_items: list[dict[str, Any]] = []
     for auth_item in auth_items:

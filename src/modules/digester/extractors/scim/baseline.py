@@ -149,7 +149,6 @@ def _register_schema(
     schema_references: Dict[str, ChunkReference],
     raw_schema: Dict[str, Any],
     *,
-    session_id: UUID,
     source: str,
     doc_id: Any,
     source_reference: Optional[ChunkReference] = None,
@@ -165,10 +164,9 @@ def _register_schema(
     name = _schema_name(raw_schema)
     if not name:
         logger.warning(
-            "[Digester:Baseline] Skipping %s schema from document %s for session %s: no resolvable name",
+            "[Digester:Baseline] Skipping %s schema from document %s: no resolvable name",
             source,
             doc_id,
-            session_id,
         )
         return
 
@@ -178,9 +176,8 @@ def _register_schema(
         if not replace_existing:
             if existing.get("id") != raw_schema.get("id"):
                 logger.warning(
-                    "[Digester:Baseline] Schema name conflict for '%s' in session %s: keeping URN %s, ignoring %s from %s",
+                    "[Digester:Baseline] Schema name conflict for '%s': keeping URN %s, ignoring %s from %s",
                     name,
-                    session_id,
                     existing.get("id"),
                     raw_schema.get("id"),
                     source,
@@ -189,18 +186,16 @@ def _register_schema(
 
         if existing.get("id") != raw_schema.get("id"):
             logger.warning(
-                "[Digester:Baseline] Replacing older schema '%s' in session %s: URN %s -> %s from %s",
+                "[Digester:Baseline] Replacing older schema '%s': URN %s -> %s from %s",
                 name,
-                session_id,
                 existing.get("id"),
                 raw_schema.get("id"),
                 source,
             )
         else:
             logger.info(
-                "[Digester:Baseline] Replacing older schema '%s' in session %s with document %s",
+                "[Digester:Baseline] Replacing older schema '%s' with document %s",
                 name,
-                session_id,
                 doc_id,
             )
         if existing_key is not None:
@@ -243,16 +238,14 @@ def _documentation_reference(item: Dict[str, Any]) -> Optional[ChunkReference]:
 def _parse_scim_resource(
     doc: Dict[str, Any],
     *,
-    session_id: UUID,
     doc_id: Any,
     source_reference: Optional[ChunkReference] = None,
 ) -> Optional[ScimResourceDefinition]:
     primary_schema = _parse_embedded_json(doc.get("primarySchema"))
     if not isinstance(primary_schema, dict):
         logger.warning(
-            "[Digester:Baseline] Skipping resource document %s for session %s: invalid primarySchema",
+            "[Digester:Baseline] Skipping resource document %s: invalid primarySchema",
             doc_id,
-            session_id,
         )
         return None
 
@@ -265,9 +258,8 @@ def _parse_scim_resource(
     name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else _schema_name(primary_schema)
     if not name:
         logger.warning(
-            "[Digester:Baseline] Skipping resource document %s for session %s: no resolvable name",
+            "[Digester:Baseline] Skipping resource document %s: no resolvable name",
             doc_id,
-            session_id,
         )
         return None
 
@@ -290,16 +282,14 @@ def _parse_scim_resource(
 def _parse_connid_object_class(
     doc: Dict[str, Any],
     *,
-    session_id: UUID,
     doc_id: Any,
     source_reference: Optional[ChunkReference] = None,
 ) -> Optional[ConnIdObjectClassDefinition]:
     name = doc.get("name")
     if not isinstance(name, str) or not name.strip():
         logger.warning(
-            "[Digester:Baseline] Skipping ConnId object class document %s for session %s: no name",
+            "[Digester:Baseline] Skipping ConnId object class document %s: no name",
             doc_id,
-            session_id,
         )
         return None
 
@@ -316,7 +306,6 @@ def _parse_connid_object_class(
 def _parse_shadow_connid_object_class(
     doc: Dict[str, Any],
     *,
-    session_id: UUID,
     doc_id: Any,
     source_reference: Optional[ChunkReference] = None,
 ) -> Optional[ConnIdObjectClassDefinition]:
@@ -328,9 +317,8 @@ def _parse_shadow_connid_object_class(
         name = scim_binding.get("name")
     if not isinstance(name, str) or not name.strip():
         logger.warning(
-            "[Digester:Baseline] Skipping ConnId object class document %s for session %s: no name",
+            "[Digester:Baseline] Skipping ConnId object class document %s: no name",
             doc_id,
-            session_id,
         )
         return None
 
@@ -339,10 +327,8 @@ def _parse_shadow_connid_object_class(
         flattened = flatten_shadow_connid_attribute(entry, binding_key=CONNDEV_SCIM_BINDING)
         if flattened is None:
             logger.warning(
-                "[Digester:Baseline] Ignoring malformed attribute shadow in ConnId object class document %s "
-                "for session %s (class %s)",
+                "[Digester:Baseline] Ignoring malformed attribute shadow in ConnId object class document %s (class %s)",
                 doc_id,
-                session_id,
                 name.strip(),
             )
             continue
@@ -375,7 +361,6 @@ def _get_service_provider_config_payload(doc: Dict[str, Any]) -> Optional[Dict[s
 def _parse_service_provider_config(
     raw_config: Dict[str, Any],
     *,
-    session_id: UUID,
     doc_id: Any,
     source_reference: Optional[ChunkReference] = None,
 ) -> Optional[ScimServiceProviderConfigDefinition]:
@@ -383,9 +368,8 @@ def _parse_service_provider_config(
         config = ScimServiceProviderConfig.model_validate(raw_config)
     except ValidationError as exc:
         logger.warning(
-            "[Digester:Baseline] Skipping ServiceProviderConfig document %s for session %s: invalid contract (%s)",
+            "[Digester:Baseline] Skipping ServiceProviderConfig document %s: invalid contract (%s)",
             doc_id,
-            session_id,
             exc,
         )
         return None
@@ -446,20 +430,30 @@ def build_scim_baseline_bundle(
 
 async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
     """
-    Load and classify the session's conndev documents into the SCIM baseline bundle.
+    Load the session's conndev documents and classify them into the SCIM baseline bundle.
 
-    Only persisted documents marked with a conndev metadata content type are considered. Those
-    documents are then classified by contract shape (``schemaContent`` / ``endpoint`` +
+    Extraction jobs that store their documentation selection build the bundle from that
+    stored input instead (:func:`build_scim_baseline_from_documents`), so a later upload
+    cannot change a queued job.
+    """
+    async with async_session_maker() as db:
+        items = await DocumentationRepository(db).get_conndev_documentation_items_by_session(session_id)
+    return build_scim_baseline_from_documents(items)
+
+
+def build_scim_baseline_from_documents(items: List[Dict[str, Any]]) -> ScimBaselineBundle:
+    """
+    Classify conndev documentation items into the SCIM baseline bundle.
+
+    Only items marked with a conndev metadata content type are considered. Those documents
+    are then classified by contract shape (``schemaContent`` / ``endpoint`` +
     ``primarySchema`` / ``locator`` + ``uid`` / shadow-wrapped ``scim`` + ``uid`` /
     ServiceProviderConfig ``content``); unrecognized conndev documents are logged and skipped.
     Embedded sub-class exports (``uid`` + ``name`` with no class-level binding) are skipped
     quietly - the same classes are derived from the SCIM schema documents. Raw SCIM schemas come
     from the dedicated schema documents; resource-embedded copies only fill in classes that have
-    no dedicated document.
+    no dedicated document. Items keep their input order, oldest first.
     """
-    async with async_session_maker() as db:
-        items = await DocumentationRepository(db).get_conndev_documentation_items_by_session(session_id)
-
     schemas: Dict[str, Dict[str, Any]] = {}
     schema_references: Dict[str, ChunkReference] = {}
     resources: Dict[str, ScimResourceDefinition] = {}
@@ -481,9 +475,8 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             doc = json.loads(content)
         except json.JSONDecodeError as exc:
             logger.warning(
-                "[Digester:Baseline] Skipping conndev document %s for session %s: invalid JSON (%s)",
+                "[Digester:Baseline] Skipping conndev document %s: invalid JSON (%s)",
                 doc_id,
-                session_id,
                 exc,
             )
             continue
@@ -495,15 +488,13 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
         if raw_service_provider_config is not None:
             parsed_service_provider_config = _parse_service_provider_config(
                 raw_service_provider_config,
-                session_id=session_id,
                 doc_id=doc_id,
                 source_reference=source_reference,
             )
             if parsed_service_provider_config is not None:
                 if service_provider_config is not None:
                     logger.info(
-                        "[Digester:Baseline] Replacing older ServiceProviderConfig in session %s with document %s",
-                        session_id,
+                        "[Digester:Baseline] Replacing older ServiceProviderConfig with document %s",
                         doc_id,
                     )
                 service_provider_config = parsed_service_provider_config
@@ -516,7 +507,6 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
                     schemas,
                     schema_references,
                     raw_schema,
-                    session_id=session_id,
                     source="schemaContent",
                     doc_id=doc_id,
                     source_reference=source_reference,
@@ -524,14 +514,12 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
                 )
             else:
                 logger.warning(
-                    "[Digester:Baseline] Skipping schema document %s for session %s: invalid schemaContent",
+                    "[Digester:Baseline] Skipping schema document %s: invalid schemaContent",
                     doc_id,
-                    session_id,
                 )
         elif "endpoint" in doc and "primarySchema" in doc:
             resource = _parse_scim_resource(
                 doc,
-                session_id=session_id,
                 doc_id=doc_id,
                 source_reference=source_reference,
             )
@@ -543,7 +531,6 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
         elif "locator" in doc and "uid" in doc:
             connid_class = _parse_connid_object_class(
                 doc,
-                session_id=session_id,
                 doc_id=doc_id,
                 source_reference=source_reference,
             )
@@ -552,7 +539,6 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
         elif CONNDEV_SCIM_BINDING in doc and "uid" in doc:
             connid_class = _parse_shadow_connid_object_class(
                 doc,
-                session_id=session_id,
                 doc_id=doc_id,
                 source_reference=source_reference,
             )
@@ -562,27 +548,24 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             # A SQL-bound object class in a SCIM baseline means the session apiType does not match
             # the uploaded conndev export; extractors/sql reads these documents.
             logger.info(
-                "[Digester:Baseline] Skipping SQL-bound conndev document %s for session %s: "
+                "[Digester:Baseline] Skipping SQL-bound conndev document %s: "
                 "the SCIM baseline only reads SCIM-bound contracts",
                 doc_id,
-                session_id,
             )
         elif is_conndev_object_class_document(doc):
             # An embedded sub-class export (``User__name``) for a complex attribute. It is a valid
             # contract, not a malformed one: the same classes are derived deterministically from the
             # dedicated SCIM schema documents, which also carry the sub-attribute definitions.
             logger.debug(
-                "[Digester:Baseline] Skipping embedded conndev sub-class '%s' (document %s) for session %s: "
+                "[Digester:Baseline] Skipping embedded conndev sub-class '%s' (document %s): "
                 "embedded classes are derived from the SCIM schema documents",
                 doc.get("name"),
                 doc_id,
-                session_id,
             )
         else:
             logger.warning(
-                "[Digester:Baseline] Skipping conndev document %s for session %s: unrecognized contract (keys: %s)",
+                "[Digester:Baseline] Skipping conndev document %s: unrecognized contract (keys: %s)",
                 doc_id,
-                session_id,
                 sorted(doc.keys()),
             )
 
@@ -591,7 +574,6 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
             schemas,
             schema_references,
             raw_schema,
-            session_id=session_id,
             source=source,
             doc_id=doc_id,
             source_reference=source_reference,
@@ -607,9 +589,8 @@ async def load_session_scim_baseline(session_id: UUID) -> ScimBaselineBundle:
     # Every SCIM extractor job loads the baseline, so this per-load summary stays at DEBUG;
     # the extractors log what they derived from it at INFO.
     logger.debug(
-        "[Digester:Baseline] Session %s: loaded %d SCIM schema(s), %d resource(s), %d ConnId object class(es), "
+        "[Digester:Baseline] Loaded %d SCIM schema(s), %d resource(s), %d ConnId object class(es), "
         "%d extension mapping(s), ServiceProviderConfig=%s",
-        session_id,
         len(bundle.schemas),
         len(bundle.resources),
         len(bundle.connid_classes),

@@ -3,33 +3,18 @@
 # Licensed under the EUPL-1.2 or later.
 
 from dataclasses import dataclass
-from enum import Enum
-from typing import Optional
-from uuid import UUID
 
-
-class AuthMode(str, Enum):
-    """How the current request was authenticated."""
-
-    disabled = "disabled"  # AUTH__API_KEY_REQUIRED is off; no checks apply
-    master = "master"  # authenticated with the configured master key
-    api_key = "api_key"  # authenticated with an issued API key
+from src.config.auth import AuthMode
 
 
 @dataclass(frozen=True)
 class AuthContext:
-    """Authentication result attached to each request (``request.state.auth``)."""
+    """Request identity; stores only a fingerprint, never the forwarded secret."""
 
     mode: AuthMode
-    api_key_id: Optional[UUID] = None
+    owner_key_hash: str | None = None
 
-    def can_access_session(self, owner_api_key_id: Optional[UUID]) -> bool:
-        """Whether this context may access a session owned by ``owner_api_key_id``.
-
-        Master key and disabled mode access everything. A regular API key only
-        accesses sessions it owns; ownerless sessions (owner None) are
-        reserved for the master key.
-        """
-        if self.mode in (AuthMode.disabled, AuthMode.master):
+    def can_access_session(self, owner_key_hash: str | None) -> bool:
+        if self.mode is AuthMode.dev:
             return True
-        return owner_api_key_id is not None and owner_api_key_id == self.api_key_id
+        return owner_key_hash is not None and owner_key_hash == self.owner_key_hash

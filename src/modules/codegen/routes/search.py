@@ -7,7 +7,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.responses import build_multi_doc_status_response
@@ -19,9 +19,12 @@ from src.modules.codegen import generation
 from src.modules.codegen.enums import SearchIntent, build_search_operation_key
 from src.modules.codegen.orchestration import schedule_operation_job
 from src.modules.codegen.persistence import store_search_override
+from src.modules.codegen.routes.dependencies import validated_connector_code
 from src.modules.codegen.schema import CodegenOperationInput, GroovyCodePayload
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType
+from src.shared.job_types import JobType
+from src.shared.session_keys import codegen_operation_keys
 
 router = APIRouter(tags=["Codegen: Search"])
 
@@ -60,8 +63,8 @@ async def generate_search(
         skip_cache=skip_cache,
         api_type=api_type,
         codegen_input=codegen_input,
-        key_prefix=operation_key,
-        job_type="codegen.getSearch",
+        keys=codegen_operation_keys(operation_key),
+        job_type=JobType.CODEGEN_SEARCH,
         worker=generation.generate_search_code,
         extra_job_input={"intent": intent},
         extra_worker_kwargs={"intent": intent},
@@ -96,7 +99,7 @@ async def get_search_status(
         repo,
         session_id,
         jobId,
-        session_key=f"{operation_key}JobId",
+        session_key=codegen_operation_keys(operation_key).job_id,
         job_label="search",
         not_found_detail=f"No search job found for {object_class} intent={intent} in session {session_id}",
     )
@@ -113,7 +116,7 @@ async def override_search(
     session_id: UUID = Path(..., description="Session ID"),
     object_class: str = Path(..., description="Object class name"),
     intent: SearchIntent = Path(..., description="Intent"),
-    search_code: GroovyCodePayload = Body(..., description="Search code as JSON"),
+    search_code: GroovyCodePayload = Depends(validated_connector_code),
     db: AsyncSession = DbSession,
 ):
     """

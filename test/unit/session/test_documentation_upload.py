@@ -7,11 +7,12 @@ from io import BytesIO
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import UploadFile
 from starlette.datastructures import Headers
 
 from src.session import documentation_upload as upload_utils
 from src.session.documentation_upload import RawUploadedDocumentation, read_uploaded_documentation
+from src.session.errors import InvalidDocumentationContentError, UnsupportedDocumentationFormatError
 
 
 def _upload(filename: str, content_type: str, data: bytes) -> UploadFile:
@@ -202,8 +203,46 @@ async def test_parse_uploaded_documentation_offloads_docx_parsing_to_thread():
 
 @pytest.mark.asyncio
 async def test_read_uploaded_documentation_rejects_unsupported_binary_type():
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(UnsupportedDocumentationFormatError) as exc_info:
         await read_uploaded_documentation(_upload("archive.zip", "application/zip", b"PK\x03\x04"))
 
     assert exc_info.value.status_code == 415
-    assert "Unsupported documentation content type" in exc_info.value.detail
+    assert "Unsupported documentation content type" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_read_uploaded_documentation_rejects_empty_upload_as_invalid_content():
+    with pytest.raises(InvalidDocumentationContentError) as exc_info:
+        await read_uploaded_documentation(_upload("empty.md", "text/markdown", b""))
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.message == "Uploaded documentation empty.md is empty."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("filename", "content_type", "expected"),
+    [
+        ("broken.pdf", "application/pdf", "Could not extract text from uploaded PDF broken.pdf."),
+        (
+            "broken.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "Could not extract text from uploaded DOCX broken.docx.",
+        ),
+    ],
+)
+async def test_corrupted_binary_upload_is_rejected_as_invalid_content(filename, content_type, expected):
+    with pytest.raises(InvalidDocumentationContentError) as exc_info:
+        await read_uploaded_documentation(_upload(filename, content_type, b"not a real document"))
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.message == expected
+    assert exc_info.value.__cause__ is not None
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_upload_is_rejected_as_producing_no_text():
+    with pytest.raises(InvalidDocumentationContentError) as exc_info:
+        await read_uploaded_documentation(_upload("blank.txt", "text/plain", b"   \n\t"))
+
+    assert exc_info.value.message == "Uploaded documentation blank.txt did not produce any text."

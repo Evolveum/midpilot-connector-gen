@@ -3,6 +3,7 @@
 The SQL framework detects relationships between tables automatically and exposes them as attributes on the ConnId object class.
 
 
+
 IMPORTANT: Relationship detection is convention- and metadata-driven; there is no script API to define custom join paths today. The `relationship {}` function in currently unsupported scripts is a stub, and `joinOn` / `foreignKey` blocks (as seen in some example scripts) are illustrative only — do not depend on them.
 
 == Relationship detection methods
@@ -14,30 +15,20 @@ Before tables are translated to object classes, the framework looks for foreign-
 
 Depending on what the foreign key columns contribute to the child table's primary key, the relationship is classified as follows:
 
-[cols="1,2,2", options="header"]
-|===
-|Relationship |Condition |Exposed as
+Single-valued embedded::
+  Foreign key columns are the only primary key columns of the child table (child has at most one row per parent). Exposed as a single-valued complex attribute (embedded object class value) on the parent, named after the child table
 
-|Single-valued embedded
-|Foreign key columns are the only primary key columns of the child table (child has at most one row per parent)
-|A single-valued complex attribute (embedded object class value) on the parent, named after the child table
+Multi-valued embedded::
+  Foreign key columns are part of the child primary key, but the child also has its own data columns. Exposed as a multi-valued complex attribute on the parent, named after the child table
 
-|Multi-valued embedded
-|Foreign key columns are part of the child primary key, but the child also has its own data columns
-|A multi-valued complex attribute on the parent, named after the child table
+Multi-valued simple attribute::
+  Foreign key columns plus exactly one additional non-foreign key column in the child primary key. Exposed as a multi-valued scalar attribute (of the value column's type) on the parent
 
-|Multi-valued simple attribute
-|Foreign key columns plus exactly one additional non-foreign key column in the child primary key
-|A multi-valued scalar attribute (of the value column's type) on the parent
-
-|Junction table (many-to-many)
-|Foreign key columns reference *two or more* distinct target tables, and the foreign key columns exactly match the child primary key (a junction has no data of its own)
-|A multi-valued reference attribute on the parent pointing at the target object class
-
-|===
+Junction table (many-to-many)::
+  Foreign key columns reference *two or more* distinct target tables, and the foreign key columns exactly match the child primary key (a junction has no data of its own). Exposed as a multi-valued reference attribute on the parent pointing at the target object class
 
 A child table whose primary key contains a surrogate key of its own (e.g., `id`, `user_id`) — i.e., the foreign keys are not the primary key — is treated as a standalone table, not a relationship.
-Detected child/embedded object classes are folded into the parent and are not exposed as separately manageable object classes (no create/update/delete handlers; the data is managed through the parent object class, see xref:related-table-writes/[]).
+Detected child/embedded object classes are folded into the parent and are not exposed as separately manageable object classes (no create/update/delete handlers; the data is managed through the parent object class, see xref:related-table-writes.adoc[]).
 
 == Example
 
@@ -66,9 +57,9 @@ The relationship values are resolved at search time in a batch: after the parent
 == Behavior
 
 * Multi-valued attributes and references are populated during search; they are not part of the parent row's columns.
-* Filtering *through* a relationship is not part of the built-in filter translation — filter on the parent object class attributes (see xref:search/[] and xref:custom-search/[] for custom needs).
-* Child-table data is readable and writable through the parent object class — create, update and delete handle the related rows in the same transaction (see xref:related-table-writes/[]).
-* Read-only flat projections of additional tables (LEFT JOINs) are not relationships — configure them with the `join` block (see xref:schema-customization/[joined attributes (read-only)]).
+* Filtering *through* a relationship is not part of the built-in filter translation — filter on the parent object class attributes (see xref:search.adoc[] and xref:custom-search.adoc[] for custom needs).
+* Child-table data is readable and writable through the parent object class — create, update and delete handle the related rows in the same transaction (see xref:related-table-writes.adoc[]).
+* Read-only flat projections of additional tables (LEFT JOINs) are not relationships — configure them with the `join` block (see xref:native-schema.adoc[joined attributes (read-only)]).
 * Incremental sync of related data is not wired yet.
 
 == Guidelines for your database schema

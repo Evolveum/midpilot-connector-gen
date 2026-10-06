@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from langchain_core.runnables import RunnableLambda
 
 from src.config import config
 from src.core.errors import LLMUnavailableError
@@ -77,6 +78,37 @@ async def test_generate_groovy_returns_empty_when_validation_fails() -> None:
     assert mock_append_job_error.await_count == 2
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair", [False, True])
+async def test_native_schema_preserves_reference_metadata_without_job_errors(repair):
+    code = (
+        "objectClasses: {group: {references: {members: "
+        "{objectClass: User, role: object, description: Members, multiValued: true}}}}"
+    )
+    repair_context = (
+        CodegenRepairContext(current_script="objectClasses: {group: {}}", midpoint_errors=["Missing role"])
+        if repair
+        else None
+    )
+    with (
+        patch("src.modules.codegen.core.generate_groovy.get_default_llm"),
+        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=_DummyChain([code])),
+        patch("src.modules.codegen.core.generate_groovy.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.generate_groovy.append_job_error", new_callable=AsyncMock) as errors,
+    ):
+        result = await generate_groovy(
+            records=[{"name": "members"}],
+            object_class="group",
+            system_prompt="system",
+            user_prompt="user",
+            job_id=uuid4(),
+            logger_prefix="NativeSchema",
+            repair_context=repair_context,
+        )
+    assert result == code
+    errors.assert_not_awaited()
+
+
 @dataclass
 class _DummyGenerator(BaseGroovyGenerator):
     def __init__(self):
@@ -98,18 +130,14 @@ class _DummyGenerator(BaseGroovyGenerator):
 
 
 @pytest.mark.asyncio
-async def test_base_generator_keeps_previous_result_when_chunk_validation_fails() -> None:
+async def test_base_generator_repairs_rejected_chunk_output_in_the_next_chunk() -> None:
     generator = _DummyGenerator()
-    chain = _DummyChain(['objectClass("User") { broken', 'objectClass("User") { search {} }'])
-    validation_results = [
-        "chunk syntax error",
-        None,
-    ]
+    broken = 'objectClass("User") { broken'
+    chain = _RecordingChain([broken, 'objectClass("User") { search {} }'])
 
     with (
         patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.base.validate_connector_code", side_effect=validation_results),
     ):
         result = await generator._process_chunks(
             chunks=["chunk-1", "chunk-2"],
@@ -117,13 +145,17 @@ async def test_base_generator_keeps_previous_result_when_chunk_validation_fails(
             per_chunk_counts={},
             chunk_ids_included=[],
             input_data={},
-            chain=chain,
+            chain=RunnableLambda(chain.ainvoke),
             job_id=uuid4(),
             initial_result='objectClass("User") {}',
         )
 
     assert result == 'objectClass("User") { search {} }'
     mock_append_job_error.assert_called_once()
+    assert "Invalid output after chunk 1/2" in mock_append_job_error.call_args.args[1]
+    second_call = chain.calls[1][0][0]
+    assert second_call["result"] == broken
+    assert "<validation_errors>" in second_call["validation_errors"]
 
 
 @pytest.mark.asyncio
@@ -145,7 +177,7 @@ async def test_base_generator_fails_fast_when_llm_unreachable(monkeypatch) -> No
                 per_chunk_counts={},
                 chunk_ids_included=[],
                 input_data={},
-                chain=chain,
+                chain=RunnableLambda(chain.ainvoke),
                 job_id=uuid4(),
                 initial_result='objectClass("User") {}',
             )
@@ -193,7 +225,6 @@ async def test_base_generator_runs_repair_pass_without_documentation_chunks() ->
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=chain),
         patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.base.validate_connector_code", return_value=None),
         patch.object(
             BaseGroovyGenerator, "_cleanup_generated_code", new_callable=AsyncMock, return_value=repaired_code
         ),
@@ -222,7 +253,7 @@ async def test_base_generator_cleanup_returns_cleaned_code_when_valid() -> None:
     with (
         patch("src.modules.codegen.core.base.get_default_llm"),
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=_DummyChain([cleaned_code])),
-        patch("src.modules.codegen.core.base.validate_connector_code", return_value=None),
+        patch("src.modules.codegen.core.base.collect_connector_code_errors", return_value=()),
     ):
         result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())
 
@@ -240,7 +271,7 @@ async def test_base_generator_cleanup_keeps_original_when_invalid() -> None:
             "src.modules.codegen.core.base.make_basic_chain",
             return_value=_DummyChain(['objectClass("User") { search { broken']),
         ),
-        patch("src.modules.codegen.core.base.validate_connector_code", return_value="syntax error"),
+        patch("src.modules.codegen.core.base.collect_connector_code_errors", return_value=("syntax error",)),
         patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
     ):
         result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())
@@ -339,7 +370,8 @@ async def test_invalid_then_empty_retains_validation_error_and_outcome():
 
     generator = _DummyGenerator()
     job_id = uuid4()
-    chain = _RecordingChain(["objectClasses: {User: {search: {endpoints: 42}}}", "```yaml\n```"])
+    invalid = "objectClasses: {User: {search: {endpoints: 42}}}"
+    chain = _RecordingChain([invalid, "```yaml\n```", ""])
     with (
         patch.object(generator, "_build_chunks", return_value=(["a", "b"], [], {}, [])),
         patch.object(generator, "_initialize_progress", new_callable=AsyncMock),
@@ -351,4 +383,81 @@ async def test_invalid_then_empty_retains_validation_error_and_outcome():
     assert errors.await_count == 2
     assert "Invalid output after chunk 1/2" in errors.await_args_list[0].args[1]
     assert errors.await_args_list[1].args == (job_id, NO_CODE_GENERATED)
-    assert chain.calls[1][0][0]["result"] == ""
+    # The empty response neither replaces the forwarded candidate nor clears its errors.
+    assert [call[0][0]["result"] for call in chain.calls] == ["", invalid, invalid]
+    assert chain.calls[2][0][0]["validation_errors"] == chain.calls[1][0][0]["validation_errors"] != ""
+    assert chain.calls[2][0][0]["chunk"] == "b"
+
+
+INVALID_YAML = "objectClasses: {User: {search: {endpoints: 42}}}"
+VALID_YAML = "objectClasses: {User: {search: {endpoints: [{path: /users}]}}}"
+FIXED_YAML = "objectClasses: {User: {search: {endpoints: [{path: /users, singleResult: false}]}}}"
+
+
+async def _generate(responses, *, chunks=("a", "b")):
+    generator = _DummyGenerator()
+    chain = _RecordingChain(responses)
+    with (
+        patch.object(generator, "_build_chunks", return_value=(list(chunks), [], {}, [])),
+        patch.object(generator, "_initialize_progress", new_callable=AsyncMock),
+        patch.object(generator, "_build_llm_chain", return_value=chain),
+        patch.object(generator, "_cleanup_generated_code", new_callable=AsyncMock, side_effect=lambda **kw: kw["code"]),
+        patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
+        patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock) as progress,
+    ):
+        result = await generator.generate(job_id=uuid4())
+    return result, [call[0][0] for call in chain.calls], errors, progress
+
+
+@pytest.mark.asyncio
+async def test_invalid_last_chunk_is_retried_once_with_its_errors():
+    result, calls, errors, progress = await _generate([VALID_YAML, INVALID_YAML, FIXED_YAML])
+
+    assert result == FIXED_YAML
+    assert len(calls) == 3
+    retry = calls[2]
+    assert (retry["idx"], retry["chunk"], retry["result"]) == (2, "b", INVALID_YAML)
+    assert "objectClasses.User.search.endpoints: Input should be a valid list" in retry["validation_errors"]
+    # The retry re-sends a chunk; it is not another processed document.
+    assert progress.await_count == 2
+    errors.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_last_chunk_still_invalid_after_retry_keeps_last_valid_result():
+    result, calls, errors, _ = await _generate([VALID_YAML, INVALID_YAML, INVALID_YAML])
+
+    assert result == VALID_YAML
+    assert len(calls) == 3
+    assert [call.args[1].split(": ")[0] for call in errors.await_args_list] == [
+        "[Codegen:Dummy] Invalid output after chunk 2/2",
+        "[Codegen:Dummy] Invalid output after final validation retry",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_clean_generation_adds_no_retry_and_no_error_block():
+    result, calls, errors, _ = await _generate([VALID_YAML, FIXED_YAML])
+
+    assert result == FIXED_YAML
+    assert [call["validation_errors"] for call in calls] == ["", ""]
+    errors.assert_not_awaited()
+
+
+def test_validation_error_block_is_rendered_as_data_without_template_interpolation():
+    from src.modules.codegen.prompts.validation_error_prompts import build_validation_error_block
+
+    generator = _DummyGenerator()
+    with (
+        patch("src.modules.codegen.core.base.get_default_llm"),
+        patch("src.modules.codegen.core.base.make_basic_chain") as make_chain,
+    ):
+        generator._build_llm_chain(2)
+    prompt = make_chain.call_args.args[0]
+    block = build_validation_error_block(["objectClasses.User: {not} a {template}"])
+
+    messages = prompt.format_messages(validation_errors=block)
+
+    assert messages[1].content == "user" + block
+    assert "- objectClasses.User: {not} a {template}\n</validation_errors>" in block
+    assert prompt.format_messages(validation_errors="")[1].content == "user"

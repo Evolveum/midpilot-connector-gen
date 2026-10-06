@@ -14,19 +14,22 @@ from uuid import UUID
 import yaml
 from bs4 import BeautifulSoup
 from docx import Document
-from fastapi import HTTPException, UploadFile, status
+from fastapi import UploadFile
 from pypdf import PdfReader
 
 from src.config import config
+from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.chunking import count_tokens, split_single_item_schema, split_text_with_token_overlap
 from src.jobs import binary_artifact_reference, schedule_coroutine_job
+from src.session.errors import InvalidDocumentationContentError, UnsupportedDocumentationFormatError
 from src.session.schema import (
     PreparedDocumentationUpload,
     RawUploadedDocumentation,
     SessionUploadContext,
     UploadedDocumentation,
 )
+from src.shared.coerce import as_mapping
 from src.shared.content_types import (
     CONNDEV_CONTENT_TYPES,
     CONNDEV_SUFFIX,
@@ -36,6 +39,8 @@ from src.shared.content_types import (
     normalize_content_type,
 )
 from src.shared.enums import JobStage
+from src.shared.job_types import JobType
+from src.shared.session_keys import DISCOVERY, SCRAPE, upload_job_pointer_key
 
 logger = logging.getLogger(__name__)
 
@@ -182,17 +187,11 @@ def _pdf_to_text(data: bytes, filename: str) -> tuple[str, dict[str, Any]]:
             if page_text.strip():
                 pages.append(f"\n\n--- Page {idx} ---\n{page_text.strip()}")
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Could not extract text from uploaded PDF {filename}.",
-        ) from exc
+        raise InvalidDocumentationContentError(f"Could not extract text from uploaded PDF {filename}.") from exc
 
     text = "\n".join(pages).strip()
     if not text:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Uploaded PDF {filename} does not contain extractable text.",
-        )
+        raise InvalidDocumentationContentError(f"Uploaded PDF {filename} does not contain extractable text.")
     return text, {"pdf_pages": len(reader.pages)}
 
 
@@ -207,17 +206,11 @@ def _docx_to_text(data: bytes, filename: str) -> tuple[str, dict[str, Any]]:
                 if cells:
                     tables.append(" | ".join(cells))
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Could not extract text from uploaded DOCX {filename}.",
-        ) from exc
+        raise InvalidDocumentationContentError(f"Could not extract text from uploaded DOCX {filename}.") from exc
 
     text = "\n".join([*paragraphs, *tables]).strip()
     if not text:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Uploaded DOCX {filename} does not contain extractable text.",
-        )
+        raise InvalidDocumentationContentError(f"Uploaded DOCX {filename} does not contain extractable text.")
     return text, {"docx_paragraphs": len(paragraphs), "docx_tables": len(document.tables)}
 
 
@@ -252,10 +245,7 @@ async def read_raw_uploaded_documentation(
     data = await documentation.read()
 
     if not data:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Uploaded documentation {filename} is empty.",
-        )
+        raise InvalidDocumentationContentError(f"Uploaded documentation {filename} is empty.")
 
     return RawUploadedDocumentation(
         data=data,
@@ -293,20 +283,11 @@ async def parse_uploaded_documentation(raw_upload: RawUploadedDocumentation) -> 
     elif _is_text_upload(content_type, suffix):
         text = await asyncio.to_thread(_decode_text, data, filename)
     else:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=(
-                f"Unsupported documentation content type '{content_type}' for {filename}. "
-                "Supported uploads include JSON, YAML, OpenAPI, Markdown, AsciiDoc, HTML, XML, CSV, SQL, text, PDF, and DOCX."
-            ),
-        )
+        raise UnsupportedDocumentationFormatError(content_type, filename)
 
     text = text.strip()
     if not text:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Uploaded documentation {filename} did not produce any text.",
-        )
+        raise InvalidDocumentationContentError(f"Uploaded documentation {filename} did not produce any text.")
 
     return UploadedDocumentation(
         text=text,
@@ -341,15 +322,20 @@ async def read_uploaded_documentation(
     return await parse_uploaded_documentation(raw_upload)
 
 
-def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentation) -> list[tuple[str, int]]:
+def chunk_uploaded_documentation(uploaded: UploadedDocumentation) -> list[tuple[str, int]]:
+    """
+    Split parsed upload text into LLM-sized ``(text, token_count)`` chunks.
+
+    Tokenization is CPU-bound and synchronous; async callers run this in a worker
+    thread (``asyncio.to_thread``) so a large upload cannot stall the event loop.
+    """
     if uploaded.preserve_as_single_item:
         token_count = count_tokens(uploaded.text)
         max_tokens = config.scrape_and_process.single_item_schema_max_tokens
         if is_conndev_content_type(uploaded.content_type) or token_count <= max_tokens:
             logger.info(
-                "[Session:Upload] Preserving uploaded schema as a single documentation item for session %s "
+                "[Session:Upload] Preserving uploaded schema as a single documentation item "
                 "filename=%s content_type=%s tokens=%s",
-                session_id,
                 uploaded.filename,
                 uploaded.content_type,
                 token_count,
@@ -357,9 +343,8 @@ def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentati
             return [(uploaded.text, token_count)]
 
         logger.warning(
-            "[Session:Upload] Single-item schema exceeds the LLM token budget for session %s "
+            "[Session:Upload] Single-item schema exceeds the LLM token budget "
             "filename=%s content_type=%s tokens=%s max_tokens=%s; splitting into structurally valid sub-schemas.",
-            session_id,
             uploaded.filename,
             uploaded.content_type,
             token_count,
@@ -372,16 +357,14 @@ def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentati
             max_tokens=max_tokens,
         )
         logger.info(
-            "[Session:Upload] Split oversized single-item schema into %s sub-schema chunks for session %s filename=%s",
+            "[Session:Upload] Split oversized single-item schema into %s sub-schema chunks filename=%s",
             len(chunks),
-            session_id,
             uploaded.filename,
         )
         return chunks
 
     logger.info(
-        "[Session:Upload] Chunking documentation for session %s filename=%s content_type=%s parser=%s",
-        session_id,
+        "[Session:Upload] Chunking documentation filename=%s content_type=%s parser=%s",
         uploaded.filename,
         uploaded.content_type,
         uploaded.metadata.get("parser"),
@@ -396,9 +379,9 @@ def chunk_uploaded_documentation(session_id: UUID, uploaded: UploadedDocumentati
 
 
 async def get_session_upload_context(repo: SessionRepository, session_id: UUID) -> SessionUploadContext:
-    session_data = await repo.get_session_data(session_id) or {}
-    discovery_input = session_data.get("discoveryInput", {})
-    scrape_input = session_data.get("scrapeInput", {})
+    stored = await repo.get_session_values(session_id, [DISCOVERY.input, SCRAPE.input])
+    discovery_input = as_mapping(stored.get(DISCOVERY.input))
+    scrape_input = as_mapping(stored.get(SCRAPE.input))
 
     return SessionUploadContext(
         app=discovery_input.get("applicationName") or scrape_input.get("applicationName") or "unknown",
@@ -444,7 +427,7 @@ async def queue_documentation_upload_job(
 
     job_id = await schedule_coroutine_job(
         db=repo.db,
-        job_type="documentation.processUpload",
+        job_type=JobType.DOCUMENTATION_PROCESS_UPLOAD,
         input_payload=input_payload,
         worker=process_documentation_worker,
         worker_kwargs={
@@ -465,6 +448,14 @@ async def queue_documentation_upload_job(
         binary_artifacts={"raw-upload": raw_upload.data},
     )
 
-    job_key = f"documentation.processUpload_{doc_id}_job_id"
+    job_key = upload_job_pointer_key(doc_id)
+    if await DocumentationRepository(repo.db).has_document(session_id, doc_id) or await repo.get_session_data(
+        session_id, job_key
+    ):
+        logger.warning(
+            "[Session:Upload] Another upload uses document ID %s; the existing content will be deleted and replaced "
+            "only after this upload succeeds. If processing fails, the existing content will be preserved.",
+            doc_id,
+        )
     await repo.update_session(session_id, {job_key: str(job_id)})
     return job_id

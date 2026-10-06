@@ -13,6 +13,7 @@ from src.core.db import async_session_maker
 from src.database.repositories.session_repository import SessionRepository
 from src.shared.coerce import as_list, as_mapping, as_str, as_str_list
 from src.shared.enums import ApiType
+from src.shared.session_keys import DISCOVERY, METADATA
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ async def resolve_effective_api_type(session_id: UUID, override: ApiType | None)
     return resolve_session_api_type(await get_session_api_types(session_id))
 
 
-async def load_session_metadata(session_id: UUID, key: str = "metadataOutput") -> dict[str, Any] | None:
+async def load_session_metadata(session_id: UUID, key: str = METADATA.output) -> dict[str, Any] | None:
     """Load and validate metadata stored under a session."""
     try:
         async with async_session_maker() as db:
@@ -145,7 +146,7 @@ async def get_session_base_api_url(session_id: UUID, protocol: ApiType | None = 
 
 async def get_discovery_application_name(session_id: UUID) -> str:
     """Return the application name the user entered in discovery, if any."""
-    discovery_input = await load_session_metadata(session_id, key="discoveryInput")
+    discovery_input = await load_session_metadata(session_id, key=DISCOVERY.input)
     return as_str(as_mapping(discovery_input).get("applicationName")).strip()
 
 

@@ -35,6 +35,7 @@ from src.session.errors import (
 from src.session.schema import Documentation
 from src.session.service import build_group_documentation_response
 from src.shared.enums import JobStatus
+from src.shared.session_keys import upload_job_pointer_key
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ async def check_documentation_item(
             return Response(status_code=status.HTTP_204_NO_CONTENT)
 
         # If the item is not yet persisted, check if an upload job for this doc is queued/running.
-        job_key = f"documentation.processUpload_{documentation_id}_job_id"
+        job_key = upload_job_pointer_key(documentation_id)
         pending_job_id = await repo.get_session_data(session_id, job_key)
         if pending_job_id:
             job_repo = JobRepository(db)
@@ -232,6 +233,8 @@ async def upload_documentation_by_id(
     Process uploaded documentation file using LLM.
     Creates a job and queues it for processing - returns immediately with job_id.
     Each chunk becomes a separate DocumentationItem with source='upload' and the provided documentation_id as doc_id.
+    Reusing an ID replaces that document only after all new chunks are processed successfully.
+    Failed processing preserves the existing document. Only the latest queued upload for this ID may publish.
     Application name and version are loaded from session's discoveryInput or scrapeInput.
     """
     return await _queue_documentation_upload(

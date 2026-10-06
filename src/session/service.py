@@ -18,16 +18,15 @@ from src.database.repositories.documentation_repository import DocumentationRepo
 from src.database.repositories.job_repository import JobRepository
 from src.session.errors import DocumentationItemNotFoundError, InvalidDocumentationImportError
 from src.session.schema import Documentation
+from src.shared.job_types import JobType
 
 logger = logging.getLogger(__name__)
-
-_UPLOAD_JOB_TYPE_PREFIX = "documentation.processUpload"
 
 
 async def list_documentation_upload_jobs(job_repo: JobRepository, session_id: UUID) -> List[Dict[str, Any]]:
     """Return the session's documentation-upload jobs, filtered by job type."""
     jobs = await job_repo.get_jobs_by_session(session_id)
-    return [job for job in jobs if job.get("type", "").startswith(_UPLOAD_JOB_TYPE_PREFIX)]
+    return [job for job in jobs if job.get("type") == JobType.DOCUMENTATION_PROCESS_UPLOAD]
 
 
 async def get_documentation_document(
@@ -141,20 +140,12 @@ async def delete_documentation_document(
     doc_repo: DocumentationRepository, session_id: UUID, documentation_id: UUID
 ) -> int:
     """
-    Delete all chunks for ``documentation_id``, detaching related job ids first.
+    Delete one document and its chunks, preserving all other documents' job links.
 
     Returns the number of removed chunks. Raises ``DocumentationItemNotFoundError``
     when no chunks exist for the document.
     """
     doc_items_with_doc_id = await doc_repo.get_documentation_items_by_doc_id(session_id, documentation_id)
-    source = doc_items_with_doc_id[0].get("source") if doc_items_with_doc_id else ""
-    if not source:
-        logger.warning(
-            "Could not determine source for documentation with doc_id %s in session %s", documentation_id, session_id
-        )
-    else:
-        await doc_repo.remove_job_ids_from_documentation_items(session_id, source)
-
     if not doc_items_with_doc_id:
         raise DocumentationItemNotFoundError(documentation_id, session_id)
 

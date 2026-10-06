@@ -337,7 +337,7 @@ async def _validate_relevant_sequence(
     min_end_sequence_length: int,
     max_end_sequence_length: int,
     marker_word_cutoff_length: int,
-) -> Optional[Any]:
+) -> DocProcessingSequenceItem | None:
     start_sequence = getattr(seq, "start_sequence", None)
     end_sequence = getattr(seq, "end_sequence", None)
 
@@ -443,6 +443,7 @@ async def _validate_item_relevant_sequences(
     min_end_sequence_length: int,
     max_end_sequence_length: int,
     marker_word_cutoff_length: int,
+    validated_item_model: type[BaseModel] | None = None,
 ) -> Optional[Any]:
     relevant_sequences = getattr(item, "relevant_sequences", None)
 
@@ -462,7 +463,7 @@ async def _validate_item_relevant_sequences(
         )
         return None
 
-    valid_sequences: List[Any] = []
+    valid_sequences: List[DocProcessingSequenceItem] = []
     for seq in relevant_sequences:
         validated_seq = await _validate_relevant_sequence(
             seq,
@@ -487,6 +488,11 @@ async def _validate_item_relevant_sequences(
     if not valid_sequences:
         logger.info("%sNo valid sequences found for item: %s, discarding", logger_prefix, item)
         return None
+
+    if validated_item_model is not None:
+        return validated_item_model.model_validate(
+            {**item.model_dump(exclude={"relevant_sequences"}), "relevant_sequences": valid_sequences}
+        )
 
     item.relevant_sequences = valid_sequences
     return item
@@ -539,6 +545,7 @@ async def extract_single_chunk(
     max_end_sequence_length: Optional[int] = None,
     marker_word_cutoff_length: Optional[int] = None,
     extraction_chain: Any | None = None,
+    validated_item_model: type[BaseModel] | None = None,
 ) -> Tuple[List[Any], bool]:
     """
     Run LLM extraction on a pre-chunked documentation item.
@@ -566,11 +573,16 @@ async def extract_single_chunk(
         max_end_sequence_length: Maximum length for the end sequence
         marker_word_cutoff_length: Maximum length of individual words in sequence markers; longer words are truncated to this length to improve performance
         extraction_chain: Optional pre-built reusable extraction chain. When not provided, one is built from prompts.
+        validated_item_model: Build this model after sequence validation instead of mutating the raw item.
+            Requires enabled_sequence_checking.
 
     Returns:
         - Flat list of extracted items
         - Boolean indicating if any relevant data was found
     """
+    if validated_item_model is not None and not enabled_sequence_checking:
+        raise ValueError("validated_item_model requires enabled_sequence_checking")
+
     # Normalize text (input is already a single pre-chunked unit)
     text = normalize_to_text(schema)
     digester_config = config.digester
@@ -679,6 +691,7 @@ async def extract_single_chunk(
                         min_end_sequence_length,
                         max_end_sequence_length,
                         marker_word_cutoff_length,
+                        validated_item_model=validated_item_model,
                     )
                     for item in items
                 )

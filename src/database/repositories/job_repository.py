@@ -18,6 +18,13 @@ from src.core.errors import ExecutionOwnershipLostError
 from src.database.models import Job, JobArtifact, JobProgress, Session
 from src.shared.clock import utc_now
 from src.shared.enums import JobStage, JobStatus
+from src.shared.job_types import (
+    DOCUMENTATION_PRODUCER_JOB_TYPES,
+    JobType,
+    ProgressCounters,
+    job_type_policy,
+    parse_job_type,
+)
 from src.shared.json_values import to_jsonable
 from src.shared.normalize import normalized_input_fingerprint
 
@@ -77,7 +84,7 @@ class JobRepository:
     async def create_job(
         self,
         input_payload: Dict[str, Any],
-        job_type: str,
+        job_type: JobType,
         session_id: UUID,
         *,
         execution_payload: Dict[str, Any],
@@ -107,7 +114,7 @@ class JobRepository:
         )
         job = Job(
             session_id=session_id,
-            job_type=job_type,
+            job_type=parse_job_type(job_type).value,
             status=JobStatus.queued.value,
             input=json_input,
             normalized_input_hash=normalized_input_fingerprint(json_input),
@@ -147,9 +154,13 @@ class JobRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
+    async def get_job_input(self, job_id: UUID) -> Optional[Dict[str, Any]]:
+        """Load only a job's input payload, e.g. a reuse candidate found by :meth:`get_job_by_input`."""
+        return (await self.db.execute(select(Job.input).where(Job.job_id == job_id))).scalar_one_or_none()
+
     async def get_job_by_input(
         self,
-        job_type: str,
+        job_type: JobType,
         input_payload: Dict[str, Any],
         date_since: datetime,
         *,
@@ -162,27 +173,27 @@ class JobRepository:
         :param date_since: Earliest acceptable job creation time
         :param requesting_session_id: Session requesting reuse. Sessions reuse
             jobs from other sessions with the same API-key owner. Ownerless
-            sessions (``api_key_id`` NULL) form a single tenant and reuse each
-            other's jobs; when ``AUTH__API_KEY_REQUIRED`` is off every session
+            sessions (``owner_key_hash`` NULL) form a single tenant and reuse each
+            other's jobs; when ``AUTH__MODE=dev`` every new session
             is ownerless, so this yields deployment-wide reuse.
         :return: Job model or None
         """
         candidate_session = aliased(Session)
         requesting_session = aliased(Session)
         requesting_owner_id = (
-            select(requesting_session.api_key_id)
+            select(requesting_session.owner_key_hash)
             .where(requesting_session.session_id == requesting_session_id)
             .scalar_subquery()
         )
         tenant_scope = or_(
             Job.session_id == requesting_session_id,
-            candidate_session.api_key_id.is_not_distinct_from(requesting_owner_id),
+            candidate_session.owner_key_hash.is_not_distinct_from(requesting_owner_id),
         )
         query = (
             select(Job)
             .join(candidate_session, candidate_session.session_id == Job.session_id)
             .where(
-                Job.job_type == job_type,
+                Job.job_type == parse_job_type(job_type).value,
                 Job.normalized_input_hash == normalized_input_fingerprint(to_jsonable(input_payload)),
                 Job.created_at >= date_since,
                 Job.status == "finished",
@@ -501,7 +512,7 @@ class JobRepository:
             if progress.message:
                 progress_dict["message"] = progress.message
 
-            if job.job_type == "scrape.getRelevantDocumentation":
+            if job_type_policy(job.job_type).progress_counters is ProgressCounters.ITERATIONS:
                 if progress.total_processing is not None:
                     progress_dict["totalIterations"] = progress.total_processing
                 if progress.processing_completed is not None:
@@ -528,7 +539,7 @@ class JobRepository:
         *,
         worker_id: str,
         claim_timeout_seconds: float,
-        job_type: Optional[str] = None,
+        job_type: Optional[JobType] = None,
     ) -> Optional[ClaimedJob]:
         """Atomically claim one queued or abandoned job.
 
@@ -545,12 +556,13 @@ class JobRepository:
             ),
         )
         documentation_job = aliased(Job)
+        documentation_producers = [producer.value for producer in DOCUMENTATION_PRODUCER_JOB_TYPES]
         pending_documentation_exists = (
             select(documentation_job.job_id)
             .where(
                 documentation_job.session_id == Job.session_id,
                 documentation_job.job_id != Job.job_id,
-                documentation_job.job_type.in_(("scrape.getRelevantDocumentation", "documentation.processUpload")),
+                documentation_job.job_type.in_(documentation_producers),
                 documentation_job.status.not_in((JobStatus.finished.value, JobStatus.failed.value)),
             )
             .exists()
@@ -574,7 +586,7 @@ class JobRepository:
             .limit(1)
         )
         if job_type:
-            query = query.where(Job.job_type == job_type)
+            query = query.where(Job.job_type == parse_job_type(job_type).value)
 
         job = (await self.db.execute(query)).scalar_one_or_none()
         if job is None or job.execution_payload is None:
@@ -587,9 +599,7 @@ class JobRepository:
                     .where(
                         documentation_job.session_id == job.session_id,
                         documentation_job.job_id != job.job_id,
-                        documentation_job.job_type.in_(
-                            ("scrape.getRelevantDocumentation", "documentation.processUpload")
-                        ),
+                        documentation_job.job_type.in_(documentation_producers),
                         documentation_job.status.not_in((JobStatus.finished.value, JobStatus.failed.value)),
                     )
                     .limit(1)

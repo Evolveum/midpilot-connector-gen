@@ -16,13 +16,12 @@ from src.modules.digester.selection.doc_chunk import (
     build_chunk_references_from_doc_items,
     build_chunk_references_from_mappings,
     build_relevant_chunks_from_doc_items,
-    chunk_ids_from_relevant_chunks,
+    chunk_texts_and_ids,
     collect_relevant_chunks,
     exclude_doc_items_by_chunk_id,
     resolve_relevant_chunk_ref,
-    select_doc_chunks,
 )
-from src.modules.digester.selection.documentation_selector import DocumentationSelector
+from src.modules.digester.selection.documentation_selector import DocumentationSelectionPlan, DocumentationSelector
 from src.modules.digester.selection.input_plans import (
     auth_input,
     build_object_class_extraction_input,
@@ -38,6 +37,7 @@ __all__ = [
     "ENDPOINT_CRITERIA",
     "EXTENDED_AUTH_CRITERIA",
     "METADATA_CRITERIA",
+    "DocumentationSelectionPlan",
     "DocumentationSelector",
     "auth_input",
     "build_chunk_id_to_doc_id",
@@ -45,11 +45,10 @@ __all__ = [
     "build_chunk_references_from_mappings",
     "build_object_class_extraction_input",
     "build_relevant_chunks_from_doc_items",
-    "chunk_ids_from_relevant_chunks",
+    "chunk_texts_and_ids",
     "collect_relevant_chunks",
     "connectivity_endpoint_input",
     "exclude_doc_items_by_chunk_id",
     "metadata_input",
     "resolve_relevant_chunk_ref",
-    "select_doc_chunks",
 ]

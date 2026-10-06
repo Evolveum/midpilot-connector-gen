@@ -44,8 +44,8 @@ from src.modules.codegen.schema import (
     EndpointsPayload,
     ScriptTagBlock,
 )
-from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, resolve_artifact_docs_paths
-from src.modules.codegen.selection.docs_loader import load_required_adoc_text
+from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, resolve_artifact_docs_sections
+from src.modules.codegen.selection.docs_loader import load_required_adoc_text, select_adoc_sections
 from src.modules.codegen.selection.relevant_chunks import collect_connector_relevant_chunks
 from src.modules.codegen.utils.code_output import build_connector_code_output
 from src.modules.codegen.utils.connector_code_validation import validate_connector_code
@@ -108,7 +108,8 @@ async def fix_connector_code(
 
     base_api_url, database_name = await get_session_connection_target(session_id, protocol=protocol)
     connection_target = base_api_url or database_name
-    dsl_documentation = _load_dsl_documentation(artifacts, protocol)
+    # Reading and slicing the bundled references is synchronous file and regex work.
+    dsl_documentation = await asyncio.to_thread(_load_dsl_documentation, artifacts, protocol)
     extracted_attributes = render_prompt_records(build_complete_attribute_mapping_records(attributes))
     extracted_endpoints = render_prompt_records(endpoints_to_records(endpoints)) if endpoints is not None else ""
     sql_context = build_sql_context_prompt_vars(attributes) if protocol is ApiType.SQL else None
@@ -384,8 +385,9 @@ def _resolve_operation_key(proposed: str, by_operation_key: Mapping[str, Connect
 
 def _load_dsl_documentation(artifacts: Sequence[ConnectorArtifact], protocol: ApiType) -> str:
     sections: List[str] = []
-    for docs_path in resolve_artifact_docs_paths(artifacts, protocol):
-        sections.append(f"== {docs_path}\n\n{load_required_adoc_text(_DOCUMENTATIONS_PACKAGE, docs_path)}")
+    for docs_path, headings in resolve_artifact_docs_sections(artifacts, protocol).items():
+        text = select_adoc_sections(load_required_adoc_text(_DOCUMENTATIONS_PACKAGE, docs_path), headings)
+        sections.append(f"== {docs_path}\n\n{text}")
     return "\n\n".join(sections)
 
 

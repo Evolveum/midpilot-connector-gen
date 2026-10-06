@@ -169,13 +169,58 @@ def test_build_attribute_mapping_records_uses_prompt_shape_and_sorting():
             "openApiFormat": "",
             "description": "",
             "mandatory": False,
-            "updateable": False,
-            "creatable": False,
+            "updateable": True,
+            "creatable": True,
             "readable": True,
             "multiValued": False,
             "returnedByDefault": True,
         },
     ]
+
+
+def test_mapping_records_apply_documented_defaults_to_flags_the_digester_left_null():
+    payload = AttributeResponse.model_validate(
+        {
+            "attributes": {
+                "login": {
+                    "type": "string",
+                    "format": None,
+                    "description": None,
+                    "mandatory": True,
+                    "updatable": None,
+                    "creatable": None,
+                    "readable": None,
+                    "multivalue": None,
+                    "returnedByDefault": None,
+                },
+                "id": {
+                    "type": "integer",
+                    "creatable": False,
+                    "updatable": False,
+                    "readable": False,
+                    "multivalue": True,
+                    "returnedByDefault": False,
+                },
+            }
+        }
+    )
+
+    records = {record["name"]: record for record in build_complete_attribute_mapping_records(payload)}
+
+    assert records["login"]["mandatory"] is True
+    assert records["login"]["multiValued"] is False
+    assert records["login"]["creatable"] is True
+    assert records["login"]["updateable"] is True
+    assert records["login"]["readable"] is True
+    assert records["login"]["returnedByDefault"] is True
+    assert records["login"]["openApiFormat"] == ""
+    assert records["login"]["description"] == ""
+    assert records["id"]["mandatory"] is False
+    assert records["id"]["creatable"] is False
+    assert records["id"]["updateable"] is False
+    assert records["id"]["readable"] is False
+    assert records["id"]["multiValued"] is True
+    assert records["id"]["returnedByDefault"] is False
 
 
 def test_build_attribute_mapping_records_preserves_scim_mapping_fields_when_present():

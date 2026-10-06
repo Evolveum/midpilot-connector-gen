@@ -4,11 +4,10 @@
 
 """Session lifecycle endpoints (create, inspect, delete)."""
 
-import logging
 from typing import Any, Dict
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, Path, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.context import AuthContext
@@ -17,10 +16,8 @@ from src.core.db import DbSession
 from src.database.repositories.job_repository import JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.session.access import ensure_session_exists
-from src.session.errors import SessionAlreadyExistsError, SessionNotFoundError
+from src.session.errors import SessionAlreadyExistsError, SessionCreationFailedError, SessionNotFoundError
 from src.session.schema import SessionCreateResponse
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -99,10 +96,10 @@ async def create_session(
     """
     repo = SessionRepository(db)
     try:
-        session_id = await repo.create_session(api_key_id=auth.api_key_id)
-    except Exception as e:
-        logger.error("Failed to create session: %s", e)
-        raise HTTPException(status_code=500, detail="Unable to create session")
+        session_id = await repo.create_session(owner_key_hash=auth.owner_key_hash)
+    except Exception as exc:
+        # The centralized handler logs the chained cause with its traceback.
+        raise SessionCreationFailedError() from exc
     return SessionCreateResponse(
         sessionId=session_id,
         message="Session created successfully. Use this session_id in subsequent requests.",
@@ -127,17 +124,13 @@ async def create_session_with_id(
     """
     repo = SessionRepository(db)
     if await repo.session_exists(session_id):
-        logger.error("Cannot create session - session already exists: %s", session_id)
         raise SessionAlreadyExistsError(session_id)
 
     try:
-        created_id = await repo.create_session_with_id(session_id, api_key_id=auth.api_key_id)
-    except ValueError as e:
-        logger.error("Failed to create session with ID %s: %s", session_id, e)
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
-    except Exception as e:
-        logger.error("Failed to create session with ID %s: %s", session_id, e)
-        raise HTTPException(status_code=500, detail="Unable to create session")
+        created_id = await repo.create_session_with_id(session_id, owner_key_hash=auth.owner_key_hash)
+    except Exception as exc:
+        # The centralized handler logs the chained cause with its traceback.
+        raise SessionCreationFailedError() from exc
 
     return SessionCreateResponse(
         sessionId=created_id,

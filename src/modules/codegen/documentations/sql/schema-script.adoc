@@ -1,0 +1,171 @@
+= Schema Script Basics (SQL)
+
+The *schema script* of an object class defines what the connector sees in the database: the
+object class name, the table it maps to, its attributes (columns and their types), and which
+ConnId attribute each of them maps to. The wizard generates a first version of the script for
+you; this screen shows it so you can review and adjust it before the connector is built.
+
+A schema script has two front-ends — Groovy and declarative YAML — that drive the *same*
+builders, so both forms can be mixed per connector. Use Groovy for anything requiring scripted
+behavior (custom `where` predicates, attribute resolvers); YAML covers the declarative
+table/attribute mapping.
+
+== What a schema script must contain
+
+Every object class needs at least:
+
+* the table it is mapped to and its attributes (the columns, with types),
+* the mapping of the attributes to ConnId attribute names and types,
+* and the mapping of the two *built-in* ConnId attributes:
+
+`__UID__` (required)::
+  The stable unique identifier of the object — normally the table's primary key (a natural or
+  composite key works too). Object classes without a `__UID__` mapping cannot participate in
+  writes at all, and searches, updates, and deletes all address objects by it.
+
+`__NAME__` (required, derivable)::
+  The human-readable name of the object (a display name, a username, an email column). When
+  `__NAME__` is not explicitly mapped, the framework *emulates* it from the `__UID__` mapping —
+  the same underlying columns serve as both.
+
+In Groovy the built-ins are bound with `connIdAttribute` (which accepts only the built-in
+names):
+
+[source,groovy]
+----
+objectClass("User") {
+    sql {
+        table "app_user"
+        schema "hr"
+    }
+    attribute("id") {
+        connId {
+            name UID                 // binds __UID__ to the "id" column
+        }
+    }
+    attribute("displayName") {
+        connId {
+            name NAME               // optional — emulated from UID when omitted
+        }
+    }
+}
+----
+
+The same in declarative YAML — the `connId` alias map binds the built-ins, and the
+per-attribute `connId.name` key maps them the same way:
+
+[source,yaml]
+----
+objectClasses:
+  User:
+    sql:
+      table: app_user
+      schema: hr
+    connId:
+      UID: id
+      NAME: displayName
+    attributes:
+      id: {}
+      displayName: {}
+----
+
+== Groovy form
+
+A Groovy schema script declares one object class per `objectClass` block — the `sql` block maps
+the class to a table, and the attribute blocks map columns:
+
+[source,groovy]
+----
+objectClass("Project") {
+    description "A project in the application database"
+    sql {
+        table "app_project"
+        schema "app"
+    }
+
+    attribute("id") {
+        connId { name UID }
+    }
+    attribute("code") {
+        connId { name NAME }
+    }
+    attribute("ownerEmail") {
+        json {
+            path { type JSON_PATH; value "$.owner_email" }
+        }
+        openApiFormat "email"
+    }
+    attribute("createdAt") {
+        openApiFormat "date-time"
+    }
+
+    // only these columns become attributes — exclude the rest of the table
+    // onlyExplicitlyListed(true)
+}
+----
+
+The essentials:
+
+`objectClass("...")`::
+  declares (or continues) an object class; multiple scripts may contribute to the same class.
+
+`sql { table "..."; schema "..." }` (or `table("...")` / `schema("...")`)::
+  the table mapping — the default table name is the object class name.
+
+`attribute("...") { ... }`::
+  one attribute (a column by default); inside it you set the ConnId name and type
+  (`connId { name ...; type ... }`), the JSON wire mapping (`json { ... }`), the OpenAPI format
+  (`openApiFormat "..."`), and the flags (`required`, `creatable`, `readable`, …).
+
+`connIdAttribute(builtIn, attribute)`::
+  binds a built-in ConnId name (`UID`, `NAME`) to an attribute of the class.
+
+`reference("...") { objectClass("...") }`::
+  a reference (linking) attribute pointing at another object class.
+
+For the complete DSL — joined attributes (`join` blocks), reference roles, the full attribute
+key list — see xref:native-schema.adoc[SQL schema customization].
+
+== YAML form
+
+The declarative YAML form describes the same builders literally — no closures, no runtime
+context. A schema document uses the `objectClasses` root (one entry per class; documents naming
+the same class merge):
+
+[source,yaml]
+----
+objectClasses:
+  User:
+    description: "A user account"
+    sql:
+      table: app_user
+      schema: hr
+    connId:
+      UID: id
+    attributes:
+      id: {}
+      displayName:
+        connId:
+          name: NAME
+      email:
+        openApiFormat: email
+      lastLoginAt:
+        openApiFormat: date-time
+----
+
+The attribute keys you will meet: `description`, `required`, `multiValued`, `creatable`,
+`updateable`, `readable`, `returnedByDefault`, `emulated`, `complexType`; the
+`connId: { name, type }` mapping (including the `__UID__` / `__NAME__` built-ins); the inherited
+`json: { name, type, openApiFormat, path }` block; and the `sql` block of the object class. A
+bare `attr: {}` declares the attribute with defaults. See
+xref:declarative-yaml.adoc[declarative YAML] for the full reference.
+
+== References
+
+* *ConnId attribute mapping and value types* — the full catalog of the built-in (special) ConnId attributes,
+  their required value types, and how to handle them (chapter shown together with this page).
+* *JSON Types and Formats* — the base JSON types and the OpenAPI formats an attribute can use.
+* xref:native-schema.adoc[SQL schema customization] — the complete Groovy DSL reference.
+* xref:declarative-yaml.adoc[Declarative YAML] — the complete YAML reference.
+* xref:schema-discovery.adoc[SQL schema discovery] — how tables, columns, and the UID are
+  detected from the database.

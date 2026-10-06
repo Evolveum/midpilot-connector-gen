@@ -9,6 +9,18 @@ from uuid import UUID
 from src.core.errors import AppError
 
 
+class DocumentationUploadSupersededError(AppError):
+    """A completed upload no longer owns the document's publication pointer."""
+
+    status_code = 409
+    code = "documentation_upload_superseded"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Upload was superseded by a newer upload or its session was removed; no document was replaced."
+        )
+
+
 class NoDocumentationStoredError(AppError):
     """Raised when an operation needs documentation but none has been stored yet.
 
@@ -24,3 +36,18 @@ class NoDocumentationStoredError(AppError):
         super().__init__(
             f"Session {session_id} has no stored documentation. Please upload documentation file or run scraper."
         )
+
+
+class DocumentationSessionNotFoundError(AppError):
+    """Raised when documentation is requested for a session that does not exist.
+
+    The documents layer cannot import the session domain, so it owns this error.
+    Code and message deliberately match ``src.session.errors.SessionNotFoundError``:
+    a caller sees the same 404 whichever layer noticed the missing session.
+    """
+
+    status_code = 404
+    code = "session_not_found"
+
+    def __init__(self, session_id: UUID):
+        super().__init__(f"Session {session_id} not found")

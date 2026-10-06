@@ -98,4 +98,5 @@ async def test_generate_search_scim_allows_missing_endpoints():
         update_args = mock_repo.update_session.call_args[0]
         assert update_args[0] == session_id
         inputs = update_args[1]
-        assert inputs["userSearchAllInput"] == {"objectClass": "user", "attributes": attrs_payload, "intent": "all"}
+        # The attributes travel in the job input only; the session pointer keeps request metadata.
+        assert inputs["userSearchAllInput"] == {"objectClass": "user", "intent": "all"}

@@ -18,6 +18,7 @@ from src.modules.digester import orchestration, results
 from src.modules.digester.schemas import ObjectClassesResponse
 from src.session.access import ensure_session_exists, resolve_session_job_id
 from src.shared.enums import ApiType, GenerationIntent
+from src.shared.session_keys import OBJECT_CLASSES
 
 router = APIRouter(tags=["Digester: Object Classes"])
 
@@ -88,7 +89,7 @@ async def get_object_classes_status(
         repo,
         session_id,
         jobId,
-        session_key="objectClassesJobId",
+        session_key=OBJECT_CLASSES.job_id,
         job_label="object classes",
     )
 

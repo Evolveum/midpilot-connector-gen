@@ -43,23 +43,24 @@ from src.modules.digester.schemas import (
     ObjectClassesResponse,
 )
 from src.shared.enums import JobStatus
+from src.shared.session_keys import (
+    CONNECTIVITY_ENDPOINT,
+    METADATA,
+    OBJECT_CLASSES,
+    RELATIONS,
+    attributes_keys,
+    endpoints_keys,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# Result keys
-OBJECT_CLASSES_RESULT_KEY = "objectClassesOutput"
-CONNECTIVITY_ENDPOINT_RESULT_KEY = "connectivityEndpointOutput"
-RELATIONS_RESULT_KEY = "relationsOutput"
-METADATA_RESULT_KEY = "metadataOutput"
-
-
 def attributes_result_key(object_class: str) -> str:
-    return f"{normalize_object_class_name(object_class)}AttributesOutput"
+    return attributes_keys(normalize_object_class_name(object_class)).output
 
 
 def endpoints_result_key(object_class: str) -> str:
-    return f"{normalize_object_class_name(object_class)}EndpointsOutput"
+    return endpoints_keys(normalize_object_class_name(object_class)).output
 
 
 # Internal helpers
@@ -143,7 +144,7 @@ async def refresh_object_classes_status(
         response,
         repo,
         session_id,
-        OBJECT_CLASSES_RESULT_KEY,
+        OBJECT_CLASSES.output,
         ObjectClassesResponse,
         hydrate_payload,
     )
@@ -200,13 +201,13 @@ async def refresh_connectivity_endpoint_status(
     session_id: UUID,
 ) -> JobStatusMultiDocResponse:
     async def hydrate_payload(payload: Any) -> Any:
-        return await hydrate_endpoints_with_relevance(db, session_id, CONNECTIVITY_ENDPOINT_RESULT_KEY, payload)
+        return await hydrate_endpoints_with_relevance(db, session_id, CONNECTIVITY_ENDPOINT.output, payload)
 
     return await _refresh_finished_status_result(
         response,
         repo,
         session_id,
-        CONNECTIVITY_ENDPOINT_RESULT_KEY,
+        CONNECTIVITY_ENDPOINT.output,
         ConnectivityEndpointResponse,
         hydrate_payload,
     )
@@ -222,9 +223,7 @@ async def store_object_classes(
     """Replace all object classes in the session, persisting relevance separately."""
     relevance_rows = extract_object_class_relevance_rows(object_classes_data)
     stripped_payload = strip_object_class_relevance(object_classes_data)
-    await _store_result_with_relevance(
-        db, repo, session_id, OBJECT_CLASSES_RESULT_KEY, stripped_payload, relevance_rows
-    )
+    await _store_result_with_relevance(db, repo, session_id, OBJECT_CLASSES.output, stripped_payload, relevance_rows)
 
 
 async def upsert_object_class_in_session(
@@ -235,13 +234,11 @@ async def upsert_object_class_in_session(
     object_class_data: Dict[str, Any],
 ) -> bool:
     """Insert or update a single object class. Returns True when an existing class was updated."""
-    object_classes_output = await repo.get_session_data(session_id, OBJECT_CLASSES_RESULT_KEY)
+    object_classes_output = await repo.get_session_data(session_id, OBJECT_CLASSES.output)
     object_classes_output, updated = upsert_object_class(object_classes_output, object_class, object_class_data)
     relevance_rows = extract_object_class_relevance_rows(object_classes_output)
     stripped_payload = strip_object_class_relevance(object_classes_output)
-    await _store_result_with_relevance(
-        db, repo, session_id, OBJECT_CLASSES_RESULT_KEY, stripped_payload, relevance_rows
-    )
+    await _store_result_with_relevance(db, repo, session_id, OBJECT_CLASSES.output, stripped_payload, relevance_rows)
     return updated
 
 
@@ -293,9 +290,9 @@ async def store_connectivity_endpoint_override(
     payload: Dict[str, Any],
 ) -> None:
     stripped_payload = strip_endpoints_relevance(payload)
-    relevance_rows = extract_endpoint_relevance_rows(payload, CONNECTIVITY_ENDPOINT_RESULT_KEY)
+    relevance_rows = extract_endpoint_relevance_rows(payload, CONNECTIVITY_ENDPOINT.output)
     await _store_result_with_relevance(
-        db, repo, session_id, CONNECTIVITY_ENDPOINT_RESULT_KEY, stripped_payload, relevance_rows
+        db, repo, session_id, CONNECTIVITY_ENDPOINT.output, stripped_payload, relevance_rows
     )
 
 
@@ -304,7 +301,7 @@ async def store_relations_override(
     session_id: UUID,
     payload: Dict[str, Any],
 ) -> None:
-    await repo.update_session(session_id, {RELATIONS_RESULT_KEY: payload})
+    await repo.update_session(session_id, {RELATIONS.output: payload})
 
 
 async def store_metadata_output(
@@ -312,7 +309,7 @@ async def store_metadata_output(
     session_id: UUID,
     payload: Dict[str, Any],
 ) -> None:
-    await repo.update_session(session_id, {METADATA_RESULT_KEY: payload})
+    await repo.update_session(session_id, {METADATA.output: payload})
 
 
 def _select_attributes_payload(hydrated_attributes: Dict[str, Any]) -> Dict[str, Any]:
@@ -363,12 +360,12 @@ async def build_object_class_detail(
         )
         result["relevantDocumentations"] = result.get("relevantDocumentations", [])
 
-    attributes_output = await repo.get_session_data(session_id, f"{normalized_name}AttributesOutput")
+    attributes_output = await repo.get_session_data(session_id, attributes_keys(normalized_name).output)
     if attributes_output and isinstance(attributes_output, dict):
         hydrated_attributes = await hydrate_attributes_with_relevance(
             db,
             session_id,
-            f"{normalized_name}AttributesOutput",
+            attributes_keys(normalized_name).output,
             attributes_output,
         )
         result["attributes"] = _select_attributes_payload(hydrated_attributes)
@@ -379,12 +376,12 @@ async def build_object_class_detail(
         if isinstance(sql_context, dict):
             result["sqlContext"] = sql_context
 
-    endpoints_output = await repo.get_session_data(session_id, f"{normalized_name}EndpointsOutput")
+    endpoints_output = await repo.get_session_data(session_id, endpoints_keys(normalized_name).output)
     if endpoints_output and isinstance(endpoints_output, dict):
         hydrated_endpoints = await hydrate_endpoints_with_relevance(
             db,
             session_id,
-            f"{normalized_name}EndpointsOutput",
+            endpoints_keys(normalized_name).output,
             endpoints_output,
         )
         if isinstance(hydrated_endpoints.get("endpoints"), list):

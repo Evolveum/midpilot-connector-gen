@@ -53,6 +53,7 @@ from src.modules.digester.schemas import (
     AttributeTypeFormatBuildResponse,
     DiscoveryAttribute,
     DocSequenceItem,
+    ValidatedAttributeCandidate,
 )
 from src.shared.enums import JobStage
 
@@ -517,11 +518,11 @@ async def extract_attributes(
         message="Processing chunks and try to extract relevant information",
     )
 
-    all_discovery_results: List[DiscoveryAttribute] = []
+    all_discovery_results: List[ValidatedAttributeCandidate] = []
 
     async def _extract_for_chunk_id(
         chunk_text: str, job_id_ext: UUID, chunk_id: UUID
-    ) -> Tuple[List[DiscoveryAttribute], bool]:
+    ) -> Tuple[List[ValidatedAttributeCandidate], bool]:
         chunk_metadata = chunk_metadata_map.get(str(chunk_id)) if chunk_metadata_map else None
 
         def parse_fn(result: AttributeDiscoveryResponse) -> List[DiscoveryAttribute]:
@@ -538,6 +539,7 @@ async def extract_attributes(
             chunk_id=chunk_id,
             chunk_metadata=chunk_metadata,
             enabled_sequence_checking=True,
+            validated_item_model=ValidatedAttributeCandidate,
             enable_marker_blending=True,
             extra_llm_attrs={"object_class": object_class},
             min_start_sequence_length=config.digester.min_start_sequence_len_attributes,
@@ -552,7 +554,7 @@ async def extract_attributes(
             len(per_chunk_results),
         )
 
-        return per_chunk_results, relevant_data
+        return [ValidatedAttributeCandidate.model_validate(item) for item in per_chunk_results], relevant_data
 
     logger.info(
         "[Digester:Attributes] Phase=attribute_discovery object_class=%s chunks=%d",

@@ -25,11 +25,8 @@ link:../sessions-and-jobs.adoc[job pattern] (`POST` enqueue, `GET` poll,
 
 | `/{sessionId}/classes/{objectClass}/native-schema`
 | The native schema definition for one object class, including its ConnId
-  attribute mapping (`UID` / `NAME`). Both live in the same Groovy script.
-
-| `/{sessionId}/classes/{objectClass}/connid`
-| *Deprecated.* The ConnId schema mapping as a separate script. Superseded by
-  `native-schema`; see <<connid-deprecation>>.
+  attribute mapping (`UID` / `NAME`). Both live in the same artifact
+  (declarative YAML or Groovy).
 
 | `/{sessionId}/classes/{objectClass}/search/{intent}`
 | Search operation; `intent` is `all` (list all), `filter` (query by
@@ -74,14 +71,31 @@ registry and manual update instructions.
    base API URL, SQL gets `databaseName` and no URL at all.
 3. *Generation and validation* — the LLM output goes through post-processing
    and format-aware validation (`utils/connector_code_validation.py`, which
-   detects YAML vs. Groovy and uses strict nested YAML models plus the existing
-   Groovy parser for documented script fields; `utils/postprocess.py`). Worker
+   detects YAML vs. Groovy and checks known YAML fields with strict types plus the existing
+   Groovy parser for documented script fields; `utils/postprocess.py`). Unknown nested
+   YAML options are preserved and logged as `[Codegen:Validation]` warnings, not job
+   errors: the connector runtime may support options missing from the local model.
+   Their values and scripts are not validated locally. Unknown root keys, malformed
+   structures, duplicate keys and invalid known scripts still block acceptance. Worker
    validation runs in a thread without executing the embedded code. New generation
-   sends an empty `<result>` until the first valid artifact is accepted; subsequent
-   chunks receive that artifact. Invalid responses leave the previous result intact.
+   sends an empty `<result>` until the first candidate is produced; each following
+   call receives the latest candidate. A rejected candidate is not discarded: it is
+   forwarded as `<result>` together with all its local validation errors
+   (`prompts/validation_error_prompts.py`), and the next chunk is asked to fix them while
+   processing its documentation. Only valid candidates are accepted; an empty response
+   keeps the previous candidate and its errors. Warnings about unknown options are only
+   logged and never reach the prompt. If the candidate is still invalid after the last
+   chunk, the last chunk is re-sent once with the errors; the retry does not count as
+   another processed document. A clean generation adds no LLM call. If no valid candidate remains, the last
+   accepted artifact is kept, and with none the existing empty-generation or
+   original-`currentScript` outcome applies. Every rejected candidate is recorded as a job
+   error. Single-pass native-schema generation and the object-class fix do not use this
+   mechanism.
    A repair starts with `currentScript` and preserves its format according to the
-   repair instructions (`repair.py`, `prompts/repair_prompts.py`). No extra LLM call
-   is introduced by validation.
+   repair instructions (`repair.py`, `prompts/repair_prompts.py`). The format-specific
+   cleanup then validates its own changed output and falls back to the accepted artifact
+   if cleanup fails. Validation checks local structure and syntax only; it does not
+   execute scripts or prove connector runtime behavior.
 4. The final artifact is persisted in the session under the operation's result
    key as `{"format": "YAML", "code": "..."}` or
    `{"format": "GROOVY", "code": "..."}`. Format detection uses the final accepted
@@ -135,8 +149,8 @@ unmet requirements remain intact. Missing model output still follows the failure
 contract above; it is never converted into a successful defaults result. Stored
 artifacts and manual overrides are not rewritten.
 
-This contract covers authorization, native schema, deprecated ConnID, every search
-intent, create, update, delete, and relations. Single-operation repairs report the
+This contract covers authorization, native schema, every search intent, create,
+update, delete, and relations. Single-operation repairs report the
 format of the returned code, including the original artifact if no repair was accepted.
 
 Object-class fix results retain their existing fields. Each item in `result.scripts`
@@ -163,10 +177,9 @@ code. Override acknowledgements and generation enqueue responses are unchanged.
 | Endpoint | `rest` | `scim` | `sql`
 
 | `native-schema` | yes | yes | yes (SQL context and SQL reference)
-| `connid` (deprecated) | yes | yes | yes (protocol-independent)
 | `search/{intent}` | yes | yes | yes
 | `create` / `update` / `delete` | yes | yes | yes
-| `relations/{relationName}` | YAML or Groovy | YAML or Groovy, respecting automatic SCIM mappings
+| `relations/{relationName}` | Groovy (YAML `relationships` is rejected by the connector) | Groovy, respecting automatic SCIM mappings
 | discovery only; scripted relationship overrides are unsupported
 | `authorization` | yes | yes | *not supported*
 |===
@@ -177,28 +190,6 @@ the only preferred authorization is the custom `other` method, which returns a
 static scaffold without calling the LLM. Write the database authentication
 block by hand for now.
 
-[[connid-deprecation]]
-== The deprecated `connid` endpoint
-
-The ConnId attribute mapping and the native schema are merged into one object
-class by the ConnId connector, so the same native attribute name had to be
-spelled identically in two independently generated scripts. `native-schema` now
-emits both in one script from one LLM call, and `connid` is deprecated.
-
-The endpoint still generates, polls and accepts overrides exactly as before, and
-its prompt is frozen. Two things changed around it:
-
-* Its output is no longer loaded by the object-class fix. It is never repaired,
-  and a `scripts` override naming that operation in a `POST .../fix` body is
-  rejected as an unknown operation.
-* Do not use it together with `native-schema`. Two scripts declaring the mapping
-  for the same object class are merged by the connector; duplicate declarations
-  are at best redundant and at worst rejected.
-
-The reference document both paths share moved to
-`src/modules/codegen/documentations/connid-attributes.adoc`, since it is now read
-for every protocol rather than only REST.
-
 == Fixing a deployed connector
 
 `POST /{sessionId}/classes/{objectClass}/fix` acts on one object class, for the
@@ -208,8 +199,7 @@ required path parameter and must identify a class in `objectClassesOutput`.
 
 1. *Collect* - generated Create, Search All/Filter/ID, Update, Delete and
    NativeSchema scripts are loaded only for the selected object class.
-   Authorization, relation scripts, scripts of all other object classes, and any
-   `{objectClass}ConnidOutput` left by the deprecated `connid` endpoint are
+   Authorization, relation scripts, and scripts of all other object classes are
    intentionally outside the fix scope. A class removed from
    `objectClassesOutput` cannot be fixed through this endpoint.
 2. *Fix* - all scripts plus the midPoint errors go to the LLM in one call,
@@ -250,10 +240,10 @@ Complete the digester sequence for the class first — `endpoints` →
 `authorization` before operations that need authenticated calls.
 
 NOTE: Protocol-specific generation endpoints accept an `apiType` query
-parameter that overrides the detected protocol for that request. The deprecated
-`connid` endpoint and relation generation are protocol-independent and do not
-accept the override. Because the ConnId mapping is now part of `native-schema`,
-that endpoint's existing `apiType` override governs it too.
+parameter that overrides the detected protocol for that request. Relation
+generation is protocol-independent and does not accept the override. Because the
+ConnId mapping is part of `native-schema`, that endpoint's `apiType` override
+governs it too.
 
 NOTE: Generated code is stored per operation and can be regenerated or
 manually replaced (`PUT`) independently — you do not need to redo the whole

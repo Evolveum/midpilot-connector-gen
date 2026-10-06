@@ -5,129 +5,6 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/api/v1/apiKeys": {
-      "get": {
-        "tags": [
-          "API Keys"
-        ],
-        "summary": "List API keys",
-        "description": "List all API key records (active and revoked), without key values.",
-        "operationId": "list_api_keys_api_v1_apiKeys_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiKeyListResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "API Keys"
-        ],
-        "summary": "Issue a new API key",
-        "description": "Generate and persist a new API key. The full key value is returned only in\nthis response and cannot be retrieved again - only its hash is stored.",
-        "operationId": "create_api_key_api_v1_apiKeys_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApiKeyCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiKeyCreateResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ]
-      }
-    },
-    "/api/v1/apiKeys/{api_key_id}": {
-      "delete": {
-        "tags": [
-          "API Keys"
-        ],
-        "summary": "Revoke an API key",
-        "description": "Revoke an API key (soft delete). The key stops authenticating immediately;\nthe record is kept for auditing. Sessions owned by the key become\naccessible only with the master key. Idempotent for already revoked keys.",
-        "operationId": "revoke_api_key_api_v1_apiKeys__api_key_id__delete",
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "api_key_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "API key ID",
-              "title": "Api Key Id"
-            },
-            "description": "API key ID"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiKeyRevokeResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/session/{session_id}": {
       "get": {
         "tags": [
@@ -820,7 +697,7 @@
           "Session"
         ],
         "summary": "Upload documentation to session by doc_id",
-        "description": "Process uploaded documentation file using LLM.\nCreates a job and queues it for processing - returns immediately with job_id.\nEach chunk becomes a separate DocumentationItem with source='upload' and the provided documentation_id as doc_id.\nApplication name and version are loaded from session's discoveryInput or scrapeInput.",
+        "description": "Process uploaded documentation file using LLM.\nCreates a job and queues it for processing - returns immediately with job_id.\nEach chunk becomes a separate DocumentationItem with source='upload' and the provided documentation_id as doc_id.\nReusing an ID replaces that document only after all new chunks are processed successfully.\nFailed processing preserves the existing document. Only the latest queued upload for this ID may publish.\nApplication name and version are loaded from session's discoveryInput or scrapeInput.",
         "operationId": "upload_documentation_by_id_api_v1_session__session_id__documentation__documentation_id__post",
         "security": [
           {
@@ -1932,7 +1809,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobStatusMultiDocResponse"
+                  "$ref": "#/components/schemas/AttributeJobStatusResponse"
                 }
               }
             }
@@ -3150,8 +3027,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Authorization code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -3407,250 +3284,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Native schema code as JSON"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/codegen/{session_id}/classes/{object_class}/connid": {
-      "post": {
-        "tags": [
-          "Codegen: ConnID"
-        ],
-        "summary": "Generate ConnID for object class (deprecated)",
-        "description": "Generate ConnID Groovy code from attributes.\nLoads attributes from session automatically.\n\nDeprecated: use `POST /{session_id}/classes/{object_class}/native-schema`, which now\nemits the ConnID mapping into the native schema script.\n\nDo not use both. Two scripts declaring the mapping for the same object class are\nmerged by the connector, and duplicate declarations are at best redundant and at\nworst rejected. The result of this endpoint is also outside the object-class fix\nscope: it is never repaired, and a `scripts` override naming this operation in a\n`POST .../fix` body is rejected as an unknown operation.",
-        "operationId": "generate_connid_api_v1_codegen__session_id__classes__object_class__connid_post",
-        "deprecated": true,
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Session ID",
-              "title": "Session Id"
-            },
-            "description": "Session ID"
-          },
-          {
-            "name": "object_class",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "Object class name",
-              "title": "Object Class"
-            },
-            "description": "Object class name"
-          },
-          {
-            "name": "skipCache",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "description": "Whether to skip cached data for generation",
-              "default": false,
-              "title": "Skipcache"
-            },
-            "description": "Whether to skip cached data for generation"
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/CodegenRepairContext"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Codegen Input"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobCreateResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Codegen: ConnID"
-        ],
-        "summary": "Get ConnID generation status (deprecated)",
-        "description": "Get the status of ConnID generation job.\n\nDeprecated together with the generation endpoint.",
-        "operationId": "get_connid_status_api_v1_codegen__session_id__classes__object_class__connid_get",
-        "deprecated": true,
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Session ID",
-              "title": "Session Id"
-            },
-            "description": "Session ID"
-          },
-          {
-            "name": "object_class",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "Object class name",
-              "title": "Object Class"
-            },
-            "description": "Object class name"
-          },
-          {
-            "name": "jobId",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Job ID (optional)",
-              "title": "Jobid"
-            },
-            "description": "Job ID (optional)"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobStatusStageResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Codegen: ConnID"
-        ],
-        "summary": "Override ConnID (deprecated)",
-        "description": "Manually override the ConnID for an object class.\n\nDeprecated: override the native schema instead, which now carries the ConnID\nmapping. Code stored here is not loaded by the object-class fix.",
-        "operationId": "override_connid_api_v1_codegen__session_id__classes__object_class__connid_put",
-        "deprecated": true,
-        "security": [
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Session ID",
-              "title": "Session Id"
-            },
-            "description": "Session ID"
-          },
-          {
-            "name": "object_class",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "Object class name",
-              "title": "Object Class"
-            },
-            "description": "Object class name"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "ConnID code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -3936,8 +3571,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Search code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -4193,8 +3828,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Create code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -4450,8 +4085,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Update code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -4707,8 +4342,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Delete code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -4929,8 +4564,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroovyCodePayload",
-                "description": "Relation code as JSON"
+                "$ref": "#/components/schemas/ConnectorCodeInput",
+                "description": "Connector code as JSON"
               }
             }
           }
@@ -5151,175 +4786,6 @@
   },
   "components": {
     "schemas": {
-      "ApiKeyCreateRequest": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name",
-            "description": "Descriptive name for the API key"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "ApiKeyCreateRequest"
-      },
-      "ApiKeyCreateResponse": {
-        "properties": {
-          "apiKeyId": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Apikeyid",
-            "description": "Unique identifier of the API key record"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Descriptive name of the API key"
-          },
-          "keyPrefix": {
-            "type": "string",
-            "title": "Keyprefix",
-            "description": "First characters of the key value, for identification"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Createdat",
-            "description": "When the key was issued"
-          },
-          "revokedAt": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revokedat",
-            "description": "When the key was revoked; null if active"
-          },
-          "apiKey": {
-            "type": "string",
-            "title": "Apikey",
-            "description": "Full API key value. Shown only once - it cannot be retrieved again."
-          },
-          "message": {
-            "type": "string",
-            "title": "Message"
-          }
-        },
-        "type": "object",
-        "required": [
-          "apiKeyId",
-          "name",
-          "keyPrefix",
-          "createdAt",
-          "apiKey",
-          "message"
-        ],
-        "title": "ApiKeyCreateResponse"
-      },
-      "ApiKeyInfo": {
-        "properties": {
-          "apiKeyId": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Apikeyid",
-            "description": "Unique identifier of the API key record"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Descriptive name of the API key"
-          },
-          "keyPrefix": {
-            "type": "string",
-            "title": "Keyprefix",
-            "description": "First characters of the key value, for identification"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Createdat",
-            "description": "When the key was issued"
-          },
-          "revokedAt": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revokedat",
-            "description": "When the key was revoked; null if active"
-          }
-        },
-        "type": "object",
-        "required": [
-          "apiKeyId",
-          "name",
-          "keyPrefix",
-          "createdAt"
-        ],
-        "title": "ApiKeyInfo",
-        "description": "Public representation of an API key record. Never contains the key value."
-      },
-      "ApiKeyListResponse": {
-        "properties": {
-          "apiKeys": {
-            "items": {
-              "$ref": "#/components/schemas/ApiKeyInfo"
-            },
-            "type": "array",
-            "title": "Apikeys"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total",
-            "description": "Total number of API key records"
-          }
-        },
-        "type": "object",
-        "required": [
-          "apiKeys",
-          "total"
-        ],
-        "title": "ApiKeyListResponse"
-      },
-      "ApiKeyRevokeResponse": {
-        "properties": {
-          "apiKeyId": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Apikeyid"
-          },
-          "revokedAt": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Revokedat"
-          },
-          "message": {
-            "type": "string",
-            "title": "Message"
-          }
-        },
-        "type": "object",
-        "required": [
-          "apiKeyId",
-          "revokedAt",
-          "message"
-        ],
-        "title": "ApiKeyRevokeResponse"
-      },
       "ApiType": {
         "type": "string",
         "enum": [
@@ -5328,6 +4794,660 @@
           "sql"
         ],
         "title": "ApiType"
+      },
+      "AttributeInfoRest": {
+        "properties": {
+          "relevantDocumentations": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Relevantdocumentations",
+            "description": "List of chunks that contain evidence for this entity. Each entry is serialized as 'docId' and 'chunkId' UUID strings. This field is populated automatically by the system and should NOT be filled by the LLM."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Short description of attribute copied from documentation. Property description from the schema; null if not provided."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type",
+            "description": "Type as declared in the documentation (prefer OpenAPI). For a simple attribute use 'string' (including binaries encoded as base64), 'number', 'integer' or 'boolean'. For a complex attribute use the name of the object class as the documentation names the objects (e.g. 'Group'), not the name of a schema component, wrapper or transfer object (e.g. not 'GroupModel', 'GroupDto' or 'GroupCollection'); for a collection use the class of its items. Use 'object' only for an anonymous inline object. For an array use the type of its items; multiplicity belongs to multivalue. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format",
+            "description": "Additional type detail. For a simple attribute use an OpenAPI format registry value (e.g. 'email', 'uri', 'int64', 'date-time'). For a complex attribute use 'reference' when it points to another full object class, even if the full object appears embedded in the payload, or 'embedded' when the object is part of this one. For an array use the format of its items. Do not put other standards or patterns (e.g. the name of a code standard or a regular expression) in format; leave it null and keep them in the description. Null when the documentation gives no format."
+          },
+          "mandatory": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mandatory",
+            "description": "Is the attribute mandatory for this object class in the IGA schema and in the connector? True when the documentation shows that an object cannot exist or be created without it (e.g. marked as required, required in this object class's create request, or described as mandatory). False when the documentation shows it as optional (e.g. it may be omitted, has a default value, or is marked as not required). Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "updatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatable",
+            "description": "Can the attribute be changed on an existing object? True when the documentation shows it as writable (e.g. write access in a field table) or it is accepted by this object class's update request. False when it is read-only or server-generated, explicitly not modifiable after creation, or missing from a documented update request of this object class. A single link to a separate collection or sub-resource (e.g. a URL from which the related items are listed) is neither creatable nor updatable unless the documentation describes it as settable. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "creatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creatable",
+            "description": "Can the attribute be set when creating the object? True when the documentation shows it as writable on create (e.g. write access in a field table) or it is accepted by this object class's create request. False when it is read-only or server-generated, limited to existing objects (e.g. only on update), or missing from a documented create request of this object class. Do not decide it from the list of endpoints alone. A single link to a separate collection or sub-resource (e.g. a URL from which the related items are listed) is neither creatable nor updatable unless the documentation describes it as settable. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "readable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readable",
+            "description": "Can the attribute value be read from the target system? True when the documentation shows it as readable (read access, part of a returned representation). False when it is write-only: marked write-only, accepted only in requests and never returned, or a secret such as a password. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "multivalue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multivalue",
+            "description": "Can the attribute hold more than one value? True for arrays or lists and for links or references to a collection. False for a single value: a scalar, one object or one reference. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "returnedByDefault": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returnedbydefault",
+            "description": "Is the attribute returned when the object is read or searched without extra request options? True when its values are part of the object's returned representation: a property of the response model, a value shown in a response example, or a list of links to the referenced objects included in the representation. False when the representation carries only a single link (href) to a separate collection or sub-resource whose items must be fetched with another request, when the attribute needs an expand, embed or include option, or when it is not readable. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "relevant_sequences": {
+            "items": {
+              "$ref": "#/components/schemas/DocSequenceItem"
+            },
+            "type": "array",
+            "title": "Relevant Sequences",
+            "description": "List of relevant document sequences that support the presence of this attribute. "
+          }
+        },
+        "type": "object",
+        "required": [
+          "relevant_sequences"
+        ],
+        "title": "AttributeInfoRest"
+      },
+      "AttributeInfoScim": {
+        "properties": {
+          "relevantDocumentations": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Relevantdocumentations",
+            "description": "List of chunks that contain evidence for this entity. Each entry is serialized as 'docId' and 'chunkId' UUID strings. This field is populated automatically by the system and should NOT be filled by the LLM."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Short description of attribute copied from documentation. Property description from the schema; null if not provided."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type",
+            "description": "Type as declared in the documentation (prefer OpenAPI). For a simple attribute use 'string' (including binaries encoded as base64), 'number', 'integer' or 'boolean'. For a complex attribute use the name of the object class as the documentation names the objects (e.g. 'Group'), not the name of a schema component, wrapper or transfer object (e.g. not 'GroupModel', 'GroupDto' or 'GroupCollection'); for a collection use the class of its items. Use 'object' only for an anonymous inline object. For an array use the type of its items; multiplicity belongs to multivalue. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format",
+            "description": "Additional type detail. For a simple attribute use an OpenAPI format registry value (e.g. 'email', 'uri', 'int64', 'date-time'). For a complex attribute use 'reference' when it points to another full object class, even if the full object appears embedded in the payload, or 'embedded' when the object is part of this one. For an array use the format of its items. Do not put other standards or patterns (e.g. the name of a code standard or a regular expression) in format; leave it null and keep them in the description. Null when the documentation gives no format."
+          },
+          "mandatory": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mandatory",
+            "description": "Is the attribute mandatory for this object class in the IGA schema and in the connector? True when the documentation shows that an object cannot exist or be created without it (e.g. marked as required, required in this object class's create request, or described as mandatory). False when the documentation shows it as optional (e.g. it may be omitted, has a default value, or is marked as not required). Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "updatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatable",
+            "description": "Can the attribute be changed on an existing object? True when the documentation shows it as writable (e.g. write access in a field table) or it is accepted by this object class's update request. False when it is read-only or server-generated, explicitly not modifiable after creation, or missing from a documented update request of this object class. A single link to a separate collection or sub-resource (e.g. a URL from which the related items are listed) is neither creatable nor updatable unless the documentation describes it as settable. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "creatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creatable",
+            "description": "Can the attribute be set when creating the object? True when the documentation shows it as writable on create (e.g. write access in a field table) or it is accepted by this object class's create request. False when it is read-only or server-generated, limited to existing objects (e.g. only on update), or missing from a documented create request of this object class. Do not decide it from the list of endpoints alone. A single link to a separate collection or sub-resource (e.g. a URL from which the related items are listed) is neither creatable nor updatable unless the documentation describes it as settable. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "readable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readable",
+            "description": "Can the attribute value be read from the target system? True when the documentation shows it as readable (read access, part of a returned representation). False when it is write-only: marked write-only, accepted only in requests and never returned, or a secret such as a password. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "multivalue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multivalue",
+            "description": "Can the attribute hold more than one value? True for arrays or lists and for links or references to a collection. False for a single value: a scalar, one object or one reference. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "returnedByDefault": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returnedbydefault",
+            "description": "Is the attribute returned when the object is read or searched without extra request options? True when its values are part of the object's returned representation: a property of the response model, a value shown in a response example, or a list of links to the referenced objects included in the representation. False when the representation carries only a single link (href) to a separate collection or sub-resource whose items must be fetched with another request, when the attribute needs an expand, embed or include option, or when it is not readable. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "scimAttribute": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scimattribute",
+            "description": "For SCIM mapping scenarios, the source SCIM attribute/path that maps to this application attribute (e.g., 'userName', 'emails[0].value', 'profile.startDate'). Leave null when not applicable."
+          }
+        },
+        "type": "object",
+        "title": "AttributeInfoScim",
+        "description": "Attribute metadata for an object class property as described in OpenAPI/JSON Schema."
+      },
+      "AttributeInfoSql": {
+        "properties": {
+          "relevantDocumentations": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Relevantdocumentations",
+            "description": "List of chunks that contain evidence for this entity. Each entry is serialized as 'docId' and 'chunkId' UUID strings. This field is populated automatically by the system and should NOT be filled by the LLM."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Short description of attribute copied from documentation. Property description from the schema; null if not provided."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type",
+            "description": "Type as declared in the documentation (prefer OpenAPI). For a simple attribute use 'string' (including binaries encoded as base64), 'number', 'integer' or 'boolean'. For a complex attribute use the name of the object class as the documentation names the objects (e.g. 'Group'), not the name of a schema component, wrapper or transfer object (e.g. not 'GroupModel', 'GroupDto' or 'GroupCollection'); for a collection use the class of its items. Use 'object' only for an anonymous inline object. For an array use the type of its items; multiplicity belongs to multivalue. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format",
+            "description": "Additional type detail. For a simple attribute use an OpenAPI format registry value (e.g. 'email', 'uri', 'int64', 'date-time'). For a complex attribute use 'reference' when it points to another full object class, even if the full object appears embedded in the payload, or 'embedded' when the object is part of this one. For an array use the format of its items. Do not put other standards or patterns (e.g. the name of a code standard or a regular expression) in format; leave it null and keep them in the description. Null when the documentation gives no format."
+          },
+          "mandatory": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mandatory",
+            "description": "Is the attribute mandatory for this object class in the IGA schema and in the connector? True when the documentation shows that an object cannot exist or be created without it (e.g. marked as required, required in this object class's create request, or described as mandatory). False when the documentation shows it as optional (e.g. it may be omitted, has a default value, or is marked as not required). Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "updatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatable",
+            "description": "Can the attribute be changed on an existing object? True when the documentation shows it as writable (e.g. write access in a field table) or it is accepted by this object class's update request. False when it is read-only or server-generated, explicitly not modifiable after creation, or missing from a documented update request of this object class. A single link to a separate collection or sub-resource (e.g. a URL from which the related items are listed) is neither creatable nor updatable unless the documentation describes it as settable. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "creatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creatable",
+            "description": "Can the attribute be set when creating the object? True when the documentation shows it as writable on create (e.g. write access in a field table) or it is accepted by this object class's create request. False when it is read-only or server-generated, limited to existing objects (e.g. only on update), or missing from a documented create request of this object class. Do not decide it from the list of endpoints alone. A single link to a separate collection or sub-resource (e.g. a URL from which the related items are listed) is neither creatable nor updatable unless the documentation describes it as settable. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "readable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readable",
+            "description": "Can the attribute value be read from the target system? True when the documentation shows it as readable (read access, part of a returned representation). False when it is write-only: marked write-only, accepted only in requests and never returned, or a secret such as a password. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "multivalue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multivalue",
+            "description": "Can the attribute hold more than one value? True for arrays or lists and for links or references to a collection. False for a single value: a scalar, one object or one reference. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "returnedByDefault": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returnedbydefault",
+            "description": "Is the attribute returned when the object is read or searched without extra request options? True when its values are part of the object's returned representation: a property of the response model, a value shown in a response example, or a list of links to the referenced objects included in the representation. False when the representation carries only a single link (href) to a separate collection or sub-resource whose items must be fetched with another request, when the attribute needs an expand, embed or include option, or when it is not readable. Null only when the documentation of this object class neither states nor lets you derive the value; never guess."
+          },
+          "databaseCatalog": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databasecatalog",
+            "description": "Database catalog containing the physical table when supplied by the source."
+          },
+          "databaseSchema": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databaseschema",
+            "description": "Database schema containing the physical table when supplied by the source."
+          },
+          "table": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Table",
+            "description": "Physical database table containing the attribute."
+          },
+          "column": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Column",
+            "description": "Physical database column mapped to the attribute."
+          },
+          "primaryKey": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primarykey",
+            "description": "Whether the column belongs to the table primary key."
+          },
+          "foreignKey": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SqlForeignKey"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Physical foreign-key target declared for the column."
+          },
+          "databaseType": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databasetype",
+            "description": "Native SQL/JDBC type name supplied by the database schema source."
+          },
+          "nullable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nullable",
+            "description": "Whether the physical database column accepts NULL."
+          },
+          "unique": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unique",
+            "description": "Whether the physical database column has a uniqueness constraint."
+          },
+          "generated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated",
+            "description": "Whether the physical database column is generated by the database."
+          },
+          "defaultValue": {
+            "title": "Defaultvalue",
+            "description": "Physical database default supplied by the schema source."
+          }
+        },
+        "type": "object",
+        "required": [
+          "table",
+          "column"
+        ],
+        "title": "AttributeInfoSql",
+        "description": "Attribute metadata with its physical database binding."
+      },
+      "AttributeJobStatusResponse": {
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Jobid",
+            "description": "Job identifier"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus",
+            "description": "Current status of the job"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat",
+            "description": "Job creation time (ISO 8601)"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat",
+            "description": "Job start time (ISO 8601)"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat",
+            "description": "Last update time (ISO 8601)"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AttributeResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Extracted attributes and protocol-specific context when the job is finished."
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors",
+            "description": "Structured list of error lines/messages for pretty presentation. Each list item is a single error line. Backward-compatible with 'error' string."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MultiDocProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Progress stage, message, and document counters."
+          }
+        },
+        "type": "object",
+        "required": [
+          "jobId",
+          "status"
+        ],
+        "title": "AttributeJobStatusResponse",
+        "description": "Attribute status response with its finished result exposed in OpenAPI."
+      },
+      "AttributeResponse": {
+        "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AttributeInfoSql"
+                },
+                {
+                  "$ref": "#/components/schemas/AttributeInfoScim"
+                },
+                {
+                  "$ref": "#/components/schemas/AttributeInfoRest"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Attributes",
+            "description": "Map of attribute name to its normalized metadata (AttributeInfo)."
+          },
+          "scimContext": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Scimcontext",
+            "description": "Class-specific SCIM schema, resource and ConnId projection used by SCIM code generation. Empty for non-SCIM object classes."
+          },
+          "sqlContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SqlContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Physical SQL table identity and optional Conndev ConnId projection. Absent for non-SQL object classes."
+          }
+        },
+        "type": "object",
+        "title": "AttributeResponse",
+        "description": "Attribute map for a specific object class where each key is the property name.\nReturn an empty map when the object class has no properties in the fragment."
       },
       "AuthorizationCodegenInput": {
         "properties": {
@@ -5349,7 +5469,7 @@
               }
             ],
             "title": "Currentscript",
-            "description": "Current user-edited Groovy script to repair."
+            "description": "Current user-edited connector code (declarative YAML or Groovy) to repair."
           },
           "preferredAuthorizations": {
             "items": {
@@ -5574,7 +5694,7 @@
               }
             ],
             "title": "Currentscript",
-            "description": "Current user-edited Groovy script to repair."
+            "description": "Current user-edited connector code (declarative YAML or Groovy) to repair."
           },
           "preferredEndpoints": {
             "items": {
@@ -5608,7 +5728,7 @@
               }
             ],
             "title": "Currentscript",
-            "description": "Current user-edited Groovy script to repair."
+            "description": "Current user-edited connector code (declarative YAML or Groovy) to repair."
           }
         },
         "type": "object",
@@ -5702,6 +5822,21 @@
         "title": "ConnectivityEndpointResponse",
         "description": "Ranked list of endpoints for testing connectivity between midPoint connector generator and the target application.\nEmpty list when no suitable endpoint is documented. First endpoint is the most suitable."
       },
+      "ConnectorCodeInput": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Connector code: declarative YAML or Groovy."
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "ConnectorCodeInput",
+        "description": "User-supplied connector code: declarative YAML or Groovy."
+      },
       "ConnectorFixInput": {
         "properties": {
           "midpointErrors": {
@@ -5739,7 +5874,7 @@
           "code": {
             "type": "string",
             "title": "Code",
-            "description": "Groovy code to use instead of the stored script."
+            "description": "Connector code (declarative YAML or Groovy) to use instead of the stored one."
           }
         },
         "type": "object",
@@ -5748,7 +5883,7 @@
           "code"
         ],
         "title": "ConnectorScriptOverride",
-        "description": "A user-edited Groovy script supplied in place of the one stored in the session."
+        "description": "A user-edited connector script supplied in place of the one stored in the session."
       },
       "DetectionSource": {
         "type": "string",
@@ -5760,6 +5895,33 @@
         ],
         "title": "DetectionSource",
         "description": "Where a protocol confirmation came from.\n\nShared provenance for the per-protocol availability advisories (which signals confirmed a\nprotocol). Declaration order is the order sources are reported in. Python StrEnums cannot be\nextended with extra members via subclassing, so this single enum carries every source and\n``SCIM_CLOUD`` is a SCIM-only member (no other protocol has a dedicated registry signal)."
+      },
+      "DocSequenceItem": {
+        "properties": {
+          "chunkId": {
+            "type": "string",
+            "title": "Chunkid",
+            "description": "Unique identifier for the document chunk."
+          },
+          "startSequence": {
+            "type": "string",
+            "title": "Startsequence",
+            "description": "Unique token / word sequence that identifies the start of the relevant chunk."
+          },
+          "endSequence": {
+            "type": "string",
+            "title": "Endsequence",
+            "description": "Unique token / word sequence that identifies the end of the relevant chunk."
+          }
+        },
+        "type": "object",
+        "required": [
+          "chunkId",
+          "startSequence",
+          "endSequence"
+        ],
+        "title": "DocSequenceItem",
+        "description": "Represents a sequence from a chunk relevant to the extracted information."
       },
       "Documentation": {
         "properties": {
@@ -5908,20 +6070,6 @@
         ],
         "title": "GenerationIntent",
         "description": "Business-domain lens object-class detection is judged through.\n\nDoes not change which documentation is read or how extraction runs mechanically; it\nchanges what counts as a primary object class when object-class detection assigns\nconfidence and ranks results (see\n``src/modules/digester/prompts/object_class_intents.py``). ``MANAGEMENT_ITSM``\ntreats both domains as primary. ``MANAGEMENT`` is the default when a caller does\nnot specify an intent."
-      },
-      "GroovyCodePayload": {
-        "properties": {
-          "code": {
-            "type": "string",
-            "title": "Code",
-            "description": "Groovy code"
-          }
-        },
-        "type": "object",
-        "required": [
-          "code"
-        ],
-        "title": "GroovyCodePayload"
       },
       "HTTPValidationError": {
         "properties": {
@@ -6261,7 +6409,7 @@
                 "type": "null"
               }
             ],
-            "description": "Multi-document progress (documents + current document chunk progress)"
+            "description": "Progress stage, message, and document counters."
           }
         },
         "type": "object",
@@ -6846,6 +6994,216 @@
         "title": "SqlAvailabilityInfo",
         "description": "SQL-specific connectivity info: the target database/schema name.\n\nAlways present on the final payload (empty when the integration is not SQL)."
       },
+      "SqlConnectorAttribute": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "connIdType": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connidtype"
+          },
+          "column": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column",
+            "description": "Explicit SQL path from Conndev; never inferred from the attribute name."
+          },
+          "mandatory": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mandatory"
+          },
+          "creatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creatable"
+          },
+          "updatable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatable"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "SqlConnectorAttribute",
+        "description": "One desired ConnId projection attribute from a Conndev export."
+      },
+      "SqlConnectorObjectClass": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "attributes": {
+            "items": {
+              "$ref": "#/components/schemas/SqlConnectorAttribute"
+            },
+            "type": "array",
+            "title": "Attributes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "SqlConnectorObjectClass",
+        "description": "Desired ConnId-facing object-class projection from Conndev."
+      },
+      "SqlContext": {
+        "properties": {
+          "physicalTable": {
+            "$ref": "#/components/schemas/SqlPhysicalTable"
+          },
+          "connectorObjectClass": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SqlConnectorObjectClass"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "physicalTable"
+        ],
+        "title": "SqlContext",
+        "description": "Class-specific physical SQL identity and separate ConnId projection."
+      },
+      "SqlForeignKey": {
+        "properties": {
+          "constraintName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Constraintname",
+            "description": "Database constraint name when the source provides it."
+          },
+          "referencedTable": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Referencedtable",
+            "description": "Referenced physical database table."
+          },
+          "referencedColumn": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Referencedcolumn",
+            "description": "Referenced physical database column."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "referencedTable",
+          "referencedColumn"
+        ],
+        "title": "SqlForeignKey",
+        "description": "Physical target of a SQL foreign-key column."
+      },
+      "SqlPhysicalTable": {
+        "properties": {
+          "databaseCatalog": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databasecatalog"
+          },
+          "databaseSchema": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databaseschema"
+          },
+          "table": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Table"
+          },
+          "tableType": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tabletype"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "table"
+        ],
+        "title": "SqlPhysicalTable",
+        "description": "Identity of the physical table that supplied SQL attributes."
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -6890,9 +7248,9 @@
     "securitySchemes": {
       "APIKeyHeader": {
         "type": "apiKey",
-        "description": "API key issued by this service (or the master key).",
+        "description": "API key validated and forwarded by Gravitee; backend access must be restricted to the gateway.",
         "in": "header",
-        "name": "X-API-Key"
+        "name": "X-Gravitee-Api-Key"
       }
     }
   }
