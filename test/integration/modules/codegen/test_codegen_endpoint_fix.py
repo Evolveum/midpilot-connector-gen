@@ -14,7 +14,6 @@ from src.config.codegen import CodegenSettings
 from src.jobs import job_input_reference
 from src.modules.codegen.errors import (
     ConnectorFixContextTooLargeError,
-    InvalidConnectorScriptOverrideError,
     UnknownConnectorOperationError,
 )
 from src.modules.codegen.routes.fix import fix_connector
@@ -288,42 +287,34 @@ async def test_errors_are_required():
 
 
 @pytest.mark.asyncio
-async def test_a_supplied_script_is_validated_before_the_job_is_created():
-    repo = _repo()
+async def test_an_invalid_supplied_script_is_accepted_as_fix_input():
+    """The caller sends the code midPoint rejected; the worker hands its validation errors to the fix."""
+    repo = _repo(
+        stored={
+            "userCreateOutput": {"code": CREATE_CODE},
+            "userNativeSchemaOutput": {"code": "objectClasses:\n  user:\n    connId:\n      UID: id\n"},
+        }
+    )
+    broken = "objectClassesrt:\n  user:\n    connId:\n      UID: id"
 
-    with pytest.raises(InvalidConnectorScriptOverrideError) as exc_info:
-        await _post(
-            repo,
-            ConnectorFixInput.model_validate(
-                {"midpointErrors": ["boom"], "scripts": [{"operationKey": "userUpdate", "code": "class {{{"}]}
-            ),
+    _, schedule = await _post(
+        repo,
+        ConnectorFixInput.model_validate(
+            {"midpointErrors": ["boom"], "scripts": [{"operationKey": "userNativeSchema", "code": broken}]}
+        ),
+    )
+
+    scripts = {s["operationKey"]: s["code"] for s in schedule.call_args.kwargs["input_payload"]["scripts"]}
+    assert scripts["userNativeSchema"] == broken
+    repo.update_session.assert_awaited_once()
+
+
+@pytest.mark.parametrize("code", ["   ", "```yaml\n```"])
+def test_an_empty_supplied_script_is_rejected(code):
+    with pytest.raises(ValueError, match="code cannot be empty"):
+        ConnectorFixInput.model_validate(
+            {"midpointErrors": ["boom"], "scripts": [{"operationKey": "userUpdate", "code": code}]}
         )
-
-    assert exc_info.value.status_code == 422
-    repo.update_session.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_override_parsing_is_offloaded_after_the_size_check():
-    repo = _repo()
-    edited = 'objectClass("user") { update { endpoint("/users") } }'
-
-    async def run_offloaded(function, *args):
-        return function(*args)
-
-    with patch(
-        "src.modules.codegen.orchestration.asyncio.to_thread",
-        new_callable=AsyncMock,
-        side_effect=run_offloaded,
-    ) as to_thread:
-        await _post(
-            repo,
-            ConnectorFixInput.model_validate(
-                {"midpointErrors": ["boom"], "scripts": [{"operationKey": "userUpdate", "code": edited}]}
-            ),
-        )
-
-    assert to_thread.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -348,7 +339,7 @@ async def test_the_input_budget_measures_the_normalized_code_the_job_will_carry(
 
 
 @pytest.mark.asyncio
-async def test_oversized_override_is_rejected_before_parser_or_database_reads():
+async def test_oversized_override_is_rejected_before_database_reads():
     repo = _repo()
     codegen_input = ConnectorFixInput.model_validate(
         {"midpointErrors": ["boom"], "scripts": [{"operationKey": "userUpdate", "code": "x" * 11}]}

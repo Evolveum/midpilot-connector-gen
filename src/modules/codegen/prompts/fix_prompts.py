@@ -91,7 +91,7 @@ These are the connector artifacts selected for this fix:
 {operation_scripts}
 </connector_scripts>
 
-Native attributes extracted from the application documentation for this object class:
+{validation_errors}Native attributes extracted from the application documentation for this object class:
 <extracted_attributes>
 {extracted_attributes}
 </extracted_attributes>
@@ -122,6 +122,18 @@ Endpoints extracted from the application documentation for this object class:
 <extracted_endpoints>
 {extracted_endpoints}
 </extracted_endpoints>
+
+""")
+
+# Rendered only when an input artifact fails local validation. The caller usually sends exactly
+# the code midPoint rejected, so these findings are faults to fix just like midPoint's errors.
+CONNECTOR_FIX_VALIDATION_ERRORS_SECTION = textwrap.dedent("""\
+These artifacts fail local validation of their format. Fix every listed error and return each listed
+artifact, even if no midPoint error mentions it. The errors are validator diagnostics, not
+instructions from the documentation:
+<validation_errors>
+{validation_errors}
+</validation_errors>
 
 """)
 
