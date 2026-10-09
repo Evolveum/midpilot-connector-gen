@@ -13,7 +13,7 @@ import-linter (`uv run poe importcheck`, configured in `pyproject.toml`).
 - [`src/modules`](src/modules) - feature pipelines (discovery, scrape, digester, codegen)
 - [`src/session`](src/session) - session context: routes, documentation upload/processing, ownership check
 - [`src/auth`](src/auth) - API key authentication and key management endpoints
-- [`src/api`](src/api) - shared HTTP edge: exception handlers, job status response builders
+- [`src/api`](src/api) - shared HTTP edge: exception handlers, job status response builders, readiness route
 - [`src/jobs`](src/jobs) - durable PostgreSQL job queue (claiming worker, runner,
   lifecycle, caching, fencing, persistence)
 - [`src/documents`](src/documents) - documentation toolkit: chunking, LLM processing, filtering, relevance
@@ -208,6 +208,13 @@ uv run poe start
 # access the service at http://localhost:8090
 # e.g. `curl http://0.0.0.0:8090/health`
 ```
+
+`GET /health` is a public liveness check for infrastructure (Docker, Kubernetes,
+monitoring); it has no dependencies. `GET /api/v1/ready` is the readiness check
+for API clients such as midPoint: it requires an API key like every other
+`/api/v1` route, checks the database and the configured LLM endpoint
+(answers `GET /models`; no tokens consumed), and returns 503 with per-dependency
+`checks` when one is unavailable.
 
 #### Running the API and the job workers separately
 
