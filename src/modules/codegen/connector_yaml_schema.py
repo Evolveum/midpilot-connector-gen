@@ -77,11 +77,8 @@ class _Configuration(BaseModel):
         return value
 
 
-def _script(*, expression: bool = False, empty_body: bool = False) -> Any:
-    return Field(default=None, json_schema_extra={"script": True, "expression": expression, "empty_body": empty_body})
-
-
-_GROOVY_ONLY_VALUE_MAPPING = "custom value mapping (implementation with deserialize/serialize) is Groovy-only"
+def _script(*, expression: bool = False) -> Any:
+    return Field(default=None, json_schema_extra={"script": True, "expression": expression})
 
 
 class _AttributePath(_Configuration):
@@ -97,7 +94,9 @@ class _AttributePath(_Configuration):
 
 
 class _ScimAttribute(_Configuration):
-    unsupported_keys: ClassVar[Mapping[str, str]] = {"implementation": _GROOVY_ONLY_VALUE_MAPPING}
+    unsupported_keys: ClassVar[Mapping[str, str]] = {
+        "implementation": "custom SCIM value mapping (implementation with deserialize/serialize) is Groovy-only"
+    }
 
     name: str | None = Field(default=None)
     type: str | None = Field(default=None)
@@ -109,13 +108,17 @@ class _ConnIdAttribute(_Configuration):
     type: _ConnIdType | None = Field(default=None)
 
 
-class _JsonAttribute(_Configuration):
-    unsupported_keys: ClassVar[Mapping[str, str]] = {"implementation": _GROOVY_ONLY_VALUE_MAPPING}
+class _ValueMapping(_Configuration):
+    deserialize: str | None = _script()
+    serialize: str | None = _script()
 
+
+class _JsonAttribute(_Configuration):
     name: str | None = Field(default=None)
     type: _JsonType | None = Field(default=None)
     openApiFormat: str | None = Field(default=None)
     path: str | _AttributePath | None = Field(default=None)
+    implementation: _ValueMapping | None = Field(default=None)
 
 
 class _SqlAttribute(_Configuration):
@@ -152,9 +155,18 @@ class _Reference(_Configuration):
     subtype: str | None = Field(default=None)
 
 
-class _Request(_Configuration):
+_ScalarValue = str | bool | int | float
+
+
+class _SearchRequest(_Configuration):
     contentType: str | None = Field(default=None)
-    body: str | None = _script(empty_body=True)
+    # connector-scimrest QueryParametersHandler: scalar values; a null value adds nothing.
+    queryParameters: dict[str, _ScalarValue | None] | None = Field(default=None)
+
+
+class _Request(_SearchRequest):
+    # The YAML key binds only the EMPTY shortcut; create/update reject custom request bodies.
+    body: Literal["EMPTY"] | None = Field(default=None)
 
 
 class _Transition(_Configuration):
@@ -176,8 +188,18 @@ class _Filter(_Configuration):
 
 
 class _HttpEndpoint(_Configuration):
+    # EndpointsHandler defaults every YAML write endpoint to POST, unlike the Groovy shortcuts.
+    requires_method: ClassVar[bool] = False
+
     path: str
     method: str | None = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_explicit_method(cls, data: Any) -> Any:
+        if cls.requires_method and isinstance(data, Mapping) and "method" not in data:
+            raise ValueError("set 'method' explicitly: a YAML update or delete endpoint defaults to POST")
+        return data
 
     @field_validator("method")
     @classmethod
@@ -185,18 +207,36 @@ class _HttpEndpoint(_Configuration):
         return _require_case_insensitive_member(value, _HTTP_METHODS)
 
 
-class _WriteEndpoint(_HttpEndpoint):
+class _DeleteEndpoint(_HttpEndpoint):
+    requires_method = True
     unsupported_keys: ClassVar[Mapping[str, str]] = {
-        "supportedAttributes": "only update endpoints accept it; limit create or delete attributes in Groovy"
+        "supportedAttributes": "only create and update endpoints accept it"
     }
 
     request: _Request | None = Field(default=None)
 
 
-class _UpdateEndpoint(_WriteEndpoint):
-    unsupported_keys: ClassVar[Mapping[str, str]] = {}
-
+class _CreateEndpoint(_HttpEndpoint):
+    request: _Request | None = Field(default=None)
     supportedAttributes: list[str | _SupportedAttribute] | None = Field(default=None)
+
+    @field_validator("supportedAttributes", mode="before")
+    @classmethod
+    def require_string_selectors(cls, value: Any) -> Any:
+        # SupportedAttributesHandler passes the scalar text, which never equals a Boolean or number.
+        # Checked before the str | mapping union so the reason is not hidden by the union error.
+        for item in value if isinstance(value, list) else ():
+            selector = item.get("value") if isinstance(item, Mapping) else None
+            if selector is not None and not isinstance(selector, str):
+                raise ValueError(
+                    "YAML supportedAttributes values are compared as strings and never match a non-string "
+                    "attribute; route non-string values with a Groovy supportedAttribute block"
+                )
+        return value
+
+
+class _UpdateEndpoint(_CreateEndpoint):
+    requires_method = True
 
 
 class _ExtractorPath(_Configuration):
@@ -224,8 +264,12 @@ class _PagingSupport(_Configuration):
 class _SearchEndpoint(_HttpEndpoint):
     responseFormat: Literal["JSON_ARRAY", "JSON_OBJECT"] | None = Field(default=None)
     objectExtractor: str | _ExtractorPath | None = _script()
+    # Always a path expression, never Groovy.
+    objectsPath: str | _ExtractorPath | None = Field(default=None)
     pagingSupport: str | _PagingSupport | None = _script()
+    request: _SearchRequest | None = Field(default=None)
     singleResult: bool | None = Field(default=None)
+    notFoundIsNoResult: bool | None = Field(default=None)
     emptyFilterSupported: bool | None = Field(default=None)
     supportedFilters: list[_Filter] | None = Field(default=None)
 
@@ -245,12 +289,16 @@ class _Operation(_Configuration):
     enabled: bool | None = Field(default=None)
 
 
-class _WriteOperation(_Operation):
-    endpoints: list[_WriteEndpoint] | None = Field(default=None)
+class _CreateOperation(_Operation):
+    endpoints: list[_CreateEndpoint] | None = Field(default=None)
 
 
 class _UpdateOperation(_Operation):
     endpoints: list[_UpdateEndpoint] | None = Field(default=None)
+
+
+class _DeleteOperation(_Operation):
+    endpoints: list[_DeleteEndpoint] | None = Field(default=None)
 
 
 class _AttributeResolver(_Configuration):
@@ -316,9 +364,9 @@ class _ObjectClass(_Configuration):
     sql: _SqlClass | None = Field(default=None)
     attributes: dict[str, _Attribute | None] | None = Field(default=None)
     references: dict[str, _Reference] | None = Field(default=None)
-    create: _WriteOperation | None = Field(default=None)
+    create: _CreateOperation | None = Field(default=None)
     update: _UpdateOperation | None = Field(default=None)
-    delete: _WriteOperation | None = Field(default=None)
+    delete: _DeleteOperation | None = Field(default=None)
     search: _Search | None = Field(default=None)
 
 
