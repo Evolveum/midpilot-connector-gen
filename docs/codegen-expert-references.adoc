@@ -13,6 +13,16 @@ Snapshot reviewed on 2026-10-06 from clean local checkouts:
 * `connector-sql`: `384fe74d9adc8a5dd4135a5438176e40c67891e5`
 
 Generated YAML may use syntax that exists only from these revisions on (for example `objectsPath`, `notFoundIsNoResult`, `request.queryParameters`, `json.implementation`, and `supportedAttributes` on create endpoints), so connector bundles must be built from these revisions or later.
+For `connector-scimrest`, use at least `685a01fc53f1e77ef40e5a8f2b830394033933f7`, which fixes the duplicate `objectClass` record component in `RestCreateOperationBuilderImpl.EndpointHandler` that prevented the snapshot revision from compiling.
+
+Rechecked on 2026-10-09 against clean local checkouts:
+
+* `conndev`: `c2d01c6684a60fa150f4157e8a146e824bef75cc`
+* `connector-scimrest`: `f88f1e7fb13cab79a72ed0db87f2a5b9a6343cde`
+* `connector-sql`: `671a2d57675c87e68c10aa0147da076f9b4e995f`
+
+The source documentation trees are unchanged from the snapshot revisions above.
+The newer commits change runtime validation, fix the SCIMREST compilation issue, and correct help labels; they introduce no newer documentation to apply to generation or repair prompts.
 
 Paths below are relative to each source repository. Local paths are relative to `src/modules/codegen/documentations/`.
 

@@ -226,11 +226,10 @@ async def test_scim_crud_runs_context_only_generation_when_selected_input_is_con
             BaseGroovyGenerator,
             "_cleanup_generated_code",
             new_callable=AsyncMock,
-            return_value=generated_code,
+            side_effect=lambda **kw: kw["code"],
         ),
         patch("src.modules.codegen.core.base.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.base.validate_connector_code", return_value=None),
     ):
         result = await generator.generate(
             session_id=uuid4(),
@@ -240,7 +239,9 @@ async def test_scim_crud_runs_context_only_generation_when_selected_input_is_con
             endpoints=endpoints,
         )
 
-    assert result == generated_code
+    assert result == (
+        'objectClass("User") {\n    create {\n        // No changes needed. Use framework defaults.\n    }\n}'
+    )
     chain.ainvoke.assert_awaited_once()
     prompt_vars = chain.ainvoke.await_args.args[0]
     assert prompt_vars["chunk"] == ""

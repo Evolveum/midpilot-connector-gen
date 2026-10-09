@@ -5874,7 +5874,7 @@
           "code": {
             "type": "string",
             "title": "Code",
-            "description": "Connector code (declarative YAML or Groovy) to use instead of the stored one."
+            "description": "Connector code (declarative YAML or Groovy) to use instead of the stored one. It may fail local validation: the fix receives its validation errors and repairs them."
           }
         },
         "type": "object",

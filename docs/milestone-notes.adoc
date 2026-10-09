@@ -45,8 +45,8 @@ nor rewritten.
 
 `connector-scimrest` `d99edf3` itself does not compile:
 `RestCreateOperationBuilderImpl.EndpointHandler` declares the record component
-`objectClass` twice. Connector bundles need the first later
-`connector-scimrest` revision that fixes it.
+`objectClass` twice. This is fixed in `connector-scimrest`
+`685a01fc53f1e77ef40e5a8f2b830394033933f7`; use that revision or later.
 
 Required Upgrade Steps
 
@@ -54,8 +54,8 @@ Required Upgrade Steps
 for rollback. No database recreation, database backup, or configuration change
 is required.
 . Build the connector bundles used by midPoint from `conndev` and
-`connector-sql` at the revisions above or later, and from the first
-`connector-scimrest` revision after `d99edf3` that compiles; see
+`connector-sql` at the revisions above or later, and from `connector-scimrest`
+`685a01fc53f1e77ef40e5a8f2b830394033933f7` or later; see
 xref:codegen-expert-references.adoc#_source_revisions[Source revisions].
 . Restart the backend with
 `docker compose up -d --build midpilot-connector-gen`.
