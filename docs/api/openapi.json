@@ -4762,6 +4762,43 @@
         }
       }
     },
+    "/api/v1/ready": {
+      "get": {
+        "tags": [
+          "Readiness"
+        ],
+        "summary": "Service readiness",
+        "description": "Checks that the database is reachable and that the configured LLM endpoint answers its OpenAI-compatible model listing. Intended for clients such as midPoint to call before starting work. Infrastructure liveness probes use the public `/health` instead.",
+        "operationId": "ready_api_v1_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessReport"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "At least one dependency is unavailable; `checks` shows which.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessReport"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -5734,6 +5771,14 @@
         "type": "object",
         "title": "CodegenRepairContext"
       },
+      "ComponentStatus": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "unavailable"
+        ],
+        "title": "ComponentStatus"
+      },
       "ConnectivityEndpointInfo": {
         "properties": {
           "relevantDocumentations": {
@@ -6626,6 +6671,45 @@
         ],
         "title": "ProtocolAvailability",
         "description": "Whether a detected integration protocol is generally usable by the customer or gated.\n\nShared advisory signal for any detected protocol (SCIM, REST): a product may expose a\nprotocol yet gate it behind a paid/enterprise/partner plan the customer might not have."
+      },
+      "ReadinessChecks": {
+        "properties": {
+          "database": {
+            "$ref": "#/components/schemas/ComponentStatus"
+          },
+          "llm": {
+            "$ref": "#/components/schemas/ComponentStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "database",
+          "llm"
+        ],
+        "title": "ReadinessChecks",
+        "description": "Per-dependency results of a readiness check."
+      },
+      "ReadinessReport": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ComponentStatus"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "checks": {
+            "$ref": "#/components/schemas/ReadinessChecks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "checks"
+        ],
+        "title": "ReadinessReport",
+        "description": "Readiness of the service: ``ok`` only when every dependency check is ``ok``."
       },
       "RelationRecord": {
         "properties": {

@@ -4,6 +4,7 @@
 
 from fastapi import APIRouter
 
+from src.api.readiness import router as readiness_router
 from src.modules.codegen.router import router as codegen_router
 from src.modules.digester.router import router as digester_router
 from src.modules.discovery.router import router as discovery_router
@@ -25,3 +26,6 @@ root_router.include_router(discovery_router, prefix="/discovery", tags=["Discove
 root_router.include_router(scrape_router, prefix="/scrape", tags=["Scrape"])
 root_router.include_router(digester_router, prefix="/digester")
 root_router.include_router(codegen_router, prefix="/codegen")
+
+# Dependency readiness for API clients (midPoint); authenticated like every other /api/v1 route.
+root_router.include_router(readiness_router, tags=["Readiness"])
