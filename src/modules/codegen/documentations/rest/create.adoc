@@ -27,10 +27,9 @@ Where:
 
 * this simplest script heavily relies on the default behavior of the connector framework.
 * The `endpoint` method specifies the endpoint to be used for the create operation. The HTTP method is given as the first argument (`endpoint(POST, "/users")`) or set with the `httpOperation` method inside the closure (constants `GET`, `POST`, `PUT`, `DELETE`, `PATCH`).
-* The `request` block customizes the request: `accept(...)`, `contentType(...)`, and `body { ... }` (a closure producing the request body as bytes).
-** If no body is specified, the default implementation serializes all `creatable` attributes of the object class into a JSON body.
-** If no `response { ... }` is specified, the response is handled by the default implementation, which expects the created object to be returned in the response body in JSON format.
-** Attributes that are `updatable` but not `creatable` are handled automatically by the framework after the object is created — it issues an `update` operation (if implemented) immediately after the `create` operation.
+* The `request` block customizes the request: `contentType(...)` (e.g. `APPLICATION_JSON`), `body EMPTY` (to send no body), and `queryParameter(name, value)` — a static query parameter added to the request URL (in YAML: `request: { queryParameters: { name: value } }`). A custom `body { ... }` closure is not supported for create — the body is always built from the supported attributes.
+** With `contentType APPLICATION_JSON` and no `body` setting, the request body serializes all `creatable` attributes of the object class into a JSON body. Without a `contentType`, no request body is sent — always declare it for a JSON API.
+** If no `response { ... }` is specified, the response is handled by the default implementation, which parses the created object from the JSON response body; the parsed object must contain the UID. A 2xx response with an empty body takes the UID from the last path segment of the `Location` header and fails when that header is missing.
 * If no `supportedAttributes` is declared, the endpoint handles all `creatable` attributes of the object class. See below for limiting to a supported subset and per-attribute value filters.
 
 == Limiting create to a supported subset of attributes
@@ -52,7 +51,23 @@ objectClass("User") {
 }
 ----
 
-NOTE: In declarative YAML, `supportedAttributes` is bound only on update endpoints; a create endpoint rejects the key. Use the Groovy form above when create must be limited to a subset of attributes.
+The same in YAML:
+
+[source,yaml]
+----
+objectClasses:
+  User:
+    create:
+      endpoints:
+        - method: POST
+          path: /users
+          request:
+            contentType: application/json
+          supportedAttributes:
+            - externalId
+            - displayName
+            - nickName
+----
 
 == Attribute-specific configuration
 
@@ -92,4 +107,4 @@ objectClasses:
             contentType: application/json
 ----
 
-See xref:../declarative-yaml.adoc[declarative YAML] for the full reference.
+See declarative YAML for the full reference.

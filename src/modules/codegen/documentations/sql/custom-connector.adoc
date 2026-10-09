@@ -56,10 +56,9 @@ package com.example;
 import com.evolveum.polygon.conndev.groovy.GroovyScriptLoader;
 import com.evolveum.polygon.conndev.groovy.GroovySchemaLoader;
 import com.evolveum.polygon.sql.base.AbstractGroovySqlConnector;
-import com.evolveum.polygon.sql.base.SqlConnectorConfiguration;
 import com.evolveum.polygon.sql.base.groovy.SqlHandlerLoader;
 
-public class ExampleSqlConnector extends AbstractGroovySqlConnector<SqlConnectorConfiguration> {
+public class ExampleSqlConnector extends AbstractGroovySqlConnector {
 
     public ExampleSqlConnector() {
         super(false);  // production: initialize once per instance

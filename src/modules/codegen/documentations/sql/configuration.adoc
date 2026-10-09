@@ -1,8 +1,6 @@
 = Connector configuration
 
-The SQL framework connector configuration is provided by `SqlConnectorConfiguration`.
-
-
+The SQL connector is configured with the following properties.
 
 == Configuration properties
 
@@ -102,7 +100,7 @@ Set via the ConnId connector configuration (for example the midPoint connector f
 Schema auto-discovery is enabled when `scanTables` or `scanViews` is set to `true`.
 If both are `false`, only the tables explicitly referenced by your schema scripts are detected (targeted discovery).
 
-NOTE: `getAutoDiscoverSchema()` (used by older API surfaces) reports auto-discovery as enabled when *either* `scanTables` *or* `scanViews` is `true` — scanning only one of the two is enough to turn auto-discovery on.
+NOTE: auto-discovery is enabled when *either* `scanTables` *or* `scanViews` is `true` — scanning only one of the two is enough to turn auto-discovery on.
 
 == Driver resolution
 

@@ -92,8 +92,8 @@ objectClass("Project") {
     attribute("ownerEmail") {
         json {
             path { type JSON_PATH; value "$.owner_email" }
+            openApiFormat "email"
         }
-        openApiFormat "email"
     }
     attribute("createdAt") {
         openApiFormat "date-time"
