@@ -20,6 +20,7 @@ empirical basis - no real Groovy sample tried there parses to a ``dict``.
 """
 
 import logging
+import re
 from typing import Any, Optional
 
 import yaml
@@ -32,6 +33,9 @@ from src.modules.codegen.utils.groovy_validation import validate_groovy_code
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
 
 logger = logging.getLogger(__name__)
+
+# conndev GroovyScriptCompiler.IMPORT_LINE
+_IMPORT_LINE = re.compile(r"\s*import\s+[\w.]+(\.\*)?;?\s*")
 
 
 class _RejectDuplicateKeysLoader(yaml.SafeLoader):
@@ -160,6 +164,16 @@ def _has_cyclic_containers(document: Any) -> bool:
     return False
 
 
+def _split_leading_imports(script: str) -> tuple[str, str]:
+    """Mirror conndev ``GroovyScriptCompiler``, which hoists leading import lines out of every hook."""
+    lines = script.split("\n")
+    count = 0
+    while count < len(lines) and _IMPORT_LINE.fullmatch(lines[count]):
+        count += 1
+    imports = "".join(f"{line.strip()}\n" for line in lines[:count])
+    return imports, "\n".join(lines[count:])
+
+
 def _collect_embedded_script_errors(value: Any, errors: list[str], path: str = "") -> None:
     if isinstance(value, BaseModel):
         for key in value.model_extra or {}:
@@ -177,9 +191,10 @@ def _collect_embedded_script_errors(value: Any, errors: list[str], path: str = "
                 if metadata.get("empty_body") and child == "EMPTY":
                     continue
                 # Hooks are closure bodies; spec is a single build-time expression.
-                wrapped = f"def hook = {{\n{child}\n}}"
+                imports, body = _split_leading_imports(child)
+                wrapped = f"{imports}def hook = {{\n{body}\n}}"
                 if metadata.get("expression"):
-                    wrapped = f"def filterSpec = (\n{child}\n)"
+                    wrapped = f"{imports}def filterSpec = (\n{body}\n)"
                 error = validate_groovy_code(wrapped)
                 if error:
                     errors.append(_describe_error(child_path, error))

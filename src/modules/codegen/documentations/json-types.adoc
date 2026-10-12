@@ -1,28 +1,32 @@
 = JSON Types and Formats
 
 Attribute definitions declare how an attribute's value appears on the wire (the JSON, or the
-protocol payload, of the target system). In the schema script you do this with a JSON type and,
-optionally, an OpenAPI format:
+protocol payload, of the target system). In the schema script you do this with a `json { ... }`
+block carrying a base JSON type and, optionally, an OpenAPI format:
 
 [source,groovy]
 ----
-attribute("createdAt") {
-    jsonType "string"            // base JSON type
-    openApiFormat "date-time"     // optional OpenAPI format (refines the value handling)
-}
-
-// or in one block:
 attribute("updatedAt") {
     json {
-        name "updated_at"
-        type "string"
-        openApiFormat "date-time"
+        name "updated_at"         // wire name (defaults to the attribute name)
+        type "string"             // base JSON type
+        openApiFormat "date-time" // optional OpenAPI format (refines the value handling)
+    }
+}
+
+attribute("isActive") {
+    json {
+        type "boolean"
     }
 }
 ----
 
-In declarative YAML the same settings are the `jsonType`, `openApiFormat`, and `json: { type, openApiFormat }`
-keys of an attribute.
+The flat `jsonType "..."` and `openApiFormat "..."` shortcuts at the attribute level still work
+but are deprecated — use the `json { ... }` block instead.
+
+In declarative YAML the same settings are the `json: { name, type, openApiFormat }` keys of an
+attribute (the flat `jsonType` / `openApiFormat` keys are still accepted, for parity with the
+deprecated shortcuts).
 
 == Base JSON types
 
@@ -167,9 +171,11 @@ the box:
 == Guidance
 
 * Dates and timestamps: use the base type `string` with the `date-time` format. The value is a
-  RFC 3339 string on the wire and a `ZonedDateTime` in ConnId. (For the ConnId *built-in* date
+  RFC 3339 string on the wire and a `ZonedDateTime` in ConnId. For date-only values (no time of
+  day), use the `date` format: the wire value is an RFC 3339 full-date (e.g. `2026-04-21`) and
+  the ConnId value is a `ZonedDateTime` at start-of-day in UTC. (For the ConnId *built-in* date
   attributes such as `__ENABLE_DATE__`, `long` epoch-millis is required instead — see the
-  *ConnId attribute mapping and value types* chapter.)
+  *ConnId Built-in Attributes* chapter.)
 * Identifiers: `uuid` and `uri` formats keep values well-formed and self-documenting.
 * Passwords on the wire: the `password` format hints that the value must not be displayed in
   logs or traces.

@@ -41,6 +41,7 @@ async def _run_with_chain_response(response: object, errors: AsyncMock) -> None:
                 }
             ],
             midpoint_errors=["Unsupported update request"],
+            validation_errors={},
             protocol=ApiType.REST,
             connection_target="https://api.example.test",
             dsl_documentation="DSL reference",

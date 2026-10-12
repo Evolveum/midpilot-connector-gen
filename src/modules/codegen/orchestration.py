@@ -33,10 +33,8 @@ from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutin
 from src.modules.codegen import connector_fix, generation
 from src.modules.codegen.enums import ArtifactKind, build_object_class_operation_key
 from src.modules.codegen.errors import (
-    ConnectorCodeValidationError,
     ConnectorFixContextTooLargeError,
     ConnectorScriptsNotFoundError,
-    InvalidConnectorScriptOverrideError,
     UnknownConnectorOperationError,
 )
 from src.modules.codegen.schema import (
@@ -47,9 +45,7 @@ from src.modules.codegen.schema import (
 )
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, load_connector_artifacts
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
-from src.modules.codegen.utils.connector_code_validation import (
-    ensure_valid_connector_code,
-)
+from src.modules.codegen.utils.postprocess import strip_markdown_fences
 from src.modules.digester.errors import (
     AttributesNotFoundError,
     InvalidRelationsOutputError,
@@ -393,15 +389,17 @@ async def schedule_connector_fix_job(
     """
     Schedule a connector fix for all generated scripts of one object class.
 
-    Loads the selected object's generated scripts and its extracted schema, validates and
-    applies caller overrides for this run only, enforces the input budget, schedules the job and
-    persists the class-scoped ``{objectClass}ConnectorFixJobId`` / ``{objectClass}ConnectorFixInput``
-    pointer.
+    Loads the selected object's generated scripts and its extracted schema, applies caller
+    overrides for this run only, enforces the input budget, schedules the job and persists the
+    class-scoped ``{objectClass}ConnectorFixJobId`` / ``{objectClass}ConnectorFixInput`` pointer.
+
+    Overrides are not format-validated here: the caller sends the code midPoint rejected, so
+    it may well be invalid. The worker validates every script and hands the errors to the fix.
 
     The budget is checked twice for a request that carries overrides, and the two checks
-    answer different questions: the first rejects an oversized request body before the Groovy
-    parser or the session is touched at all, the second measures the exact text the job will
-    carry once the overrides are normalized and merged with the stored scripts.
+    answer different questions: the first rejects an oversized request body before the session
+    is touched at all, the second measures the exact text the job will carry once the overrides
+    are normalized and merged with the stored scripts.
 
     Unlike the per-operation jobs this one passes no ``session_result_key``: it
     publishes many ``{key}Output`` rows itself, and ``schedule_coroutine_job``
@@ -414,8 +412,8 @@ async def schedule_connector_fix_job(
     if not stored_artifacts:
         raise ConnectorScriptsNotFoundError(session_id, object_class)
 
-    validated_overrides = await _validate_script_overrides(codegen_input)
-    artifacts = _apply_script_overrides(stored_artifacts, validated_overrides, session_id)
+    overrides = {override.operation_key: strip_markdown_fences(override.code) for override in codegen_input.scripts}
+    artifacts = _apply_script_overrides(stored_artifacts, overrides, session_id)
     await _enforce_fix_token_budget(artifact.code for artifact in artifacts)
 
     # The fix must not decide attribute naming from the generated scripts alone: they are
@@ -499,23 +497,6 @@ def _apply_script_overrides(
         artifact.with_code(overrides[artifact.operation_key]) if artifact.operation_key in overrides else artifact
         for artifact in artifacts
     ]
-
-
-async def _validate_script_overrides(codegen_input: ConnectorFixInput) -> dict[str, str]:
-    """Normalize and parse caller scripts in a worker thread after size checks pass."""
-    if not codegen_input.scripts:
-        return {}
-
-    def validate_all() -> dict[str, str]:
-        validated: dict[str, str] = {}
-        for override in codegen_input.scripts:
-            try:
-                validated[override.operation_key] = ensure_valid_connector_code(override.code)
-            except ConnectorCodeValidationError as exc:
-                raise InvalidConnectorScriptOverrideError(override.operation_key, str(exc)) from exc
-        return validated
-
-    return await asyncio.to_thread(validate_all)
 
 
 async def _enforce_fix_token_budget(codes: Iterable[str]) -> None:

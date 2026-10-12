@@ -33,6 +33,7 @@ async def test_complete_prompt_is_rejected_before_the_llm_chain_is_built():
                 }
             ],
             midpoint_errors=["Unsupported update request"],
+            validation_errors={},
             protocol=ApiType.REST,
             connection_target="https://api.example.test",
             dsl_documentation="DSL reference",
@@ -66,6 +67,7 @@ async def test_non_sql_prompt_does_not_render_sql_context(protocol):
         await run_connector_fix_pass(
             artifact_payloads=[],
             midpoint_errors=[],
+            validation_errors={},
             protocol=protocol,
             connection_target="https://api.example.test",
             dsl_documentation="DSL reference",
@@ -98,6 +100,7 @@ async def test_sql_context_is_rendered_before_token_budget_enforcement():
         await run_connector_fix_pass(
             artifact_payloads=[],
             midpoint_errors=[],
+            validation_errors={},
             protocol=ApiType.SQL,
             connection_target="connector_project_db",
             dsl_documentation="SQL DSL reference",

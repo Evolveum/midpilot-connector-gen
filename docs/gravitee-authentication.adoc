@@ -55,6 +55,11 @@ The backend `/health`, `/docs`, `/redoc` and `/openapi.json` routes remain publi
 at the application layer. Network exposure and gateway policies must be chosen
 explicitly; gateway plans can still protect these routes when proxied.
 
+The readiness check `GET /api/v1/ready` is not one of them: it is authenticated
+like every other `/api/v1` route, so midPoint calls it through the gateway with
+its own key (`/midpilot/api/v1/ready`). Infrastructure probes that carry no key
+use `/health`.
+
 == Administrator: configure Gravitee
 
 . Create an HTTP Proxy API. For Docker Desktop with FastAPI running on the

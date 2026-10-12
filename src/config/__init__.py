@@ -13,6 +13,7 @@ from src.config.jobs import JobsSettings
 from src.config.langfuse import LangfuseSettings
 from src.config.llm import LLMSettings, ReasoningEffort
 from src.config.logging import LoggingSettings, LogLevel
+from src.config.readiness import ReadinessSettings
 from src.config.scrape import ScrapeAndProcessSettings
 from src.config.search import BraveSettings, SearchSettings
 
@@ -47,6 +48,7 @@ class Settings(BaseSettings):
     jobs: JobsSettings = JobsSettings()
     brave: BraveSettings = BraveSettings()
     database: DatabaseSettings = DatabaseSettings()
+    readiness: ReadinessSettings = ReadinessSettings()
 
 
 config = Settings()
@@ -63,6 +65,7 @@ __all__ = [
     "LangfuseSettings",
     "LogLevel",
     "LoggingSettings",
+    "ReadinessSettings",
     "ReasoningEffort",
     "ScrapeAndProcessSettings",
     "SearchSettings",

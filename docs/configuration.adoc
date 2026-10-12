@@ -67,6 +67,10 @@ most likely to touch.
 
 | `+CODEGEN__+` | `src/config/codegen.py`
 | Object-class fix input-token limit.
+
+| `+READINESS__+` | `src/config/readiness.py`
+| Per-check timeout (`CHECK_TIMEOUT_SECONDS`, default 5 s) for the database and
+  LLM-endpoint checks behind `GET /api/v1/ready`.
 |===
 
 NOTE: The external apiType signal settings cover REST and SCIM. SQL is selected

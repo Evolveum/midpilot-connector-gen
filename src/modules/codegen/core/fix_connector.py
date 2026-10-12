@@ -31,6 +31,7 @@ from src.modules.codegen.prompts.fix_prompts import (
     CONNECTOR_FIX_DOCUMENTATION_SECTION,
     CONNECTOR_FIX_ENDPOINTS_SECTION,
     CONNECTOR_FIX_PREVIOUS_ATTEMPT_SECTION,
+    CONNECTOR_FIX_VALIDATION_ERRORS_SECTION,
     get_connector_fix_system_prompt,
     get_connector_fix_user_prompt,
 )
@@ -95,6 +96,14 @@ def extract_script_tag_blocks(code: str) -> List[ScriptTagBlock]:
     return blocks
 
 
+def render_validation_errors(validation_errors: Mapping[str, Sequence[str]]) -> str:
+    """Render the validation-errors section; empty when every input artifact is valid."""
+    lines = [f"- {operation_key}: {error}" for operation_key, errors in validation_errors.items() for error in errors]
+    if not lines:
+        return ""
+    return CONNECTOR_FIX_VALIDATION_ERRORS_SECTION.format(validation_errors="\n".join(lines))
+
+
 def render_previous_attempt(response: ConnectorFixLLMResponse) -> str:
     lines = [f"- {script.operation_key}: {script.reason}" for script in response.fixed_scripts]
     if response.analysis:
@@ -124,6 +133,7 @@ async def run_connector_fix_pass(
     *,
     artifact_payloads: Sequence[Dict[str, Any]],
     midpoint_errors: Sequence[str],
+    validation_errors: Mapping[str, Sequence[str]],
     protocol: ApiType,
     connection_target: str,
     dsl_documentation: str,
@@ -139,7 +149,8 @@ async def run_connector_fix_pass(
     Run one fix pass and return its validated structured output.
 
     Passing ``documentation_chunks`` and ``previous_attempt`` turns this into the
-    escalation pass; nothing else differs between the two.
+    escalation pass; nothing else differs between the two. ``validation_errors`` are the
+    local validation errors of the input artifacts, keyed by operation key.
 
     :raises LLMUnavailableError: when the model backend is unreachable
     :raises ConnectorFixPassFailedError: when the pass produces no valid structured response
@@ -170,6 +181,7 @@ async def run_connector_fix_pass(
     prompt_vars = {
         "midpoint_errors": json.dumps(list(midpoint_errors), ensure_ascii=False, indent=2),
         "operation_scripts": render_script_bundle(artifact_payloads),
+        "validation_errors": render_validation_errors(validation_errors),
         "extracted_attributes": extracted_attributes,
         "extracted_endpoints": endpoints_section,
         "dsl_documentation": dsl_documentation or "No bundled DSL reference is available for these operations.",

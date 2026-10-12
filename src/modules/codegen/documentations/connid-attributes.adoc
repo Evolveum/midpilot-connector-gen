@@ -31,7 +31,7 @@ objectClass("User") {
 
 In this example, we are mapping the `id` attribute of the object class to the built-in `UID` attribute, and the `name` attribute to the `NAME` attribute.
 
-The `connIdAttribute` method takes two parameters: the first is the name of the built-in ConnID attribute (e.g., `UID`, `NAME`), and the second is the *native* name of the corresponding attribute of the object class (e.g., `id`, `name`). For SCIM-based object classes the native name is the attribute as declared in the schema script — the SCIM wire path is described separately (see the `scim { path ... }` / `scim { name ... }` blocks in xref:scim/native-schema.adoc[SCIM schema customization]). The `connIdAttribute` method accepts only the built-in ConnID attributes as the first parameter.
+The `connIdAttribute` method takes two parameters: the first is the name of the built-in ConnID attribute (e.g., `UID`, `NAME`), and the second is the *native* name of the corresponding attribute of the object class (e.g., `id`, `name`). For SCIM-based object classes the native name is the attribute as declared in the schema script — the SCIM wire path is described separately (see the `scim { path ... }` / `scim { name ... }` blocks in SCIM schema customization). The `connIdAttribute` method accepts only the built-in ConnID attributes as the first parameter.
 
 NOTE: If `NAME` is not explicitly mapped, it is derived from the `UID` mapping by default (the same underlying attribute).
 
@@ -277,42 +277,83 @@ custom date attributes::
 The conndev base (`com.evolveum.polygon.conndev`) exposes the built-in
 attributes through a dedicated enum and type-resolution rules:
 
-* `ConnIdBuiltInAttribute` (`build/ConnIdBuiltInAttribute.java`) — enum of
-  built-in attributes with an optional *forced type*:
+* `ConnIdBuiltInAttribute` (`build/ConnIdBuiltInAttribute.java`) — the registry
+  of built-in attributes, each with an optional *forced type*:
 ** `UID` (`pass:[__UID__]`) and `NAME` (`pass:[__NAME__]`) — forced
    `String.class` (a hard ConnId constraint).
-** `PASSWORD`, `ENABLE`, `ENABLE_DATE`, `DISABLE_DATE`, `LOCK_OUT` — no forced
-   type; the connector script must declare the correct ConnId type
-   (`GuardedString` for password, `Boolean`/`Long` for the others).
-** A Groovy `Mixin` exposes them as `ConnIdBuiltInAttribute.UID` etc. for DSL
-   scripts.
+** `PASSWORD` (`pass:[__PASSWORD__]`) and `CURRENT_PASSWORD`
+   (`pass:[__CURRENT_PASSWORD__]`) — forced `GuardedString.class`.
+** `ENABLE`, `ENABLE_DATE`, `DISABLE_DATE`, `LOCK_OUT` — no forced type; the
+   connector script must declare the ConnId type (`Boolean` / `Long`).
+** Inside a `connId { ... }` block the constants `UID`, `NAME`, `PASSWORD`, `ENABLE`,
+   `ENABLE_DATE`, `DISABLE_DATE` and `LOCK_OUT` are available without an import
+   (`connId { name UID }`); `CURRENT_PASSWORD` is not among them — reference it as
+   `ConnIdBuiltInAttribute.CURRENT_PASSWORD` (with
+   `import com.evolveum.polygon.conndev.build.ConnIdBuiltInAttribute`) or by its special name
+   `pass:[__CURRENT_PASSWORD__]`. The YAML `connId.name` shortcuts are the same seven names.
 * Mapping a protocol attribute to a built-in attribute:
 ** `attribute("id").connId().name(ConnIdBuiltInAttribute.UID)` —
    `AttributeBuilder.ConnIdMapping.name(ConnIdBuiltInAttribute)`
-** or `connIdAttribute("UID", "id")` on the object class builder
-   (`BaseObjectClassDefinitionBuilder.connIdAttribute`) — only `"UID"` and
-   `"NAME"` are supported there; it binds the built-in name to an existing
-   protocol attribute.
-* Type resolution (`rules/AttributeTypeResolutionRule.java`): the
-  `AttributeOnly` rule `UID_OR_NAME_IS_STRING` is the *first* candidate in the
-  priority chain — any attribute whose ConnId name is `pass:[__UID__]` or
-  `pass:[__NAME__]` is forced to `String` regardless of what the protocol
-  mapping suggested. This encodes the hard framework constraint.
-* `AbstractAttributeBuilder.JsonMapping.build()` applies
-  `ConnIdBuiltInAttribute.getForcedType()` when the script did not declare a
-  ConnId type, wrapping the value mapping in a `ValueTypeOverrideMapping` so
-  the JSON value is converted to the forced type.
-* SCIM-style defaults: `BaseSchemaBuilder` maps the SCIM `id` attribute to
-  `pass:[__UID__]` and `name` to `pass:[__NAME__]` (see the dummy-schema
-  initialization as a reference), and `FilterSpecification`/
-  `FilterBasedSearchDispatcher` treat `pass:[__UID__]`-equals filters as the primary
-  lookup path.
+** or `connIdAttribute("UID", "id")` on the object class builder — only
+   `"UID"` and `"NAME"` are supported there; it binds the built-in name to an
+   existing protocol attribute.
+* Type resolution (`rules/AttributeTypeResolutionRule.java`): a single
+  `AttributeOnly` rule whose internal priority chain evaluates candidate
+  sources in order — the first one with an answer wins. The chain only
+  produces a *detected* type: a ConnId type declared explicitly on the
+  attribute (`connId { type ... }` / YAML `connId.type`) always takes
+  precedence over it, including over the forced built-in types — so never
+  declare a type other than `String` for `pass:[__UID__]` / `pass:[__NAME__]`
+  or other than `GuardedString` for the password attributes. The *first* candidate
+  is the built-in forced type: any attribute whose ConnId name is a
+  `ConnIdBuiltInAttribute` keeps its forced type (`String` for
+  `pass:[__UID__]` / `pass:[__NAME__]`, `GuardedString` for the password
+  attributes) regardless of what the protocol mapping suggested. The remaining
+  candidates, in order: reference attributes → `ConnectorObjectReference`,
+  attributes with a `complexType` → `EmbeddedObject`, the protocol mapping's
+  suggestion, and finally the attribute's current ConnId type (the `String`
+  default when nothing was declared).
+* After the final type is decided, `AttributeTypeCoercionRule`
+   (`rules/AttributeTypeCoercionRule.java`) pushes it into every protocol value
+   mapping. When a mapping's native ConnId type differs from the final one,
+   `JsonMapping.build()` wraps the mapping in a `ValueTypeOverrideMapping`
+   (`schema/ValueTypeOverrideMapping.java`):
+** A *default* mapping (derived from the JSON type / OpenAPI format) is bridged
+    with a value conversion — supported overrides are same-type passthrough,
+    numeric/`ZonedDateTime`-to-`String` (e.g. an `int64`-backed
+    `pass:[__UID__]`) and `String`↔`GuardedString` (e.g. a JSON `string` or
+    `password`-format mapping behind a `GuardedString`-forced attribute — the
+    wire value stays a JSON string, the ConnId value a `GuardedString`), so any
+    other combination (e.g. a JSON `string` mapping for a reference attribute)
+    fails the schema build.
+** A *custom* mapping (a user-supplied `implementation`) is never bridged: its
+   `serialize`/`deserialize` closures own the wire↔ConnId conversion and produce
+   the type from the connid section, not from the default JSON mapping, so the
+   built mapping is only re-labeled to the final ConnId type
+   (`ValueTypeOverrideMapping.asConnIdType`). This is how an attribute that the
+   default mapping cannot bridge is supported — e.g. a reference attribute whose
+   `deserialize` builds a `ConnectorObjectReference` from a JSON string
+   (`json { type("string") implementation { deserialize { ... } } }`).
+* Naming defaults: when nothing else claims `pass:[__NAME__]` (protocol-specific
+  detection or an explicit `connIdAttribute("NAME", …)`), `NameDefaultsToUidRule`
+  creates it as a copy of the `pass:[__UID__]` attribute. Protocol-specific
+  built-in detection (e.g. the SCIM `id` → `pass:[__UID__]` mapping) belongs to
+  the protocol framework, not to the conndev base. `FilterBasedSearchDispatcher`
+  gives single-value `pass:[__UID__]`-equals filters special treatment
+  (rewriting them via the `nameHint` when no filter implementation matches).
+* Same attribute for both: when the object's identifier doubles as its name,
+  the same protocol attribute may be mapped to both `UID` and `NAME`
+  (`connId: {UID: id, NAME: id}` in the class-level alias map, or
+  `pass:[__UID__]` / `pass:[__NAME__]` on the same attribute). The attribute
+  keeps `pass:[__UID__]` and `pass:[__NAME__]` is satisfied by the
+  `NameDefaultsToUidRule` derivation — no failure, no double mapping.
 
-NOTE:: *Known DSL gap* — `ConnIdBuiltInAttribute` currently lists only UID, NAME, PASSWORD,
-ENABLE, ENABLE_DATE, DISABLE_DATE and LOCK_OUT. `pass:[__FORCE_PASSWORD_CHANGE__]`,
-`pass:[__PASSWORD_EXPIRED__]`, `pass:[__PASSWORD_EXPIRATION_DATE__]`,
-`pass:[__GROUPS__]`, `pass:[__DESCRIPTION__]`, `pass:[__SHORT_NAME__]`,
+NOTE: *Known DSL gap* — `ConnIdBuiltInAttribute` exposes UID, NAME, PASSWORD,
+CURRENT_PASSWORD, ENABLE, ENABLE_DATE, DISABLE_DATE and LOCK_OUT.
+`pass:[__FORCE_PASSWORD_CHANGE__]`, `pass:[__PASSWORD_EXPIRED__]`,
+`pass:[__PASSWORD_EXPIRATION_DATE__]`, `pass:[__GROUPS__]`,
+`pass:[__DESCRIPTION__]`, `pass:[__SHORT_NAME__]`,
 `pass:[__LAST_LOGIN_DATE__]` and `pass:[__AUXILIARY_OBJECT_CLASS__]` are not
-exposed as enum constants and have no forced type; scripts that need them must
-pass the special name via `connId().name(...)` (e.g. `pass:[__FORCE_PASSWORD_CHANGE__]`)
-and declare the type explicitly (per the catalog above).
+exposed as enum constants; scripts that need them must pass the special name
+via `connId().name(...)` (e.g. `pass:[__FORCE_PASSWORD_CHANGE__]`) and declare
+the type explicitly (per the catalog above).

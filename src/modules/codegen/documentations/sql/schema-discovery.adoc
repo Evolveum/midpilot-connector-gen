@@ -24,7 +24,7 @@ If both `scanTables` and `scanViews` are `false`, no bulk discovery happens — 
 
 Each discovered table becomes a ConnId object class; the object class name defaults to the table name.
 Each column becomes a ConnId attribute; the attribute name defaults to the column name.
-Table and attribute correlation is case-insensitive, so `app_user` matches `App_User` in your scripts.
+Table and attribute correlation is **case-sensitive**: a script name must match the discovered table/column name exactly (`app_user` does not match `App_User`).
 
 The SQL-to-ConnId type mapping of a column is resolved from its JDBC type:
 
@@ -67,7 +67,7 @@ The framework determines which column (or columns) form the object `+++__UID__++
 . *Single primary key* — the single PK column becomes `__UID__`.
 . *Composite primary key* — the first PK column becomes `__UID__` and the remaining PK columns are attached as additional UID columns; the composite UID value is the column values joined with a `.` separator (e.g. `tenant-1.account-42`).
 . *No primary key* — falls back to the first unique column of the table as `__UID__`.
-. *No primary key and no unique column* — the object class is still created, but without a `__UID__` mapping; no create/update/delete handler can be built for it. Exclude such tables with `scanExcludeTables` unless they are only needed read-only.
+. *No primary key and no unique column* — the object class is still created, but without a `__UID__` mapping, so it is effectively read-only: write operations fail at runtime because no SQL UID mapping exists. Exclude such tables with `scanExcludeTables` unless they are only needed read-only.
 
 You can override the detected UID mapping in your schema script (see xref:native-schema.adoc[]).
 

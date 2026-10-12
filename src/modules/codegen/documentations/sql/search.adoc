@@ -78,7 +78,7 @@ objectClass("User") {
 }
 ----
 
-Inside the `where { e +++->+++ }` closure (delegated to `SqlWherePredicateBuilder`):
+Inside the `where { e +++->+++ }` closure:
 
 `e.col("name")` / `e.column("name")`::
   Typed column reference, resolved from the discovered table metadata (unknown column → `IllegalArgumentException`).

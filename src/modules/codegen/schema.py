@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from src.core.schema import CamelCaseModel
 from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.utils.connector_code_validation import ensure_valid_connector_code
+from src.modules.codegen.utils.postprocess import strip_markdown_fences
 from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 from src.shared.auth import normalize_auth_type_value
 
@@ -275,7 +276,13 @@ class ConnectorScriptOverride(CamelCaseModel):
     """A user-edited connector script supplied in place of the one stored in the session."""
 
     operation_key: str = Field(..., description="Operation key of the script being replaced, e.g. 'userUpdate'.")
-    code: str = Field(..., description="Connector code (declarative YAML or Groovy) to use instead of the stored one.")
+    code: str = Field(
+        ...,
+        description=(
+            "Connector code (declarative YAML or Groovy) to use instead of the stored one. It may fail "
+            "local validation: the fix receives its validation errors and repairs them."
+        ),
+    )
 
     @field_validator("operation_key")
     @classmethod
@@ -284,6 +291,14 @@ class ConnectorScriptOverride(CamelCaseModel):
         if not normalized:
             raise ValueError("operationKey cannot be empty")
         return normalized
+
+    @field_validator("code")
+    @classmethod
+    def reject_empty_code(cls, value: str) -> str:
+        """Broken code is the fix's input, but empty code leaves nothing to repair; kept as sent."""
+        if not strip_markdown_fences(value):
+            raise ValueError("code cannot be empty")
+        return value
 
 
 class ConnectorFixInput(MidpointErrorsInput):

@@ -45,16 +45,6 @@ class UnknownConnectorOperationError(AppError):
         )
 
 
-class InvalidConnectorScriptOverrideError(AppError):
-    """Raised when a caller-supplied fix override is not valid connector code (declarative YAML or Groovy)."""
-
-    status_code = 422
-    code = "invalid_connector_script_override"
-
-    def __init__(self, operation_key: str, reason: str):
-        super().__init__(f"Script override for operation '{operation_key}' is invalid: {reason}")
-
-
 class ConnectorFixContextTooLargeError(AppError):
     """Raised when assembled object-class scripts exceed the fix input budget."""
 

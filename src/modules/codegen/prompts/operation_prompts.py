@@ -51,6 +51,9 @@ REST_ENDPOINT_RULES = """
   the documented behavior and add a concise TODO explaining the discrepancy.
 - Normalize API paths relative to <base_api_url>: remove the scheme, host and an existing base-path
   prefix; retain literal path placeholders. Use connector-relative paths without a leading slash.
+- In update and delete endpoints the framework substitutes only `{{id}}` (with the object's UID): write
+  the documented identifier placeholder as `{{id}}`. Declarative YAML update and delete endpoints
+  default to POST, so always set their `method`.
 - Search is a logical operation, not a restriction to HTTP GET. Honor a documented POST or other
   method. Select a documented endpoint configuration or custom implementation that supports its
   method and body; never change the target method to fit a framework example or invent a DSL key.

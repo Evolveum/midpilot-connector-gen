@@ -5,9 +5,10 @@
 """
 Worker for an object-class connector fix.
 
-Takes one object class's CRUD/search/schema Groovy scripts plus the errors
-midPoint reported, asks the model which scripts are at fault, validates and
-merges what comes back, and writes the changed scripts to the session as one unit.
+Takes one object class's CRUD/search/schema scripts plus the errors midPoint
+reported and the scripts' own local validation errors, asks the model which
+scripts are at fault, validates and merges what comes back, and writes the
+changed scripts to the session as one unit.
 
 Named ``connector_fix`` rather than ``fix`` because ``repair`` already exists in
 this package and the two are different things: repair rewrites one operation from
@@ -48,7 +49,10 @@ from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, re
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text, select_adoc_sections
 from src.modules.codegen.selection.relevant_chunks import collect_connector_relevant_chunks
 from src.modules.codegen.utils.code_output import build_connector_code_output
-from src.modules.codegen.utils.connector_code_validation import validate_connector_code
+from src.modules.codegen.utils.connector_code_validation import (
+    collect_connector_code_errors,
+    validate_connector_code,
+)
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
 from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
@@ -91,6 +95,8 @@ async def fix_connector_code(
     extracted schema the generators worked from: without it the model would have to
     settle a naming conflict from the very scripts that are under suspicion.
     ``endpoints`` is absent for protocols that have no endpoint surface (SQL).
+    A script that fails local validation is not rejected: its errors go to the model
+    as faults to fix, because the caller usually sends exactly the code midPoint rejected.
 
     :raises ConnectorFixEscalationFailedError: when the documentation pass fails and no first-pass repair is usable
     :raises ConnectorFixPassFailedError: when an LLM pass produces no valid structured response
@@ -113,6 +119,14 @@ async def fix_connector_code(
     extracted_attributes = render_prompt_records(build_complete_attribute_mapping_records(attributes))
     extracted_endpoints = render_prompt_records(endpoints_to_records(endpoints)) if endpoints is not None else ""
     sql_context = build_sql_context_prompt_vars(attributes) if protocol is ApiType.SQL else None
+    # Collected once: both passes see the same original scripts, so they share the errors.
+    validation_errors = await asyncio.to_thread(_collect_input_validation_errors, artifacts)
+    if validation_errors:
+        logger.info(
+            "[Codegen:Fix] %d input script(s) fail local validation: %s",
+            len(validation_errors),
+            ", ".join(validation_errors),
+        )
 
     async def run_pass(
         *,
@@ -123,6 +137,7 @@ async def fix_connector_code(
         return await run_connector_fix_pass(
             artifact_payloads=artifact_payloads,
             midpoint_errors=midpoint_errors,
+            validation_errors=validation_errors,
             protocol=protocol,
             connection_target=connection_target,
             dsl_documentation=dsl_documentation,
@@ -211,6 +226,16 @@ async def fix_connector_code(
             escalation_failure_detail,
         )
 
+    for operation_key, errors in validation_errors.items():
+        if operation_key not in accepted:
+            await report_job_error(
+                logger,
+                job_id,
+                "[Codegen:Fix] %s still fails local validation; no valid replacement was produced: %s",
+                operation_key,
+                errors[0],
+            )
+
     final_outputs = {
         artifact.operation_key: await build_connector_code_output(
             accepted[artifact.operation_key].code if artifact.operation_key in accepted else artifact.code
@@ -244,6 +269,16 @@ async def fix_connector_code(
         documentation_query=documentation_query,
         analysis=response.analysis,
     )
+
+
+def _collect_input_validation_errors(artifacts: Sequence[ConnectorArtifact]) -> Dict[str, tuple[str, ...]]:
+    """Local validation errors per operation key; valid scripts are omitted. CPU-bound."""
+    validation_errors: Dict[str, tuple[str, ...]] = {}
+    for artifact in artifacts:
+        errors = collect_connector_code_errors(artifact.code)
+        if errors:
+            validation_errors[artifact.operation_key] = errors
+    return validation_errors
 
 
 def _merge_fix_responses(
