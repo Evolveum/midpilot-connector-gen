@@ -18,11 +18,8 @@ back to the other signals.
 import logging
 from typing import cast
 
-from langchain_core.runnables.config import RunnableConfig
-
 from src.config import config
 from src.core.llm import build_structured_chain
-from src.core.observability.langfuse import langfuse_handler
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.prompts.apitype.knowledge_prompts import (
     get_api_type_knowledge_system_prompt,
@@ -66,7 +63,7 @@ async def lookup_api_type_knowledge(application_name: str) -> ApiTypeSignalResul
             await invoke_llm(
                 chain,
                 {"application_name": application_name},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:ApiTypeKnowledge"),
+                run_name="Digester:ApiTypeKnowledge",
             ),
         )
     except Exception as exc:
@@ -117,7 +114,7 @@ async def lookup_rest_knowledge(application_name: str) -> RestSignalResult:
             await invoke_llm(
                 chain,
                 {"application_name": application_name},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:RestKnowledge"),
+                run_name="Digester:RestKnowledge",
             ),
         )
     except Exception as exc:

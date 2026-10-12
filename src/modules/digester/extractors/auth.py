@@ -8,11 +8,8 @@ from collections import Counter
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from uuid import UUID
 
-from langchain_core.runnables.config import RunnableConfig
-
 from src.config import config
 from src.core.llm import build_structured_chain
-from src.core.observability.langfuse import langfuse_handler
 from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
 from src.modules.digester.extraction.chunk_extraction import (
@@ -116,7 +113,7 @@ async def extract_auth_raw(
         system_prompt=get_auth_discovery_system_prompt,
         user_prompt=get_auth_discovery_user_prompt,
         parse_fn=parse_fn,
-        logger_prefix="[Digester:Auth] ",
+        run_name="Digester:Auth",
         job_id=job_id,
         chunk_id=chunk_id,
         chunk_metadata=chunk_metadata,
@@ -159,7 +156,7 @@ async def build_auth_items(auth_info: List[AuthProcessingInfo], job_id: UUID) ->
             system_prompt=auth_build_system_prompt,
             user_prompt=auth_build_user_prompt,
             parse_fn=parse_fn,
-            logger_prefix="[Digester:Auth:Build] ",
+            run_name="Digester:Auth:Build",
             job_id=job_id,
         )
 
@@ -260,7 +257,6 @@ async def _to_processing_info(auth: DiscoveryAuth | AuthProcessingInfo) -> AuthP
                     seq.chunk_id,
                     seq.start_sequence,
                     seq.end_sequence,
-                    logger_prefix="[Digester:Auth:Deduplication] ",
                 )
             relevant_seq.append(
                 DocProcessingSequenceItem(
@@ -375,7 +371,7 @@ async def deduplicate_auth(
             await invoke_llm(
                 chain,
                 {"auth_list": json.dumps([auth.model_dump() for auth in auth_list])},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:DedupAuth"),
+                run_name="Digester:DedupAuth",
             ),
         )
         logger.debug("[Digester:Auth] LLM result in deduplication: %r", (result or ""))
@@ -439,7 +435,7 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
             await invoke_llm(
                 chain,
                 {"items_json": items_json},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:SortAuth"),
+                run_name="Digester:SortAuth",
             ),
         )
 

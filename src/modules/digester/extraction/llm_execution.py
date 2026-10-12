@@ -5,15 +5,13 @@
 import asyncio
 import json
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, cast
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar
 from uuid import UUID
 
-from langchain_core.callbacks.base import Callbacks
-from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel
 
 from src.config import config
-from src.core.observability.langfuse import langfuse_handler
+from src.core.observability.langfuse import build_llm_config
 from src.jobs import increment_processed_documents, update_job_progress
 from src.modules.digester.extraction.metadata_helper import extract_summary_and_tags
 
@@ -50,13 +48,15 @@ async def run_with_digester_llm_limit(callback: Callable[[], Awaitable[T]]) -> T
         return await callback()
 
 
-async def invoke_llm(chain: Any, input: Any, **kwargs: Any) -> Any:
+async def invoke_llm(chain: Any, input: Any, *, run_name: str) -> Any:
     """
-    Run one digester LLM chain invocation behind the process-wide digester LLM limit.
+    Trace one named digester LLM invocation behind the process-wide concurrency limit.
     """
 
+    llm_config = build_llm_config(run_name)
+
     async def _invoke() -> Any:
-        return await chain.ainvoke(input, **kwargs)
+        return await chain.ainvoke(input, config=llm_config)
 
     return await run_with_digester_llm_limit(_invoke)
 
@@ -93,12 +93,10 @@ async def invoke_chunk_chain(
     without it Langfuse names the trace after the chain class (``RunnableSequence``).
     """
     summary, tags = extract_summary_and_tags(chunk_metadata)
-    callbacks = cast(Callbacks, [langfuse_handler] if langfuse_handler else [])
-    llm_config = RunnableConfig(callbacks=callbacks, run_name=run_name)
     return await invoke_llm(
         chain,
         {"chunk": chunk, "summary": summary, "tags": tags},
-        config=llm_config,
+        run_name=run_name,
     )
 
 

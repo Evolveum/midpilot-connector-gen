@@ -80,7 +80,7 @@ class SearchGenerator(_OperationGenerator):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold="search {\n}\n",
-            logger_prefix=f"[Codegen:Search:{protocol_label}:{search_intent_label(intent)}]",
+            run_name=f"Codegen:Search:{protocol_label}:{search_intent_label(intent)}",
             extra_prompt_vars=extra_prompt_vars or {},
             context_only_for_conndev=context_only_for_conndev,
         )
@@ -130,7 +130,7 @@ class CreateGenerator(_OperationGenerator):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold="create {\n}\n",
-            logger_prefix=f"[Codegen:Create:{protocol_label}]",
+            run_name=f"Codegen:Create:{protocol_label}",
             extra_prompt_vars=extra_prompt_vars or {},
             context_only_for_conndev=context_only_for_conndev,
         )
@@ -179,7 +179,7 @@ class UpdateGenerator(_OperationGenerator):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold="update {\n}\n",
-            logger_prefix=f"[Codegen:Update:{protocol_label}]",
+            run_name=f"Codegen:Update:{protocol_label}",
             extra_prompt_vars=extra_prompt_vars or {},
             context_only_for_conndev=context_only_for_conndev,
         )
@@ -228,7 +228,7 @@ class DeleteGenerator(_OperationGenerator):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold="delete {\n}\n",
-            logger_prefix=f"[Codegen:Delete:{protocol_label}]",
+            run_name=f"Codegen:Delete:{protocol_label}",
             extra_prompt_vars=extra_prompt_vars or {},
             context_only_for_conndev=context_only_for_conndev,
         )
@@ -269,7 +269,7 @@ class RelationGenerator(BaseGroovyGenerator):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold="{}",
-            logger_prefix="[Codegen:Relation]",
+            run_name="Codegen:Relation",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["relation_docs"] = docs_text
@@ -372,7 +372,7 @@ class AuthorizationGenerator(BaseGroovyGenerator):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold=default_scaffold,
-            logger_prefix=f"[Codegen:Authorization:{protocol.value.upper()}]",
+            run_name=f"Codegen:Authorization:{protocol.value.upper()}",
             extra_prompt_vars=extra_prompt_vars or {},
         )
         config.extra_prompt_vars["authorization_docs"] = docs_text

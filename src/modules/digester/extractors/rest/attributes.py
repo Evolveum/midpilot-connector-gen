@@ -9,12 +9,10 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel
 
 from src.config import config
 from src.core.llm import build_structured_chain, raise_if_llm_unavailable
-from src.core.observability.langfuse import langfuse_handler
 from src.jobs import (
     update_job_progress,
 )
@@ -271,7 +269,7 @@ async def _build_attr_from_sequences(
                     "object_class": object_class,
                     "attribute_context": attribute_context,
                 },
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name=run_name),
+                run_name=run_name,
             )
 
             parsed = parse_structured_result(result, response_model)
@@ -540,7 +538,7 @@ async def extract_attributes(
             system_prompt=get_attribute_discovery_system_prompt,
             user_prompt=get_attribute_discovery_user_prompt,
             parse_fn=parse_fn,
-            logger_prefix="[Digester:Attributes] ",
+            run_name="Digester:Attributes",
             job_id=job_id_ext,
             chunk_id=chunk_id,
             chunk_metadata=chunk_metadata,

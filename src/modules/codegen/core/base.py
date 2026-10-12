@@ -12,7 +12,6 @@ from uuid import UUID
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
-from langchain_core.runnables.config import RunnableConfig
 
 from src.config import config
 from src.core.db import async_session_maker
@@ -22,7 +21,7 @@ from src.core.llm import (
     raise_if_llm_unavailable,
     retry_on_transient_llm_error,
 )
-from src.core.observability.langfuse import langfuse_handler
+from src.core.observability.langfuse import build_llm_config
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.documents.chunking import normalize_to_text
 from src.jobs import (
@@ -31,6 +30,7 @@ from src.jobs import (
     update_job_progress,
 )
 from src.jobs.errors import JobClaimLostError
+from src.modules.codegen.core.tracing import generation_run_name
 from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.prompts.cleanup_prompts import (
     get_groovy_cleanup_system_prompt,
@@ -104,7 +104,6 @@ class ChunkProcessor:
     def build_chunks_from_pairs(
         relevant_chunk_pairs: List[Dict[str, Any]],
         documentation_items: List[Dict[str, Any]],
-        logger_prefix: str,
     ) -> tuple[List[str], List[Optional[str]], Dict[str, int], List[str]]:
         """
         Build chunks using per-document selection (when pairs + items are provided).
@@ -137,7 +136,7 @@ class ChunkProcessor:
 
             chunk_item = chunks_by_uuid.get(chunk_id)
             if not chunk_item:
-                logger.warning("%s Missing chunk for chunk_id=%s", logger_prefix, chunk_id)
+                logger.warning("[Codegen:Chunks] Missing chunk for chunk_id=%s", chunk_id)
                 continue
 
             content = chunk_item.get("content")
@@ -155,8 +154,7 @@ class ChunkProcessor:
             chunk_counts[chunk_id] += 1
 
         logger.info(
-            "%s Using %d pre-chunked documentation items from %d unique chunk IDs",
-            logger_prefix,
+            "[Codegen:Chunks] Using %d pre-chunked documentation items from %d unique chunk IDs",
             len(chunks),
             len(seen_chunk_ids),
         )
@@ -239,8 +237,8 @@ class BaseGroovyGenerator(ABC):
             per_chunk_counts = {}
             chunk_ids_included = []
             logger.info(
-                "%s No LLM text chunks remain after conndev filtering; running one context-only generation pass",
-                self.config.logger_prefix,
+                "[Codegen:Generation] No LLM text chunks remain for %s after conndev filtering; running one context-only generation pass",
+                self.config.run_name,
             )
 
         if not chunks and repair_context is not None:
@@ -248,7 +246,10 @@ class BaseGroovyGenerator(ABC):
             provenance_chunk_ids = [None]
             per_chunk_counts = {}
             chunk_ids_included = []
-            logger.info("%s Repair mode has no chunks; running single repair pass", self.config.logger_prefix)
+            logger.info(
+                "[Codegen:Generation] Repair mode has no chunks for %s; running single repair pass",
+                self.config.run_name,
+            )
 
         if not chunks:
             logger.warning("[Codegen:Generation] No chunks to process")
@@ -264,7 +265,7 @@ class BaseGroovyGenerator(ABC):
         chain = self._build_llm_chain(len(chunks))
 
         # Step 4: Process chunks iteratively
-        trace_name = self._trace_name(repair=repair_context is not None)
+        run_name = generation_run_name(self.config.run_name, repair=repair_context is not None)
         initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result="")
         result = await self._process_chunks(
             chunks=chunks,
@@ -275,7 +276,7 @@ class BaseGroovyGenerator(ABC):
             chain=chain,
             job_id=job_id,
             initial_result=initial_result,
-            trace_name=trace_name,
+            run_name=run_name,
         )
 
         if not result:
@@ -283,15 +284,10 @@ class BaseGroovyGenerator(ABC):
             return initial_result
 
         # Cleanup returns either its own validated output or this already valid result.
-        result = await self._cleanup_generated_code(code=result, job_id=job_id, trace_name=trace_name)
+        result = await self._cleanup_generated_code(code=result, job_id=job_id, run_name=run_name)
         return strip_markdown_fences(result)
 
-    def _trace_name(self, *, repair: bool) -> str:
-        """Langfuse trace name of this operation's LLM calls; a repair is named apart from generation."""
-        name = self.config.logger_prefix.strip("[]")
-        return f"{name}:Repair" if repair else name
-
-    async def _cleanup_generated_code(self, code: str, job_id: UUID, trace_name: str) -> str:
+    async def _cleanup_generated_code(self, code: str, job_id: UUID, run_name: str) -> str:
         """
         Run one final LLM cleanup pass to remove TODO/comment-only scaffolding.
 
@@ -317,7 +313,7 @@ class BaseGroovyGenerator(ABC):
                 chain,
                 {prompt_var_name: code},
                 context="cleanup",
-                run_name=f"{trace_name}:Cleanup",
+                run_name=f"{run_name}:Cleanup",
                 max_attempts=1,
             )
             candidate = await asyncio.to_thread(
@@ -331,7 +327,7 @@ class BaseGroovyGenerator(ABC):
 
             errors = await asyncio.to_thread(collect_connector_code_errors, candidate)
             if errors:
-                error_message = f"{self.config.logger_prefix} Cleanup pass produced invalid output: {errors[0]}"
+                error_message = f"[{self.config.run_name}] Cleanup pass produced invalid output: {errors[0]}"
                 logger.warning("[Codegen:Generation] Cleanup pass produced invalid output: %s", errors[0])
                 await append_job_error(job_id, error_message)
                 return code
@@ -341,7 +337,7 @@ class BaseGroovyGenerator(ABC):
         except JobClaimLostError:
             raise
         except Exception as exc:
-            error_message = f"{self.config.logger_prefix} Cleanup pass failed: {exc}"
+            error_message = f"[{self.config.run_name}] Cleanup pass failed: {exc}"
             logger.exception("[Codegen:Generation] Cleanup pass failed")
             await append_job_error(job_id, error_message)
             return code
@@ -356,15 +352,15 @@ class BaseGroovyGenerator(ABC):
         max_attempts: int | None = None,
     ) -> str:
         """Share invocation and tracing; cleanup explicitly retains its single-attempt policy."""
+        llm_config = build_llm_config(run_name)
         return await retry_on_transient_llm_error(
             lambda: chain.ainvoke(
                 prompt_vars,
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name=run_name),
+                config=llm_config,
             ),
             max_attempts=config.llm.transient_retry_attempts if max_attempts is None else max_attempts,
             base_delay=config.llm.transient_retry_base_delay_seconds,
-            logger_prefix="[Codegen:Generation] ",
-            context=context,
+            context=f"{run_name}: {context}",
         )
 
     async def _generate_candidate(
@@ -405,7 +401,7 @@ class BaseGroovyGenerator(ABC):
                     candidate_errors[0],
                 )
                 await append_job_error(
-                    job_id, f"{self.config.logger_prefix} Invalid output after {context}: {candidate_errors[0]}"
+                    job_id, f"[{self.config.run_name}] Invalid output after {context}: {candidate_errors[0]}"
                 )
             elif errors:
                 logger.info("[Codegen:Generation] Validation errors resolved after %s", context)
@@ -416,7 +412,7 @@ class BaseGroovyGenerator(ABC):
         except Exception as exc:
             raise_if_llm_unavailable(exc, context="generating connector code")
             logger.exception("[Codegen:Generation] Failed to process %s", context)
-            await append_job_error(job_id, f"{self.config.logger_prefix} Failed to process {context}: {exc}")
+            await append_job_error(job_id, f"[{self.config.run_name}] Failed to process {context}: {exc}")
             return None
 
     async def _load_documentation_items(self, session_id: UUID) -> List[Dict[str, Any]]:
@@ -462,7 +458,7 @@ class BaseGroovyGenerator(ABC):
     ) -> tuple[List[str], List[Optional[str]], Dict[str, int], List[str]]:
         """Build LLM chunks while keeping deterministic conndev contracts out of codegen."""
         if not documentation_items:
-            logger.warning("%s No documentation items available", self.config.logger_prefix)
+            logger.warning("[Codegen:Chunks] No documentation items available for %s", self.config.run_name)
             return [], [], {}, []
 
         llm_documentation_items, llm_relevant_chunk_pairs = ChunkProcessor.exclude_conndev_contracts(
@@ -475,13 +471,16 @@ class BaseGroovyGenerator(ABC):
             return ChunkProcessor.build_chunks_from_pairs(
                 llm_relevant_chunk_pairs,
                 llm_documentation_items,
-                self.config.logger_prefix,
             )
 
         # Use all documentation items directly
         chunks = [normalize_to_text(item.get("content", "")) for item in llm_documentation_items]
         provenance: List[Optional[str]] = [item.get("chunkId") for item in llm_documentation_items]
-        logger.info("%s Using all %d pre-chunked documentation items", self.config.logger_prefix, len(chunks))
+        logger.info(
+            "[Codegen:Chunks] Operation %s uses all %d pre-chunked documentation items",
+            self.config.run_name,
+            len(chunks),
+        )
         return chunks, provenance, {}, []
 
     async def _initialize_progress(
@@ -492,7 +491,7 @@ class BaseGroovyGenerator(ABC):
     ):
         """Initialize job progress tracking."""
         total_chunks = len(chunks)
-        logger.info("%s Processing %d chunks", self.config.logger_prefix, total_chunks)
+        logger.info("[Codegen:Generation] Operation %s processes %d chunks", self.config.run_name, total_chunks)
 
         # Use selected chunk-id count if available, otherwise use chunk count as fallback
         total_count = len(chunk_ids_included) if chunk_ids_included else total_chunks
@@ -532,7 +531,7 @@ class BaseGroovyGenerator(ABC):
         chain: Runnable[Dict[str, Any], str],
         job_id: UUID,
         initial_result: str,
-        trace_name: str,
+        run_name: str,
     ) -> str:
         """Return the last valid candidate, or empty when no chunk produced one.
 
@@ -577,7 +576,7 @@ class BaseGroovyGenerator(ABC):
                     {**input_data, "idx": idx, "chunk": chunk, "result": result},
                     errors=errors,
                     context=f"chunk {idx}/{total_chunks}",
-                    run_name=trace_name,
+                    run_name=run_name,
                     job_id=job_id,
                 )
                 if generated is not None:
@@ -610,7 +609,7 @@ class BaseGroovyGenerator(ABC):
                 {**input_data, "idx": total_chunks, "chunk": chunks[-1], "result": result},
                 errors=errors,
                 context="final validation retry",
-                run_name=f"{trace_name}:ValidationRetry",
+                run_name=f"{run_name}:ValidationRetry",
                 job_id=job_id,
             )
             if generated is not None:

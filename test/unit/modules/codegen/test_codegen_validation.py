@@ -71,11 +71,15 @@ async def test_generate_groovy_returns_empty_when_validation_fails() -> None:
             system_prompt="system",
             user_prompt="user",
             job_id=uuid4(),
-            logger_prefix="NativeSchema",
+            run_name="Codegen:NativeSchema",
+            operation_name="NativeSchema",
         )
 
     assert result == ""
     assert mock_append_job_error.await_count == 2
+    assert mock_append_job_error.await_args_list[0].args[1] == (
+        "[Codegen:NativeSchema] Generated invalid output: syntax error"
+    )
 
 
 @pytest.mark.asyncio
@@ -90,9 +94,10 @@ async def test_native_schema_preserves_reference_metadata_without_job_errors(rep
         if repair
         else None
     )
+    chain = _RecordingChain([code])
     with (
         patch("src.modules.codegen.core.generate_groovy.get_default_llm"),
-        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=_DummyChain([code])),
+        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=chain),
         patch("src.modules.codegen.core.generate_groovy.update_job_progress", new_callable=AsyncMock),
         patch("src.modules.codegen.core.generate_groovy.append_job_error", new_callable=AsyncMock) as errors,
     ):
@@ -102,10 +107,14 @@ async def test_native_schema_preserves_reference_metadata_without_job_errors(rep
             system_prompt="system",
             user_prompt="user",
             job_id=uuid4(),
-            logger_prefix="NativeSchema",
+            run_name="Codegen:NativeSchema",
+            operation_name="NativeSchema",
             repair_context=repair_context,
         )
     assert result == code
+    assert [kwargs["config"]["run_name"] for _, kwargs in chain.calls] == [
+        "Codegen:NativeSchema:Repair" if repair else "Codegen:NativeSchema"
+    ]
     errors.assert_not_awaited()
 
 
@@ -118,7 +127,7 @@ class _DummyGenerator(BaseGroovyGenerator):
                 system_prompt="system",
                 user_prompt="user",
                 default_scaffold='objectClass("User") {}',
-                logger_prefix="[Codegen:Dummy]",
+                run_name="Codegen:Dummy",
             )
         )
 
@@ -148,7 +157,7 @@ async def test_base_generator_repairs_rejected_chunk_output_in_the_next_chunk() 
             chain=RunnableLambda(chain.ainvoke),
             job_id=uuid4(),
             initial_result='objectClass("User") {}',
-            trace_name="Codegen:Dummy",
+            run_name="Codegen:Dummy",
         )
 
     assert result == 'objectClass("User") { search {} }'
@@ -181,7 +190,7 @@ async def test_base_generator_fails_fast_when_llm_unreachable(monkeypatch) -> No
                 chain=RunnableLambda(chain.ainvoke),
                 job_id=uuid4(),
                 initial_result='objectClass("User") {}',
-                trace_name="Codegen:Dummy",
+                run_name="Codegen:Dummy",
             )
 
     # Retries the transient failure before giving up, and does not bury it as a non-fatal error.
@@ -209,7 +218,8 @@ async def test_generate_groovy_raises_when_llm_unreachable(monkeypatch) -> None:
                 system_prompt="system",
                 user_prompt="user",
                 job_id=uuid4(),
-                logger_prefix="NativeSchema",
+                run_name="Codegen:NativeSchema",
+                operation_name="NativeSchema",
             )
 
     assert chain.calls == 2
@@ -257,7 +267,7 @@ async def test_base_generator_cleanup_returns_cleaned_code_when_valid() -> None:
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=_DummyChain([cleaned_code])),
         patch("src.modules.codegen.core.base.collect_connector_code_errors", return_value=()),
     ):
-        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4(), trace_name="Codegen:Dummy")
+        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4(), run_name="Codegen:Dummy")
 
     assert result == cleaned_code
 
@@ -276,7 +286,7 @@ async def test_base_generator_cleanup_keeps_original_when_invalid() -> None:
         patch("src.modules.codegen.core.base.collect_connector_code_errors", return_value=("syntax error",)),
         patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
     ):
-        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4(), trace_name="Codegen:Dummy")
+        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4(), run_name="Codegen:Dummy")
 
     assert result == original_code
     mock_append_job_error.assert_called_once()
@@ -300,7 +310,16 @@ async def test_single_pass_empty_output(response, repair):
         patch("src.modules.codegen.core.generate_groovy.append_job_error", new_callable=AsyncMock) as errors,
     ):
         job_id = uuid4()
-        result = await generate_groovy([], "User", "system", "user", job_id, repair_context=context)
+        result = await generate_groovy(
+            [],
+            "User",
+            "system",
+            "user",
+            job_id,
+            run_name="Codegen:NativeSchema",
+            operation_name="NativeSchema",
+            repair_context=context,
+        )
     assert result == ("broken(" if repair else "")
     assert len(chain.calls) == 1
     errors.assert_awaited_once_with(job_id, NO_REPAIR_GENERATED if repair else NO_CODE_GENERATED)

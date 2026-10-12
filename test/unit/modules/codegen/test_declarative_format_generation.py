@@ -83,7 +83,7 @@ class _DummyGenerator(BaseGroovyGenerator):
                 system_prompt="system",
                 user_prompt="user",
                 default_scaffold='objectClass("User") {}',
-                logger_prefix="[Codegen:Dummy]",
+                run_name="Codegen:Dummy",
             )
         )
 
@@ -109,7 +109,7 @@ async def _run_process_chunks(chain, *, chunks=("chunk",)):
             chain=chain,
             job_id=uuid4(),
             initial_result='objectClass("User") {}',
-            trace_name="Codegen:Dummy",
+            run_name="Codegen:Dummy",
         )
     return result, mock_append_job_error
 

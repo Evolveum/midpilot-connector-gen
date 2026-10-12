@@ -45,7 +45,7 @@ async def extract_api_type(
         system_prompt=get_api_type_system_prompt,
         user_prompt=get_api_type_user_prompt,
         parse_fn=parse_fn,
-        logger_prefix="[Digester:ApiType] ",
+        run_name="Digester:ApiType",
         job_id=job_id,
         chunk_id=chunk_id,
         chunk_metadata=chunk_metadata,
