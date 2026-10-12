@@ -47,7 +47,7 @@ async def test_relevant_links_raises_when_llm_unreachable(monkeypatch):
             await get_relevant_links_from_text(("developer {parser_instructions}", "user"))
 
     assert chain.calls == 2  # retried before failing
-    assert [item["run_name"] for item in chain.configs] == ["Scrape:RelevantLinks"] * 2
+    assert [item["run_name"] for item in chain.configs] == ["Scrape:Links:SelectRelevant"] * 2
     assert all(item["callbacks"] == [langfuse_handler] for item in chain.configs)
 
 
@@ -65,4 +65,4 @@ async def test_relevant_links_returns_none_on_non_outage_error(monkeypatch):
 
     assert result is None
     assert chain.calls == 1  # non-transient errors are not retried
-    assert chain.configs[0]["run_name"] == "Scrape:RelevantLinks"
+    assert chain.configs[0]["run_name"] == "Scrape:Links:SelectRelevant"

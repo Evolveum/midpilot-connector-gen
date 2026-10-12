@@ -63,7 +63,7 @@ async def extract_object_classes_raw(
         system_prompt=get_object_class_system_prompt(intent) if extraction_chain is None else "",
         user_prompt=get_object_class_user_prompt,
         parse_fn=parse_fn,
-        run_name="Digester:REST:ObjectClasses",
+        run_name="Digester:ObjectClasses:REST",
         job_id=job_id,
         chunk_id=chunk_id,
         chunk_metadata=chunk_metadata,

@@ -538,7 +538,7 @@ async def extract_attributes(
             system_prompt=get_attribute_discovery_system_prompt,
             user_prompt=get_attribute_discovery_user_prompt,
             parse_fn=parse_fn,
-            run_name="Digester:Attributes",
+            run_name="Digester:Attributes:REST",
             job_id=job_id_ext,
             chunk_id=chunk_id,
             chunk_metadata=chunk_metadata,

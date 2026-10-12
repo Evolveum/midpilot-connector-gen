@@ -63,7 +63,7 @@ async def lookup_api_type_knowledge(application_name: str) -> ApiTypeSignalResul
             await invoke_llm(
                 chain,
                 {"application_name": application_name},
-                run_name="Digester:ApiTypeKnowledge",
+                run_name="Digester:ApiType:SCIM:Knowledge",
             ),
         )
     except Exception as exc:
@@ -114,7 +114,7 @@ async def lookup_rest_knowledge(application_name: str) -> RestSignalResult:
             await invoke_llm(
                 chain,
                 {"application_name": application_name},
-                run_name="Digester:RestKnowledge",
+                run_name="Digester:ApiType:REST:Knowledge",
             ),
         )
     except Exception as exc:

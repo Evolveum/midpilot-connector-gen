@@ -54,7 +54,7 @@ async def classify_irrelevant_links(prompts: tuple[str, str]) -> IrrelevantLinks
     )
 
     return await retry_on_transient_llm_error(
-        lambda: chain.ainvoke({}, config=build_llm_config("Web:ClassifyIrrelevantLinks")),
+        lambda: chain.ainvoke({}, config=build_llm_config("Web:Links:ClassifyIrrelevant")),
         max_attempts=_LINK_FILTER_MAX_ATTEMPTS,
         base_delay=_LINK_FILTER_BASE_DELAY_SECONDS,
         context="irrelevant-link filter",

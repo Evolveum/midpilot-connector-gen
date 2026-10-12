@@ -28,5 +28,5 @@ async def test_chunk_processing_preserves_trace_name_across_transient_retry(monk
         assert await get_llm_processed_chunk(("system", "document")) is result
 
     configs = [call.kwargs["config"] for call in chain.ainvoke.await_args_list]
-    assert [item["run_name"] for item in configs] == ["Scrape:ProcessChunk"] * 2
+    assert [item["run_name"] for item in configs] == ["Scrape:Chunks:Process"] * 2
     assert all(item["callbacks"] == [langfuse_handler] for item in configs)

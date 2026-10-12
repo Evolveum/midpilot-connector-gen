@@ -175,7 +175,7 @@ async def _sort_bucket_by_importance(
         sort_result = await invoke_llm(
             sort_chain,
             {"items_json": items_json, "confidence_level": confidence_level},
-            run_name="Digester:SortSqlObjectClasses" if sql_compact else "Digester:SortObjectClasses",
+            run_name="Digester:ObjectClasses:SQL:Sort" if sql_compact else "Digester:ObjectClasses:Sort",
         )
         logger.debug("[Digester:ObjectClasses] Bucket sorting LLM raw (%s): %r", confidence_level, (sort_result or ""))
 
@@ -313,7 +313,7 @@ async def _deduplicate_and_sort_object_classes(
         confidence_result = await invoke_llm(
             confidence_chain,
             {},
-            run_name="Digester:SqlObjectClassConfidence" if sql_compact else "Digester:ObjectClassConfidence",
+            run_name="Digester:ObjectClasses:SQL:Confidence" if sql_compact else "Digester:ObjectClasses:Confidence",
         )
         logger.info("[Digester:ObjectClasses] Confidence LLM raw: %r", (confidence_result or ""))
 

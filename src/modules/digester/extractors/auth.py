@@ -371,7 +371,7 @@ async def deduplicate_auth(
             await invoke_llm(
                 chain,
                 {"auth_list": json.dumps([auth.model_dump() for auth in auth_list])},
-                run_name="Digester:DedupAuth",
+                run_name="Digester:Auth:Dedup",
             ),
         )
         logger.debug("[Digester:Auth] LLM result in deduplication: %r", (result or ""))
@@ -435,7 +435,7 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
             await invoke_llm(
                 chain,
                 {"items_json": items_json},
-                run_name="Digester:SortAuth",
+                run_name="Digester:Auth:Sort",
             ),
         )
 

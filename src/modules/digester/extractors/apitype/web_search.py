@@ -148,7 +148,7 @@ async def lookup_api_type_web_search(application_name: str) -> ApiTypeSignalResu
             await invoke_llm(
                 chain,
                 {"application_name": application_name, "search_results": search_results},
-                run_name="Digester:ApiTypeWebSearch",
+                run_name="Digester:ApiType:SCIM:WebSearch",
             ),
         )
     except Exception as exc:
@@ -205,7 +205,7 @@ async def lookup_rest_web_search(application_name: str) -> RestSignalResult:
             await invoke_llm(
                 chain,
                 {"application_name": application_name, "search_results": search_results},
-                run_name="Digester:RestWebSearch",
+                run_name="Digester:ApiType:REST:WebSearch",
             ),
         )
     except Exception as exc:

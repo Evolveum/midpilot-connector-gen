@@ -49,8 +49,8 @@ def test_query_generation_traces_repair_only_when_needed(needs_repair):
 
     assert queries == parsed.search_prompts == ["Example REST API"]
     assert recorder.model_calls == (2 if needs_repair else 1)
-    assert recorder.root_names == ["Discovery:GenerateQueries"] + (
-        ["Discovery:GenerateQueries:ParseRepair"] if needs_repair else []
+    assert recorder.root_names == ["Discovery:Queries:Generate"] + (
+        ["Discovery:Queries:ParseRepair"] if needs_repair else []
     )
 
 
@@ -61,7 +61,7 @@ def test_invalid_repair_keeps_single_attempt_and_surfaces_parsing_error():
             _parse_search_prompts(FakeListChatModel(responses=["still invalid"]), "invalid JSON")
 
     assert recorder.model_calls == 1
-    assert recorder.root_names == ["Discovery:GenerateQueries:ParseRepair"]
+    assert recorder.root_names == ["Discovery:Queries:ParseRepair"]
 
 
 @pytest.mark.asyncio
@@ -81,5 +81,5 @@ async def test_ranking_preserves_trace_name_single_call_and_fallback(fails):
     assert result == (urls if fails else list(reversed(urls)))
     chain.ainvoke.assert_awaited_once()
     llm_config = chain.ainvoke.await_args.kwargs["config"]
-    assert llm_config["run_name"] == "Discovery:RankLinks"
+    assert llm_config["run_name"] == "Discovery:Links:Rank"
     assert llm_config["callbacks"] == [langfuse_handler]

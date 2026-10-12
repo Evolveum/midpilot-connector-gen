@@ -344,7 +344,7 @@ async def extract_custom_scim_classes(
         system_prompt=scim_object_class_system_prompt(intent) if extraction_chain is None else "",
         user_prompt=scim_object_class_user_prompt,
         parse_fn=parse_fn,
-        run_name="Digester:SCIM:ObjectClasses",
+        run_name="Digester:ObjectClasses:SCIM",
         job_id=job_id,
         chunk_id=chunk_id,
         chunk_metadata=chunk_metadata,

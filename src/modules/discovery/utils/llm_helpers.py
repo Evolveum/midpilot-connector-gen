@@ -69,9 +69,7 @@ def _parse_search_prompts(parser_model: ChatOpenAI, raw_text: str) -> PySearchPr
     base_parser: PydanticOutputParser[PySearchPrompts] = PydanticOutputParser(pydantic_object=PySearchPrompts)
     meta_parser = OutputFixingParser.from_llm(parser=base_parser, llm=parser_model)
     # Name only the repair chain: valid structured output needs no additional LLM call or trace.
-    meta_parser.retry_chain = meta_parser.retry_chain.with_config(
-        build_llm_config("Discovery:GenerateQueries:ParseRepair")
-    )
+    meta_parser.retry_chain = meta_parser.retry_chain.with_config(build_llm_config("Discovery:Queries:ParseRepair"))
     parsed = meta_parser.parse(raw_text)
     assert isinstance(parsed, PySearchPrompts)
     return parsed
@@ -96,7 +94,7 @@ def generate_queries_via_llm(
     enriched_user_prompt = f"{user_prompt}\n\nReturn exactly {num_queries} distinct queries."
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=enriched_user_prompt)]
-    response = model.invoke(messages, config=build_llm_config("Discovery:GenerateQueries"))
+    response = model.invoke(messages, config=build_llm_config("Discovery:Queries:Generate"))
 
     logger.info("[Discovery:Queries] Parse LLM output into structured search prompts")
     parsed = _parse_search_prompts(parser_model, str(response.content))

@@ -162,6 +162,10 @@ distinguishable without any call site passing ids around.
   LLM call (`+LANGFUSE__*+` settings).
   Codegen, digester, discovery, scraping and their shared document/link processing
   declare an explicit, nonblank `run_name` for each LLM operation.
+  Names are colon-separated from general to specific,
+  `<Pipeline>:<Area>[:<Protocol>][:<Step>]` (for example
+  `Digester:Endpoints:CheckParams`, `Codegen:Search:REST:All`); a segment never
+  fuses an area with its step.
   `build_llm_config` in `src/core/observability/langfuse.py` attaches the callback;
   digester invokes it through its concurrency-limited `invoke_llm`.
   Trace names are independent of log prefixes. Keep meaningful names stable,
@@ -171,9 +175,9 @@ distinguishable without any call site passing ids around.
   Auth item building uses `Digester:Auth:Build` for the whole batch, with item
   indices in log messages and job errors instead of trace names.
   Discovery's optional output-parser repair uses
-  `Discovery:GenerateQueries:ParseRepair`; valid output does not invoke that
-  chain. Existing names `Scrape:ProcessChunk` and `Web:ClassifyIrrelevantLinks`
-  remain stable even though these steps are shared across pipelines.
+  `Discovery:Queries:ParseRepair`; valid output does not invoke that
+  chain. `Scrape:Chunks:Process` and `Web:Links:ClassifyIrrelevant` keep their
+  `Scrape` and `Web` segments even though these steps are shared across pipelines.
 * Shared LLM retries use `retry_on_transient_llm_error`, with literal
   `+[Core:LLM]+` log messages. Callers retain their own attempt/backoff settings;
   codegen cleanup still makes one attempt. Digester releases its LLM concurrency

@@ -137,7 +137,7 @@ async def test_extractors_name_the_actual_chain_invocations():
     relations_chain.ainvoke.assert_awaited_once()
     scim_chain.ainvoke.assert_awaited_once()
     assert relations_chain.ainvoke.await_args.kwargs["config"]["run_name"] == "Digester:Relations"
-    assert scim_chain.ainvoke.await_args.kwargs["config"]["run_name"] == "Digester:SCIM:Attributes"
+    assert scim_chain.ainvoke.await_args.kwargs["config"]["run_name"] == "Digester:Attributes:SCIM"
 
 
 @pytest.mark.asyncio

@@ -23,7 +23,7 @@ async def test_shared_link_filter_preserves_trace_name_and_retry_budget():
             await classify_irrelevant_links(("system", "links"))
 
     configs = [call.kwargs["config"] for call in chain.ainvoke.await_args_list]
-    assert [item["run_name"] for item in configs] == ["Web:ClassifyIrrelevantLinks"] * 3
+    assert [item["run_name"] for item in configs] == ["Web:Links:ClassifyIrrelevant"] * 3
     assert all(item["callbacks"] == [langfuse_handler] for item in configs)
     assert [call.args[0] for call in sleep.await_args_list] == [1.0, 2.0]
 

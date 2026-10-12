@@ -236,7 +236,7 @@ async def extract_endpoints(
                                 "endpoint": endpoint.model_dump(by_alias=True, exclude={"relevant_documentations"}),
                                 "chunk": context_snippet,
                             },
-                            run_name="Digester:CheckEndpointParams",
+                            run_name="Digester:Endpoints:CheckParams",
                         ),
                     )
                     if checked_result:

@@ -229,7 +229,7 @@ async def merge_attribute_candidates(
                     "object_class": object_class,
                     "attributes_list": json.dumps([item.model_dump() for item in merged]),
                 },
-                run_name="Digester:DedupAttributes",
+                run_name="Digester:Attributes:Dedup",
             ),
         )
 

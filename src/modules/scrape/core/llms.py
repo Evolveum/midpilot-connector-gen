@@ -55,7 +55,7 @@ async def get_relevant_links_from_text(prompts: Tuple[str, str]) -> RelevantLink
 
     try:
         result = await retry_on_transient_llm_error(
-            lambda: chain.ainvoke({}, config=build_llm_config("Scrape:RelevantLinks")),
+            lambda: chain.ainvoke({}, config=build_llm_config("Scrape:Links:SelectRelevant")),
             max_attempts=config.scrape_and_process.chunk_llm_retry_attempts,
             base_delay=config.scrape_and_process.chunk_llm_retry_base_delay_seconds,
             context="relevant-link extraction",

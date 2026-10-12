@@ -196,7 +196,7 @@ async def rank_candidate_links(
     )
 
     try:
-        ranked = await chain.ainvoke({}, config=build_llm_config("Discovery:RankLinks"))
+        ranked = await chain.ainvoke({}, config=build_llm_config("Discovery:Links:Rank"))
     except Exception:
         logger.exception("[Discovery:Rank] LLM ranking call failed")
         ranked = None

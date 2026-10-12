@@ -53,7 +53,7 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
     )
 
     result = await retry_on_transient_llm_error(
-        lambda: chain.ainvoke({}, config=build_llm_config("Scrape:ProcessChunk")),
+        lambda: chain.ainvoke({}, config=build_llm_config("Scrape:Chunks:Process")),
         max_attempts=config.scrape_and_process.chunk_llm_retry_attempts,
         base_delay=config.scrape_and_process.chunk_llm_retry_base_delay_seconds,
         context="chunk processing",
