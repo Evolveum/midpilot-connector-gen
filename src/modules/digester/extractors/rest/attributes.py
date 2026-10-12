@@ -9,6 +9,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
+from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel
 
 from src.config import config
@@ -227,6 +228,7 @@ async def _build_attr_from_sequences(
     use_steps: bool,
     fields_to_update: List[str],
     log_stage: str,
+    run_name: str,
     response_model: type[BaseModel],
     context_builder: Callable[[AttributeProcessingInfo, Sequence[DocSequenceItem]], Dict[str, Any]],
 ) -> AttributeProcessingInfo | None:
@@ -242,6 +244,7 @@ async def _build_attr_from_sequences(
         use_steps: Whether to use steps when processing sequences or process all at once (if false, the whole sequence list will be used in one call)
         fields_to_update: Attribute fields this chain is allowed to update
         log_stage: Human-readable stage name for logs
+        run_name: Langfuse trace name of this stage's LLM calls
         response_model: Pydantic model expected from this extraction stage
     Returns:
         AttributeProcessingInfo object with filled and potentially corrected attribute information
@@ -268,7 +271,7 @@ async def _build_attr_from_sequences(
                     "object_class": object_class,
                     "attribute_context": attribute_context,
                 },
-                config={"callbacks": [langfuse_handler]},
+                config=RunnableConfig(callbacks=[langfuse_handler], run_name=run_name),
             )
 
             parsed = parse_structured_result(result, response_model)
@@ -329,6 +332,7 @@ async def build_attributes_from_sequences(
             use_steps=True,
             fields_to_update=["type", "format"],
             log_stage="Type/format enrichment",
+            run_name="Digester:Attributes:TypeFormat",
             response_model=AttributeTypeFormatBuildResponse,
             context_builder=_type_format_context,
         )
@@ -352,6 +356,7 @@ async def build_attributes_from_sequences(
             use_steps=True,
             fields_to_update=["mandatory", "updatable", "creatable", "readable", "multivalue", "returnedByDefault"],
             log_stage="Boolean flag enrichment",
+            run_name="Digester:Attributes:BooleanFlags",
             response_model=AttributeBooleanFlagsBuildResponse,
             context_builder=_boolean_flags_context,
         )
@@ -408,6 +413,7 @@ async def consolidate_attributes(attrs: List[AttributeProcessingInfo], object_cl
                         "returnedByDefault",
                     ],
                     log_stage="Final consolidation",
+                    run_name="Digester:Attributes:Consolidation",
                     response_model=AttributeBuildResponse,
                     context_builder=_final_consolidation_context,
                 )

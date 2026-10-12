@@ -148,6 +148,7 @@ async def test_base_generator_repairs_rejected_chunk_output_in_the_next_chunk() 
             chain=RunnableLambda(chain.ainvoke),
             job_id=uuid4(),
             initial_result='objectClass("User") {}',
+            trace_name="Codegen:Dummy",
         )
 
     assert result == 'objectClass("User") { search {} }'
@@ -180,6 +181,7 @@ async def test_base_generator_fails_fast_when_llm_unreachable(monkeypatch) -> No
                 chain=RunnableLambda(chain.ainvoke),
                 job_id=uuid4(),
                 initial_result='objectClass("User") {}',
+                trace_name="Codegen:Dummy",
             )
 
     # Retries the transient failure before giving up, and does not bury it as a non-fatal error.
@@ -255,7 +257,7 @@ async def test_base_generator_cleanup_returns_cleaned_code_when_valid() -> None:
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=_DummyChain([cleaned_code])),
         patch("src.modules.codegen.core.base.collect_connector_code_errors", return_value=()),
     ):
-        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())
+        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4(), trace_name="Codegen:Dummy")
 
     assert result == cleaned_code
 
@@ -274,7 +276,7 @@ async def test_base_generator_cleanup_keeps_original_when_invalid() -> None:
         patch("src.modules.codegen.core.base.collect_connector_code_errors", return_value=("syntax error",)),
         patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
     ):
-        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4())
+        result = await generator._cleanup_generated_code(code=original_code, job_id=uuid4(), trace_name="Codegen:Dummy")
 
     assert result == original_code
     mock_append_job_error.assert_called_once()
@@ -348,7 +350,7 @@ async def test_empty_cleanup_preserves_artifact(response):
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=_DummyChain([response])),
         patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
     ):
-        assert await _DummyGenerator()._cleanup_generated_code("{}", uuid4()) == "{}"
+        assert await _DummyGenerator()._cleanup_generated_code("{}", uuid4(), "Codegen:Dummy") == "{}"
     errors.assert_not_awaited()
 
 
@@ -461,3 +463,30 @@ def test_validation_error_block_is_rendered_as_data_without_template_interpolati
     assert messages[1].content == "user" + block
     assert "- objectClasses.User: {not} a {template}\n</validation_errors>" in block
     assert prompt.format_messages(validation_errors="")[1].content == "user"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair", [False, True])
+async def test_llm_calls_are_traced_by_operation_and_step(repair):
+    """Langfuse trace names tell generation, validation retry, cleanup and repair apart."""
+    generator = _DummyGenerator()
+    context = CodegenRepairContext(current_script="broken(", midpoint_errors=["syntax"]) if repair else None
+    chain = _RecordingChain([VALID_YAML, INVALID_YAML, FIXED_YAML, FIXED_YAML])
+    with (
+        patch.object(generator, "_build_chunks", return_value=(["a", "b"], [], {}, [])),
+        patch.object(generator, "_initialize_progress", new_callable=AsyncMock),
+        patch.object(generator, "_build_llm_chain", return_value=chain),
+        patch("src.modules.codegen.core.base.get_default_llm"),
+        patch("src.modules.codegen.core.base.make_basic_chain", return_value=chain),
+        patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
+    ):
+        assert await generator.generate(job_id=uuid4(), repair_context=context) == FIXED_YAML
+
+    name = "Codegen:Dummy:Repair" if repair else "Codegen:Dummy"
+    assert [kwargs["config"]["run_name"] for _, kwargs in chain.calls] == [
+        name,
+        name,
+        f"{name}:ValidationRetry",
+        f"{name}:Cleanup",
+    ]

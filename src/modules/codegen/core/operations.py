@@ -10,7 +10,7 @@ from src.modules.codegen.core.base import (
     BaseGroovyGenerator,
     endpoints_to_records,
 )
-from src.modules.codegen.enums import SearchIntent
+from src.modules.codegen.enums import SearchIntent, search_intent_label
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, OperationConfig
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
 from src.modules.codegen.utils.operation_defaults import normalize_operation_defaults
@@ -80,7 +80,7 @@ class SearchGenerator(_OperationGenerator):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             default_scaffold="search {\n}\n",
-            logger_prefix=f"[Codegen:Search:{protocol_label}]",
+            logger_prefix=f"[Codegen:Search:{protocol_label}:{search_intent_label(intent)}]",
             extra_prompt_vars=extra_prompt_vars or {},
             context_only_for_conndev=context_only_for_conndev,
         )

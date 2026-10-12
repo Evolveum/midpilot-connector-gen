@@ -546,7 +546,7 @@ async def extract_custom_scim_attributes(
         Dictionary of mapped attributes (application name -> AttributeInfo)
     """
     try:
-        result = await invoke_chunk_chain(chain, chunk, chunk_metadata)
+        result = await invoke_chunk_chain(chain, chunk, chunk_metadata, run_name="Digester:SCIM:Attributes")
 
         parsed = parse_structured_result(result, ExtractedAttributeResponseSCIM)
         if parsed is None:

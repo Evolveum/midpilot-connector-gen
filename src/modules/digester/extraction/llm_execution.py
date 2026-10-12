@@ -84,19 +84,17 @@ async def invoke_chunk_chain(
     chunk: str,
     chunk_metadata: Optional[Dict[str, Any]],
     *,
-    run_name: Optional[str] = None,
+    run_name: str,
 ) -> Any:
     """Invoke a per-chunk extraction chain with the standard summary/tags context and tracing.
 
     Centralizes the ``extract_summary_and_tags`` + langfuse callback + input assembly that the
-    per-chunk extractors previously duplicated (and had drifted on).
+    per-chunk extractors previously duplicated (and had drifted on). ``run_name`` is required:
+    without it Langfuse names the trace after the chain class (``RunnableSequence``).
     """
     summary, tags = extract_summary_and_tags(chunk_metadata)
     callbacks = cast(Callbacks, [langfuse_handler] if langfuse_handler else [])
-    if run_name:
-        llm_config = RunnableConfig(callbacks=callbacks, run_name=run_name)
-    else:
-        llm_config = RunnableConfig(callbacks=callbacks)
+    llm_config = RunnableConfig(callbacks=callbacks, run_name=run_name)
     return await invoke_llm(
         chain,
         {"chunk": chunk, "summary": summary, "tags": tags},

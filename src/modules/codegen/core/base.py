@@ -264,6 +264,7 @@ class BaseGroovyGenerator(ABC):
         chain = self._build_llm_chain(len(chunks))
 
         # Step 4: Process chunks iteratively
+        trace_name = self._trace_name(repair=repair_context is not None)
         initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result="")
         result = await self._process_chunks(
             chunks=chunks,
@@ -274,6 +275,7 @@ class BaseGroovyGenerator(ABC):
             chain=chain,
             job_id=job_id,
             initial_result=initial_result,
+            trace_name=trace_name,
         )
 
         if not result:
@@ -281,10 +283,15 @@ class BaseGroovyGenerator(ABC):
             return initial_result
 
         # Cleanup returns either its own validated output or this already valid result.
-        result = await self._cleanup_generated_code(code=result, job_id=job_id)
+        result = await self._cleanup_generated_code(code=result, job_id=job_id, trace_name=trace_name)
         return strip_markdown_fences(result)
 
-    async def _cleanup_generated_code(self, code: str, job_id: UUID) -> str:
+    def _trace_name(self, *, repair: bool) -> str:
+        """Langfuse trace name of this operation's LLM calls; a repair is named apart from generation."""
+        name = self.config.logger_prefix.strip("[]")
+        return f"{name}:Repair" if repair else name
+
+    async def _cleanup_generated_code(self, code: str, job_id: UUID, trace_name: str) -> str:
         """
         Run one final LLM cleanup pass to remove TODO/comment-only scaffolding.
 
@@ -310,7 +317,7 @@ class BaseGroovyGenerator(ABC):
                 chain,
                 {prompt_var_name: code},
                 context="cleanup",
-                run_name_suffix=":Cleanup",
+                run_name=f"{trace_name}:Cleanup",
                 max_attempts=1,
             )
             candidate = await asyncio.to_thread(
@@ -345,11 +352,10 @@ class BaseGroovyGenerator(ABC):
         prompt_vars: Dict[str, Any],
         *,
         context: str,
-        run_name_suffix: str = "",
+        run_name: str,
         max_attempts: int | None = None,
     ) -> str:
         """Share invocation and tracing; cleanup explicitly retains its single-attempt policy."""
-        run_name = self.config.logger_prefix.strip("[]") + run_name_suffix
         return await retry_on_transient_llm_error(
             lambda: chain.ainvoke(
                 prompt_vars,
@@ -368,6 +374,7 @@ class BaseGroovyGenerator(ABC):
         *,
         errors: tuple[str, ...],
         context: str,
+        run_name: str,
         job_id: UUID,
     ) -> tuple[str, tuple[str, ...]] | None:
         """Run one generation call and validate its candidate.
@@ -381,6 +388,7 @@ class BaseGroovyGenerator(ABC):
                 chain,
                 {**prompt_vars, "validation_errors": build_validation_error_block(errors)},
                 context=context,
+                run_name=run_name,
             )
             candidate = await asyncio.to_thread(
                 self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response))
@@ -524,6 +532,7 @@ class BaseGroovyGenerator(ABC):
         chain: Runnable[Dict[str, Any], str],
         job_id: UUID,
         initial_result: str,
+        trace_name: str,
     ) -> str:
         """Return the last valid candidate, or empty when no chunk produced one.
 
@@ -568,6 +577,7 @@ class BaseGroovyGenerator(ABC):
                     {**input_data, "idx": idx, "chunk": chunk, "result": result},
                     errors=errors,
                     context=f"chunk {idx}/{total_chunks}",
+                    run_name=trace_name,
                     job_id=job_id,
                 )
                 if generated is not None:
@@ -600,6 +610,7 @@ class BaseGroovyGenerator(ABC):
                 {**input_data, "idx": total_chunks, "chunk": chunks[-1], "result": result},
                 errors=errors,
                 context="final validation retry",
+                run_name=f"{trace_name}:ValidationRetry",
                 job_id=job_id,
             )
             if generated is not None:

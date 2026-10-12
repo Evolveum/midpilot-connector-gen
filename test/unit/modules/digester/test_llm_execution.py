@@ -10,7 +10,7 @@ import pytest
 
 from src.config import config
 from src.modules.digester.extraction import llm_execution
-from src.modules.digester.extraction.llm_execution import invoke_llm, run_chunks_concurrently
+from src.modules.digester.extraction.llm_execution import invoke_chunk_chain, invoke_llm, run_chunks_concurrently
 
 
 # PyCharm's monkeypatch inspection does not resolve pydantic model fields as attribute names
@@ -106,3 +106,15 @@ async def test_nested_digester_llm_limit_does_not_deadlock(monkeypatch):
 
     assert [result for result, _, _ in results] == [[chunk["content"]] for chunk in chunk_items]
     assert chain.max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_invoke_chunk_chain_names_the_langfuse_trace():
+    chain = AsyncMock()
+    chain.ainvoke = AsyncMock(return_value="result")
+
+    await invoke_chunk_chain(chain, "chunk text", None, run_name="Digester:Relations")
+
+    config = chain.ainvoke.await_args.kwargs["config"]
+    assert config["run_name"] == "Digester:Relations"
+    assert config["callbacks"]

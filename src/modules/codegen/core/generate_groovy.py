@@ -62,6 +62,7 @@ async def generate_groovy(
 
     try:
         action = "Repairing" if repair_context else "Generating"
+        trace_name = f"Codegen:{logger_prefix or 'Generation'}" + (":Repair" if repair_context else "")
         await update_job_progress(job_id, stage=JobStage.generating, message=f"{action} {logger_prefix or 'code'}")
         logger.info("[Codegen:Generation] %s connector code for %s", action, object_class)
         resp = await retry_on_transient_llm_error(
@@ -69,7 +70,7 @@ async def generate_groovy(
                 vars_payload,
                 config=RunnableConfig(
                     callbacks=[langfuse_handler],
-                    run_name=f"Codegen:{logger_prefix or 'Generation'}",
+                    run_name=trace_name,
                 ),
             ),
             max_attempts=config.llm.transient_retry_attempts,
