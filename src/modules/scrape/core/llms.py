@@ -8,11 +8,10 @@ from typing import Tuple
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables.config import RunnableConfig
 
 from src.config import config
 from src.core.llm import get_default_llm, make_basic_chain, raise_if_llm_unavailable, retry_on_transient_llm_error
-from src.core.observability.langfuse import langfuse_handler
+from src.core.observability.langfuse import build_llm_config
 from src.modules.scrape.schema import RelevantLinks
 
 logger = logging.getLogger(__name__)
@@ -56,17 +55,14 @@ async def get_relevant_links_from_text(prompts: Tuple[str, str]) -> RelevantLink
 
     try:
         result = await retry_on_transient_llm_error(
-            lambda: chain.ainvoke(
-                {}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Scrape:RelevantLinks")
-            ),
+            lambda: chain.ainvoke({}, config=build_llm_config("Scrape:RelevantLinks")),
             max_attempts=config.scrape_and_process.chunk_llm_retry_attempts,
             base_delay=config.scrape_and_process.chunk_llm_retry_base_delay_seconds,
-            logger_prefix="[Scrape:LLM] ",
             context="relevant-link extraction",
         )
         logger.debug("[Scrape:LLM] LLM call successful for relevant links extraction")
         return result
     except Exception as e:
         raise_if_llm_unavailable(e, context="extracting relevant links")
-        logger.error("[Scrape:LLM] Error invoking LLM for relevant links extraction: %s", e)
+        logger.exception("[Scrape:LLM] Error invoking LLM for relevant links extraction")
         return None

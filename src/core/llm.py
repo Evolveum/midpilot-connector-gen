@@ -78,7 +78,6 @@ async def retry_on_transient_llm_error(
     *,
     max_attempts: int,
     base_delay: float,
-    logger_prefix: str = "",
     context: Optional[str] = None,
 ) -> T:
     """
@@ -99,8 +98,7 @@ async def retry_on_transient_llm_error(
 
             wait = delay * (2 ** (attempt - 1))
             logger.warning(
-                "%sTransient LLM failure%s; retrying attempt %s/%s in %.1fs: %s",
-                logger_prefix,
+                "[Core:LLM] Transient LLM failure%s; retrying attempt %s/%s in %.1fs: %s",
                 f" for {context}" if context else "",
                 attempt + 1,
                 attempts,

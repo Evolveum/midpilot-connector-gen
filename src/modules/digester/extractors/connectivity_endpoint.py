@@ -7,10 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
-from langchain_core.runnables.config import RunnableConfig
-
 from src.core.llm import build_structured_chain
-from src.core.observability.langfuse import langfuse_handler
 from src.documents.filtering.filter import filter_documentation_items
 from src.documents.normalize import normalize_endpoint_key
 from src.jobs import append_job_error, update_job_progress
@@ -65,7 +62,7 @@ async def extract_connectivity_endpoint_raw(
         system_prompt=get_connectivity_endpoint_system_prompt,
         user_prompt=get_connectivity_endpoint_user_prompt,
         parse_fn=parse_fn,
-        logger_prefix="[Digester:ConnectivityEndpoint] ",
+        run_name="Digester:ConnectivityEndpoint",
         job_id=job_id,
         chunk_id=chunk_id,
         chunk_metadata=chunk_metadata,
@@ -165,7 +162,7 @@ async def rank_connectivity_candidates(
         result = await invoke_llm(
             chain,
             {"candidates": candidates_json, "count": len(candidates)},
-            config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:RankConnectivityEndpoints"),
+            run_name="Digester:RankConnectivityEndpoints",
         )
         if not result or not result.ranked_endpoints:
             logger.warning("[Digester:ConnectivityEndpoint] Ranking LLM returned empty result, using original order")

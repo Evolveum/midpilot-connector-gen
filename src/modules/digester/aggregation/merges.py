@@ -7,10 +7,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, cast
 from uuid import UUID
 
-from langchain_core.runnables.config import RunnableConfig
-
 from src.config import config
-from src.core.observability.langfuse import langfuse_handler
 from src.documents.normalize import canonical_object_class_key, normalize_endpoint_key
 from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.sequence_merge import merge_relevant_sequences
@@ -232,7 +229,7 @@ async def merge_attribute_candidates(
                     "object_class": object_class,
                     "attributes_list": json.dumps([item.model_dump() for item in merged]),
                 },
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:DedupAttributes"),
+                run_name="Digester:DedupAttributes",
             ),
         )
 

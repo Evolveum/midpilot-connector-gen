@@ -8,10 +8,7 @@ import re
 from typing import Any, Dict, List, Set, Tuple, cast
 from uuid import UUID
 
-from langchain_core.runnables.config import RunnableConfig
-
 from src.core.llm import build_structured_chain, get_default_llm, raise_if_llm_unavailable
-from src.core.observability.langfuse import langfuse_handler
 from src.documents.chunking import get_neighboring_tokens
 from src.documents.normalize import normalize_endpoint_key
 from src.jobs import (
@@ -183,7 +180,7 @@ async def extract_endpoints(
 
                 result = cast(
                     ExtractedEndpointResponse,
-                    await invoke_chunk_chain(chain, chunk, chunk_metadata, run_name="Digester:ExtractEndpoints"),
+                    await invoke_chunk_chain(chain, chunk, chunk_metadata, run_name="Digester:Endpoints"),
                 )
 
                 if not result or not result.endpoints:
@@ -239,9 +236,7 @@ async def extract_endpoints(
                                 "endpoint": endpoint.model_dump(by_alias=True, exclude={"relevant_documentations"}),
                                 "chunk": context_snippet,
                             },
-                            config=RunnableConfig(
-                                callbacks=[langfuse_handler], run_name="Digester:CheckEndpointParams"
-                            ),
+                            run_name="Digester:CheckEndpointParams",
                         ),
                     )
                     if checked_result:

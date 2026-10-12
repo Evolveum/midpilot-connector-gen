@@ -12,11 +12,10 @@ internals.
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables.config import RunnableConfig
 
 from src.config import ReasoningEffort, config
 from src.core.llm import get_default_llm, make_basic_chain, retry_on_transient_llm_error
-from src.core.observability.langfuse import langfuse_handler
+from src.core.observability.langfuse import build_llm_config
 from src.integrations.web.schemas import IrrelevantLinks
 
 _LINK_FILTER_REASONING_CAP: ReasoningEffort = "medium"
@@ -55,9 +54,7 @@ async def classify_irrelevant_links(prompts: tuple[str, str]) -> IrrelevantLinks
     )
 
     return await retry_on_transient_llm_error(
-        lambda: chain.ainvoke(
-            {}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Web:ClassifyIrrelevantLinks")
-        ),
+        lambda: chain.ainvoke({}, config=build_llm_config("Web:ClassifyIrrelevantLinks")),
         max_attempts=_LINK_FILTER_MAX_ATTEMPTS,
         base_delay=_LINK_FILTER_BASE_DELAY_SECONDS,
         context="irrelevant-link filter",

@@ -23,9 +23,13 @@ _SEARCH_INTENT_SUFFIX: dict[SearchIntent, str] = {
 }
 
 
+def search_intent_label(intent: SearchIntent | str) -> str:
+    """PascalCase intent name shared by search operation keys and trace names."""
+    return _SEARCH_INTENT_SUFFIX[SearchIntent(intent)]
+
+
 def build_search_operation_key(object_class: str, intent: SearchIntent | str) -> str:
-    normalized_intent = SearchIntent(intent) if isinstance(intent, str) else intent
-    return f"{object_class}Search{_SEARCH_INTENT_SUFFIX[normalized_intent]}"
+    return f"{object_class}Search{search_intent_label(intent)}"
 
 
 class ArtifactKind(StrEnum):
