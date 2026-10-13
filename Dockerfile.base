@@ -3,14 +3,23 @@
 # Licensed under the EUPL-1.2 or later.
 
 # Python + uv + production dependency base with Playwright browsers.
-# Rebuild this image when Python, uv.lock, pyproject.toml, or Playwright changes.
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+# Rebuild this image when Python, uv.lock, pyproject.toml, or Playwright changes,
+# and regularly to pick up Debian and Chromium security fixes.
+FROM ghcr.io/astral-sh/uv:python3.13-trixie-slim
 
 WORKDIR /app
 
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+
+# Apply Debian security updates published after the upstream image was built.
+# Remove the system pip: the application runs from the uv-managed /app/.venv,
+# so pip is never used at runtime and would only ship its advisories.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip uninstall --yes pip
 
 # Install production dependencies without the project itself. This gives the
 # Playwright CLI from the locked dependency graph before browser installation.
@@ -21,5 +30,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN python -m playwright install --with-deps chromium
+RUN python -m playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
 RUN python -c "import importlib.metadata; print(importlib.metadata.version('playwright'))" > /opt/playwright-python-version
