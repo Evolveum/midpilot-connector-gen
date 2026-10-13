@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from src.database.repositories.session_repository import SessionRepository
 
@@ -67,6 +68,34 @@ async def test_missing_key_and_missing_session_both_read_as_none() -> None:
     repo, _ = _repo_returning(None)
 
     assert await repo.get_session_data(uuid4(), "absentOutput") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "lock_and_write",
+    [
+        pytest.param(lambda repo, session_id: repo.lock_session(session_id), id="lock_session"),
+        pytest.param(lambda repo, session_id: repo.update_session(session_id, {"k": "v"}), id="update_session"),
+        pytest.param(
+            lambda repo, session_id: repo.update_result_if_current_job(
+                session_id=session_id, result_key="userOutput", job_id=uuid4(), value={}
+            ),
+            id="update_result_if_current_job",
+        ),
+    ],
+)
+async def test_session_writers_lock_the_row_without_blocking_foreign_key_checks(lock_and_write) -> None:
+    """Session writers must take ``FOR NO KEY UPDATE``, never ``FOR UPDATE``.
+
+    A job insert holds ``FOR KEY SHARE`` on its session row for the foreign-key check, which
+    ``FOR UPDATE`` conflicts with: two requests scheduling jobs for one session then deadlock.
+    """
+    repo, db = _repo_returning(None)
+
+    await lock_and_write(repo, uuid4())
+
+    sql = str(db.execute.await_args_list[0].args[0].compile(dialect=postgresql.dialect()))
+    assert sql.endswith("FOR NO KEY UPDATE")
 
 
 def _repo_returning_rows(rows: list[tuple[str, object]]) -> tuple[SessionRepository, MagicMock]:

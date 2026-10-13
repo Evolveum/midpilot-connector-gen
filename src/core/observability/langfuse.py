@@ -6,6 +6,7 @@ import os
 import ssl
 
 import httpx
+from langchain_core.runnables.config import RunnableConfig
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 
@@ -45,3 +46,10 @@ langfuse = Langfuse(
 
 # langfuse langchain handler that automatically observes runnables (chains)
 langfuse_handler = CallbackHandler(public_key=config.langfuse.public_key)
+
+
+def build_llm_config(run_name: str) -> RunnableConfig:
+    """Attach tracing to an explicitly named LLM operation, including when export is disabled."""
+    if not run_name.strip():
+        raise ValueError("LLM run_name must not be blank")
+    return RunnableConfig(callbacks=[langfuse_handler], run_name=run_name)

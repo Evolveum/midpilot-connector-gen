@@ -4,10 +4,10 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, TypeVar, Union
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import Select, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,20 @@ from src.shared.clock import utc_now
 from src.shared.session_keys import job_pointer_key_for_output
 
 logger = logging.getLogger(__name__)
+
+SelectT = TypeVar("SelectT", bound=Select[Any])
+
+
+def _locked_for_session_write(statement: SelectT) -> SelectT:
+    """Lock the selected ``sessions`` row with ``FOR NO KEY UPDATE``.
+
+    Session writers change only non-key columns. ``NO KEY UPDATE`` serializes them with each
+    other while staying compatible with the ``FOR KEY SHARE`` lock PostgreSQL takes for the
+    foreign-key check when a child row (job, session data, document, relevant chunk) is
+    inserted. A plain ``FOR UPDATE`` conflicts with that lock and deadlocks two requests that
+    each insert a job for the same session before writing its pointer.
+    """
+    return statement.with_for_update(key_share=True)
 
 
 @dataclass(frozen=True)
@@ -106,7 +120,7 @@ class SessionRepository:
         :return: True if successful, False otherwise
         """
         # Check if session exists
-        query = select(Session).where(Session.session_id == session_id).with_for_update()
+        query = _locked_for_session_write(select(Session).where(Session.session_id == session_id))
         result = await self.db.execute(query)
         session = result.scalar_one_or_none()
 
@@ -128,7 +142,7 @@ class SessionRepository:
 
     async def lock_session(self, session_id: UUID) -> bool:
         """Serialize a read-modify-write sequence for one session."""
-        query = select(Session.session_id).where(Session.session_id == session_id).with_for_update()
+        query = _locked_for_session_write(select(Session.session_id).where(Session.session_id == session_id))
         return (await self.db.execute(query)).scalar_one_or_none() is not None
 
     async def update_locked_session(self, session_id: UUID, data: Dict[str, Any]) -> bool:
@@ -177,7 +191,7 @@ class SessionRepository:
         """
         pointer_key = job_pointer_key_for_output(result_key)
         session = (
-            await self.db.execute(select(Session).where(Session.session_id == session_id).with_for_update())
+            await self.db.execute(_locked_for_session_write(select(Session).where(Session.session_id == session_id)))
         ).scalar_one_or_none()
         if session is None:
             return False

@@ -227,7 +227,7 @@ async def _extract_from_chunk(
     chunk_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[RelationRecord]:
     try:
-        result = await invoke_chunk_chain(chain, chunk, chunk_metadata)
+        result = await invoke_chunk_chain(chain, chunk, chunk_metadata, run_name="Digester:Relations")
         return await _parse_relations_result(
             result,
             job_id=job_id,

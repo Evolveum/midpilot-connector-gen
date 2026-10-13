@@ -127,6 +127,73 @@ async def test_persisted_job_and_pointer_commit_together_for_status_requests(
     assert visible_input == {"value": "hello"}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("first_key", "second_key"),
+    [("attributesUser", "endpointsUser"), ("attributesUser", "attributesUser")],
+    ids=["different-pointer-keys", "same-pointer-key"],
+)
+async def test_concurrent_scheduling_for_one_session_serializes_without_deadlock(
+    postgres_session_factory: SessionFactory,
+    first_key: str,
+    second_key: str,
+) -> None:
+    """Parallel enqueue requests for one session queue on the session row instead of deadlocking.
+
+    Each request inserts its job before writing the pointer, and the job's foreign key takes a
+    KEY SHARE lock on the session row. midPoint schedules e.g. attributes and endpoints of one
+    class in parallel, so the pointer write's session lock must not conflict with KEY SHARE.
+    """
+    session_id = await _create_session(postgres_session_factory)
+    async with postgres_session_factory() as first_db, postgres_session_factory() as second_db:
+        requests: list[tuple[AsyncSession, JobSessionKeys, dict[str, str], UUID]] = []
+        for db, key, value in ((first_db, first_key, "first"), (second_db, second_key, "second")):
+            job_id = await JobRepository(db).create_job(
+                {"value": value},
+                JobType.CODEGEN_FIX_CONNECTOR,
+                session_id,
+                execution_payload=_execution_payload(value),
+            )
+            requests.append((db, JobSessionKeys(key), {"value": value}, job_id))
+
+        pointer_writes = {
+            asyncio.create_task(persist_job_pointer(SessionRepository(db), session_id, keys, session_input, job_id)): (
+                db,
+                keys,
+                session_input,
+                job_id,
+            )
+            for db, keys, session_input, job_id in requests
+        }
+        commit_order = []
+        try:
+            done, pending = await asyncio.wait(pointer_writes, timeout=5, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()  # A deadlock victim surfaces here as DBAPIError.
+            assert len(done) == 1, "the first pointer write must hold the session row until it commits"
+            # The other request is queued behind that lock rather than finished or failed.
+            finished_early, _ = await asyncio.wait(pending, timeout=0.1)
+            assert not finished_early
+
+            for write in (done.pop(), pending.pop()):
+                await asyncio.wait_for(write, timeout=5)
+                await pointer_writes[write][0].commit()
+                commit_order.append(pointer_writes[write])
+        finally:
+            for task in pointer_writes:
+                task.cancel()
+            await asyncio.gather(*pointer_writes, return_exceptions=True)
+
+    # The later commit wins a shared pointer key; distinct keys each keep their own job.
+    expected_pointers = {keys: (job_id, session_input) for _, keys, session_input, job_id in commit_order}
+    async with postgres_session_factory() as reader:
+        for _, _, _, job_id in requests:
+            assert await JobRepository(reader).get_job_for_session(job_id, session_id) is not None
+        for keys, (job_id, session_input) in expected_pointers.items():
+            assert await SessionRepository(reader).get_session_data(session_id, keys.job_id) == str(job_id)
+            assert await SessionRepository(reader).get_session_data(session_id, keys.input) == session_input
+
+
 async def _create_queued_job(
     session_factory: SessionFactory,
     session_id: UUID,

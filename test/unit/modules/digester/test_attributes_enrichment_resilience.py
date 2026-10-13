@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
-from src.modules.digester.extractors.rest.attributes import _build_attr_from_sequences
+from src.modules.digester.extractors.rest.attributes import (
+    _build_attr_from_sequences,
+    build_attributes_from_sequences,
+    consolidate_attributes,
+)
 from src.modules.digester.schemas import AttributeProcessingInfo
 from src.modules.digester.schemas.common import DocProcessingSequenceItem
 
@@ -25,18 +29,7 @@ async def test_unexpected_llm_result_type_keeps_attribute():
     return None, so the attribute was filtered out downstream even though it was
     already fully discovered; the exception path kept it.
     """
-    attr = AttributeProcessingInfo(
-        name="id",
-        type="string",
-        relevant_sequences=[
-            DocProcessingSequenceItem(
-                chunk_id="c1",
-                start_sequence="begin",
-                end_sequence="end",
-                text="id is a string",
-            )
-        ],
-    )
+    attr = _attribute_with_sequence()
 
     # object() is neither the response model, nor a dict, nor has string content.
     with patch(
@@ -50,6 +43,7 @@ async def test_unexpected_llm_result_type_keeps_attribute():
             use_steps=False,
             fields_to_update=["type"],
             log_stage="TypeFormat",
+            run_name="Digester:Attributes:TypeFormat",
             response_model=_DummyResponse,
             context_builder=lambda a, s: {},
         )
@@ -57,3 +51,38 @@ async def test_unexpected_llm_result_type_keeps_attribute():
     assert result is attr
     assert result.name == "id"
     assert result.type == "string"
+
+
+@pytest.mark.asyncio
+async def test_enrichment_stages_are_traced_under_their_own_names():
+    """Each enrichment stage names its LLM calls; unnamed calls show up as ``RunnableSequence``."""
+    chain = MagicMock()
+    chain.ainvoke = AsyncMock(return_value=object())
+    with (
+        patch("src.modules.digester.extractors.rest.attributes._build_type_format_chain", return_value=chain),
+        patch("src.modules.digester.extractors.rest.attributes._build_boolean_flags_chain", return_value=chain),
+        patch("src.modules.digester.extractors.rest.attributes._build_consolidation_chain", return_value=chain),
+    ):
+        attrs = await build_attributes_from_sequences([_attribute_with_sequence()], object_class="User")
+        await consolidate_attributes(attrs, object_class="User")
+
+    assert [call.kwargs["config"]["run_name"] for call in chain.ainvoke.await_args_list] == [
+        "Digester:Attributes:TypeFormat",
+        "Digester:Attributes:BooleanFlags",
+        "Digester:Attributes:Consolidation",
+    ]
+
+
+def _attribute_with_sequence() -> AttributeProcessingInfo:
+    return AttributeProcessingInfo(
+        name="id",
+        type="string",
+        relevant_sequences=[
+            DocProcessingSequenceItem(
+                chunk_id="c1",
+                start_sequence="begin",
+                end_sequence="end",
+                text="id is a string",
+            )
+        ],
+    )

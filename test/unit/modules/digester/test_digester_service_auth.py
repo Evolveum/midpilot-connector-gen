@@ -243,6 +243,33 @@ async def test_build_auth_items_filters_failed_build_results():
 
 
 @pytest.mark.asyncio
+async def test_auth_build_batch_has_stable_trace_names_and_item_specific_errors():
+    items = [
+        AuthProcessingInfo(name=name, type=AuthType.API_KEY, quirks="", relevant_sequences=[])
+        for name in ("Header token", "Query token")
+    ]
+    chain = AsyncMock()
+    chain.ainvoke.return_value = None
+    job_id = uuid4()
+    with (
+        patch("src.modules.digester.extractors.auth.update_job_progress", new_callable=AsyncMock),
+        patch("src.modules.digester.extraction.chunk_extraction.build_structured_chain", return_value=chain) as build,
+        patch("src.modules.digester.extraction.chunk_extraction.append_job_error", new_callable=AsyncMock) as errors,
+    ):
+        assert await build_auth_items(items, job_id) == []
+
+    build.assert_called_once()
+    assert [call.kwargs["config"]["run_name"] for call in chain.ainvoke.await_args_list] == [
+        "Digester:Auth:Build",
+        "Digester:Auth:Build",
+    ]
+    assert {call.args for call in errors.await_args_list} == {
+        (job_id, "[Digester:Auth:Build] Item 1/2 - Empty LLM response."),
+        (job_id, "[Digester:Auth:Build] Item 2/2 - Empty LLM response."),
+    }
+
+
+@pytest.mark.asyncio
 async def test_deduplicate_auth_keeps_distinct_methods_with_same_concrete_type():
     """Entries with the same concrete type can still represent different auth mechanisms."""
     items = [

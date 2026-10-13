@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 async def extract_sequence(
-    chunk_id: str, start_pattern: str, end_pattern: str, enable_marker_blending: bool = False, logger_prefix: str = ""
+    chunk_id: str, start_pattern: str, end_pattern: str, enable_marker_blending: bool = False
 ) -> str:
     """
     Extract sequence from text using start and end sequences.
@@ -20,7 +20,6 @@ async def extract_sequence(
         start_pattern: str - the exact opening phrase from the documentation (word-for-word, searchable)
         end_pattern: str - the exact closing phrase from the documentation (word-for-word, searchable)
         enable_marker_blending: bool - whether to enable marker blending
-        logger_prefix: str - prefix for logging to identify the context
     """
     text = ""
     async with async_session_maker() as db:
@@ -29,7 +28,7 @@ async def extract_sequence(
         text = doc["content"] if doc and "content" in doc else ""
 
     if not text:
-        logger.warning("%sNo text found for chunk ID: %s", logger_prefix, chunk_id)
+        logger.warning("[Digester:Sequences] No text found for chunk ID: %s", chunk_id)
         return ""
 
     start_match = await asyncio.to_thread(lambda: re.search(re.escape(start_pattern), text))
@@ -41,8 +40,7 @@ async def extract_sequence(
 
     if not start_match or not end_match:
         logger.warning(
-            "%sFailed to find valid sequence. Start pattern: %s, End pattern: %s, Text: %s",
-            logger_prefix,
+            "[Digester:Sequences] Failed to find valid sequence. Start pattern: %s, End pattern: %s, Text: %s",
             start_pattern,
             end_pattern,
             text,
@@ -52,8 +50,7 @@ async def extract_sequence(
     end_index = offset + end_match.end()
     full_sequence = text[start_match.start() : end_index]
     logger.debug(
-        "%sExtracted sequence: %s, Start index: %d, End index: %d",
-        logger_prefix,
+        "[Digester:Sequences] Extracted sequence: %s, Start index: %d, End index: %d",
         full_sequence,
         start_match.start(),
         end_index,

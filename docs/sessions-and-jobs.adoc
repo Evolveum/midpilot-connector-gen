@@ -217,6 +217,18 @@ result. The older computation remains a finished historical job, but its
 `errors` list explicitly records that the result was not published to the
 session.
 
+Every session write locks the `sessions` row with `FOR NO KEY UPDATE`
+(`_locked_for_session_write` in `src/database/repositories/session_repository.py`
+is the single place that sets the lock mode). Writers of one session therefore
+still run one after another, but the lock stays compatible with the
+`FOR KEY SHARE` lock PostgreSQL takes on the session row whenever a job,
+session-data, document or relevant-chunk row referencing it is inserted. An
+enqueue request inserts its job before writing the pointer, so a plain
+`FOR UPDATE` would deadlock two parallel enqueue requests for the same session,
+such as attribute and endpoint extraction for one object class. With
+`FOR NO KEY UPDATE` the second request waits for the first to commit and both
+succeed.
+
 Run `uv run alembic upgrade head` before starting the updated application.
 Migration `007` marks pre-migration queued/running jobs as failed because they
 do not contain a resumable execution payload. The same migration adds

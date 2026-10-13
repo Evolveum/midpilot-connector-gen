@@ -62,7 +62,7 @@ async def extract_info_metadata_chunk(
         system_prompt=get_info_system_prompt,
         user_prompt=get_info_user_prompt,
         parse_fn=parse_fn,
-        logger_prefix="[Digester:InfoMetadata] ",
+        run_name="Digester:InfoMetadata",
         job_id=job_id,
         chunk_id=chunk_id,
         chunk_metadata=chunk_metadata,

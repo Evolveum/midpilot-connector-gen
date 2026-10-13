@@ -5,9 +5,11 @@
 from unittest.mock import patch
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 
 from src.config import config
 from src.core.errors import LLMUnavailableError
+from src.core.observability.langfuse import langfuse_handler
 from src.modules.scrape.core.llms import get_relevant_links_from_text
 
 
@@ -23,9 +25,11 @@ class _FailingChain:
     def __init__(self, exc: Exception):
         self._exc = exc
         self.calls = 0
+        self.configs: list[RunnableConfig] = []
 
     async def ainvoke(self, *args, **kwargs):
         self.calls += 1
+        self.configs.append(kwargs["config"])
         raise self._exc
 
 
@@ -43,6 +47,8 @@ async def test_relevant_links_raises_when_llm_unreachable(monkeypatch):
             await get_relevant_links_from_text(("developer {parser_instructions}", "user"))
 
     assert chain.calls == 2  # retried before failing
+    assert [item["run_name"] for item in chain.configs] == ["Scrape:Links:SelectRelevant"] * 2
+    assert all(item["callbacks"] == [langfuse_handler] for item in chain.configs)
 
 
 @pytest.mark.asyncio
@@ -59,3 +65,4 @@ async def test_relevant_links_returns_none_on_non_outage_error(monkeypatch):
 
     assert result is None
     assert chain.calls == 1  # non-transient errors are not retried
+    assert chain.configs[0]["run_name"] == "Scrape:Links:SelectRelevant"
