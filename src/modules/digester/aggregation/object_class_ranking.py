@@ -13,10 +13,8 @@ from uuid import UUID
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables.config import RunnableConfig
 
 from src.core.llm import build_structured_chain, get_default_llm, make_basic_chain
-from src.core.observability.langfuse import langfuse_handler
 from src.documents.normalize import canonical_object_class_key
 from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.aggregation.merges import merge_object_classes
@@ -177,10 +175,7 @@ async def _sort_bucket_by_importance(
         sort_result = await invoke_llm(
             sort_chain,
             {"items_json": items_json, "confidence_level": confidence_level},
-            config=RunnableConfig(
-                callbacks=[langfuse_handler],
-                run_name="Digester:SortSqlObjectClasses" if sql_compact else "Digester:SortObjectClasses",
-            ),
+            run_name="Digester:ObjectClasses:SQL:Sort" if sql_compact else "Digester:ObjectClasses:Sort",
         )
         logger.debug("[Digester:ObjectClasses] Bucket sorting LLM raw (%s): %r", confidence_level, (sort_result or ""))
 
@@ -318,10 +313,7 @@ async def _deduplicate_and_sort_object_classes(
         confidence_result = await invoke_llm(
             confidence_chain,
             {},
-            config=RunnableConfig(
-                callbacks=[langfuse_handler],
-                run_name=("Digester:SqlObjectClassConfidence" if sql_compact else "Digester:ObjectClassConfidence"),
-            ),
+            run_name="Digester:ObjectClasses:SQL:Confidence" if sql_compact else "Digester:ObjectClasses:Confidence",
         )
         logger.info("[Digester:ObjectClasses] Confidence LLM raw: %r", (confidence_result or ""))
 

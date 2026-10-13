@@ -83,7 +83,7 @@ class _DummyGenerator(BaseGroovyGenerator):
                 system_prompt="system",
                 user_prompt="user",
                 default_scaffold='objectClass("User") {}',
-                logger_prefix="[Codegen:Dummy]",
+                run_name="Codegen:Dummy",
             )
         )
 
@@ -109,6 +109,7 @@ async def _run_process_chunks(chain, *, chunks=("chunk",)):
             chain=chain,
             job_id=uuid4(),
             initial_result='objectClass("User") {}',
+            run_name="Codegen:Dummy",
         )
     return result, mock_append_job_error
 
@@ -346,6 +347,6 @@ async def test_invalid_embedded_groovy_cleanup_preserves_valid_yaml():
         patch("src.modules.codegen.core.base.make_basic_chain", return_value=chain),
         patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
     ):
-        result = await generator._cleanup_generated_code(YAML_SUFFICIENT_CODE, uuid4())
+        result = await generator._cleanup_generated_code(YAML_SUFFICIENT_CODE, uuid4(), "Codegen:Dummy")
     assert result == YAML_SUFFICIENT_CODE
     errors.assert_awaited_once()

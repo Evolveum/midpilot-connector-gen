@@ -7,11 +7,10 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables.config import RunnableConfig
 
 from src.config import config
 from src.core.llm import get_default_llm, make_basic_chain, retry_on_transient_llm_error
-from src.core.observability.langfuse import langfuse_handler
+from src.core.observability.langfuse import build_llm_config
 from src.documents.processing.schema import LlmChunkOutput
 
 logger = logging.getLogger(__name__)
@@ -54,10 +53,9 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
     )
 
     result = await retry_on_transient_llm_error(
-        lambda: chain.ainvoke({}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Scrape:ProcessChunk")),
+        lambda: chain.ainvoke({}, config=build_llm_config("Scrape:Chunks:Process")),
         max_attempts=config.scrape_and_process.chunk_llm_retry_attempts,
         base_delay=config.scrape_and_process.chunk_llm_retry_base_delay_seconds,
-        logger_prefix="[Documents:LLM] ",
         context="chunk processing",
     )
 

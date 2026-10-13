@@ -63,6 +63,7 @@ async def test_extraction_validates_new_candidate_before_merge(include_valid):
         patch("src.modules.digester.extraction.sequences.extract_sequence", new_callable=AsyncMock) as reload_text,
     ):
         items, found = await extract_single_chunk(
+            run_name="Digester:TestExtraction",
             schema="Prefix. User object includes id string and email string. Suffix.",
             pydantic_model=AttributeDiscoveryResponse,
             system_prompt="system",
@@ -103,6 +104,7 @@ async def test_validated_model_requires_sequence_checking():
     chain = AsyncMock()
     with pytest.raises(ValueError, match="requires enabled_sequence_checking"):
         await extract_single_chunk(
+            run_name="Digester:TestExtraction",
             schema="text",
             pydantic_model=AttributeDiscoveryResponse,
             system_prompt="system",

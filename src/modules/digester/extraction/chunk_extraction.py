@@ -11,13 +11,11 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 from uuid import UUID
 
-from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, ValidationError
 
 from src.config import config
 from src.core import pool
-from src.core.llm import build_structured_chain, is_transient_llm_error, raise_if_llm_unavailable
-from src.core.observability.langfuse import langfuse_handler
+from src.core.llm import build_structured_chain, raise_if_llm_unavailable, retry_on_transient_llm_error
 from src.documents.chunking import normalize_to_text
 from src.jobs import append_job_error, update_job_progress
 from src.modules.digester.extraction.fuzzysearch_worker import fuzzy_search_worker
@@ -29,46 +27,6 @@ from src.shared.enums import JobStage
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
-
-
-async def _invoke_extraction_chain_with_retry(
-    extraction_chain: Any,
-    payload: Dict[str, Any],
-    *,
-    logger_prefix: str,
-    chunk_id: Optional[UUID],
-) -> Any:
-    max_attempts = max(1, config.digester.chunk_llm_retry_attempts)
-    base_delay = max(0.0, config.digester.chunk_llm_retry_base_delay_seconds)
-
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return await invoke_llm(
-                extraction_chain,
-                payload,
-                config=RunnableConfig(
-                    callbacks=[langfuse_handler],
-                    run_name=logger_prefix.strip("[] ") or "Digester:ChunkExtraction",
-                ),
-            )
-        except Exception as exc:
-            if attempt >= max_attempts or not is_transient_llm_error(exc):
-                raise
-
-            delay = base_delay * (2 ** (attempt - 1))
-            logger.warning(
-                "%sTransient LLM chunk failure for chunk %s; retrying attempt %s/%s in %.1fs: %s",
-                logger_prefix,
-                chunk_id,
-                attempt + 1,
-                max_attempts,
-                delay,
-                exc,
-            )
-            if delay:
-                await asyncio.sleep(delay)
-
-    raise RuntimeError("LLM extraction retry loop exited unexpectedly")
 
 
 async def run_doc_extractors_concurrently(
@@ -326,7 +284,6 @@ async def _validate_relevant_sequence(
     item: Any,
     text: str,
     collapsed_text: str,
-    logger_prefix: str,
     doc_id: Optional[UUID],
     enable_marker_blending: bool,
     fuzzy_start_marker_error_ratio: float,
@@ -342,17 +299,16 @@ async def _validate_relevant_sequence(
     end_sequence = getattr(seq, "end_sequence", None)
 
     if not isinstance(start_sequence, str) or not isinstance(end_sequence, str):
-        logger.info("%sSequence has invalid data: %s, discarding", logger_prefix, seq)
+        logger.info("[Digester:Sequences] Sequence has invalid data: %s, discarding", seq)
         return None
 
     if not start_sequence.strip() or not end_sequence.strip():
-        logger.info("%sSequence has empty start or end data: %s, discarding", logger_prefix, seq)
+        logger.info("[Digester:Sequences] Sequence has empty start or end data: %s, discarding", seq)
         return None
 
     if len(start_sequence) < min_start_sequence_length or len(end_sequence) < min_end_sequence_length:
         logger.info(
-            "%sSequence start or end is too short (less than %d chars for start and %d for end), discarding. Sequence: %s",
-            logger_prefix,
+            "[Digester:Sequences] Sequence start or end is too short (less than %d chars for start and %d for end), discarding. Sequence: %s",
             min_start_sequence_length,
             min_end_sequence_length,
             seq,
@@ -361,8 +317,7 @@ async def _validate_relevant_sequence(
 
     if len(start_sequence) > max_start_sequence_length or len(end_sequence) > max_end_sequence_length:
         logger.info(
-            "%sSequence start or end is too long (more than %d chars for start and %d for end), discarding. Sequence: %s",
-            logger_prefix,
+            "[Digester:Sequences] Sequence start or end is too long (more than %d chars for start and %d for end), discarding. Sequence: %s",
             max_start_sequence_length,
             max_end_sequence_length,
             seq,
@@ -377,7 +332,7 @@ async def _validate_relevant_sequence(
         marker_word_cutoff_length=marker_word_cutoff_length,
     )
     if not start_match:
-        logger.info("%sSequence start not found in text: %s, discarding", logger_prefix, seq)
+        logger.info("[Digester:Sequences] Sequence start not found in text: %s, discarding", seq)
         return None
 
     end_match: DocMarkerMatch | None = await _find_closest_best_fuzzy_literal(
@@ -391,13 +346,12 @@ async def _validate_relevant_sequence(
         marker_word_cutoff_length=marker_word_cutoff_length,
     )
     if not end_match:
-        logger.info("%sSequence end not found after start in text: %s, discarding", logger_prefix, seq)
+        logger.info("[Digester:Sequences] Sequence end not found after start in text: %s, discarding", seq)
         return None
 
     matched_text = text[start_match.start_position : end_match.end_position]
     logger.debug(
-        "%sValidating sequence pair. Start: %s, End: %s, Start distance: %d/%d, End distance: %d/%d, full text: %s",
-        logger_prefix,
+        "[Digester:Sequences] Validating sequence pair. Start: %s, End: %s, Start distance: %d/%d, End distance: %d/%d, full text: %s",
         start_sequence,
         end_sequence,
         start_match.distance,
@@ -408,7 +362,7 @@ async def _validate_relevant_sequence(
     )
 
     if not doc_id:
-        logger.warning("%sNo doc_id provided, skipping sequence: %s", logger_prefix, item)
+        logger.warning("[Digester:Sequences] No doc_id provided, skipping sequence: %s", item)
         return None
 
     validated_seq = DocProcessingSequenceItem(
@@ -419,8 +373,7 @@ async def _validate_relevant_sequence(
     )
 
     logger.debug(
-        "%sNew validated start: %s, end: %s",
-        logger_prefix,
+        "[Digester:Sequences] New validated start: %s, end: %s",
         validated_seq.start_sequence,
         validated_seq.end_sequence,
     )
@@ -432,7 +385,6 @@ async def _validate_item_relevant_sequences(
     item: Any,
     text: str,
     collapsed_text: str,
-    logger_prefix: str,
     doc_id: Optional[UUID],
     enable_marker_blending: bool,
     fuzzy_start_marker_error_ratio: float,
@@ -449,16 +401,14 @@ async def _validate_item_relevant_sequences(
 
     if not isinstance(relevant_sequences, list):
         logger.info(
-            "%sItem relevant_sequences is not a list: %s, discarding",
-            logger_prefix,
+            "[Digester:Sequences] Item relevant_sequences is not a list: %s, discarding",
             relevant_sequences,
         )
         return None
 
     if not relevant_sequences:
         logger.info(
-            "%sNo relevant sequences found for item: %s, discarding",
-            logger_prefix,
+            "[Digester:Sequences] No relevant sequences found for item: %s, discarding",
             item,
         )
         return None
@@ -470,7 +420,6 @@ async def _validate_item_relevant_sequences(
             item,
             text,
             collapsed_text,
-            logger_prefix,
             doc_id,
             enable_marker_blending,
             fuzzy_start_marker_error_ratio,
@@ -486,7 +435,7 @@ async def _validate_item_relevant_sequences(
             valid_sequences.append(validated_seq)
 
     if not valid_sequences:
-        logger.info("%sNo valid sequences found for item: %s, discarding", logger_prefix, item)
+        logger.info("[Digester:Sequences] No valid sequences found for item: %s, discarding", item)
         return None
 
     if validated_item_model is not None:
@@ -530,7 +479,8 @@ async def extract_single_chunk(
     user_prompt: str,
     parse_fn: Callable[[T], List[Any]],
     job_id: UUID,
-    logger_prefix: str = "",
+    *,
+    run_name: str,
     chunk_id: Optional[UUID] = None,
     chunk_metadata: Optional[Dict[str, Any]] = None,
     enabled_sequence_checking: bool = False,
@@ -560,7 +510,7 @@ async def extract_single_chunk(
         user_prompt: The user prompt template to use for the LLM
         parse_fn: Function to parse the Pydantic model into a list of items
         job_id: ID of the job for progress tracking
-        logger_prefix: Optional prefix for log messages
+        run_name: Explicit operation name for tracing and job errors
         chunk_id: Optional chunk ID for tracking
         chunk_metadata: Optional metadata about the chunk (summary, tags, etc.)
         fuzzy_start_marker_error_ratio: Optional override for fuzzy error ratio for start sequence validation
@@ -628,7 +578,7 @@ async def extract_single_chunk(
         message="Processing chunk and extracting relevant information",
     )
 
-    logger.info("%sLLM call for chunk %s", logger_prefix, chunk_id)
+    logger.info("[Digester:ChunkExtraction] Calling %s for chunk %s", run_name, chunk_id)
     if extraction_chain is None:
         extraction_chain = build_chunk_extraction_chain(
             pydantic_model=pydantic_model,
@@ -643,20 +593,24 @@ async def extract_single_chunk(
 
         result = cast(
             T,
-            await _invoke_extraction_chain_with_retry(
-                extraction_chain,
-                {"chunk": text, "summary": summary, "tags": tags, **(extra_llm_attrs or {})},
-                logger_prefix=logger_prefix,
-                chunk_id=chunk_id,
+            await retry_on_transient_llm_error(
+                lambda: invoke_llm(
+                    extraction_chain,
+                    {"chunk": text, "summary": summary, "tags": tags, **(extra_llm_attrs or {})},
+                    run_name=run_name,
+                ),
+                max_attempts=digester_config.chunk_llm_retry_attempts,
+                base_delay=digester_config.chunk_llm_retry_base_delay_seconds,
+                context=f"{run_name} for chunk {chunk_id}" if chunk_id else run_name,
             ),
         )
-        logger.debug("%sLLM result: %r", logger_prefix, (result or ""))
+        logger.debug("[Digester:ChunkExtraction] Result from %s: %r", run_name, result or "")
 
         if not result:
-            error_message = f"{logger_prefix}Empty LLM response."
+            error_message = f"[{run_name}] Empty LLM response."
             if chunk_id:
                 error_message = f"{error_message} (chunk_id: {chunk_id})"
-            logger.warning(error_message)
+            logger.warning("[Digester:ChunkExtraction] Empty response from %s for chunk %s", run_name, chunk_id)
             await append_job_error(job_id, error_message)
             return [], False
 
@@ -665,10 +619,15 @@ async def extract_single_chunk(
             items = parse_fn(result)
         except (ValidationError, ValueError, json.JSONDecodeError) as exc:
             snippet = _result_snippet(result)
-            error_message = f"{logger_prefix}Failed to parse LLM output: {exc}. LLM output: {snippet}"
+            error_message = f"[{run_name}] Failed to parse LLM output: {exc}. LLM output: {snippet}"
             if chunk_id:
                 error_message = f"{error_message} (chunk_id: {chunk_id})"
-            logger.exception(error_message)
+            logger.exception(
+                "[Digester:ChunkExtraction] Failed to parse %s for chunk %s. LLM output: %s",
+                run_name,
+                chunk_id,
+                snippet,
+            )
             await append_job_error(job_id, error_message)
             return [], False
 
@@ -680,7 +639,6 @@ async def extract_single_chunk(
                         item,
                         text,
                         collapsed_text,
-                        logger_prefix,
                         chunk_id,
                         enable_marker_blending,
                         fuzzy_start_marker_error_ratio,
@@ -705,10 +663,10 @@ async def extract_single_chunk(
 
     except Exception as exc:
         raise_if_llm_unavailable(exc, context="extracting documentation")
-        error_message = f"{logger_prefix}Failed to process chunk: {exc}"
+        error_message = f"[{run_name}] Failed to process chunk: {exc}"
         if chunk_id:
             error_message = f"{error_message} (chunk_id: {chunk_id})"
-        logger.exception(error_message)
+        logger.exception("[Digester:ChunkExtraction] Operation %s failed for chunk %s", run_name, chunk_id)
         await append_job_error(job_id, error_message)
         return [], False
 
@@ -718,7 +676,10 @@ async def run_item_build_parallel(
     chain: Any,
     job_id: UUID,
     parse_fn: Callable[[T, Any], Any],
-    logger_prefix: str = "",
+    *,
+    run_name: str,
+    item_index: int,
+    item_count: int,
 ) -> Any | None:
     """
     Run LLM item building.
@@ -727,30 +688,34 @@ async def run_item_build_parallel(
         item: The item to process (e.g., extracted auth method without full details)
         chain: Reusable LLM chain configured for this item build batch
         job_id: ID of the job for progress tracking
-        logger_prefix: Optional prefix for log messages
+        run_name: Explicit operation name for tracing and job errors
+        item_index: One-based item index for logs and job errors, never trace names
+        item_count: Total number of items in this build batch
     Returns:
         Built item, or None when the item could not be built
     """
 
+    error_context = f"[{run_name}] Item {item_index}/{item_count} - "
     try:
-        logger.info("%sCalling LLM for document extraction.", logger_prefix)
+        logger.info("[Digester:BuildItem] Calling %s for item %d/%d", run_name, item_index, item_count)
 
         result = cast(
             T,
             await invoke_llm(
                 chain,
                 {"item": item},
-                config=RunnableConfig(
-                    callbacks=[langfuse_handler],
-                    run_name=logger_prefix.strip("[] ") or "Digester:BuildItem",
-                ),
+                run_name=run_name,
             ),
         )
-        logger.debug("%sLLM result: %r", logger_prefix, (result or ""))
+        logger.debug(
+            "[Digester:BuildItem] Result from %s for item %d/%d: %r", run_name, item_index, item_count, result or ""
+        )
 
         if not result:
-            logger.warning("%sEmpty LLM response.", logger_prefix)
-            error_msg = f"{logger_prefix}Empty LLM response."
+            logger.warning(
+                "[Digester:BuildItem] Empty response from %s for item %d/%d", run_name, item_index, item_count
+            )
+            error_msg = f"{error_context}Empty LLM response."
             await append_job_error(job_id, error_msg)
             return None
 
@@ -758,17 +723,19 @@ async def run_item_build_parallel(
         try:
             new_item = parse_fn(result, item)
         except (ValidationError, ValueError, json.JSONDecodeError) as e:
-            logger.info("%sJSON parse failed. Error: %s", logger_prefix, e)
+            logger.info(
+                "[Digester:BuildItem] Parsing %s failed for item %d/%d: %s", run_name, item_index, item_count, e
+            )
             snippet = _result_snippet(result)
-            error_msg = f"{logger_prefix}Parse failed: {e}. LLM output: {snippet}"
+            error_msg = f"{error_context}Parse failed: {e}. LLM output: {snippet}"
             await append_job_error(job_id, error_msg)
             return None
 
         return new_item
     except Exception as e:
         raise_if_llm_unavailable(e, context="building extracted items")
-        logger.error("%sItem building failed. Error: %s", logger_prefix, e)
-        error_msg = f"{logger_prefix}Item building call failed: {e}"
+        logger.exception("[Digester:BuildItem] Operation %s failed for item %d/%d", run_name, item_index, item_count)
+        error_msg = f"{error_context}Item building call failed: {e}"
         await append_job_error(job_id, error_msg)
         return None
 
@@ -780,7 +747,8 @@ async def run_all_items_build_parallel(
     user_prompt: str,
     job_id: UUID,
     parse_fn: Callable[[T, Any], Any],
-    logger_prefix: str = "",
+    *,
+    run_name: str,
 ) -> List[Any]:
     """
     Run LLM item building for all items in parallel.
@@ -790,7 +758,7 @@ async def run_all_items_build_parallel(
         system_prompt: The system prompt to use for the LLM
         user_prompt: The user prompt template to use for the LLM (should include {item} placeholder)
         job_id: ID of the job for progress tracking
-        logger_prefix: Optional prefix for log messages
+        run_name: Explicit operation name for tracing and job errors
     Returns:
         List of built items
     """
@@ -804,7 +772,9 @@ async def run_all_items_build_parallel(
                     chain,
                     job_id,
                     parse_fn,
-                    f"{logger_prefix}Item {idx + 1}/{len(items)} - ",
+                    run_name=run_name,
+                    item_index=idx + 1,
+                    item_count=len(items),
                 )
                 for idx, item in enumerate(items)
             )

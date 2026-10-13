@@ -26,6 +26,9 @@ class OperationConfig:
     """
     Static configuration of one Groovy generation operation.
 
+    ``run_name`` is the explicit base trace name, independent of log formatting.
+    Generation appends repair and step suffixes without changing this base.
+
     ``context_only_for_conndev`` marks a protocol whose operation context is deterministic
     (SCIM contracts, SQL tables): conndev exports are never fed to the LLM as text chunks, so
     a session built only from them would otherwise have nothing to generate from. Such a
@@ -36,7 +39,7 @@ class OperationConfig:
     system_prompt: str
     user_prompt: str
     default_scaffold: str
-    logger_prefix: str
+    run_name: str
     extra_prompt_vars: Dict[str, Any] = field(default_factory=dict)
     context_only_for_conndev: bool = False
 

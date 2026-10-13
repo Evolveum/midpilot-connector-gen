@@ -104,6 +104,8 @@ async def test_generate_native_schema():
         _, kwargs = mock_generate_groovy.call_args
         assert kwargs["system_prompt"] == get_native_schema_system_prompt
         assert kwargs["user_prompt"] == get_native_schema_user_prompt
+        assert kwargs["run_name"] == "Codegen:NativeSchema"
+        assert kwargs["operation_name"] == "NativeSchema"
         assert set(kwargs["extra_prompt_vars"]) == {"protocol_schema_docs", "declarative_docs", "connid_attribute_docs"}
 
 

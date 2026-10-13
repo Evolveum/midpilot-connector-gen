@@ -74,7 +74,6 @@ class AcceptedScript:
 
 
 _DOCUMENTATIONS_PACKAGE = "src.modules.codegen.documentations"
-_LOGGER_PREFIX = "[Codegen:Fix]"
 
 
 async def fix_connector_code(
@@ -457,7 +456,7 @@ async def _load_escalation_documentation(
     # Same pair -> ordered text materialization the generators use, so the fix cannot
     # drift from them on chunk ordering or on keeping conndev contracts out of the LLM.
     llm_documentation_items, llm_pairs = ChunkProcessor.exclude_conndev_contracts(documentation_items, pairs)
-    sections, _, _, _ = ChunkProcessor.build_chunks_from_pairs(llm_pairs or [], llm_documentation_items, _LOGGER_PREFIX)
+    sections, _, _, _ = ChunkProcessor.build_chunks_from_pairs(llm_pairs or [], llm_documentation_items)
 
     if not sections:
         await append_job_error(job_id, "[Codegen:Fix] Requested documentation had no usable content")

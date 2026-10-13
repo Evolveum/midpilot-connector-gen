@@ -8,10 +8,9 @@ from typing import Any, Dict, List
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables.config import RunnableConfig
 
 from src.core.llm import get_default_llm, make_basic_chain
-from src.core.observability.langfuse import langfuse_handler
+from src.core.observability.langfuse import build_llm_config
 from src.integrations.web import classify_irrelevant_links
 from src.modules.discovery.prompts.prompts import get_irrelevant_filter_prompts, get_rank_links_prompts
 from src.modules.discovery.schema import DiscoveryIntegrationType, RankedLinks
@@ -133,8 +132,8 @@ async def filter_candidate_links(
             else:
                 logger.warning("[Discovery:Filter] LLM returned no irrelevant links or failed")
 
-        except Exception as e:
-            logger.error("[Discovery:Filter] LLM filtering call %s failed: %s", call_num + 1, e)
+        except Exception:
+            logger.exception("[Discovery:Filter] LLM filtering call %s failed", call_num + 1)
 
     all_irrelevant = basic_irrelevant + llm_irrelevant
     logger.info(
@@ -197,11 +196,9 @@ async def rank_candidate_links(
     )
 
     try:
-        ranked = await chain.ainvoke(
-            {}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Discovery:RankLinks")
-        )
-    except Exception as exc:
-        logger.error("[Discovery:Rank] LLM ranking call failed: %s", exc)
+        ranked = await chain.ainvoke({}, config=build_llm_config("Discovery:Links:Rank"))
+    except Exception:
+        logger.exception("[Discovery:Rank] LLM ranking call failed")
         ranked = None
 
     original_urls = [entry["url"] for entry in entries]

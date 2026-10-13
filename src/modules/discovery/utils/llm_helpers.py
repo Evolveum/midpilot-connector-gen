@@ -10,10 +10,9 @@ from typing import Any, List, Tuple
 from langchain_classic.output_parsers import OutputFixingParser
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.runnables.config import RunnableConfig
 from langchain_openai import ChatOpenAI
 
-from src.core.observability.langfuse import langfuse_handler
+from src.core.observability.langfuse import build_llm_config
 from src.modules.discovery.schema import DiscoveryIntegrationType, PySearchPrompts
 
 logger = logging.getLogger(__name__)
@@ -69,6 +68,8 @@ def get_prioritized_fallback_templates(integration_type: DiscoveryIntegrationTyp
 def _parse_search_prompts(parser_model: ChatOpenAI, raw_text: str) -> PySearchPrompts:
     base_parser: PydanticOutputParser[PySearchPrompts] = PydanticOutputParser(pydantic_object=PySearchPrompts)
     meta_parser = OutputFixingParser.from_llm(parser=base_parser, llm=parser_model)
+    # Name only the repair chain: valid structured output needs no additional LLM call or trace.
+    meta_parser.retry_chain = meta_parser.retry_chain.with_config(build_llm_config("Discovery:Queries:ParseRepair"))
     parsed = meta_parser.parse(raw_text)
     assert isinstance(parsed, PySearchPrompts)
     return parsed
@@ -88,16 +89,14 @@ def generate_queries_via_llm(
     Returns:
         (queries, raw_model_response, parsed_prompts)
     """
-    logger.info("Call LLM to generate %d search queries.", num_queries)
+    logger.info("[Discovery:Queries] Call LLM to generate %d search queries", num_queries)
 
     enriched_user_prompt = f"{user_prompt}\n\nReturn exactly {num_queries} distinct queries."
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=enriched_user_prompt)]
-    response = model.invoke(
-        messages, config=RunnableConfig(callbacks=[langfuse_handler], run_name="Discovery:GenerateQueries")
-    )
+    response = model.invoke(messages, config=build_llm_config("Discovery:Queries:Generate"))
 
-    logger.info("Parse LLM output into structured search prompts.")
+    logger.info("[Discovery:Queries] Parse LLM output into structured search prompts")
     parsed = _parse_search_prompts(parser_model, str(response.content))
 
     if parsed.search_prompts:
@@ -107,7 +106,7 @@ def generate_queries_via_llm(
 
     if len(queries) < num_queries:
         logger.warning(
-            "LLM returned %d/%d queries; adding deterministic fallbacks.",
+            "[Discovery:Queries] LLM returned %d/%d queries; adding deterministic fallbacks",
             len(queries),
             num_queries,
         )

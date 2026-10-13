@@ -18,11 +18,10 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from uuid import UUID
 
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.runnables.config import RunnableConfig
 
 from src.config import config
 from src.core.llm import build_structured_chain, raise_if_llm_unavailable, retry_on_transient_llm_error
-from src.core.observability.langfuse import langfuse_handler
+from src.core.observability.langfuse import build_llm_config
 from src.documents.chunking import count_tokens
 from src.jobs import report_job_error
 from src.modules.codegen.errors import ConnectorFixContextTooLargeError, ConnectorFixPassFailedError
@@ -217,11 +216,10 @@ async def run_connector_fix_pass(
         response = await retry_on_transient_llm_error(
             lambda: chain.ainvoke(
                 prompt_vars,
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name=run_name),
+                config=build_llm_config(run_name),
             ),
             max_attempts=config.llm.transient_retry_attempts,
             base_delay=config.llm.transient_retry_base_delay_seconds,
-            logger_prefix="[Codegen:Fix] ",
             context="fixing connector code",
         )
     except Exception as exc:

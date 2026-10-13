@@ -22,11 +22,8 @@ import asyncio
 import logging
 from typing import Dict, List, Optional, cast
 
-from langchain_core.runnables.config import RunnableConfig
-
 from src.config import config
 from src.core.llm import build_structured_chain
-from src.core.observability.langfuse import langfuse_handler
 from src.integrations.web import SearchResult, fetch_markdown_pages, search_web
 from src.modules.digester.extraction.llm_execution import invoke_llm
 from src.modules.digester.prompts.apitype.web_search_prompts import (
@@ -151,7 +148,7 @@ async def lookup_api_type_web_search(application_name: str) -> ApiTypeSignalResu
             await invoke_llm(
                 chain,
                 {"application_name": application_name, "search_results": search_results},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:ApiTypeWebSearch"),
+                run_name="Digester:ApiType:SCIM:WebSearch",
             ),
         )
     except Exception as exc:
@@ -208,7 +205,7 @@ async def lookup_rest_web_search(application_name: str) -> RestSignalResult:
             await invoke_llm(
                 chain,
                 {"application_name": application_name, "search_results": search_results},
-                config=RunnableConfig(callbacks=[langfuse_handler], run_name="Digester:RestWebSearch"),
+                run_name="Digester:ApiType:REST:WebSearch",
             ),
         )
     except Exception as exc:
