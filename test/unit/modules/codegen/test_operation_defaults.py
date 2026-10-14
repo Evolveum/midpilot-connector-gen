@@ -130,7 +130,10 @@ async def test_generation_and_cleanup_normalize_native_defaults(protocol, genera
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["SQL", "SCIM", "REST"])
-@pytest.mark.parametrize("response", ["", "```yaml\n```", "{}", "objectClasses: {User: {}}"])
+# "user" differs from the requested "User" by case only and still counts as an empty artifact.
+@pytest.mark.parametrize(
+    "response", ["", "```yaml\n```", "{}", "objectClasses: {User: {}}", "objectClasses: {user: {}}"]
+)
 @pytest.mark.parametrize("generator_class", [SearchGenerator, CreateGenerator, UpdateGenerator, DeleteGenerator])
 async def test_model_finding_nothing_returns_the_operation_fallback(protocol, response, generator_class):
     generator = make_generator(generator_class, protocol)

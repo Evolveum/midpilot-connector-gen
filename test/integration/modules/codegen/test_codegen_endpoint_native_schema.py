@@ -51,18 +51,19 @@ async def test_generate_native_schema_success():
 
         assert response.jobId == job_id
         mock_repo.session_exists.assert_awaited_once_with(session_id)
+        # Session keys are normalized; the worker keeps the spelling midPoint requested.
         mock_repo.get_session_data.assert_awaited_once_with(session_id, "userAttributesOutput")
         mock_schedule.assert_awaited_once_with(
             db=mock_repo.db,
             job_type="codegen.getNativeSchema",
             input_payload={
                 "attributes": {"username": {"type": "string"}},
-                "objectClass": "user",
+                "objectClass": "User",
                 "skipCache": True,
                 "apiType": "rest",
             },
             worker=ANY,
-            worker_args=(job_input_reference("attributes"), "user"),
+            worker_args=(job_input_reference("attributes"), "User"),
             worker_kwargs={"session_id": session_id, "protocol": ApiType.REST},
             initial_stage="queue",
             initial_message="Queued code generation",
@@ -117,7 +118,7 @@ async def test_generate_native_schema_uses_repair_context_only():
     inputs = update_args[1]["userNativeSchemaInput"]
     assert "preferredEndpoints" not in inputs
     assert "attributes" not in inputs
-    assert inputs["objectClass"] == "user"
+    assert inputs["objectClass"] == "User"
     assert inputs["midpointErrors"] == ["Missing method: request.pathParameter(...)"]
 
 
@@ -196,7 +197,7 @@ async def test_generate_native_schema_missing_class():
             await generate_native_schema(uuid4(), "NonExistentClass", db=MagicMock())
 
     assert exc_info.value.status_code == 404
-    assert "No attributes found for nonexistentclass" in exc_info.value.message
+    assert "No attributes found for NonExistentClass" in exc_info.value.message
 
 
 @pytest.mark.parametrize(
