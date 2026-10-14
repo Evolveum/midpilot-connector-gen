@@ -14,6 +14,7 @@ from src.modules.codegen.enums import SearchIntent, search_intent_label
 from src.modules.codegen.repair import NO_DOCUMENTED_BEHAVIOR
 from src.modules.codegen.schema import AttributesPayload, EndpointsPayload, FallbackArtifact, OperationConfig
 from src.modules.codegen.selection.authorization import ANALYSIS_SUPPORT_FIELD, ANALYSIS_SUPPORT_UNSUPPORTED
+from src.modules.codegen.utils.object_class_casing import restore_object_class_casing
 from src.modules.codegen.utils.operation_defaults import (
     authorization_defaults_artifact,
     is_empty_authorization_artifact,
@@ -64,6 +65,8 @@ class _OperationGenerator(BaseGroovyGenerator):
         self.operation = config.operation_name.lower()
 
     def normalize_generated_code(self, code: str) -> str:
+        # Restore the requested spelling first, so the exact-scope empty-artifact checks below match.
+        code = restore_object_class_casing(code, self.object_class)
         if self.protocol in _PROTOCOLS_WITH_FRAMEWORK_DEFAULTS:
             return normalize_operation_defaults(code, object_class=self.object_class, operation=self.operation)
         # Without framework defaults an explicit empty artifact implements nothing.

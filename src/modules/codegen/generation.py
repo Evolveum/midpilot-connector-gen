@@ -41,6 +41,7 @@ from src.modules.codegen.selection.relevant_chunks import (
     _collect_relevant_chunks,
 )
 from src.modules.codegen.utils.code_output import build_connector_code_output
+from src.modules.codegen.utils.object_class_casing import restore_object_class_casing
 from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
     build_scim_contract_prompt_vars,
@@ -114,6 +115,7 @@ async def generate_native_schema_code(
         job_id=job_id,
         repair_context=repair_context,
     )
+    code = await asyncio.to_thread(restore_object_class_casing, code, object_class)
     return await build_connector_code_output(code)
 
 

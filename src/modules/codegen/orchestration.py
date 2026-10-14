@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import config
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.chunking import count_tokens
+from src.documents.normalize import normalize_object_class_name
 from src.documents.relevance import hydrate_auth_sequences_from_relevance
 from src.jobs import job_input_reference, persist_job_pointer, schedule_coroutine_job
 from src.modules.codegen import connector_fix, generation
@@ -106,13 +107,15 @@ async def schedule_operation_job(
     the job works from travel only in its input; the session pointer keeps the
     request identifiers and caller-supplied context.
 
-    ``object_class`` must already be normalized and the session must already be
-    known to exist; callers own those request-bootstrap concerns.
+    ``object_class`` is the spelling midPoint requested: it reaches the prompts and
+    the generated artifact unchanged, while the session lookups use its normalized
+    key. The session must already be known to exist; callers own that check.
 
     The ``extra_*`` mappings carry operation-specific fields (e.g. ``intent``
     for search) that are merged into the base payloads.
     """
-    attrs = await repo.get_session_data(session_id, attributes_keys(object_class).output)
+    class_key = normalize_object_class_name(object_class)
+    attrs = await repo.get_session_data(session_id, attributes_keys(class_key).output)
     if not attrs:
         raise AttributesNotFoundError(object_class, session_id)
 
@@ -121,7 +124,7 @@ async def schedule_operation_job(
     repair_context = codegen_input.repair_context() if codegen_input is not None else None
     context_payload = codegen_input.context_payload() if codegen_input is not None else {}
 
-    eps = await repo.get_session_data(session_id, endpoints_keys(object_class).output)
+    eps = await repo.get_session_data(session_id, endpoints_keys(class_key).output)
     if eps is None and protocol in _PROTOCOLS_REQUIRING_ENDPOINTS:
         raise OperationSurfaceNotFoundError(object_class, session_id)
 
@@ -272,10 +275,11 @@ async def schedule_native_schema_job(
     Schedule the native-schema codegen job for an object class.
 
     Loads attributes, resolves the protocol, schedules the job, and persists
-    ``{object_class}NativeSchemaJobId`` / ``{object_class}NativeSchemaInput``.
+    ``{object_class}NativeSchemaJobId`` / ``{object_class}NativeSchemaInput`` under the
+    normalized key. ``object_class`` keeps the spelling midPoint requested for the worker.
     """
     keys = codegen_operation_keys(build_object_class_operation_key(object_class, ArtifactKind.NATIVE_SCHEMA))
-    attrs = await repo.get_session_data(session_id, attributes_keys(object_class).output)
+    attrs = await repo.get_session_data(session_id, attributes_keys(normalize_object_class_name(object_class)).output)
     if not attrs:
         raise AttributesNotFoundError(object_class, session_id)
 
