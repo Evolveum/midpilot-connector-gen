@@ -395,17 +395,17 @@ async def generate_relation_code(
         logger.warning("[Codegen:Relation] No relevant object-class chunks found for relation %s", relation_name)
 
     generator = RelationGenerator(
+        relation_name=relation_name,
+        protocol=protocol,
         docs_text=relation_docs_text,
         declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
-        extra_prompt_vars={"protocol": protocol.value},
     )
     code = await generator.generate(
         session_id=session_id,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
         relations=relations,
-        relation_name=relation_name,
     )
     return await build_connector_code_output(code)

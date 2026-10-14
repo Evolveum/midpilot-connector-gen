@@ -87,9 +87,10 @@ registry and manual update instructions.
    logged and never reach the prompt. If the candidate is still invalid after the last
    chunk, the last chunk is re-sent once with the errors; the retry does not count as
    another processed document. A clean generation adds no LLM call. If no valid candidate remains, the last
-   accepted artifact is kept, and with none the existing empty-generation or
-   original-`currentScript` outcome applies. Every rejected candidate is recorded as a job
-   error. Single-pass native-schema generation and the object-class fix do not use this
+   accepted artifact is kept. With none, a run in which the model found nothing to generate
+   returns the operation's fallback artifact (see <<empty-results>>), and any other run keeps
+   the empty-generation or original-`currentScript` outcome. Every rejected candidate is
+   recorded as a job error. Single-pass native-schema generation and the object-class fix do not use this
    mechanism.
    A repair starts with `currentScript` and preserves its format according to the
    repair instructions (`repair.py`, `prompts/repair_prompts.py`). The format-specific
@@ -117,13 +118,76 @@ the `result` payload contains:
 ----
 
 `format` is always present: `YAML` or `GROOVY` for code, and JSON `null` when no
-code was accepted. The `code` field remains a string. For an empty generation,
-`result` is `{"format": null, "code": ""}` and the existing `errors` array explains
-the outcome. YAML `{}` is a nonempty valid artifact and has format `YAML`.
+code was accepted. The `code` field remains a string. When generation fails, `result`
+is `{"format": null, "code": ""}` and the existing `errors` array explains the outcome.
 
-For SQL and SCIM CRUD/search generation, recognized empty default artifacts are
-normalized before validation, including after cleanup. The result names the target
-object class and operation and explains that the framework defaults apply:
+[[empty-results]]
+==== Operations that need no generated code
+
+Not every operation needs code, and not every chunk contributes to it. When the model
+finds nothing to generate, the result is not empty: it is a small, non-executable YAML
+artifact for the operation. This applies when no chunk is relevant to the operation (no
+LLM call is made), when every model response is empty, or when the model returns an
+explicitly empty artifact. It applies to every search intent, create, update, delete,
+relations, and authorization.
+
+[cols="2,3,3", options="header"]
+|===
+| Artifact | SQL and SCIM | REST
+
+| search / create / update / delete
+| Framework defaults, no job error
+| TODO placeholder plus a job error
+
+| relation
+| Framework defaults (SQL foreign-key discovery, SCIM automatic mappings), no job error
+| TODO placeholder plus a job error
+
+| authorization
+| not supported for SQL; SCIM: framework defaults, no job error
+| Framework defaults, no job error
+|===
+
+The object-class operations name the target object class and operation, and the YAML key
+is the base operation (`search` for every intent):
+
+[source,yaml]
+----
+# No changes needed. Use framework defaults.
+objectClasses:
+  "user":
+    search: {}
+----
+
+REST has no framework defaults: an empty REST operation registers no handler, so the
+operation is unsupported. REST therefore returns a placeholder in the same shape, and the
+`errors` array contains "No documented behavior was found for this operation; a TODO
+placeholder was returned. Review the application documentation for this operation and
+retry with skipCache=true.":
+
+[source,yaml]
+----
+# TODO: No search behavior for "user" was found in the documentation. REST operations have no framework defaults; add an endpoint.
+objectClasses:
+  "user":
+    search: {}
+----
+
+A relationship needing no override returns `# No changes needed. Use framework
+defaults.` followed by `{}`. For REST, the placeholder asks for a Groovy
+`relationship("<name>")` block. Authorization returns the defaults comment, then one
+comment line per selected method that was not found in the documentation, then
+`authentication: {<rest|scim>: {}}`. The selected methods are built into the framework,
+and a script only refines them.
+
+Real failures are not presented as defaults. If a model call fails, or the last candidate
+still fails validation, the run keeps the failure contract above. A repair that is given
+a `currentScript` keeps that script, as described above. Native schema has no fallback,
+because an empty schema is always a failure.
+
+For SQL and SCIM CRUD/search generation, explicitly empty candidates are also
+normalized before validation, including after cleanup, so the next chunk and the cleanup
+pass see the same defaults artifact:
 
 [source,yaml]
 ----
@@ -144,10 +208,9 @@ objectClass("user") {
 }
 ----
 
-This adds no executable handler or extra LLM call. Customizations and comments about
-unmet requirements remain intact. Missing model output still follows the failure
-contract above; it is never converted into a successful defaults result. Stored
-artifacts and manual overrides are not rewritten.
+These artifacts add no executable handler and no extra LLM call. Customizations and
+comments about unmet requirements remain intact. Stored artifacts and manual overrides are
+not rewritten.
 
 This contract covers authorization, native schema, every search intent, create,
 update, delete, and relations. Single-operation repairs report the
