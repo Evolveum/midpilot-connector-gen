@@ -222,6 +222,7 @@ async def test_generate_native_schema_passes_bounded_scim_context_to_prompt():
         "extensions": scim_context["extensions"],
     }
     assert json.loads(prompt_vars["connid_object_class_json"]) == scim_context["connectorObjectClass"]
+    assert json.loads(prompt_vars["scim_flatten_candidates_json"]) == []
     assert kwargs["records"][0]["scimAttribute"] == "serialNumber"
 
 
@@ -237,6 +238,7 @@ async def test_generate_native_schema_passes_bounded_scim_context_to_prompt():
                 "scim_resource_contract_json",
                 "connid_object_class_json",
                 "scim_service_provider_config_json",
+                "scim_flatten_candidates_json",
             },
         ),
     ],

@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -44,6 +45,7 @@ from src.modules.codegen.utils.code_output import build_connector_code_output
 from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
     build_scim_contract_prompt_vars,
+    build_scim_flatten_candidates,
     build_sql_context_prompt_vars,
     extract_sql_context,
 )
@@ -97,6 +99,9 @@ async def generate_native_schema_code(
     }
     if protocol == ApiType.SCIM:
         extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))
+        extra_prompt_vars["scim_flatten_candidates_json"] = json.dumps(
+            build_scim_flatten_candidates(attributes_payload), ensure_ascii=False
+        )
 
     if protocol == ApiType.SQL:
         if not extract_sql_context(attributes_payload).get("physicalTable"):

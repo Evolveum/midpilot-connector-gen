@@ -12,6 +12,8 @@ from src.modules.digester.schemas import AttributeResponse, EndpointResponse
 from src.shared.coerce import as_dict_list, as_mapping
 
 _ATTRIBUTE_MAPPING_OPTIONAL_FIELDS = ("scimAttribute", "connectorExposed")
+# connector-scimrest flattens these complex attributes even without a scalar `type` sub-attribute.
+_WELL_KNOWN_SCIM_FLATTEN_FAMILIES = frozenset({"name", "emails", "phoneNumbers", "addresses"})
 _SQL_ATTRIBUTE_BINDING_FIELDS = (
     "databaseCatalog",
     "databaseSchema",
@@ -120,6 +122,41 @@ def extract_sql_context(payload: AttributesPayload) -> Dict[str, Any]:
             return {}
         return payload.sqlContext.model_dump(by_alias=True, mode="json")
     return dict(as_mapping(payload.get("sqlContext")))
+
+
+def build_scim_flatten_candidates(payload: AttributesPayload) -> List[str]:
+    """
+    Complex attributes of the class's primary SCIM schema that a ``scim.flatten`` entry accepts.
+
+    connector-scimrest schema discovery fails on a flatten entry that is not a complex attribute
+    of the schema, or that is multi-valued without a scalar ``type`` sub-attribute to derive the
+    per-type names from (the well-known families excepted). A single-valued complex attribute
+    needs at least one scalar sub-attribute to produce anything.
+    """
+    context = extract_scim_context(payload)
+    schema = as_mapping(context.get("schema")) or as_mapping(as_mapping(context.get("resource")).get("primarySchema"))
+    candidates: List[str] = []
+    for attribute in as_dict_list(schema.get("attributes")):
+        name = attribute.get("name")
+        if not isinstance(name, str) or not name.strip() or not _is_scim_complex(attribute):
+            continue
+        scalar_sub_attributes = {
+            sub_attribute.get("name")
+            for sub_attribute in as_dict_list(attribute.get("subAttributes"))
+            if not _is_scim_complex(sub_attribute)
+        }
+        if name in _WELL_KNOWN_SCIM_FLATTEN_FAMILIES:
+            candidates.append(name)
+        elif attribute.get("multiValued") is True:
+            if "type" in scalar_sub_attributes:
+                candidates.append(name)
+        elif scalar_sub_attributes:
+            candidates.append(name)
+    return candidates
+
+
+def _is_scim_complex(attribute: Mapping[str, Any]) -> bool:
+    return str(attribute.get("type") or "").strip().lower() == "complex"
 
 
 def build_sql_context_prompt_vars(payload: AttributesPayload) -> Dict[str, str]:

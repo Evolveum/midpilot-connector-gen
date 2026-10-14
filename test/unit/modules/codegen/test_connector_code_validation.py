@@ -580,12 +580,36 @@ def test_values_the_runtime_rejects_are_rejected(code, path):
             "supportedAttributes",
         ),
         ("objectClasses: {User: {attributes: {a: {scim: {implementation: {deserialize: it}}}}}}", "implementation"),
+        ("objectClasses: {User: {attributes: {name: {complexType: UserName}}}}", "complexType"),
     ],
 )
 def test_keys_the_runtime_rejects_are_rejected_with_reason(code, key):
     error = validate_connector_code(code)
     assert error is not None
     assert f"'{key}' is not supported in declarative YAML" in error
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        'objectClass("User") {\n    attribute("name") {\n        complexType "UserName"\n    }\n}',
+        'objectClass("User") { attribute("name") { complexType("UserName") } }',
+    ],
+)
+def test_groovy_complex_type_is_rejected(code):
+    errors = collect_connector_code_errors(code)
+    assert len(errors) == 1
+    assert "'complexType' is not supported: midPoint does not support embedded object classes" in errors[0]
+
+
+def test_groovy_complex_type_in_comments_and_strings_is_accepted():
+    code = (
+        'objectClass("User") {\n'
+        '    // complexType "UserName" is not supported\n'
+        '    attribute("name") { description "no complexType here" }\n'
+        "}"
+    )
+    assert collect_connector_code_errors(code) == ()
 
 
 @pytest.mark.parametrize(

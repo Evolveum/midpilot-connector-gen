@@ -18,10 +18,11 @@ EXTRACTED TYPES:
 - `openApiFormat: "reference"`: the attribute points to the object class named in `jsonType`. Declare it
   only with a reference construct your chosen format documents (declarative YAML: `references.<name>`
   with `objectClass`), never as a wire type or format.
-- `openApiFormat: "embedded"`: an embedded object of the class named in `jsonType`; declare that class
-  with `complexType`.
-- `jsonType: "object"`: an anonymous inline object with no wire type. Map its documented scalar parts with
-  attribute paths, or leave a TODO.
+- `openApiFormat: "embedded"` (with a synthetic class name in `jsonType`) and `jsonType: "object"` both mark
+  a structured value. midPoint does not support embedded object classes: never emit `complexType`, the ConnID
+  type `EmbeddedObject`, or a declaration of that synthetic class. Map the documented scalar parts as flat
+  attributes with an attribute path your chosen format documents; if none is documented, omit the attribute
+  and leave a TODO comment that names it.
 """)
 
 

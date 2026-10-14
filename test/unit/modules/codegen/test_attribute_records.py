@@ -10,6 +10,7 @@ from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
     build_connid_attribute_mapping_records,
     build_scim_contract_prompt_vars,
+    build_scim_flatten_candidates,
     extract_scim_context,
 )
 from src.modules.digester.schemas import AttributeInfoScim, AttributeInfoSql, AttributeResponse
@@ -508,3 +509,34 @@ def test_complete_records_match_the_protocol_neutral_builder_without_a_scim_proj
     }
 
     assert build_complete_attribute_mapping_records(rest_payload) == build_attribute_mapping_records(rest_payload)
+
+
+def test_scim_flatten_candidates_follow_the_connector_flatten_rules():
+    scalar = {"name": "value", "type": "string"}
+    type_sub = {"name": "type", "type": "string"}
+    payload = {
+        "attributes": {},
+        "scimContext": {
+            "schema": {
+                "attributes": [
+                    {"name": "userName", "type": "string"},
+                    {"name": "name", "type": "complex", "subAttributes": [{"name": "givenName", "type": "string"}]},
+                    # A well-known family flattens even without a `type` sub-attribute.
+                    {"name": "emails", "type": "complex", "multiValued": True, "subAttributes": [scalar]},
+                    {"name": "photos", "type": "complex", "multiValued": True, "subAttributes": [scalar, type_sub]},
+                    {"name": "groups", "type": "complex", "multiValued": True, "subAttributes": [scalar]},
+                    {"name": "manager", "type": "complex", "subAttributes": [{"name": "nested", "type": "complex"}]},
+                ]
+            }
+        },
+    }
+
+    assert build_scim_flatten_candidates(payload) == ["name", "emails", "photos"]
+
+
+def test_scim_flatten_candidates_fall_back_to_the_resource_primary_schema():
+    complex_name = {"name": "name", "type": "complex", "subAttributes": [{"name": "familyName", "type": "string"}]}
+    payload = {"attributes": {}, "scimContext": {"resource": {"primarySchema": {"attributes": [complex_name]}}}}
+
+    assert build_scim_flatten_candidates(payload) == ["name"]
+    assert build_scim_flatten_candidates({"attributes": {}}) == []

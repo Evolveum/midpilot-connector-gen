@@ -174,4 +174,4 @@ objectClass("User") {
 }
 ----
 
-Complex attributes (embedded objects such as `emails` or `addresses`) are exposed as embedded object classes — see complex and binary attributes. Complex attributes can also be flattened into plain attributes — on the primary schema via the `scim { flatten ... }` list, on a mapped extension via its `extension(...) { flatten ... }` block — see flattening SCIM attributes.
+Complex attributes (structured values such as `emails` or `addresses`) are not declared as embedded object classes, which midPoint does not support. Flatten them into plain attributes — on the primary schema via the `scim { flatten ... }` list, on a mapped extension via its `extension(...) { flatten ... }` block — see flattening SCIM attributes, or map flat attributes with SCIM paths — see complex and binary attributes.
