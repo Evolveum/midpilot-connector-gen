@@ -154,14 +154,15 @@ async def _collect_relevant_chunks(
 
     Args:
         session_id: Session UUID
-        object_class: Object class name
+        object_class: Object class name, as requested; the session keys use its normalized form
         operation_name: Operation name for logging (e.g., "Search", "Create")
 
     Returns:
         Ordered relevant chunk references, or ``None`` when no selection exists.
     """
-    key_endpoints = endpoints_keys(object_class).output
-    key_attributes = attributes_keys(object_class).output
+    class_key = normalize_object_class_name(object_class)
+    key_endpoints = endpoints_keys(class_key).output
+    key_attributes = attributes_keys(class_key).output
     async with async_session_maker() as db:
         repo = RelevantChunkRepository(db)
         relevant_map = await repo.get_relevant_chunks_map(session_id, result_keys=[key_endpoints, key_attributes])

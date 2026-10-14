@@ -19,6 +19,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from src.modules.codegen.core.base import BaseGroovyGenerator, OperationConfig
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.prompts.declarative_format_prompts import DECLARATIVE_FORMAT_POLICY_SYSTEM_RULES
+from src.modules.codegen.schema import FallbackArtifact
 from src.modules.codegen.selection.docs_loader import load_required_adoc_text
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
 from src.shared.enums import ApiType
@@ -82,7 +83,6 @@ class _DummyGenerator(BaseGroovyGenerator):
                 operation_name="Dummy",
                 system_prompt="system",
                 user_prompt="user",
-                default_scaffold='objectClass("User") {}',
                 run_name="Codegen:Dummy",
             )
         )
@@ -90,8 +90,8 @@ class _DummyGenerator(BaseGroovyGenerator):
     def prepare_input_data(self, **kwargs):
         return {}
 
-    def get_initial_result(self, **kwargs):
-        return 'objectClass("User") {}'
+    def fallback_artifact(self):
+        return FallbackArtifact("{}")
 
 
 async def _run_process_chunks(chain, *, chunks=("chunk",)):
@@ -100,7 +100,7 @@ async def _run_process_chunks(chain, *, chunks=("chunk",)):
         patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as mock_append_job_error,
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
     ):
-        result = await generator._process_chunks(
+        result, _ = await generator._process_chunks(
             chunks=list(chunks),
             provenance_chunk_ids=[None] * len(chunks),
             per_chunk_counts={},

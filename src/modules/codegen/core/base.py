@@ -45,7 +45,7 @@ from src.modules.codegen.repair import (
     build_repair_prompt_vars,
     get_repair_initial_result,
 )
-from src.modules.codegen.schema import CodegenRepairContext, EndpointsPayload, OperationConfig
+from src.modules.codegen.schema import CodegenRepairContext, EndpointsPayload, FallbackArtifact, OperationConfig
 from src.modules.codegen.utils.connector_code_validation import (
     collect_connector_code_errors,
     detect_connector_code_format,
@@ -184,16 +184,19 @@ class BaseGroovyGenerator(ABC):
         pass
 
     @abstractmethod
-    def get_initial_result(self, **kwargs) -> str:
+    def fallback_artifact(self) -> FallbackArtifact:
         """
-        Get the initial scaffold/result before processing chunks.
+        Return the artifact used when the model generated nothing for this operation.
 
-        Example: 'objectClass("User") {\\n search {}\\n}'
+        Applies when no chunk was relevant or every response was empty; never after a failed
+        call or a rejected candidate, which keep the failure contract.
         """
-        pass
 
     def normalize_generated_code(self, code: str) -> str:
-        """Normalize a model candidate before validation; preserve artifacts by default."""
+        """Normalize a model candidate before validation; preserve artifacts by default.
+
+        An empty return value is handled like an empty model response: nothing to add.
+        """
         return code
 
     async def generate(
@@ -252,9 +255,8 @@ class BaseGroovyGenerator(ABC):
             )
 
         if not chunks:
-            logger.warning("[Codegen:Generation] No chunks to process")
-            await append_job_error(job_id, NO_CODE_GENERATED)
-            return ""
+            # Only a fresh generation reaches here: a repair always runs at least one pass.
+            return await self._return_fallback(job_id)
 
         # Step 2: Initialize progress
         await self._initialize_progress(job_id, chunks, chunk_ids_included)
@@ -267,7 +269,7 @@ class BaseGroovyGenerator(ABC):
         # Step 4: Process chunks iteratively
         run_name = generation_run_name(self.config.run_name, repair=repair_context is not None)
         initial_result = get_repair_initial_result(repair_context=repair_context, fallback_result="")
-        result = await self._process_chunks(
+        result, declined = await self._process_chunks(
             chunks=chunks,
             provenance_chunk_ids=provenance_chunk_ids,
             per_chunk_counts=per_chunk_counts,
@@ -280,12 +282,30 @@ class BaseGroovyGenerator(ABC):
         )
 
         if not result:
+            if declined and not initial_result:
+                return await self._return_fallback(job_id)
             await append_job_error(job_id, NO_REPAIR_GENERATED if repair_context else NO_CODE_GENERATED)
             return initial_result
 
         # Cleanup returns either its own validated output or this already valid result.
         result = await self._cleanup_generated_code(code=result, job_id=job_id, run_name=run_name)
         return strip_markdown_fences(result)
+
+    async def _return_fallback(self, job_id: UUID) -> str:
+        """Return the deterministic fallback artifact; it needs no cleanup pass."""
+        fallback = self.fallback_artifact()
+        if fallback.job_error is None:
+            logger.info(
+                "[Codegen:Generation] Nothing to customize for %s; returning framework defaults",
+                self.config.run_name,
+            )
+        else:
+            logger.warning(
+                "[Codegen:Generation] No documented behavior for %s; returning a TODO placeholder",
+                self.config.run_name,
+            )
+            await append_job_error(job_id, fallback.job_error)
+        return fallback.code
 
     async def _cleanup_generated_code(self, code: str, job_id: UUID, run_name: str) -> str:
         """
@@ -376,8 +396,9 @@ class BaseGroovyGenerator(ABC):
         """Run one generation call and validate its candidate.
 
         ``errors`` belong to the candidate forwarded as ``result`` and are appended to the prompt
-        for the model to fix. Returns the new candidate with its own validation errors, or None
-        when the response is empty or the call failed, so the caller keeps its previous state.
+        for the model to fix. Returns the new candidate with its own validation errors, an empty
+        candidate when the model has nothing to add, or None when the call failed. The caller
+        keeps its previous state in both of the last two cases.
         """
         try:
             response = await self._invoke_generation_chain(
@@ -390,7 +411,7 @@ class BaseGroovyGenerator(ABC):
                 self.normalize_generated_code, strip_markdown_fences(coerce_llm_text(response))
             )
             if not candidate:
-                return None
+                return "", ()
 
             candidate_errors = await asyncio.to_thread(collect_connector_code_errors, candidate)
             if candidate_errors:
@@ -532,8 +553,8 @@ class BaseGroovyGenerator(ABC):
         job_id: UUID,
         initial_result: str,
         run_name: str,
-    ) -> str:
-        """Return the last valid candidate, or empty when no chunk produced one.
+    ) -> tuple[str, bool]:
+        """Return the last valid candidate (empty when none) and whether the model declined.
 
         Each call receives the latest candidate as ``result``. A rejected candidate is forwarded
         together with its validation errors, so the next call repairs it instead of discarding
@@ -541,10 +562,13 @@ class BaseGroovyGenerator(ABC):
         to repair its output, so it is re-sent once with its errors.
         Only a valid candidate is returned, which lets the caller preserve the supplied repair
         code without running cleanup when no valid replacement exists.
+        The model declined when no call failed and no candidate was ever produced: every
+        response was empty, which means it found nothing to generate for this operation.
         """
         result = initial_result
         accepted = ""
         errors: tuple[str, ...] = ()
+        failed = False
         total_chunks = len(chunks)
         current_chunk_id: Optional[str] = None
         current_group_chunks_remaining: int = 0
@@ -579,7 +603,9 @@ class BaseGroovyGenerator(ABC):
                     run_name=run_name,
                     job_id=job_id,
                 )
-                if generated is not None:
+                if generated is None:
+                    failed = True
+                elif generated[0]:
                     result, errors = generated
                     if not errors:
                         accepted = result
@@ -612,12 +638,12 @@ class BaseGroovyGenerator(ABC):
                 run_name=f"{run_name}:ValidationRetry",
                 job_id=job_id,
             )
-            if generated is not None:
+            if generated is not None and generated[0]:
                 result, errors = generated
                 if not errors:
                     accepted = result
 
-        return accepted
+        return accepted, not failed and not result
 
 
 def endpoints_to_records(payload: EndpointsPayload) -> List[Dict[str, Any]]:

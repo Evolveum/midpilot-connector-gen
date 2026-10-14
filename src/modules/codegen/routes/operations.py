@@ -52,7 +52,8 @@ async def generate_create(
     Generate Groovy create code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
-    object_class = normalize_object_class_name(object_class)
+    # midPoint's spelling goes into the generated artifact; session keys normalize it.
+    object_class = object_class.strip()
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -151,7 +152,8 @@ async def generate_update(
     Generate Groovy update code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
-    object_class = normalize_object_class_name(object_class)
+    # midPoint's spelling goes into the generated artifact; session keys normalize it.
+    object_class = object_class.strip()
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 
@@ -250,7 +252,8 @@ async def generate_delete(
     Generate Groovy delete code for the given object class.
     Loads attributes and endpoints from session automatically.
     """
-    object_class = normalize_object_class_name(object_class)
+    # midPoint's spelling goes into the generated artifact; session keys normalize it.
+    object_class = object_class.strip()
     repo = SessionRepository(db)
     await ensure_session_exists(repo, session_id)
 

@@ -14,10 +14,15 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from src.core.db import get_db
-from src.modules.codegen.repair import NO_CODE_GENERATED
+from src.modules.codegen.repair import NO_CODE_GENERATED, NO_DOCUMENTED_BEHAVIOR
 from src.modules.codegen.router import router
 from src.modules.codegen.schema import GroovyCodePayload
 from src.modules.codegen.utils.connector_code_validation import ensure_valid_connector_code
+from src.modules.codegen.utils.operation_defaults import (
+    authorization_defaults_artifact,
+    relation_defaults_artifact,
+    rest_operation_placeholder_artifact,
+)
 
 OPERATIONS = [
     ("authorization", "authorizationOutput"),
@@ -62,13 +67,16 @@ def client(app):
         ('objectClass("user") { create { // No changes needed. Use framework defaults.\n} }', "GROOVY"),
         ('objectClass("user") {}', "GROOVY"),
         ("objectClasses: {user: {search: {custom: {implementation: 'return []'}}}}", "YAML"),
+        (rest_operation_placeholder_artifact("user", "search"), "YAML"),
+        (relation_defaults_artifact(), "YAML"),
+        (authorization_defaults_artifact("rest"), "YAML"),
         ("", None),
     ],
 )
 def test_generation_status_keeps_envelope_and_code_format(client, path, session_key, code, code_format):
     session_id, job_id = uuid4(), uuid4()
     result = {"format": code_format, "code": code}
-    errors = [NO_CODE_GENERATED] if not code else []
+    errors = [NO_CODE_GENERATED] if not code else [NO_DOCUMENTED_BEHAVIOR] if "TODO" in code else []
     with (
         patch(
             "src.database.repositories.session_repository.SessionRepository.session_exists",

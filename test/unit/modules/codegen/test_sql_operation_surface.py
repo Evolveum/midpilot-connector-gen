@@ -13,6 +13,7 @@ from src.modules.codegen import generation, orchestration
 from src.modules.codegen.core.operations import SearchGenerator
 from src.modules.codegen.enums import SearchIntent
 from src.modules.codegen.selection.protocol_selectors import get_operation_assets, get_search_operation_assets
+from src.modules.codegen.utils.operation_defaults import operation_defaults_artifact
 from src.modules.digester.errors import OperationSurfaceNotFoundError
 from src.shared.enums import ApiType
 from src.shared.job_types import JobType
@@ -76,12 +77,13 @@ async def test_sql_generation_runs_context_only_pass_when_session_is_conndev_onl
 
 
 @pytest.mark.asyncio
-async def test_generation_without_context_only_pass_returns_empty():
-    """Guards the contrast: the pass is what keeps a conndev-only session from producing nothing."""
-    with patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock):
+async def test_generation_without_context_only_pass_returns_only_framework_defaults():
+    """Guards the contrast: without the pass a conndev-only session never reaches the model."""
+    with patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors:
         code = await _generate_from_conndev_only_session(_sql_search_generator(context_only_for_conndev=False))
 
-    assert code == ""
+    assert code == operation_defaults_artifact("m_user", "search")
+    errors.assert_not_awaited()
 
 
 @pytest.mark.asyncio

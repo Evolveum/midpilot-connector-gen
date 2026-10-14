@@ -8,12 +8,13 @@ from uuid import uuid4
 import pytest
 
 from src.modules.codegen import generation
-from src.modules.codegen.core.operations import build_authorization_scaffold, build_other_authorization_scaffold
+from src.modules.codegen.core.operations import AuthorizationGenerator, build_other_authorization_scaffold
 from src.modules.codegen.selection.authorization import (
     ANALYSIS_SUPPORT_FIELD,
     ANALYSIS_SUPPORT_SUPPORTED,
     ANALYSIS_SUPPORT_UNSUPPORTED,
 )
+from src.modules.codegen.utils.connector_code_validation import validate_connector_code
 from src.shared.enums import ApiType
 
 
@@ -193,8 +194,19 @@ async def test_generate_authorization_code_marks_unmatched_midpoint_authorizatio
     assert generate_kwargs["relevant_chunk_pairs"] == []
 
 
-def test_authorization_scaffold_includes_comments_for_unsupported_midpoint_authorizations():
-    code = build_authorization_scaffold(
+def _authorization_generator(protocol: ApiType, preferred_authorizations=None) -> AuthorizationGenerator:
+    return AuthorizationGenerator(
+        preferred_authorizations=preferred_authorizations,
+        docs_text="",
+        declarative_docs_text="",
+        system_prompt="system",
+        user_prompt="user",
+        protocol=protocol,
+    )
+
+
+def test_authorization_defaults_explain_unsupported_midpoint_authorizations():
+    generator = _authorization_generator(
         ApiType.REST,
         [
             {
@@ -205,15 +217,40 @@ def test_authorization_scaffold_includes_comments_for_unsupported_midpoint_autho
         ],
     )
 
-    assert code == (
-        "authorization {\n"
-        "    rest {\n"
-        "        // HTTP JWT Bearer Token Authorization (jwtBearer) was selected in midPoint, but it was not "
+    fallback = generator.fallback_artifact()
+
+    assert fallback.job_error is None
+    assert fallback.code == (
+        "# No changes needed. Use framework defaults.\n"
+        "# HTTP JWT Bearer Token Authorization (jwtBearer) was selected in midPoint, but it was not "
         "identified in the analyzed application documentation.\n"
-        "        // No application-specific authorization customization can be generated for this method.\n"
-        "    }\n"
-        "}\n"
+        "# No application-specific authorization customization can be generated for this method.\n"
+        "authentication:\n"
+        "  rest: {}"
     )
+    assert validate_connector_code(fallback.code) is None
+
+
+@pytest.mark.parametrize("protocol", [ApiType.REST, ApiType.SCIM])
+@pytest.mark.parametrize("candidate", ["{}", "authentication: {}", "authentication: {NAMESPACE: {}}"])
+def test_empty_authorization_candidate_is_presented_as_framework_defaults(protocol, candidate):
+    generator = _authorization_generator(protocol)
+    code = candidate.replace("NAMESPACE", protocol.value)
+
+    assert generator.normalize_generated_code(code) == generator.fallback_artifact().code
+    assert f"  {protocol.value}: {{}}" in generator.fallback_artifact().code
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "# TODO: token URL is not documented\nauthentication: {rest: {}}",
+        'authentication: {rest: {bearer: {implementation: \'request.header("X", "Y")\'}}}',
+        "authentication: {scim: {}}",
+    ],
+)
+def test_authorization_candidate_with_behavior_or_explanation_is_kept(candidate):
+    assert _authorization_generator(ApiType.REST).normalize_generated_code(candidate) == candidate
 
 
 def test_other_authorization_scaffold_remains_unchanged():

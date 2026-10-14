@@ -99,4 +99,4 @@ async def test_generate_search_scim_allows_missing_endpoints():
         assert update_args[0] == session_id
         inputs = update_args[1]
         # The attributes travel in the job input only; the session pointer keeps request metadata.
-        assert inputs["userSearchAllInput"] == {"objectClass": "user", "intent": "all"}
+        assert inputs["userSearchAllInput"] == {"objectClass": "User", "intent": "all"}
