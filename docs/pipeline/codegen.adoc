@@ -76,7 +76,9 @@ registry and manual update instructions.
    YAML options are preserved and logged as `[Codegen:Validation]` warnings, not job
    errors: the connector runtime may support options missing from the local model.
    Their values and scripts are not validated locally. Unknown root keys, malformed
-   structures, duplicate keys and invalid known scripts still block acceptance. Worker
+   structures, duplicate keys and invalid known scripts still block acceptance, and so
+   does `complexType` (a YAML key or a Groovy call), because midPoint does not support the
+   embedded object class it declares. Worker
    validation runs in a thread without executing the embedded code. New generation
    sends an empty `<result>` until the first candidate is produced; each following
    call receives the latest candidate. A rejected candidate is not discarded: it is
@@ -90,8 +92,11 @@ registry and manual update instructions.
    accepted artifact is kept. With none, a run in which the model found nothing to generate
    returns the operation's fallback artifact (see <<empty-results>>), and any other run keeps
    the empty-generation or original-`currentScript` outcome. Every rejected candidate is
-   recorded as a job error. Single-pass native-schema generation and the object-class fix do not use this
-   mechanism.
+   recorded as a job error. Single-pass native-schema generation instead retries an invalid
+   artifact exactly once, sending it as `<result>` with all its validation errors; if the
+   retry is still invalid or empty, the errors are recorded as a job error and the
+   empty-generation or original-`currentScript` outcome applies. The object-class fix does
+   not use either mechanism.
    A repair starts with `currentScript` and preserves its format according to the
    repair instructions (`repair.py`, `prompts/repair_prompts.py`). The format-specific
    cleanup then validates its own changed output and falls back to the accepted artifact
@@ -315,6 +320,13 @@ parameter that overrides the detected protocol for that request. Relation
 generation is protocol-independent and does not accept the override. Because the
 ConnId mapping is part of `native-schema`, that endpoint's `apiType` override
 governs it too.
+
+NOTE: The native schema never declares structured attributes (`complexType`,
+embedded object classes). For SCIM, it lists complex attributes in the object
+class `scim.flatten` list, restricted to the candidates computed from the SCIM
+schema (`build_scim_flatten_candidates`), because connector schema discovery
+rejects any other entry. Other structured values become flat attributes with
+`scim.path` / `json.path`, or a TODO comment when nothing is documented.
 
 NOTE: Generated code is stored per operation and can be regenerated or
 manually replaced (`PUT`) independently — you do not need to redo the whole

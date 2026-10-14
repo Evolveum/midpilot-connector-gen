@@ -52,6 +52,7 @@ def test_every_operation_renders_its_expert_reference_and_only_known_inputs(name
             "scim_resource_contract_json",
             "connid_object_class_json",
             "scim_service_provider_config_json",
+            "scim_flatten_candidates_json",
             "sql_physical_table_json",
             "sql_connector_object_class_json",
         ),
@@ -247,6 +248,31 @@ def test_native_schema_prompt_bridges_extracted_types_and_date_built_ins(protoco
     system_prompt = get_operation_assets("native_schema", ApiType(protocol)).system_prompt
     assert system_prompt.count("EXTRACTED TYPES:") == 1
     assert "__LAST_LOGIN_DATE__" in system_prompt
+
+
+def test_prompts_and_references_never_offer_complex_type():
+    import pathlib
+
+    from src.modules.codegen.prompts.fix_prompts import get_connector_fix_system_prompt
+    from src.modules.codegen.prompts.native_schema_prompts import EXTRACTED_ATTRIBUTE_TYPE_RULES
+
+    # midPoint does not support embedded object classes; the prompt names the key only to forbid it.
+    for prompt in (EXTRACTED_ATTRIBUTE_TYPE_RULES, get_connector_fix_system_prompt):
+        assert "never emit `complexType`" in prompt
+        assert "declare that class" not in prompt
+    documentations = pathlib.Path(__file__).parents[4] / "src/modules/codegen/documentations"
+    offending = [path.name for path in documentations.rglob("*.adoc") if "complexType" in path.read_text()]
+    assert offending == []
+
+
+def test_scim_native_schema_flattens_only_computed_candidates():
+    from src.modules.codegen.prompts.scim.native_schema_prompts import (
+        get_scim_native_schema_system_prompt,
+        get_scim_native_schema_user_prompt,
+    )
+
+    assert "Never flatten a name missing from <scim_flatten_candidates>" in get_scim_native_schema_system_prompt
+    assert "{scim_flatten_candidates_json}" in get_scim_native_schema_user_prompt
 
 
 def test_connector_fix_prompts_bridge_extracted_types():

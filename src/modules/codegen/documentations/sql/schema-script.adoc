@@ -154,7 +154,7 @@ objectClasses:
 ----
 
 The attribute keys you will meet: `description`, `required`, `multiValued`, `creatable`,
-`updateable`, `readable`, `returnedByDefault`, `emulated`, `complexType`; the
+`updateable`, `readable`, `returnedByDefault`, `emulated`; the
 `connId: { name, type }` mapping (including the `__UID__` / `__NAME__` built-ins); the inherited
 `json: { name, type, openApiFormat, path }` block; and the `sql` block of the object class. A
 bare `attr: {}` declares the attribute with defaults. See

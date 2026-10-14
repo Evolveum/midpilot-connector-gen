@@ -210,6 +210,9 @@ async def test_generate_native_schema_missing_class():
         ("objectClasses: {User: {attributes: {name: null}}}", 200),
         ("objectClasses: {User: {search: {endpoints: 42}}}", 422),
         ('objectClasses: {User: {search: {custom: {implementation: "return ("}}}}', 422),
+        # midPoint does not support the embedded object class a complexType declares.
+        ("objectClasses: {User: {attributes: {name: {complexType: UserName}}}}", 422),
+        ('objectClass("User") { attribute("name") { complexType "UserName" } }', 422),
         (
             "objectClasses: {User: {update: {endpoints: [{path: /users, "
             "supportedAttributes: [{name: status, value: &loop [*loop]}]}]}}}",

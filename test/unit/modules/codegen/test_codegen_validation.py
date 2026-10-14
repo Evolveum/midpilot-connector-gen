@@ -53,17 +53,16 @@ class _RecordingChain(_DummyChain):
         return await super().ainvoke(*args, **kwargs)
 
 
-@pytest.mark.asyncio
-async def test_generate_groovy_returns_empty_when_validation_fails() -> None:
+_COMPLEX_TYPE_SCHEMA = "objectClasses:\n  User:\n    attributes:\n      name:\n        complexType: UserName"
+_FLATTENED_SCHEMA = "objectClasses:\n  User:\n    scim:\n      flatten: [name]"
+
+
+async def _generate_native_schema(chain: _RecordingChain):
     with (
         patch("src.modules.codegen.core.generate_groovy.get_default_llm"),
-        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=_DummyChain(["bad code"])),
+        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=chain),
         patch("src.modules.codegen.core.generate_groovy.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.generate_groovy.append_job_error") as mock_append_job_error,
-        patch(
-            "src.modules.codegen.core.generate_groovy.validate_connector_code",
-            return_value="syntax error",
-        ),
+        patch("src.modules.codegen.core.generate_groovy.append_job_error", new_callable=AsyncMock) as errors,
     ):
         result = await generate_groovy(
             records=[{"name": "uid"}],
@@ -74,12 +73,46 @@ async def test_generate_groovy_returns_empty_when_validation_fails() -> None:
             run_name="Codegen:NativeSchema",
             operation_name="NativeSchema",
         )
+    return result, errors
+
+
+@pytest.mark.asyncio
+async def test_invalid_native_schema_is_retried_once_with_its_validation_errors() -> None:
+    chain = _RecordingChain([_COMPLEX_TYPE_SCHEMA, _FLATTENED_SCHEMA])
+
+    result, errors = await _generate_native_schema(chain)
+
+    assert result == _FLATTENED_SCHEMA
+    errors.assert_not_awaited()
+    first_errors, retry_errors = (args[0]["validation_errors"] for args, _ in chain.calls)
+    assert first_errors == ""
+    assert f"<result>\n{_COMPLEX_TYPE_SCHEMA}\n</result>" in retry_errors
+    assert "'complexType' is not supported" in retry_errors
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry_response", [_COMPLEX_TYPE_SCHEMA, ""])
+async def test_native_schema_still_invalid_after_retry_returns_empty(retry_response) -> None:
+    chain = _RecordingChain([_COMPLEX_TYPE_SCHEMA, retry_response])
+
+    result, errors = await _generate_native_schema(chain)
 
     assert result == ""
-    assert mock_append_job_error.await_count == 2
-    assert mock_append_job_error.await_args_list[0].args[1] == (
-        "[Codegen:NativeSchema] Generated invalid output: syntax error"
-    )
+    assert len(chain.calls) == 2
+    assert errors.await_count == 2
+    assert errors.await_args_list[0].args[1].startswith("[Codegen:NativeSchema] Generated invalid output: ")
+    assert "'complexType' is not supported" in errors.await_args_list[0].args[1]
+
+
+@pytest.mark.asyncio
+async def test_valid_native_schema_is_not_retried() -> None:
+    chain = _RecordingChain([_FLATTENED_SCHEMA])
+
+    result, errors = await _generate_native_schema(chain)
+
+    assert result == _FLATTENED_SCHEMA
+    assert len(chain.calls) == 1
+    errors.assert_not_awaited()
 
 
 @pytest.mark.asyncio

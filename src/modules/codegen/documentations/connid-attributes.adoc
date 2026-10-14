@@ -310,8 +310,7 @@ attributes through a dedicated enum and type-resolution rules:
   `pass:[__UID__]` / `pass:[__NAME__]`, `GuardedString` for the password
   attributes) regardless of what the protocol mapping suggested. The remaining
   candidates, in order: reference attributes → `ConnectorObjectReference`,
-  attributes with a `complexType` → `EmbeddedObject`, the protocol mapping's
-  suggestion, and finally the attribute's current ConnId type (the `String`
+  the protocol mapping's suggestion, and finally the attribute's current ConnId type (the `String`
   default when nothing was declared).
 * After the final type is decided, `AttributeTypeCoercionRule`
    (`rules/AttributeTypeCoercionRule.java`) pushes it into every protocol value

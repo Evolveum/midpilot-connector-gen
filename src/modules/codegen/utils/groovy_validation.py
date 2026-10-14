@@ -43,6 +43,15 @@ def _parse_groovy_code(code: str) -> None:
     parser.parse(tokens)
 
 
+def groovy_names(code: str) -> frozenset[str]:
+    """Names the Groovy code references, excluding comments and string literals."""
+    # groovy-parser tokens are Pygments token types; Pygments ships no type stubs.
+    from pygments.token import Name  # type: ignore[import-untyped]
+
+    _, tokenizer_cls = _load_groovy_parser_components()
+    return frozenset(value for token_type, value in tokenizer_cls().get_tokens(code) if token_type in Name)
+
+
 def _clean_validation_message(message: str) -> str:
     lines = [line.strip() for line in message.splitlines() if line.strip()]
     if not lines:

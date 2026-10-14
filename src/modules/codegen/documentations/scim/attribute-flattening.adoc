@@ -112,8 +112,7 @@ attribute definition:
 Listing an attribute that is missing from the resource's schema, that is not a complex
 attribute, or that is a multi-valued attribute without a scalar `type` sub-attribute fails the
 schema discovery with a message naming the object class and the attribute — in those cases use
-the embedded object class (`Parent__Attribute`) or an explicit `scim { path ... }` mapping
-instead.
+an explicit `scim { path ... }` mapping instead.
 
 == Flattening extension attributes
 
@@ -229,10 +228,8 @@ the organization identifies people by email.
   only expose one attribute per `type`.
 * You need the structured value itself (e.g. to write it back or to iterate over it).
 
-In those cases use the alternative representation: the complex attribute is also available as
-an *embedded object class* named `Parent__Attribute` (e.g. `User__emails`), or you can map a
-flat attribute to an arbitrary SCIM path with the `scim { path ... }` DSL — see
-SCIM complex and binary attributes.
+In those cases map a flat attribute to an arbitrary SCIM path with the `scim { path ... }` DSL —
+see SCIM complex and binary attributes. Embedded object classes are not supported by midPoint.
 
 NOTE: Complex attribute values are read-only from the ConnId side — writing complex attributes
 is not supported yet, regardless of which representation you use.
