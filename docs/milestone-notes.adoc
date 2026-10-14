@@ -17,6 +17,160 @@ prepare this page).
 
 == 0.1.0
 
+=== 2026-10-14 Reject complexType and flatten SCIM complex attributes in native schemas
+
+Description: midPoint does not support embedded object classes, so connector
+code may no longer declare `complexType`. The conndev runtime binds the key,
+but the embedded object class it creates cannot be used by midPoint. Generated
+native schemas previously declared SCIM complex attributes (`name`, `emails`,
+`addresses`, ...) as `complexType: UserName`, `complexType: UserEmails` and so
+on, which pointed to classes that were never declared.
+
+Native-schema generation now expresses structured values as flat attributes.
+For SCIM, complex attributes are listed in the object class `scim.flatten`
+list, restricted to the candidates computed from the SCIM schema; connector
+schema discovery rejects any other entry. Other documented sub-attributes are
+mapped with `scim.path` (SCIM) or `json.path` (REST); when nothing is
+documented, the attribute is omitted with a TODO comment.
+
+Validation rejects `complexType` both as a YAML attribute key and as a Groovy
+call. This applies to generated code and to caller-supplied code: the codegen
+override endpoints (`PUT`) return 422 for such code, and the object-class fix
+forwards the error to the model. An invalid native schema is now retried once
+with its validation errors before the job reports it as invalid. That adds at
+most one LLM call, only when the first output is invalid. The shape of midPoint
+API responses is unchanged. Stored artifacts are neither re-validated nor
+rewritten.
+
+Required Upgrade Steps
+
+. Keep the previous backend version and resource scripts for rollback. No
+database recreation, database backup, or configuration change is required.
+. Restart the backend with
+`docker compose up -d --build midpilot-connector-gen`.
+For a host installation, stop the running backend and start it with
+`uv run python server.py`.
+. List the stored artifacts that still declare `complexType`:
++
+[source,sql]
+----
+SELECT session_id, key
+FROM session_data
+WHERE key LIKE '%Output'
+  AND value ->> 'code' LIKE '%complexType%';
+----
++
+Regenerate every listed native schema with
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema?skipCache=true`,
+or submit a corrected artifact through
+`PUT /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema`; its 422
+response names the rejected key.
+. Update any client or script that sends `complexType` in a codegen `PUT`
+override: flatten the complex attribute (`scim.flatten`) or map its scalar
+parts with `scim.path` / `json.path`.
+. Run `uv run poe test test/unit/modules/codegen test/integration/modules/codegen -q`.
+Load a regenerated SCIM native schema in the target connector and verify that
+schema discovery succeeds and exposes the flattened attributes
+(`name_givenName`, `work_email`, ...).
+
+Rollback Procedure (If Upgrade Fails)
+
+. Restore the previous backend version and resource scripts, and restart using
+the applicable command above.
+. Artifacts regenerated with this snapshot remain loadable by the previous
+backend version; restore the retained scripts through the codegen `PUT`
+endpoints only if a regenerated schema behaves differently.
+. No database restore is needed because this change does not modify stored data.
+
+Notes & References
+
+* Related PR: Not assigned.
+* Docs: `docs/pipeline/codegen.adoc` (Generation and validation, native-schema
+note), xref:codegen-expert-references.adoc[Bundled codegen expert references]
+(Deliberate adaptations).
+* Affected endpoints: codegen `PUT` override endpoints (stricter validation);
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/native-schema`
+(flattened output, one retry on invalid output).
+* Affected configs: None.
+
+=== 2026-10-14 Return a default artifact when codegen finds nothing to generate
+
+Description: A finished codegen job no longer returns
+`result: {"format": null, "code": ""}` when the model found nothing to generate for an
+operation. This partially reverses the 2026-09-16 entry "Report connector generation
+without accepted code". The case covers runs in which no chunk was relevant to the
+operation, every model response was empty, or the model returned an explicitly empty
+artifact. These runs now return a small, non-executable YAML artifact with
+`format: "YAML"`. It applies to every search intent, create, update, delete, relations
+and authorization:
+
+* SQL and SCIM search/create/update/delete return
+`# No changes needed. Use framework defaults.` followed by
+`objectClasses: {"<class>": {<operation>: {}}}`. The YAML key is `search` for every
+search intent. The `errors` array is empty.
+* REST search/create/update/delete return a `# TODO: No <operation> behavior for
+"<class>" was found in the documentation. ...` placeholder in the same shape. REST has
+no framework defaults, so the `errors` array keeps exactly one message: "No documented
+behavior was found for this operation; a TODO placeholder was returned. Review the
+application documentation for this operation and retry with skipCache=true."
+* Relations return `# No changes needed. Use framework defaults.` followed by `{}` for
+SQL and SCIM. For REST they return a TODO placeholder that asks for a Groovy
+`relationship("<name>")` block, plus the same error message.
+* REST and SCIM authorization returns the defaults comment, a comment line for each
+selected method that was not found in the documentation, and
+`authentication: {<rest|scim>: {}}`. The `errors` array is empty.
+
+Real failures are unchanged. A failed model call, a candidate that is still invalid
+after the final retry, and native-schema generation keep returning `format: null`, empty
+`code` and "No connector code was generated. ...". A repair that is given a
+`currentScript` still preserves that script. REST CRUD/search and relation candidates
+that are explicitly empty, for example `{}`, are no longer accepted as results: they are
+treated like an empty model response. Response fields, types, HTTP statuses and job
+statuses are unchanged. No extra LLM call is made, and the run skips the cleanup pass
+whenever it returns a fallback artifact.
+
+Required Upgrade Steps
+
+. Update midPoint-side consumers that treat an empty `result.code` as "nothing to
+install". A defaults artifact is valid connector YAML that declares nothing executable,
+so it can be installed or skipped. A REST TODO placeholder declares an operation with no
+handler. Do not treat it as a working operation: display its `errors` message and review
+the operation documentation.
+. From the updated checkout, run `docker compose build` followed by
+`docker compose up -d` to rebuild and recreate the application services. For local
+source execution, stop the running backend and restart it with `uv run poe start`, and
+restart any separately managed consumers with `uv run python -m src.jobs.runtime`.
+. No database recreation, migration, configuration change or data backup is required.
+. Cached empty results are not rewritten. To get the new artifact for an operation that
+previously returned empty code, regenerate it with the existing request body and
+`skipCache=true`, for example
+`POST /api/v1/codegen/{sessionId}/classes/{objectClass}/search/all?skipCache=true`.
+. Validate with
+`uv run poe test test/unit/modules/codegen test/integration/modules/codegen test/unit/jobs/test_cache_control.py`,
+`uv run poe lint`, `uv run poe typecheck` and `uv run poe importcheck`.
+
+Rollback Procedure (If Upgrade Fails)
+
+. Finish or cancel the jobs created by this snapshot. From the previous snapshot
+checkout, run `docker compose build` and `docker compose up -d`. For local source
+execution, restart the previous snapshot with `uv run poe start` and
+`uv run python -m src.jobs.runtime`.
+. Results cached by this snapshot keep their fallback artifacts. Regenerate the affected
+operations with `skipCache=true` to return to the empty result. If needed, restore
+retained connector scripts through the existing override endpoints. No database
+downgrade or backup restore is required.
+. Run the codegen tests above against the restored version and check one operation's
+status response before installing its artifact.
+
+Notes & References
+
+* Related PR: Not assigned.
+* Docs: `docs/pipeline/codegen.adoc` (section "Operations that need no generated code").
+* Implementation: `src/modules/codegen/core/base.py`,
+`src/modules/codegen/core/operations.py`,
+`src/modules/codegen/utils/operation_defaults.py`, `src/modules/codegen/repair.py`.
+* Affected configs: none.
+
 === 2026-10-13 Security refresh of Playwright, Python dependencies and the Debian 13 base image
 
 Author: Alexander Brecko

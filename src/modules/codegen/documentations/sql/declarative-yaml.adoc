@@ -83,7 +83,7 @@ Structure:
   The SQL table name (defaults to the object class name) and optional SQL schema qualifier
 
 `attributes.<name>`::
-  One attribute — the regular attribute settings (`description`, `required`, `multiValued`, `creatable`, `updateable`, `readable`, `returnedByDefault`, `emulated`, `complexType`), the `connId: { name, type }` mapping (including the `__UID__` / `__NAME__` built-ins), the inherited `json: { name, type, openApiFormat, path }` block (the `path` is an attribute-path string such as `$.name.first`, default basic JSONPath — or an explicit `{ type: JSON_POINTER, value: /name/first }` mapping), and the `sql` block below. An empty value (`{}`) declares the attribute without renaming.
+  One attribute — the regular attribute settings (`description`, `required`, `multiValued`, `creatable`, `updateable`, `readable`, `returnedByDefault`, `emulated`), the `connId: { name, type }` mapping (including the `__UID__` / `__NAME__` built-ins), the inherited `json: { name, type, openApiFormat, path }` block (the `path` is an attribute-path string such as `$.name.first`, default basic JSONPath — or an explicit `{ type: JSON_POINTER, value: /name/first }` mapping), and the `sql` block below. An empty value (`{}`) declares the attribute without renaming.
 
 `references.<name>`::
   Map of `attribute name → reference attribute definition`, with `objectClass`, `subtype`, `role` (see xref:native-schema.adoc[reference attributes])

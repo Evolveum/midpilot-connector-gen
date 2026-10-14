@@ -38,10 +38,22 @@ class OperationConfig:
     operation_name: str
     system_prompt: str
     user_prompt: str
-    default_scaffold: str
     run_name: str
     extra_prompt_vars: Dict[str, Any] = field(default_factory=dict)
     context_only_for_conndev: bool = False
+
+
+@dataclass(frozen=True)
+class FallbackArtifact:
+    """
+    The artifact returned when generation produced nothing for an operation.
+
+    ``job_error`` is ``None`` for framework defaults, a complete result. A placeholder for a
+    protocol without defaults carries the job error that keeps the missing behavior visible.
+    """
+
+    code: str
+    job_error: str | None = None
 
 
 @dataclass(frozen=True)

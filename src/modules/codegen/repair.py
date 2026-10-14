@@ -40,3 +40,7 @@ NO_CODE_GENERATED = (
     "and retry with skipCache=true."
 )
 NO_REPAIR_GENERATED = "No connector repair was generated. The supplied code has been preserved."
+NO_DOCUMENTED_BEHAVIOR = (
+    "No documented behavior was found for this operation; a TODO placeholder was returned. "
+    "Review the application documentation for this operation and retry with skipCache=true."
+)

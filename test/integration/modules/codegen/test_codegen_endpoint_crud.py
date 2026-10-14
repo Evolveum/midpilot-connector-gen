@@ -96,12 +96,15 @@ async def test_generate_crud_includes_preferred_endpoints_in_job_and_session_inp
     assert schedule_kwargs["job_type"] == job_type
     assert mock_repo.get_session_data.await_args_list[0].args[1] == "userAttributesOutput"
     assert mock_repo.get_session_data.await_args_list[1].args[1] == "userEndpointsOutput"
+    # Session keys are normalized; the worker keeps the spelling midPoint requested.
+    assert schedule_kwargs["worker_kwargs"]["object_class"] == "User"
     assert schedule_kwargs["input_payload"]["preferredEndpoints"] == preferred_endpoints
     assert schedule_kwargs["worker_kwargs"]["preferred_endpoints"] == job_input_reference("preferredEndpoints")
 
     update_args = mock_repo.update_session.call_args[0]
     inputs = update_args[1]
     assert inputs[session_input_key]["preferredEndpoints"] == preferred_endpoints
+    assert inputs[session_input_key]["objectClass"] == "User"
     assert "mode" not in inputs[session_input_key]
     # Stored outputs travel in the job input only.
     assert "attributes" not in inputs[session_input_key]

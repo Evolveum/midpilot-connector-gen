@@ -48,6 +48,13 @@ _RESOLUTION_TYPES = frozenset({"PER_OBJECT", "BATCH"})
 _BARE_EXTRACTOR_PATH = re.compile(r"(?:\$(?:\.\.?[\w*]+|\[(?:\d+|\*|'[^'\r\n]*'|\"[^\"\r\n]*\")\])*|(?:/[\w~-]+)+)")
 
 
+# The conndev runtime binds `complexType`, but midPoint cannot use the embedded object class it creates.
+COMPLEX_TYPE_UNSUPPORTED_REASON = (
+    "midPoint does not support embedded object classes; flatten the complex attribute (scim.flatten) "
+    "or map its scalar parts as flat attributes with scim.path / json.path"
+)
+
+
 def _require_case_insensitive_member(value: str, allowed: frozenset[str]) -> str:
     if value.upper() not in allowed:
         raise ValueError(f"expected one of {', '.join(sorted(allowed))} (case-insensitive)")
@@ -131,6 +138,8 @@ class _SqlAttribute(_Configuration):
 
 
 class _Attribute(_Configuration):
+    unsupported_keys: ClassVar[Mapping[str, str]] = {"complexType": COMPLEX_TYPE_UNSUPPORTED_REASON}
+
     description: str | None = Field(default=None)
     required: bool | None = Field(default=None)
     multiValued: bool | None = Field(default=None)
@@ -140,7 +149,6 @@ class _Attribute(_Configuration):
     readable: bool | None = Field(default=None)
     returnedByDefault: bool | None = Field(default=None)
     emulated: bool | None = Field(default=None)
-    complexType: str | None = Field(default=None)
     jsonType: _JsonType | None = Field(default=None)
     openApiFormat: str | None = Field(default=None)
     json_mapping: _JsonAttribute | None = Field(default=None, alias="json")
