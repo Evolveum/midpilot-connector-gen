@@ -5,8 +5,7 @@
 """Dependency checks behind the readiness endpoint.
 
 Each check is bounded by ``config.readiness.check_timeout_seconds`` and reports only
-``ok`` or ``unavailable``. The caller receives only the aggregated status; which dependency
-failed, and why, is logged and never returned.
+``ok`` or ``unavailable``. Failure details are logged and never returned to the caller.
 """
 
 import asyncio
@@ -24,16 +23,24 @@ from src.core.llm import get_llm_http_client
 logger = logging.getLogger(__name__)
 
 
-class ReadinessStatus(StrEnum):
+class ComponentStatus(StrEnum):
     ok = "ok"
     unavailable = "unavailable"
+
+
+class ReadinessChecks(BaseModel):
+    """Per-dependency results of a readiness check."""
+
+    database: ComponentStatus
+    llm: ComponentStatus
 
 
 class ReadinessReport(BaseModel):
     """Readiness of the service: ``ok`` only when every dependency check is ``ok``."""
 
-    status: ReadinessStatus
+    status: ComponentStatus
     version: str
+    checks: ReadinessChecks
 
 
 class _ServedModel(BaseModel):
@@ -68,33 +75,35 @@ async def _probe_llm() -> None:
     _ServedModelList.model_validate_json(response.content)
 
 
-async def _run_check(name: str, probe: Callable[[], Awaitable[None]]) -> ReadinessStatus:
+async def _run_check(name: str, probe: Callable[[], Awaitable[None]]) -> ComponentStatus:
     timeout = config.readiness.check_timeout_seconds
     try:
         async with asyncio.timeout(timeout):
             await probe()
     except TimeoutError:
         logger.warning("[Core:Readiness] %s check timed out after %ss", name, timeout)
-        return ReadinessStatus.unavailable
+        return ComponentStatus.unavailable
     except Exception as exc:
         logger.warning("[Core:Readiness] %s check failed (%s): %s", name, type(exc).__name__, exc)
-        return ReadinessStatus.unavailable
-    return ReadinessStatus.ok
+        return ComponentStatus.unavailable
+    return ComponentStatus.ok
 
 
-async def check_database() -> ReadinessStatus:
+async def check_database() -> ComponentStatus:
     return await _run_check("Database", _probe_database)
 
 
-async def check_llm() -> ReadinessStatus:
+async def check_llm() -> ComponentStatus:
     return await _run_check("LLM", _probe_llm)
 
 
 async def check_readiness() -> ReadinessReport:
-    """Run all dependency checks concurrently and aggregate them into one status."""
-    results = await asyncio.gather(check_database(), check_llm())
-    all_ok = all(result is ReadinessStatus.ok for result in results)
+    """Run all dependency checks concurrently and aggregate them into one report."""
+    database, llm = await asyncio.gather(check_database(), check_llm())
+    checks = ReadinessChecks(database=database, llm=llm)
+    all_ok = database is ComponentStatus.ok and llm is ComponentStatus.ok
     return ReadinessReport(
-        status=ReadinessStatus.ok if all_ok else ReadinessStatus.unavailable,
+        status=ComponentStatus.ok if all_ok else ComponentStatus.unavailable,
         version=config.app.version,
+        checks=checks,
     )

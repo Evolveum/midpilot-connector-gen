@@ -12,7 +12,7 @@ from pydantic import SecretStr
 
 from src.config import config
 from src.core import readiness
-from src.core.readiness import ReadinessStatus, check_database, check_llm, check_readiness
+from src.core.readiness import ComponentStatus, check_database, check_llm, check_readiness
 
 API_KEY = "llm-secret-key"
 MODEL = "served/model"
@@ -52,7 +52,7 @@ def _engine(execute: AsyncMock) -> MagicMock:
 async def test_llm_ok_when_endpoint_lists_models(monkeypatch):
     requests = _serve(monkeypatch, lambda request: _models("other/model", MODEL))
 
-    assert await check_llm() is ReadinessStatus.ok
+    assert await check_llm() is ComponentStatus.ok
     assert len(requests) == 1
     assert str(requests[0].url) == "https://llm.example/v1/models"
     assert requests[0].headers["Authorization"] == f"Bearer {API_KEY}"
@@ -63,7 +63,7 @@ async def test_llm_check_sends_no_authorization_without_key(monkeypatch):
     monkeypatch.setattr(config.llm, "openai_api_key", SecretStr(""))
     requests = _serve(monkeypatch, lambda request: _models(MODEL))
 
-    assert await check_llm() is ReadinessStatus.ok
+    assert await check_llm() is ComponentStatus.ok
     assert "Authorization" not in requests[0].headers
 
 
@@ -72,7 +72,7 @@ async def test_llm_ok_when_configured_model_is_not_listed_under_its_name(monkeyp
     # LiteLLM lists its alias (gpt-oss-120b) but accepts the underlying name used in LLM__MODEL_NAME.
     _serve(monkeypatch, lambda request: _models("gpt-oss-120b"))
 
-    assert await check_llm() is ReadinessStatus.ok
+    assert await check_llm() is ComponentStatus.ok
 
 
 @pytest.mark.asyncio
@@ -81,7 +81,7 @@ async def test_llm_unavailable_on_error_status_without_leaking_key(monkeypatch, 
     _serve(monkeypatch, lambda request: httpx.Response(status_code, json={"error": "nope"}))
 
     with caplog.at_level(logging.WARNING):
-        assert await check_llm() is ReadinessStatus.unavailable
+        assert await check_llm() is ComponentStatus.unavailable
 
     assert "[Core:Readiness] LLM check failed (HTTPStatusError)" in caplog.text
     assert API_KEY not in caplog.text
@@ -99,7 +99,7 @@ async def test_llm_unavailable_on_error_status_without_leaking_key(monkeypatch, 
 async def test_llm_unavailable_on_unexpected_response(monkeypatch, response):
     _serve(monkeypatch, lambda request: response)
 
-    assert await check_llm() is ReadinessStatus.unavailable
+    assert await check_llm() is ComponentStatus.unavailable
 
 
 @pytest.mark.asyncio
@@ -109,7 +109,7 @@ async def test_llm_unavailable_when_endpoint_unreachable(monkeypatch):
 
     _serve(monkeypatch, refuse)
 
-    assert await check_llm() is ReadinessStatus.unavailable
+    assert await check_llm() is ComponentStatus.unavailable
 
 
 @pytest.mark.asyncio
@@ -119,7 +119,7 @@ async def test_llm_unavailable_on_http_timeout(monkeypatch):
 
     _serve(monkeypatch, time_out)
 
-    assert await check_llm() is ReadinessStatus.unavailable
+    assert await check_llm() is ComponentStatus.unavailable
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_database_ok(monkeypatch):
     execute = AsyncMock()
     monkeypatch.setattr(readiness, "engine", _engine(execute))
 
-    assert await check_database() is ReadinessStatus.ok
+    assert await check_database() is ComponentStatus.ok
     execute.assert_awaited_once()
 
 
@@ -136,7 +136,7 @@ async def test_database_unavailable_on_error(monkeypatch, caplog):
     monkeypatch.setattr(readiness, "engine", _engine(AsyncMock(side_effect=OSError("connection refused"))))
 
     with caplog.at_level(logging.WARNING):
-        assert await check_database() is ReadinessStatus.unavailable
+        assert await check_database() is ComponentStatus.unavailable
 
     assert "[Core:Readiness] Database check failed (OSError): connection refused" in caplog.text
 
@@ -150,7 +150,7 @@ async def test_database_unavailable_on_timeout(monkeypatch, caplog):
     monkeypatch.setattr(readiness, "engine", _engine(AsyncMock(side_effect=hang)))
 
     with caplog.at_level(logging.WARNING):
-        assert await check_database() is ReadinessStatus.unavailable
+        assert await check_database() is ComponentStatus.unavailable
 
     assert "[Core:Readiness] Database check timed out" in caplog.text
 
@@ -159,10 +159,10 @@ async def test_database_unavailable_on_timeout(monkeypatch, caplog):
 @pytest.mark.parametrize(
     ("database", "llm", "expected"),
     [
-        (ReadinessStatus.ok, ReadinessStatus.ok, ReadinessStatus.ok),
-        (ReadinessStatus.ok, ReadinessStatus.unavailable, ReadinessStatus.unavailable),
-        (ReadinessStatus.unavailable, ReadinessStatus.ok, ReadinessStatus.unavailable),
-        (ReadinessStatus.unavailable, ReadinessStatus.unavailable, ReadinessStatus.unavailable),
+        (ComponentStatus.ok, ComponentStatus.ok, ComponentStatus.ok),
+        (ComponentStatus.ok, ComponentStatus.unavailable, ComponentStatus.unavailable),
+        (ComponentStatus.unavailable, ComponentStatus.ok, ComponentStatus.unavailable),
+        (ComponentStatus.unavailable, ComponentStatus.unavailable, ComponentStatus.unavailable),
     ],
 )
 async def test_readiness_is_ok_only_when_every_check_is_ok(monkeypatch, database, llm, expected):
@@ -172,4 +172,6 @@ async def test_readiness_is_ok_only_when_every_check_is_ok(monkeypatch, database
     report = await check_readiness()
 
     assert report.status is expected
+    assert report.checks.database is database
+    assert report.checks.llm is llm
     assert report.version == config.app.version
