@@ -1,3 +1,8 @@
+== 1.0.0
+
+First stable release. The code is the same as in 0.9.0; only the version was raised
+to match the other midPilot components.
+
 == 0.9.0
 
 === 🚀 Features
