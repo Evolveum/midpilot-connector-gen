@@ -15,7 +15,7 @@ The upgrade instructions between releases are in the
 https://docs.evolveum.com/midpoint/release/[release notes] (for midPilot we will
 prepare this page).
 
-== 0.1.0
+== 0.9.0
 
 === 2026-10-14 Reject complexType and flatten SCIM complex attributes in native schemas
 

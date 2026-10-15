@@ -29,7 +29,7 @@ class AppSettings(BaseModel):
     """
 
     title: str = "Midpilot Connector Generator"
-    version: str = "0.1.0"
+    version: str = "0.9.0"
     description: str = "Midpilot Connector Generator - discovery, scraping, digester and codegen"
     api_base_url: str = "/api"
 

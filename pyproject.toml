@@ -1,6 +1,6 @@
 [project]
 name = "midpilot-connector-gen"
-version = "0.1.0"
+version = "0.9.0"
 description = "Midpilot Connector Generator"
 readme = "README.md"
 requires-python = ">=3.13.4"
