@@ -1,3 +1,30 @@
+== 0.9.0
+
+=== 🚀 Features
+
+
+* Add /api/v1/ready readiness endpoint
+
+
+=== 🐛 Bug Fixes
+
+
+* Accept invalid scripts in connector fix
+* Prevent deadlock on parallel job scheduling
+* Add traces name for all langfuse calls
+* Unify all traces name and fix logger prefix
+* Unify logger messages
+* Upgrade playwright and move base image to trixie
+* Reject complexType in native schemas
+* Return explicit artifacts for empty codegen runs
+* Keep requested object class casing
+
+
+=== 📚 Documentation
+
+
+* Refresh connector references
+
 == 0.1.0-RC2
 
 === 🚀 Features
