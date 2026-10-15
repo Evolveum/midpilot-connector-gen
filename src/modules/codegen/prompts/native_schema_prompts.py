@@ -18,10 +18,11 @@ EXTRACTED TYPES:
 - `openApiFormat: "reference"`: the attribute points to the object class named in `jsonType`. Declare it
   only with a reference construct your chosen format documents (declarative YAML: `references.<name>`
   with `objectClass`), never as a wire type or format.
-- `openApiFormat: "embedded"`: an embedded object of the class named in `jsonType`; declare that class
-  with `complexType`.
-- `jsonType: "object"`: an anonymous inline object with no wire type. Map its documented scalar parts with
-  attribute paths, or leave a TODO.
+- `openApiFormat: "embedded"` (with a synthetic class name in `jsonType`) and `jsonType: "object"` both mark
+  a structured value. midPoint does not support embedded object classes: never emit `complexType`, the ConnID
+  type `EmbeddedObject`, or a declaration of that synthetic class. Map the documented scalar parts as flat
+  attributes with an attribute path your chosen format documents; if none is documented, omit the attribute
+  and leave a TODO comment that names it.
 """)
 
 
@@ -99,6 +100,8 @@ OUTPUT RULES:
 - Emit exactly one top-level `objectClass("{object_class}")` (Groovy) or one `objectClasses.{object_class}`
   entry (declarative YAML) containing both the attribute definitions and the ConnID mapping. Never emit a
   second top-level block for the same object class, and never emit the ConnID mapping as a separate artifact.
+- Spell the object class exactly `{object_class}`, including letter case. Class names in the documentation
+  examples or in the protocol context never override it.
 - Check the example in <protocol_schema_docs></protocol_schema_docs> or <declarative_docs></declarative_docs>,
   matching whichever format you chose.
 - The structure may vary, but should be consistent and syntactically valid for the format you chose.

@@ -4,6 +4,8 @@
 
 from enum import StrEnum
 
+from src.documents.normalize import normalize_object_class_name
+
 
 class ConnectorCodeFormat(StrEnum):
     YAML = "YAML"
@@ -29,7 +31,8 @@ def search_intent_label(intent: SearchIntent | str) -> str:
 
 
 def build_search_operation_key(object_class: str, intent: SearchIntent | str) -> str:
-    return f"{object_class}Search{search_intent_label(intent)}"
+    """Operation key of a search script, e.g. ``userSearchAll``; the object class is normalized here."""
+    return f"{normalize_object_class_name(object_class)}Search{search_intent_label(intent)}"
 
 
 class ArtifactKind(StrEnum):
@@ -62,5 +65,9 @@ OBJECT_CLASS_OPERATION_KINDS: tuple[ArtifactKind, ...] = tuple(_OBJECT_CLASS_OPE
 
 
 def build_object_class_operation_key(object_class: str, kind: ArtifactKind) -> str:
-    """Operation key of a native-schema or CRUD script, e.g. ``userCreate``; it prefixes its session keys."""
-    return f"{object_class}{_OBJECT_CLASS_OPERATION_SUFFIX[kind]}"
+    """
+    Operation key of a native-schema or CRUD script, e.g. ``userCreate``; it prefixes its session keys.
+
+    The object class is normalized here, so callers can pass the spelling midPoint requested.
+    """
+    return f"{normalize_object_class_name(object_class)}{_OBJECT_CLASS_OPERATION_SUFFIX[kind]}"

@@ -3,6 +3,7 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -41,9 +42,11 @@ from src.modules.codegen.selection.relevant_chunks import (
     _collect_relevant_chunks,
 )
 from src.modules.codegen.utils.code_output import build_connector_code_output
+from src.modules.codegen.utils.object_class_casing import restore_object_class_casing
 from src.modules.codegen.utils.prompt_records import (
     build_complete_attribute_mapping_records,
     build_scim_contract_prompt_vars,
+    build_scim_flatten_candidates,
     build_sql_context_prompt_vars,
     extract_sql_context,
 )
@@ -97,6 +100,9 @@ async def generate_native_schema_code(
     }
     if protocol == ApiType.SCIM:
         extra_prompt_vars.update(build_scim_contract_prompt_vars(attributes_payload))
+        extra_prompt_vars["scim_flatten_candidates_json"] = json.dumps(
+            build_scim_flatten_candidates(attributes_payload), ensure_ascii=False
+        )
 
     if protocol == ApiType.SQL:
         if not extract_sql_context(attributes_payload).get("physicalTable"):
@@ -114,6 +120,7 @@ async def generate_native_schema_code(
         job_id=job_id,
         repair_context=repair_context,
     )
+    code = await asyncio.to_thread(restore_object_class_casing, code, object_class)
     return await build_connector_code_output(code)
 
 
@@ -395,17 +402,17 @@ async def generate_relation_code(
         logger.warning("[Codegen:Relation] No relevant object-class chunks found for relation %s", relation_name)
 
     generator = RelationGenerator(
+        relation_name=relation_name,
+        protocol=protocol,
         docs_text=relation_docs_text,
         declarative_docs_text=declarative_docs_text,
         system_prompt=assets.system_prompt,
         user_prompt=assets.user_prompt,
-        extra_prompt_vars={"protocol": protocol.value},
     )
     code = await generator.generate(
         session_id=session_id,
         relevant_chunk_pairs=relevant_pairs,
         job_id=job_id,
         relations=relations,
-        relation_name=relation_name,
     )
     return await build_connector_code_output(code)

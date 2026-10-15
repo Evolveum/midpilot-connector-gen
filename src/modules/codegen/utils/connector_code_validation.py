@@ -26,10 +26,10 @@ from typing import Any, Optional
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from src.modules.codegen.connector_yaml_schema import ConnectorYamlDocument
+from src.modules.codegen.connector_yaml_schema import COMPLEX_TYPE_UNSUPPORTED_REASON, ConnectorYamlDocument
 from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.errors import ConnectorCodeValidationError
-from src.modules.codegen.utils.groovy_validation import validate_groovy_code
+from src.modules.codegen.utils.groovy_validation import groovy_names, validate_groovy_code
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
 
 logger = logging.getLogger(__name__)
@@ -236,7 +236,11 @@ def collect_connector_code_errors(code: str) -> tuple[str, ...]:
     if detect_connector_code_format(normalized) is ConnectorCodeFormat.YAML:
         return _collect_yaml_connector_code_errors(normalized)
     error = validate_groovy_code(normalized)
-    return (error,) if error else ()
+    if error:
+        return (error,)
+    if "complexType" in normalized and "complexType" in groovy_names(normalized):
+        return (f"'complexType' is not supported: {COMPLEX_TYPE_UNSUPPORTED_REASON}",)
+    return ()
 
 
 def ensure_valid_connector_code(code: str) -> str:

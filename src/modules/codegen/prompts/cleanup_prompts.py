@@ -73,7 +73,8 @@ SQL-only rules:
 Safety rules:
 - Never invent new attributes, endpoints, operators, comments, request parameters, or logic.
 - Only move existing executable logic when required by the matching DSL-specific rules above.
-- Do not change endpoint names, path templates, attribute names, operators, or response extraction logic.
+- Do not change object-class names (including their letter case), endpoint names, path templates, attribute names,
+  operators, or response extraction logic.
 - Do not remove or rewrite protocol-specific executable declarations merely because another protocol represents the
   same behavior differently.
 - Keep brace structure correct.

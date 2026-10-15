@@ -22,7 +22,7 @@ def build_operation_system_prompt(operation: str, *, rules: str, context_rules: 
 
 def build_operation_user_prompt(context: str, *, intent: bool = False) -> str:
     return (
-        "Chunk {idx}/{total}. Target object class: {object_class}.\n"
+        "Chunk {idx}/{total}. Target object class: {object_class} (case-sensitive; keep this exact spelling).\n"
         + ("Requested search intent: {intent}.\n" if intent else "")
         + "\n<extracted_attributes>\n{attributes_json}\n</extracted_attributes>\n"
         + context

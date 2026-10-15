@@ -13,7 +13,7 @@ from src.config import config
 from src.core.errors import LLMUnavailableError
 from src.modules.codegen.core.base import BaseGroovyGenerator, OperationConfig
 from src.modules.codegen.core.generate_groovy import generate_groovy
-from src.modules.codegen.schema import CodegenRepairContext
+from src.modules.codegen.schema import CodegenRepairContext, FallbackArtifact
 
 
 # PyCharm's monkeypatch inspection does not resolve pydantic model fields as attribute names
@@ -53,17 +53,16 @@ class _RecordingChain(_DummyChain):
         return await super().ainvoke(*args, **kwargs)
 
 
-@pytest.mark.asyncio
-async def test_generate_groovy_returns_empty_when_validation_fails() -> None:
+_COMPLEX_TYPE_SCHEMA = "objectClasses:\n  User:\n    attributes:\n      name:\n        complexType: UserName"
+_FLATTENED_SCHEMA = "objectClasses:\n  User:\n    scim:\n      flatten: [name]"
+
+
+async def _generate_native_schema(chain: _RecordingChain):
     with (
         patch("src.modules.codegen.core.generate_groovy.get_default_llm"),
-        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=_DummyChain(["bad code"])),
+        patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=chain),
         patch("src.modules.codegen.core.generate_groovy.update_job_progress", new_callable=AsyncMock),
-        patch("src.modules.codegen.core.generate_groovy.append_job_error") as mock_append_job_error,
-        patch(
-            "src.modules.codegen.core.generate_groovy.validate_connector_code",
-            return_value="syntax error",
-        ),
+        patch("src.modules.codegen.core.generate_groovy.append_job_error", new_callable=AsyncMock) as errors,
     ):
         result = await generate_groovy(
             records=[{"name": "uid"}],
@@ -74,12 +73,46 @@ async def test_generate_groovy_returns_empty_when_validation_fails() -> None:
             run_name="Codegen:NativeSchema",
             operation_name="NativeSchema",
         )
+    return result, errors
+
+
+@pytest.mark.asyncio
+async def test_invalid_native_schema_is_retried_once_with_its_validation_errors() -> None:
+    chain = _RecordingChain([_COMPLEX_TYPE_SCHEMA, _FLATTENED_SCHEMA])
+
+    result, errors = await _generate_native_schema(chain)
+
+    assert result == _FLATTENED_SCHEMA
+    errors.assert_not_awaited()
+    first_errors, retry_errors = (args[0]["validation_errors"] for args, _ in chain.calls)
+    assert first_errors == ""
+    assert f"<result>\n{_COMPLEX_TYPE_SCHEMA}\n</result>" in retry_errors
+    assert "'complexType' is not supported" in retry_errors
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry_response", [_COMPLEX_TYPE_SCHEMA, ""])
+async def test_native_schema_still_invalid_after_retry_returns_empty(retry_response) -> None:
+    chain = _RecordingChain([_COMPLEX_TYPE_SCHEMA, retry_response])
+
+    result, errors = await _generate_native_schema(chain)
 
     assert result == ""
-    assert mock_append_job_error.await_count == 2
-    assert mock_append_job_error.await_args_list[0].args[1] == (
-        "[Codegen:NativeSchema] Generated invalid output: syntax error"
-    )
+    assert len(chain.calls) == 2
+    assert errors.await_count == 2
+    assert errors.await_args_list[0].args[1].startswith("[Codegen:NativeSchema] Generated invalid output: ")
+    assert "'complexType' is not supported" in errors.await_args_list[0].args[1]
+
+
+@pytest.mark.asyncio
+async def test_valid_native_schema_is_not_retried() -> None:
+    chain = _RecordingChain([_FLATTENED_SCHEMA])
+
+    result, errors = await _generate_native_schema(chain)
+
+    assert result == _FLATTENED_SCHEMA
+    assert len(chain.calls) == 1
+    errors.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -118,6 +151,9 @@ async def test_native_schema_preserves_reference_metadata_without_job_errors(rep
     errors.assert_not_awaited()
 
 
+DUMMY_DEFAULTS = "# No changes needed. Use framework defaults.\n{}"
+
+
 @dataclass
 class _DummyGenerator(BaseGroovyGenerator):
     def __init__(self):
@@ -126,7 +162,6 @@ class _DummyGenerator(BaseGroovyGenerator):
                 operation_name="Dummy",
                 system_prompt="system",
                 user_prompt="user",
-                default_scaffold='objectClass("User") {}',
                 run_name="Codegen:Dummy",
             )
         )
@@ -134,8 +169,8 @@ class _DummyGenerator(BaseGroovyGenerator):
     def prepare_input_data(self, **kwargs):
         return {}
 
-    def get_initial_result(self, **kwargs):
-        return 'objectClass("User") {}'
+    def fallback_artifact(self):
+        return FallbackArtifact(DUMMY_DEFAULTS)
 
 
 @pytest.mark.asyncio
@@ -148,7 +183,7 @@ async def test_base_generator_repairs_rejected_chunk_output_in_the_next_chunk() 
         patch("src.modules.codegen.core.base.append_job_error") as mock_append_job_error,
         patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
     ):
-        result = await generator._process_chunks(
+        result, declined = await generator._process_chunks(
             chunks=["chunk-1", "chunk-2"],
             provenance_chunk_ids=[None, None],
             per_chunk_counts={},
@@ -161,6 +196,7 @@ async def test_base_generator_repairs_rejected_chunk_output_in_the_next_chunk() 
         )
 
     assert result == 'objectClass("User") { search {} }'
+    assert declined is False
     mock_append_job_error.assert_called_once()
     assert "Invalid output after chunk 1/2" in mock_append_job_error.call_args.args[1]
     second_call = chain.calls[1][0][0]
@@ -329,7 +365,7 @@ async def test_single_pass_empty_output(response, repair):
 @pytest.mark.parametrize("responses", [["", "{}"], ["{}", "```yaml\n```"], EMPTY_RESPONSES, []])
 @pytest.mark.parametrize("repair", [False, True])
 async def test_chunk_sequences_preserve_accepted_code_and_progress(responses, repair):
-    from src.modules.codegen.repair import NO_CODE_GENERATED, NO_REPAIR_GENERATED
+    from src.modules.codegen.repair import NO_REPAIR_GENERATED
 
     generator = _DummyGenerator()
     context = CodegenRepairContext(current_script="broken(", midpoint_errors=["syntax"]) if repair else None
@@ -355,9 +391,14 @@ async def test_chunk_sequences_preserve_accepted_code_and_progress(responses, re
         assert result == "{}"
         errors.assert_not_awaited()
         cleanup.assert_awaited_once()
+    elif repair:
+        assert result == "broken("
+        errors.assert_awaited_once_with(job_id, NO_REPAIR_GENERATED)
+        cleanup.assert_not_awaited()
     else:
-        assert result == ("broken(" if repair else "")
-        errors.assert_awaited_once_with(job_id, NO_REPAIR_GENERATED if repair else NO_CODE_GENERATED)
+        # Nothing generated without a failure: the model found nothing to customize.
+        assert result == DUMMY_DEFAULTS
+        errors.assert_not_awaited()
         cleanup.assert_not_awaited()
 
 
@@ -509,3 +550,52 @@ async def test_llm_calls_are_traced_by_operation_and_step(repair):
         f"{name}:ValidationRetry",
         f"{name}:Cleanup",
     ]
+
+
+class _FailingFirstChain(_RecordingChain):
+    """First call fails with a non-transient error, later calls return the given responses."""
+
+    async def ainvoke(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        if len(self.calls) == 1:
+            raise ValueError("Malformed provider response")
+        return self._responses.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_failed_call_with_otherwise_empty_responses_keeps_the_failure_contract():
+    from src.modules.codegen.repair import NO_CODE_GENERATED
+
+    generator = _DummyGenerator()
+    job_id = uuid4()
+    chain = _FailingFirstChain([""])
+    with (
+        patch.object(generator, "_build_chunks", return_value=(["a", "b"], [], {}, [])),
+        patch.object(generator, "_initialize_progress", new_callable=AsyncMock),
+        patch.object(generator, "_build_llm_chain", return_value=chain),
+        patch("src.modules.codegen.core.base.increment_processed_documents", new_callable=AsyncMock),
+        patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
+    ):
+        assert await generator.generate(job_id=job_id) == ""
+    assert len(chain.calls) == 2
+    assert "Failed to process chunk 1/2" in errors.await_args_list[0].args[1]
+    assert errors.await_args_list[-1].args == (job_id, NO_CODE_GENERATED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_error", [None, "Placeholder needs review"])
+async def test_no_chunks_returns_the_fallback_without_an_llm_call(job_error):
+    generator = _DummyGenerator()
+    job_id = uuid4()
+    with (
+        patch.object(generator, "_build_chunks", return_value=([], [], {}, [])),
+        patch.object(generator, "fallback_artifact", return_value=FallbackArtifact("placeholder", job_error)),
+        patch.object(generator, "_build_llm_chain") as build_chain,
+        patch("src.modules.codegen.core.base.append_job_error", new_callable=AsyncMock) as errors,
+    ):
+        assert await generator.generate(job_id=job_id) == "placeholder"
+    build_chain.assert_not_called()
+    if job_error is None:
+        errors.assert_not_awaited()
+    else:
+        errors.assert_awaited_once_with(job_id, job_error)

@@ -187,9 +187,6 @@ The following ConnId-side flags can be set directly on the attribute (they overr
 `description(String)`::
   Description of the attribute (shown in schema tools).
 
-`complexType(String)`::
-  Declares the attribute as a complex (embedded) attribute of the given type; complex attributes imply embedded/reference semantics.
-
 [source,groovy]
 ----
 objectClass("User") {

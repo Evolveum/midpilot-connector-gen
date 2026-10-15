@@ -8,10 +8,27 @@ import pytest
 import yaml
 
 from src.modules.codegen.core.base import BaseGroovyGenerator
-from src.modules.codegen.core.operations import CreateGenerator, DeleteGenerator, SearchGenerator, UpdateGenerator
-from src.modules.codegen.enums import SearchIntent
-from src.modules.codegen.utils.connector_code_validation import validate_connector_code
-from src.modules.codegen.utils.operation_defaults import DEFAULTS_COMMENT, normalize_operation_defaults
+from src.modules.codegen.core.operations import (
+    CreateGenerator,
+    DeleteGenerator,
+    RelationGenerator,
+    SearchGenerator,
+    UpdateGenerator,
+)
+from src.modules.codegen.enums import ConnectorCodeFormat, SearchIntent
+from src.modules.codegen.repair import NO_DOCUMENTED_BEHAVIOR
+from src.modules.codegen.utils.connector_code_validation import detect_connector_code_format, validate_connector_code
+from src.modules.codegen.utils.operation_defaults import (
+    DEFAULTS_COMMENT,
+    authorization_defaults_artifact,
+    is_empty_operation_artifact,
+    normalize_operation_defaults,
+    operation_defaults_artifact,
+    relation_defaults_artifact,
+    rest_operation_placeholder_artifact,
+    rest_relation_placeholder_artifact,
+)
+from src.shared.enums import ApiType
 
 
 @pytest.mark.parametrize("operation", ["search", "create", "update", "delete"])
@@ -81,13 +98,9 @@ def make_generator(
     )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("protocol", ["SQL", "SCIM", "REST"])
-@pytest.mark.parametrize("generator_class", [SearchGenerator, CreateGenerator, UpdateGenerator, DeleteGenerator])
-async def test_generation_and_cleanup_normalize_only_native_defaults(protocol, generator_class):
-    generator = make_generator(generator_class, protocol)
+async def _generate(generator: BaseGroovyGenerator, response: str):
     chain = AsyncMock()
-    chain.ainvoke.return_value = "```yaml\ncode:{}\n```" if protocol != "REST" else "{}"
+    chain.ainvoke.return_value = response
     cleanup_chain = AsyncMock()
     cleanup_chain.ainvoke.return_value = "{}"
     with (
@@ -100,28 +113,106 @@ async def test_generation_and_cleanup_normalize_only_native_defaults(protocol, g
         patch("src.modules.codegen.core.base.append_job_error", AsyncMock()) as errors,
     ):
         result = await generator.generate(session_id=uuid4(), job_id=uuid4(), attributes={})
-    errors.assert_not_awaited()
-    assert (DEFAULTS_COMMENT in result) is (protocol != "REST")
-    assert validate_connector_code(result) is None
     chain.ainvoke.assert_awaited_once()
-    cleanup_chain.ainvoke.assert_awaited_once()
+    return result, errors, cleanup_chain
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["SQL", "SCIM"])
-async def test_empty_model_response_remains_a_generation_failure(protocol):
-    generator = make_generator(CreateGenerator, protocol)
-    chain = AsyncMock()
-    chain.ainvoke.return_value = ""
-    with (
-        patch.object(generator, "_load_documentation_items", AsyncMock(return_value=[{"content": "docs"}])),
-        patch.object(generator, "_initialize_progress", AsyncMock()),
-        patch.object(generator, "_build_llm_chain", return_value=chain),
-        patch.object(generator, "_cleanup_generated_code", AsyncMock()) as cleanup,
-        patch("src.modules.codegen.core.base.increment_processed_documents", AsyncMock()),
-        patch("src.modules.codegen.core.base.append_job_error", AsyncMock()) as errors,
-    ):
-        result = await generator.generate(session_id=uuid4(), job_id=uuid4(), attributes={})
-    assert result == ""
-    errors.assert_awaited_once()
-    cleanup.assert_not_awaited()
+@pytest.mark.parametrize("generator_class", [SearchGenerator, CreateGenerator, UpdateGenerator, DeleteGenerator])
+async def test_generation_and_cleanup_normalize_native_defaults(protocol, generator_class):
+    result, errors, cleanup_chain = await _generate(make_generator(generator_class, protocol), "```yaml\ncode:{}\n```")
+    errors.assert_not_awaited()
+    assert DEFAULTS_COMMENT in result
+    assert validate_connector_code(result) is None
+    cleanup_chain.ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["SQL", "SCIM", "REST"])
+# "user" differs from the requested "User" by case only and still counts as an empty artifact.
+@pytest.mark.parametrize(
+    "response", ["", "```yaml\n```", "{}", "objectClasses: {User: {}}", "objectClasses: {user: {}}"]
+)
+@pytest.mark.parametrize("generator_class", [SearchGenerator, CreateGenerator, UpdateGenerator, DeleteGenerator])
+async def test_model_finding_nothing_returns_the_operation_fallback(protocol, response, generator_class):
+    generator = make_generator(generator_class, protocol)
+    operation = generator.config.operation_name.lower()
+    result, errors, cleanup_chain = await _generate(generator, response)
+
+    assert validate_connector_code(result) is None
+    assert detect_connector_code_format(result) is ConnectorCodeFormat.YAML
+    assert yaml.safe_load(result) == {"objectClasses": {"User": {operation: {}}}}
+    if protocol == "REST":
+        # REST has no framework defaults: say so and keep the missing behavior visible.
+        assert result == rest_operation_placeholder_artifact("User", operation)
+        assert DEFAULTS_COMMENT not in result
+        errors.assert_awaited_once()
+        assert errors.await_args.args[1] == NO_DOCUMENTED_BEHAVIOR
+    else:
+        assert result == operation_defaults_artifact("User", operation)
+        errors.assert_not_awaited()
+    # Explicit native defaults are an accepted candidate and still pass the cleanup pass.
+    native_candidate = protocol != "REST" and response.startswith(("{", "objectClasses"))
+    assert cleanup_chain.ainvoke.await_count == (1 if native_candidate else 0)
+
+
+def test_user_facing_defaults_artifact_shape():
+    assert operation_defaults_artifact("user", "search") == (
+        '# No changes needed. Use framework defaults.\nobjectClasses:\n  "user":\n    search: {}'
+    )
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        operation_defaults_artifact("User", "search"),
+        rest_operation_placeholder_artifact("User", "delete"),
+        rest_operation_placeholder_artifact('odd "name"\n# injected', "create"),
+        relation_defaults_artifact(),
+        rest_relation_placeholder_artifact("membership\nnext line"),
+        authorization_defaults_artifact("scim", ["note one", "note two"]),
+    ],
+)
+def test_fallback_artifacts_are_valid_yaml_with_single_line_comments(code):
+    assert validate_connector_code(code) is None
+    assert detect_connector_code_format(code) is ConnectorCodeFormat.YAML
+    assert all(line.startswith("#") for line in code.splitlines() if "TODO" in line or DEFAULTS_COMMENT in line)
+
+
+def test_placeholder_is_never_rewritten_into_defaults():
+    placeholder = rest_operation_placeholder_artifact("User", "create")
+    assert normalize_operation_defaults(placeholder, object_class="User", operation="create") == placeholder
+    assert not is_empty_operation_artifact(placeholder, object_class="User", operation="create")
+
+
+def _relation_generator(protocol: ApiType) -> RelationGenerator:
+    return RelationGenerator(
+        relation_name="membership",
+        protocol=protocol,
+        docs_text="",
+        declarative_docs_text="",
+        system_prompt="system",
+        user_prompt="user",
+    )
+
+
+@pytest.mark.parametrize("protocol", [ApiType.SQL, ApiType.SCIM, ApiType.REST])
+def test_relation_fallback_and_empty_candidate(protocol):
+    generator = _relation_generator(protocol)
+    fallback = generator.fallback_artifact()
+    if protocol == ApiType.REST:
+        assert fallback.code == rest_relation_placeholder_artifact("membership")
+        assert 'relationship("membership")' in fallback.code
+        assert fallback.job_error == NO_DOCUMENTED_BEHAVIOR
+        assert generator.normalize_generated_code("{}") == ""
+    else:
+        assert fallback.code == relation_defaults_artifact()
+        assert fallback.job_error is None
+        assert generator.normalize_generated_code("{}") == relation_defaults_artifact()
+        assert generator.normalize_generated_code(relation_defaults_artifact()) == relation_defaults_artifact()
+
+
+@pytest.mark.parametrize("code", ["# TODO: override is unsupported\n{}", 'relationship("membership") {}'])
+def test_relation_candidate_with_explanation_or_behavior_is_kept(code):
+    assert _relation_generator(ApiType.SQL).normalize_generated_code(code) == code

@@ -4,13 +4,7 @@ This document is part of the SCIM 2.0 connector tutorial. See the framework intr
 
 == Complex attributes
 
-SCIM complex attributes (for example `name`, `emails`, `addresses`, `phoneNumbers`) are exposed as *embedded object classes* named `Parent__Attribute` — for example `User__emails` for the `User` schema's `emails` attribute.
-Nested complex sub-attributes are flattened one level.
-
-* *Reading* is supported out of the box: the embedded value is deserialized from the SCIM JSON through the sub-attribute mappings (a SCIM object without `subAttributes` is handled safely).
-* *Writing* complex attribute values is not supported yet — complex attributes are read-only from the ConnId side (`Write not supported yet`).
-
-To map a flat ConnId attribute into a complex SCIM structure, use a SCIM path (below):
+SCIM complex attributes (for example `name`, `emails`, `addresses`, `phoneNumbers`) are never declared as structured attributes: midPoint does not support embedded object classes. Expose their parts as plain attributes instead — flatten them (see flattening SCIM attributes) or map a flat ConnId attribute into the complex SCIM structure with a SCIM path (below):
 
 [source,groovy]
 ----

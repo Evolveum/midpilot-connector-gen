@@ -88,7 +88,8 @@ async def test_generate_relation(protocol):
         # Verify generator was instantiated and generate method was called
         mock_relation_generator_class.assert_called_once()
         config = mock_relation_generator_class.call_args.kwargs
-        assert config["extra_prompt_vars"]["protocol"] == protocol.value
+        assert config["protocol"] == protocol
+        assert config["relation_name"] == "project_to_membership"
         expected_reference = {
             ApiType.REST: "The relationship concept",
             ApiType.SCIM: "SCIM",
@@ -97,7 +98,6 @@ async def test_generate_relation(protocol):
         assert expected_reference in config["docs_text"]
         mock_generator_instance.generate.assert_called_once()
         generate_kwargs = mock_generator_instance.generate.await_args.kwargs
-        assert generate_kwargs["relation_name"] == "project_to_membership"
         assert generate_kwargs["relevant_chunk_pairs"] == [
             {"doc_id": "doc-1", "chunk_id": "project-chunk"},
             {"doc_id": "doc-2", "chunk_id": "shared-chunk"},
