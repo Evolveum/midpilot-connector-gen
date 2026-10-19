@@ -21,28 +21,25 @@ async def get_relevant_links_from_text(prompts: Tuple[str, str]) -> RelevantLink
     """
     Get relevant links from text using an LLM.
 
-    :param prompts: Tuple containing the developer and user prompts.
+    :param prompts: Tuple containing the system and user prompts.
     :param app: Application name.
     :param app_version: Application version.
     :return: RelevantLinks object containing the list of relevant links, or None if an error occurs.
     """
     logger.debug("[Scrape:LLM] Starting LLM call for relevant links extraction")
-    developer_msg, user_msg = prompts
+    system_msg, user_msg = prompts
 
     llm = get_default_llm()
 
     parser: PydanticOutputParser = PydanticOutputParser(pydantic_object=RelevantLinks)
     parser_instructions = parser.get_format_instructions()
 
-    developer_message = SystemMessage(content=developer_msg.format(parser_instructions=parser_instructions))
-    developer_message.additional_kwargs = {"__openai_role__": "developer"}
-
+    system_message = SystemMessage(content=system_msg.format(parser_instructions=parser_instructions))
     user_message = HumanMessage(content=user_msg)
-    user_message.additional_kwargs = {"__openai_role__": "user"}
 
     chat_prompts = ChatPromptTemplate.from_messages(
         [
-            developer_message,
+            system_message,
             user_message,
         ]
     )

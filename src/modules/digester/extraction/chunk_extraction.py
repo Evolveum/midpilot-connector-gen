@@ -469,7 +469,7 @@ def build_chunk_extraction_chain(
     user_prompt: str,
 ) -> Any:
     """Build a reusable structured extraction chain for repeated chunk invocations."""
-    return build_structured_chain(system_prompt, user_prompt, pydantic_model, user_role="human")
+    return build_structured_chain(system_prompt, user_prompt, pydantic_model)
 
 
 async def extract_single_chunk(
@@ -762,7 +762,7 @@ async def run_all_items_build_parallel(
     Returns:
         List of built items
     """
-    chain = build_structured_chain(system_prompt, user_prompt, pydantic_model, user_role="human")
+    chain = build_structured_chain(system_prompt, user_prompt, pydantic_model)
 
     return list(
         await asyncio.gather(

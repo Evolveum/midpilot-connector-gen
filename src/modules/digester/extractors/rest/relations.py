@@ -313,7 +313,6 @@ async def extract_relations_raw(
             "relevant_descriptions": relevant_descriptions,
             "relevant_list_with_descriptions": relevant_list_with_descriptions,
         },
-        user_role="human",
     )
 
     # Process the single pre-chunked input (no need for asyncio.gather with just one item)

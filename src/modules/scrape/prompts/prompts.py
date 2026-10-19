@@ -7,9 +7,9 @@ def get_irrelevant_filter_prompts(links: list[str], app: str, app_version: str) 
     """
     Returns developer and user messages for filtering irrelevant links.
 
-    :return: Tuple of (developer_message, user_message)
+    :return: Tuple of (system_message, user_message)
     """
-    developer_msg = f"""You are an expert documentation relevancy evaluator for {app} {app_version}.
+    system_msg = f"""You are an expert documentation relevancy evaluator for {app} {app_version}.
 
 Your mission: Identify links that are IRRELEVANT to a developer implementing IDM (Identity Management) integration for {app} {app_version}.
 
@@ -150,7 +150,7 @@ If no links are irrelevant, return: {{"links": []}}
 
 {links}"""
 
-    return developer_msg, user_msg
+    return system_msg, user_msg
 
 
 # TODO: maybe regex pattern for getting relevant text around links.
@@ -162,9 +162,9 @@ If no links are irrelevant, return: {{"links": []}}
 #         text: str - the text content to analyze for relevant links
 #         app: str - application name
 #         app_version: str - application version
-#    :return: Tuple of (developer_message, user_message)
+#    :return: Tuple of (system_message, user_message)
 #    """
-#    developer_msg = """
+#    system_msg = """
 #    You are an expert in getting links from text that are relevant for IDM integration of {app} {app_version}.
 #    Our goal is to get to the API documentation, ideally specifications (OpenAPI/Swagger in JSON/YAML format) or REST API documentation, that is relevant for IDM integration.
 #    It is also neccessary to get to the documentation about authentification methods, supported apiTypes, and data schemas, that are relevant for IDM integration.
@@ -184,7 +184,7 @@ If no links are irrelevant, return: {{"links": []}}
 
 # {text}"""
 
-#    return developer_msg, user_msg
+#    return system_msg, user_msg
 
 
 def get_relevant_filter_prompts(text: str, app: str, app_version: str) -> tuple[str, str]:
@@ -195,9 +195,9 @@ def get_relevant_filter_prompts(text: str, app: str, app_version: str) -> tuple[
        text: str - the text content to analyze for relevant links
        app: str - application name
        app_version: str - application version
-    :return: Tuple of (developer_message, user_message)
+    :return: Tuple of (system_message, user_message)
     """
-    developer_msg = f"""
+    system_msg = f"""
 **Situation**
 The assistant is working with a developer who needs to identify relevant API documentation and specifications for implementing Identity Management (IDM) integration with a specific application and version. The input consists of markdown text extracted from webpages containing links and descriptions that may or may not be relevant to the integration task.
 
@@ -235,4 +235,4 @@ The markdown text provided is extracted from webpages and may contain irrelevant
    
 {text}"""
 
-    return developer_msg, user_msg
+    return system_msg, user_msg

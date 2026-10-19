@@ -362,7 +362,6 @@ async def deduplicate_auth(
         auth_deduplication_system_prompt,
         auth_deduplication_user_prompt,
         AuthDedupResponse,
-        user_role="human",
     )
 
     try:
@@ -426,7 +425,6 @@ async def sort_auth_by_importance(raw_dedup_list: List[AuthProcessingInfo], job_
             sort_auth_system_prompt,
             sort_auth_user_prompt,
             AuthResponse[AuthInfo],
-            user_role="human",
         )
 
         items_json = json.dumps([auth.model_dump(exclude={"relevant_sequences"}) for auth in dedup_list])
