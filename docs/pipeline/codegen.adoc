@@ -327,6 +327,10 @@ class `scim.flatten` list, restricted to the candidates computed from the SCIM
 schema (`build_scim_flatten_candidates`), because connector schema discovery
 rejects any other entry. Other structured values become flat attributes with
 `scim.path` / `json.path`, or a TODO comment when nothing is documented.
+Reference attributes are not supported yet: the native schema omits an
+attribute the digester marks as `reference` and leaves a TODO comment naming it
+and its target object class, and validation rejects the YAML `references` key
+and the Groovy `reference(...)` call.
 
 NOTE: Generated code is stored per operation and can be regenerated or
 manually replaced (`PUT`) independently — you do not need to redo the whole

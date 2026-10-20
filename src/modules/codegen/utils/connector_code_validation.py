@@ -26,10 +26,14 @@ from typing import Any, Optional
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from src.modules.codegen.connector_yaml_schema import COMPLEX_TYPE_UNSUPPORTED_REASON, ConnectorYamlDocument
+from src.modules.codegen.connector_yaml_schema import (
+    COMPLEX_TYPE_UNSUPPORTED_REASON,
+    REFERENCES_UNSUPPORTED_REASON,
+    ConnectorYamlDocument,
+)
 from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.errors import ConnectorCodeValidationError
-from src.modules.codegen.utils.groovy_validation import groovy_names, validate_groovy_code
+from src.modules.codegen.utils.groovy_validation import groovy_call_names, groovy_names, validate_groovy_code
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
 
 logger = logging.getLogger(__name__)
@@ -238,9 +242,12 @@ def collect_connector_code_errors(code: str) -> tuple[str, ...]:
     error = validate_groovy_code(normalized)
     if error:
         return (error,)
+    errors: list[str] = []
     if "complexType" in normalized and "complexType" in groovy_names(normalized):
-        return (f"'complexType' is not supported: {COMPLEX_TYPE_UNSUPPORTED_REASON}",)
-    return ()
+        errors.append(f"'complexType' is not supported: {COMPLEX_TYPE_UNSUPPORTED_REASON}")
+    if "reference" in normalized and "reference" in groovy_call_names(normalized):
+        errors.append(f"'reference' is not supported: {REFERENCES_UNSUPPORTED_REASON}")
+    return tuple(errors)
 
 
 def ensure_valid_connector_code(code: str) -> str:

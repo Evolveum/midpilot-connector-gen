@@ -97,10 +97,6 @@ def test_validate_yaml_connector_code_accepts_full_native_schema() -> None:
         "        sql:\n"
         "          type: INT\n"
         "          primaryKey: true\n"
-        "    references:\n"
-        "      manager:\n"
-        "        objectClass: Person\n"
-        "        role: SUBJECT\n"
     )
     assert validate_yaml_connector_code(code) is None
 
@@ -154,12 +150,12 @@ def test_unknown_nested_options_are_preserved_with_warning(code, path, caplog):
 
 
 def test_collect_errors_returns_every_structural_error_without_input_values():
-    errors = collect_connector_code_errors("objectClasses: {User: {references: [], search: {endpoints: 42}}}")
+    errors = collect_connector_code_errors("objectClasses: {User: {attributes: [], search: {endpoints: 42}}}")
     assert [error.split(": ", 1)[0] for error in errors] == [
-        "objectClasses.User.references",
+        "objectClasses.User.attributes",
         "objectClasses.User.search.endpoints",
     ]
-    assert errors[0] == "objectClasses.User.references: Input should be a valid dictionary"
+    assert errors[0] == "objectClasses.User.attributes: Input should be a valid dictionary"
     assert "42" not in errors[1]
 
 
@@ -181,28 +177,29 @@ def test_collect_errors_is_empty_for_valid_code():
     )
 
 
-def test_reference_metadata_is_preserved_without_logging_values(caplog):
+def test_references_are_rejected_without_echoing_values():
+    # midPoint rejects a reference whose target object class is not in the connector schema.
     code = (
-        "# Keep the user's formatting and metadata\n"
         "objectClasses:\n  group:\n    references:\n      members:\n"
         "        objectClass: User\n        role: object\n"
         "        description: private-description-value\n        multiValued: true"
     )
-    assert ensure_valid_connector_code(code) == code
-    assert "objectClasses.group.references.members.description" in caplog.text
-    assert "objectClasses.group.references.members.multiValued" in caplog.text
-    assert "private-description-value" not in caplog.text
+    errors = collect_connector_code_errors(code)
+    assert len(errors) == 1
+    assert errors[0].startswith("objectClasses.group: ")
+    assert "'references' is not supported in declarative YAML: midPoint does not support" in errors[0]
+    assert "private-description-value" not in errors[0]
 
 
 @pytest.mark.parametrize(
     ("code", "path"),
     [
         (
-            "objectClasses: {group: {references: {members: {description: x, multiValued: true, role: []}}}}",
-            "references.members.role",
+            "objectClasses: {group: {attributes: {members: {unknownOption: x, required: []}}}}",
+            "attributes.members.required",
         ),
         (
-            "objectClasses: {group: {references: {members: {description: x}}, "
+            "objectClasses: {group: {attributes: {members: {unknownOption: x}}, "
             "search: {custom: {implementation: 'return ('}}}}",
             "search.custom.implementation",
         ),
@@ -323,7 +320,6 @@ def test_ensure_valid_connector_code_returns_normalized_code_for_valid_groovy() 
         ("objectClasses: {User: {search: {endpoints: {path: /users}}}}", "search.endpoints"),
         ("objectClasses: {User: {search: {endpoints: [3]}}}", "search.endpoints.0"),
         ("objectClasses: {User: {search: {endpoints: [{path: false}]}}}", "path"),
-        ("objectClasses: {User: {references: {group: null}}}", "references.group"),
         ("authentication: null", "authentication"),
         ("authentication: {rest: {bearer: {implementation: 3}}}", "implementation"),
         ("authentication: {rest: {preference: bearer}}", "preference"),
@@ -341,7 +337,7 @@ def test_nested_configuration_rejects_wrong_types_and_shapes(code, path):
         "{}",
         "objectClasses: {}",
         "objectClasses: {User: {attributes: {id: null, name: {}}}}",
-        "objectClasses: {User: {create: {}, search: {normalize: {}}, references: {group: {}}}}",
+        "objectClasses: {User: {create: {}, search: {normalize: {}}}}",
         "authentication: {rest: {bearer: {}, oauth2Password: {}}}",
         "objectClasses: {User: {update: {endpoints: [{path: /users, method: PATCH, supportedAttributes: [name, {name: status, value: active}, {name: status, transition: {from: active, to: locked}}]}]}}}",
         "objectClasses: {User: {create: {endpoints: [{path: /users, supportedAttributes: [name, {name: type, value: internal}]}]}}}",
@@ -581,6 +577,7 @@ def test_values_the_runtime_rejects_are_rejected(code, path):
         ),
         ("objectClasses: {User: {attributes: {a: {scim: {implementation: {deserialize: it}}}}}}", "implementation"),
         ("objectClasses: {User: {attributes: {name: {complexType: UserName}}}}", "complexType"),
+        ("objectClasses: {Ticket: {references: {status: {objectClass: TicketStatus}}}}", "references"),
     ],
 )
 def test_keys_the_runtime_rejects_are_rejected_with_reason(code, key):
@@ -607,6 +604,30 @@ def test_groovy_complex_type_in_comments_and_strings_is_accepted():
         'objectClass("User") {\n'
         '    // complexType "UserName" is not supported\n'
         '    attribute("name") { description "no complexType here" }\n'
+        "}"
+    )
+    assert collect_connector_code_errors(code) == ()
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        'objectClass("User") {\n    reference("teams") {\n        objectClass("Team")\n    }\n}',
+        'objectClass("User") { reference "teams" }',
+    ],
+)
+def test_groovy_reference_is_rejected(code):
+    errors = collect_connector_code_errors(code)
+    assert len(errors) == 1
+    assert "'reference' is not supported: midPoint does not support reference attributes" in errors[0]
+
+
+def test_groovy_reference_variable_comment_and_string_are_accepted():
+    code = (
+        'objectClass("User") {\n'
+        '    // reference("teams") is not supported\n'
+        '    attribute("name") { description "no reference(...) here" }\n'
+        '    attribute("id") { json { implementation { deserialize { def reference = value; reference.asText() } } } }\n'
         "}"
     )
     assert collect_connector_code_errors(code) == ()

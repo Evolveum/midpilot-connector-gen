@@ -54,6 +54,12 @@ COMPLEX_TYPE_UNSUPPORTED_REASON = (
     "or map its scalar parts as flat attributes with scim.path / json.path"
 )
 
+# conndev binds `references` / `reference(...)`, but midPoint rejects a reference whose target object class
+# is not in the connector schema, and a REST reference needs a value mapping codegen does not produce.
+REFERENCES_UNSUPPORTED_REASON = (
+    "midPoint does not support reference attributes yet; omit the attribute and leave a TODO comment that names it"
+)
+
 
 def _require_case_insensitive_member(value: str, allowed: frozenset[str]) -> str:
     if value.upper() not in allowed:
@@ -155,12 +161,6 @@ class _Attribute(_Configuration):
     connId: _ConnIdAttribute | None = Field(default=None)
     scim: _ScimAttribute | None = Field(default=None)
     sql: _SqlAttribute | None = Field(default=None)
-
-
-class _Reference(_Configuration):
-    objectClass: str | None = Field(default=None)
-    role: str | None = Field(default=None)
-    subtype: str | None = Field(default=None)
 
 
 _ScalarValue = str | bool | int | float
@@ -363,6 +363,8 @@ class _SqlClass(_Configuration):
 
 
 class _ObjectClass(_Configuration):
+    unsupported_keys: ClassVar[Mapping[str, str]] = {"references": REFERENCES_UNSUPPORTED_REASON}
+
     description: str | None = Field(default=None)
     embedded: bool | None = Field(default=None)
     readOnly: bool | None = Field(default=None)
@@ -371,7 +373,6 @@ class _ObjectClass(_Configuration):
     scim: _ScimClass | None = Field(default=None)
     sql: _SqlClass | None = Field(default=None)
     attributes: dict[str, _Attribute | None] | None = Field(default=None)
-    references: dict[str, _Reference] | None = Field(default=None)
     create: _CreateOperation | None = Field(default=None)
     update: _UpdateOperation | None = Field(default=None)
     delete: _DeleteOperation | None = Field(default=None)

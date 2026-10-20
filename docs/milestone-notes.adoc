@@ -15,6 +15,18 @@ The upgrade instructions between releases are in the
 https://docs.evolveum.com/midpoint/release/[release notes] (for midPilot we will
 prepare this page).
 
+== TODO: next version
+
+=== TODO - 12165 - <Author>
+
+Connector code may no longer declare reference attributes: validation rejects the
+YAML `references` key and the Groovy `reference(...)` call, so the codegen
+override endpoints (`PUT`) return 422 for such code, and native-schema
+generation omits reference attributes with a TODO comment. midPoint replays its
+stored scripts through these `PUT` endpoints when it restores a lost session, so
+a connector development whose stored native schema still contains references
+cannot restore its session until they are removed from that script in midPoint.
+
 == 0.9.0
 
 === 2026-10-14 Reject complexType and flatten SCIM complex attributes in native schemas

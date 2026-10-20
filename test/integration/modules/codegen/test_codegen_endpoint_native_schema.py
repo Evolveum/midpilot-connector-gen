@@ -213,6 +213,9 @@ async def test_generate_native_schema_missing_class():
         # midPoint does not support the embedded object class a complexType declares.
         ("objectClasses: {User: {attributes: {name: {complexType: UserName}}}}", 422),
         ('objectClass("User") { attribute("name") { complexType "UserName" } }', 422),
+        # midPoint rejects a reference whose target object class is not in the connector schema.
+        ("objectClasses: {Ticket: {references: {status: {objectClass: TicketStatus}}}}", 422),
+        ('objectClass("Ticket") { reference("status") { objectClass("TicketStatus") } }', 422),
         (
             "objectClasses: {User: {update: {endpoints: [{path: /users, "
             "supportedAttributes: [{name: status, value: &loop [*loop]}]}]}}}",
