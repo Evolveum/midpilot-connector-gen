@@ -177,7 +177,20 @@ def test_collect_errors_is_empty_for_valid_code():
     )
 
 
-def test_references_are_rejected_without_echoing_values():
+def test_reference_metadata_is_preserved_without_logging_values(caplog):
+    code = (
+        "# Keep the user's formatting and metadata\n"
+        "objectClasses:\n  group:\n    references:\n      members:\n"
+        "        objectClass: User\n        role: object\n"
+        "        description: private-description-value\n        multiValued: true"
+    )
+    assert ensure_valid_connector_code(code) == code
+    assert "objectClasses.group.references.members.description" in caplog.text
+    assert "objectClasses.group.references.members.multiValued" in caplog.text
+    assert "private-description-value" not in caplog.text
+
+
+def test_generated_references_are_rejected_without_echoing_values():
     # midPoint rejects a reference whose target object class is not in the connector schema.
     code = (
         "objectClasses:\n  group:\n    references:\n      members:\n"
@@ -186,9 +199,9 @@ def test_references_are_rejected_without_echoing_values():
     )
     errors = collect_connector_code_errors(code)
     assert len(errors) == 1
-    assert errors[0].startswith("objectClasses.group: ")
-    assert "'references' is not supported in declarative YAML: midPoint does not support" in errors[0]
+    assert errors[0].startswith("objectClasses.group.references: 'references' is not supported: midPoint does not")
     assert "private-description-value" not in errors[0]
+    assert validate_connector_code(code, allow_references=True) is None
 
 
 @pytest.mark.parametrize(
@@ -577,7 +590,6 @@ def test_values_the_runtime_rejects_are_rejected(code, path):
         ),
         ("objectClasses: {User: {attributes: {a: {scim: {implementation: {deserialize: it}}}}}}", "implementation"),
         ("objectClasses: {User: {attributes: {name: {complexType: UserName}}}}", "complexType"),
-        ("objectClasses: {Ticket: {references: {status: {objectClass: TicketStatus}}}}", "references"),
     ],
 )
 def test_keys_the_runtime_rejects_are_rejected_with_reason(code, key):
@@ -616,10 +628,11 @@ def test_groovy_complex_type_in_comments_and_strings_is_accepted():
         'objectClass("User") { reference "teams" }',
     ],
 )
-def test_groovy_reference_is_rejected(code):
+def test_groovy_reference_is_rejected_only_in_generated_code(code):
     errors = collect_connector_code_errors(code)
     assert len(errors) == 1
     assert "'reference' is not supported: midPoint does not support reference attributes" in errors[0]
+    assert ensure_valid_connector_code(code) == code
 
 
 def test_groovy_reference_variable_comment_and_string_are_accepted():

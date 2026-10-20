@@ -26,11 +26,7 @@ from typing import Any, Optional
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from src.modules.codegen.connector_yaml_schema import (
-    COMPLEX_TYPE_UNSUPPORTED_REASON,
-    REFERENCES_UNSUPPORTED_REASON,
-    ConnectorYamlDocument,
-)
+from src.modules.codegen.connector_yaml_schema import COMPLEX_TYPE_UNSUPPORTED_REASON, ConnectorYamlDocument
 from src.modules.codegen.enums import ConnectorCodeFormat
 from src.modules.codegen.errors import ConnectorCodeValidationError
 from src.modules.codegen.utils.groovy_validation import groovy_call_names, groovy_names, validate_groovy_code
@@ -40,6 +36,13 @@ logger = logging.getLogger(__name__)
 
 # conndev GroovyScriptCompiler.IMPORT_LINE
 _IMPORT_LINE = re.compile(r"\s*import\s+[\w.]+(\.\*)?;?\s*")
+
+# conndev binds `references` / `reference(...)`, but midPoint rejects a reference whose target object class
+# is not in the connector schema, and a REST reference needs a value mapping codegen does not produce.
+# Only generated code is held to this; overrides keep accepting them (see ensure_valid_connector_code).
+REFERENCES_UNSUPPORTED_REASON = (
+    "midPoint does not support reference attributes yet; omit the attribute and leave a TODO comment that names it"
+)
 
 
 class _RejectDuplicateKeysLoader(yaml.SafeLoader):
@@ -107,11 +110,11 @@ def validate_yaml_connector_code(code: str) -> Optional[str]:
 
     Returns None when valid, otherwise a human-readable error message.
     """
-    errors = _collect_yaml_connector_code_errors(code)
+    errors = _collect_yaml_connector_code_errors(code, allow_references=False)
     return errors[0] if errors else None
 
 
-def _collect_yaml_connector_code_errors(code: str) -> tuple[str, ...]:
+def _collect_yaml_connector_code_errors(code: str, *, allow_references: bool) -> tuple[str, ...]:
     normalized = strip_markdown_fences(code)
     if not normalized:
         return ("Connector code cannot be empty",)
@@ -135,6 +138,12 @@ def _collect_yaml_connector_code_errors(code: str) -> tuple[str, ...]:
             for error in exc.errors(include_url=False, include_input=False, include_context=False)
         )
     errors: list[str] = []
+    if not allow_references:
+        errors.extend(
+            f"objectClasses.{name}.references: 'references' is not supported: {REFERENCES_UNSUPPORTED_REASON}"
+            for name, object_class in (model.objectClasses or {}).items()
+            if object_class.references is not None
+        )
     _collect_embedded_script_errors(model, errors)
     return tuple(errors)
 
@@ -212,7 +221,7 @@ def _collect_embedded_script_errors(value: Any, errors: list[str], path: str = "
             _collect_embedded_script_errors(child, errors, f"{path}[{index}]")
 
 
-def validate_connector_code(code: str) -> Optional[str]:
+def validate_connector_code(code: str, *, allow_references: bool = False) -> Optional[str]:
     """
     Validate a connector artifact, detecting whether it is declarative YAML or Groovy first.
 
@@ -223,11 +232,11 @@ def validate_connector_code(code: str) -> Optional[str]:
 
     Returns None when valid, otherwise a human-readable error message.
     """
-    errors = collect_connector_code_errors(code)
+    errors = collect_connector_code_errors(code, allow_references=allow_references)
     return errors[0] if errors else None
 
 
-def collect_connector_code_errors(code: str) -> tuple[str, ...]:
+def collect_connector_code_errors(code: str, *, allow_references: bool = False) -> tuple[str, ...]:
     """
     Return every local validation error as ``"path: message"``; empty when the code is valid.
 
@@ -238,22 +247,28 @@ def collect_connector_code_errors(code: str) -> tuple[str, ...]:
     if not normalized:
         return ("Connector code cannot be empty",)
     if detect_connector_code_format(normalized) is ConnectorCodeFormat.YAML:
-        return _collect_yaml_connector_code_errors(normalized)
+        return _collect_yaml_connector_code_errors(normalized, allow_references=allow_references)
     error = validate_groovy_code(normalized)
     if error:
         return (error,)
     errors: list[str] = []
     if "complexType" in normalized and "complexType" in groovy_names(normalized):
         errors.append(f"'complexType' is not supported: {COMPLEX_TYPE_UNSUPPORTED_REASON}")
-    if "reference" in normalized and "reference" in groovy_call_names(normalized):
+    if not allow_references and "reference" in normalized and "reference" in groovy_call_names(normalized):
         errors.append(f"'reference' is not supported: {REFERENCES_UNSUPPORTED_REASON}")
     return tuple(errors)
 
 
 def ensure_valid_connector_code(code: str) -> str:
-    """Return normalized connector code (YAML or Groovy) or raise with validation details."""
+    """
+    Return normalized connector code (YAML or Groovy) or raise with validation details.
+
+    Validates override (``PUT``) bodies, which keep accepting reference attributes: the code is
+    the user's own, and midPoint replays its stored scripts through these endpoints when it
+    restores a session.
+    """
     normalized = strip_markdown_fences(code)
-    error = validate_connector_code(normalized)
+    error = validate_connector_code(normalized, allow_references=True)
     if error is not None:
         raise ConnectorCodeValidationError(error)
     return normalized

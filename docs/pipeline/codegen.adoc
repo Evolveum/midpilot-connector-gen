@@ -329,8 +329,9 @@ rejects any other entry. Other structured values become flat attributes with
 `scim.path` / `json.path`, or a TODO comment when nothing is documented.
 Reference attributes are not supported yet: the native schema omits an
 attribute the digester marks as `reference` and leaves a TODO comment naming it
-and its target object class, and validation rejects the YAML `references` key
-and the Groovy `reference(...)` call.
+and its target object class. Generation and the object-class fix reject
+generated code with the YAML `references` key or the Groovy `reference(...)`
+call; a manual override (`PUT`) still accepts both.
 
 NOTE: Generated code is stored per operation and can be regenerated or
 manually replaced (`PUT`) independently — you do not need to redo the whole
