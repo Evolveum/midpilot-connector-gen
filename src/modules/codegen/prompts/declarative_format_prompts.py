@@ -29,7 +29,8 @@ DOCUMENTATION AND EVIDENCE:
 - Preserve working behavior across chunks. Missing details in a later chunk are not contradictory
   evidence. If it adds nothing relevant, return the last accepted artifact unchanged.
 - Use only documented keys. Attribute wire types belong in json.type/scim.type/sql.type, and ConnId
-  types in connId.type; reference attributes belong in references, not attributes.<name>.type.
+  types in connId.type. midPoint does not support reference attributes yet: never emit references
+  (YAML) or reference(...) (Groovy).
 - The same only-documented rule applies to objects and methods inside a Groovy scripting hook or a
   full Groovy script, not only to YAML keys: call only what the bundled reference documents for
   that hook or operation (for example the objects and methods it lists for a custom-implementation

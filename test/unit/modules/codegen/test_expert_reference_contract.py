@@ -265,6 +265,17 @@ def test_prompts_and_references_never_offer_complex_type():
     assert offending == []
 
 
+def test_prompts_never_offer_reference_attributes():
+    from src.modules.codegen.prompts.fix_prompts import get_connector_fix_system_prompt
+    from src.modules.codegen.prompts.native_schema_prompts import EXTRACTED_ATTRIBUTE_TYPE_RULES
+
+    # midPoint does not support reference attributes yet. The bundled references keep documenting
+    # them, so the prompts must override that documentation.
+    for prompt in (EXTRACTED_ATTRIBUTE_TYPE_RULES, get_connector_fix_system_prompt):
+        assert "never emit `references`" in prompt
+        assert "references.<name>" not in prompt
+
+
 def test_scim_native_schema_flattens_only_computed_candidates():
     from src.modules.codegen.prompts.scim.native_schema_prompts import (
         get_scim_native_schema_system_prompt,

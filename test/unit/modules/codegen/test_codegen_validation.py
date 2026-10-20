@@ -117,17 +117,16 @@ async def test_valid_native_schema_is_not_retried() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("repair", [False, True])
-async def test_native_schema_preserves_reference_metadata_without_job_errors(repair):
-    code = (
-        "objectClasses: {group: {references: {members: "
-        "{objectClass: User, role: object, description: Members, multiValued: true}}}}"
-    )
+async def test_native_schema_with_references_is_retried_with_its_validation_errors(repair):
+    # midPoint does not support reference attributes yet.
+    with_references = "objectClasses: {group: {references: {members: {objectClass: User, role: object}}}}"
+    without_references = "# TODO: members references User (not supported yet)\nobjectClasses: {group: {}}"
     repair_context = (
         CodegenRepairContext(current_script="objectClasses: {group: {}}", midpoint_errors=["Missing role"])
         if repair
         else None
     )
-    chain = _RecordingChain([code])
+    chain = _RecordingChain([with_references, without_references])
     with (
         patch("src.modules.codegen.core.generate_groovy.get_default_llm"),
         patch("src.modules.codegen.core.generate_groovy.make_basic_chain", return_value=chain),
@@ -144,10 +143,10 @@ async def test_native_schema_preserves_reference_metadata_without_job_errors(rep
             operation_name="NativeSchema",
             repair_context=repair_context,
         )
-    assert result == code
-    assert [kwargs["config"]["run_name"] for _, kwargs in chain.calls] == [
-        "Codegen:NativeSchema:Repair" if repair else "Codegen:NativeSchema"
-    ]
+    assert result == without_references
+    run_name = "Codegen:NativeSchema:Repair" if repair else "Codegen:NativeSchema"
+    assert [kwargs["config"]["run_name"] for _, kwargs in chain.calls] == [run_name, run_name]
+    assert "'references' is not supported" in chain.calls[1][0][0]["validation_errors"]
     errors.assert_not_awaited()
 
 
