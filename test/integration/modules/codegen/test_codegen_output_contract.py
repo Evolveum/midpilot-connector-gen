@@ -131,11 +131,13 @@ def test_generation_status_keeps_envelope_and_code_format(client, path, session_
             "YAML",
         ),
         ('objectClasses: {user: {scim: {extensions: {enterprise: {uri: "urn:example", flatten: photos}}}}}', "YAML"),
+        # Only generated code must not declare references; an override keeps them.
         (
             "# Preserve reference metadata\nobjectClasses: {group: {references: {members: "
             "{objectClass: User, role: object, description: Members, multiValued: true}}}}",
             "YAML",
         ),
+        ('objectClass("group") { reference("members") { objectClass("User") } }', "GROOVY"),
     ],
 )
 def test_code_only_override_persists_derived_format(client, path, session_key, code, code_format):

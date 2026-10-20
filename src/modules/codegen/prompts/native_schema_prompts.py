@@ -15,9 +15,10 @@ EXTRACTED TYPES:
 - `jsonType` / `openApiFormat` in <extracted_info> describe the attribute; they are not values to copy.
   The only JSON wire types (`jsonType`, `json.type`) are `string`, `integer`, `number`, `boolean` and
   `binary`; an array is its item type plus `multiValued`, never `array`.
-- `openApiFormat: "reference"`: the attribute points to the object class named in `jsonType`. Declare it
-  only with a reference construct your chosen format documents (declarative YAML: `references.<name>`
-  with `objectClass`), never as a wire type or format.
+- `openApiFormat: "reference"`: the attribute points to the object class named in `jsonType`. midPoint does
+  not support reference attributes yet: never emit `references` (declarative YAML), a `reference(...)` block
+  (Groovy) or the ConnID type `ConnectorObjectReference`, even where the documentation shows them. Omit the
+  attribute and leave a TODO comment that names it and its target object class.
 - `openApiFormat: "embedded"` (with a synthetic class name in `jsonType`) and `jsonType: "object"` both mark
   a structured value. midPoint does not support embedded object classes: never emit `complexType`, the ConnID
   type `EmbeddedObject`, or a declaration of that synthetic class. Map the documented scalar parts as flat

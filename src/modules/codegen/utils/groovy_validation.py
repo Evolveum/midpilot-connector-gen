@@ -52,6 +52,19 @@ def groovy_names(code: str) -> frozenset[str]:
     return frozenset(value for token_type, value in tokenizer_cls().get_tokens(code) if token_type in Name)
 
 
+def groovy_call_names(code: str) -> frozenset[str]:
+    """Names the Groovy code calls: followed by `(` or, in command syntax, by a string literal."""
+    from pygments.token import Name, String  # type: ignore[import-untyped]
+
+    _, tokenizer_cls = _load_groovy_parser_components()
+    tokens = [(token_type, value) for token_type, value in tokenizer_cls().get_tokens(code) if value.strip()]
+    return frozenset(
+        value
+        for (token_type, value), (next_type, next_value) in zip(tokens, tokens[1:])
+        if token_type is Name and (next_value == "(" or next_type in String)
+    )
+
+
 def _clean_validation_message(message: str) -> str:
     lines = [line.strip() for line in message.splitlines() if line.strip()]
     if not lines:
