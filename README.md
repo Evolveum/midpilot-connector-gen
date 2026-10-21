@@ -213,8 +213,9 @@ uv run poe start
 monitoring); it has no dependencies. `GET /api/v1/ready` is the readiness check
 for API clients such as midPoint: it requires an API key like every other
 `/api/v1` route, checks the database and the configured LLM endpoint
-(answers `GET /models`; no tokens consumed), and returns 503 with per-dependency
-`checks` when one is unavailable.
+(answers `GET /models`; no tokens consumed), and returns only the overall
+`status` (`ok`, or 503 with `unavailable`) and `version`. Which dependency
+failed is logged as a `[Core:Readiness]` warning, never returned.
 
 #### Running the API and the job workers separately
 

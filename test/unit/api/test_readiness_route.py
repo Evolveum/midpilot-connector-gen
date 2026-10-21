@@ -1,4 +1,6 @@
-# Copyright (C) 2010-2026 Evolveum and contributors
+#  Copyright (C) 2010-2026 Evolveum and contributors
+#  #
+#  Licensed under the EUPL-1.2 or later.
 #
 # Licensed under the EUPL-1.2 or later.
 
@@ -14,20 +16,14 @@ from src.app import create_api
 from src.auth.dependencies import API_KEY_HEADER_NAME
 from src.config import config
 from src.config.auth import AuthMode
-from src.core.readiness import ComponentStatus, ReadinessChecks, ReadinessReport
+from src.core.readiness import ReadinessReport, ReadinessStatus
 
 READY_PATH = "/api/v1/ready"
 HEADERS = {API_KEY_HEADER_NAME: "gravitee-key"}
 
 
-def _report(database: ComponentStatus, llm: ComponentStatus) -> ReadinessReport:
-    all_ok = database is ComponentStatus.ok and llm is ComponentStatus.ok
-    overall = ComponentStatus.ok if all_ok else ComponentStatus.unavailable
-    return ReadinessReport(
-        status=overall,
-        version="1.2.3",
-        checks=ReadinessChecks(database=database, llm=llm),
-    )
+def _report(status: ReadinessStatus) -> ReadinessReport:
+    return ReadinessReport(status=status, version="1.2.3")
 
 
 @pytest.fixture()
@@ -48,7 +44,7 @@ def _stub_readiness(monkeypatch, report: ReadinessReport) -> AsyncMock:
 
 
 def test_ready_requires_api_key(client, monkeypatch):
-    check = _stub_readiness(monkeypatch, _report(ComponentStatus.ok, ComponentStatus.ok))
+    check = _stub_readiness(monkeypatch, _report(ReadinessStatus.ok))
 
     response = client.get(READY_PATH)
 
@@ -58,36 +54,25 @@ def test_ready_requires_api_key(client, monkeypatch):
 
 
 def test_ready_returns_200_when_all_dependencies_are_ok(client, monkeypatch):
-    _stub_readiness(monkeypatch, _report(ComponentStatus.ok, ComponentStatus.ok))
+    _stub_readiness(monkeypatch, _report(ReadinessStatus.ok))
 
     response = client.get(READY_PATH, headers=HEADERS)
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": "1.2.3", "checks": {"database": "ok", "llm": "ok"}}
+    assert response.json() == {"status": "ok", "version": "1.2.3"}
 
 
-@pytest.mark.parametrize(
-    ("database", "llm"),
-    [
-        (ComponentStatus.ok, ComponentStatus.unavailable),
-        (ComponentStatus.unavailable, ComponentStatus.ok),
-    ],
-)
-def test_ready_returns_503_with_component_detail(client, monkeypatch, database, llm):
-    _stub_readiness(monkeypatch, _report(database, llm))
+def test_ready_returns_503_without_dependency_detail(client, monkeypatch):
+    _stub_readiness(monkeypatch, _report(ReadinessStatus.unavailable))
 
     response = client.get(READY_PATH, headers=HEADERS)
 
     assert response.status_code == 503
-    assert response.json() == {
-        "status": "unavailable",
-        "version": "1.2.3",
-        "checks": {"database": database.value, "llm": llm.value},
-    }
+    assert response.json() == {"status": "unavailable", "version": "1.2.3"}
 
 
 def test_ready_is_not_exposed_outside_api_prefix(client, monkeypatch):
-    _stub_readiness(monkeypatch, _report(ComponentStatus.ok, ComponentStatus.ok))
+    _stub_readiness(monkeypatch, _report(ReadinessStatus.ok))
 
     assert client.get("/ready", headers=HEADERS).status_code == 404
 
@@ -101,7 +86,6 @@ def test_ready_openapi_contract(app):
         assert responses[code]["content"]["application/json"]["schema"] == {
             "$ref": "#/components/schemas/ReadinessReport"
         }
-    assert set(components["ReadinessReport"]["properties"]) == {"status", "version", "checks"}
-    assert set(components["ReadinessReport"]["required"]) == {"status", "version", "checks"}
-    assert set(components["ReadinessChecks"]["properties"]) == {"database", "llm"}
-    assert components["ComponentStatus"]["enum"] == ["ok", "unavailable"]
+    assert set(components["ReadinessReport"]["properties"]) == {"status", "version"}
+    assert set(components["ReadinessReport"]["required"]) == {"status", "version"}
+    assert components["ReadinessStatus"]["enum"] == ["ok", "unavailable"]
