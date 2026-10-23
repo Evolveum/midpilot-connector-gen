@@ -5,7 +5,7 @@ import asyncio
 import logging
 import ssl
 from functools import lru_cache
-from typing import Any, Awaitable, Callable, Final, Literal, Optional, TypeVar, cast
+from typing import Any, Awaitable, Callable, Final, Optional, TypeVar, cast
 
 import httpx
 from langchain_classic.output_parsers import RetryWithErrorOutputParser
@@ -188,11 +188,13 @@ def get_default_llm(
         "model": config.llm.model_name,
         "timeout": config.llm.request_timeout,
         "temperature": temperature,
-        "extra_body": {"provider": {"order": config.llm.provider_order}},
         "http_async_client": get_llm_http_client(),
         "max_retries": 0,
         "callbacks": [get_llm_metrics_handler()],
     }
+    # Provider routing is an OpenRouter extension; strict OpenAI-compatible APIs reject unknown fields.
+    if config.llm.provider_order:
+        llm_kwargs["extra_body"] = {"provider": {"order": config.llm.provider_order}}
     if selected_reasoning_effort is not None:
         llm_kwargs["reasoning_effort"] = selected_reasoning_effort
 
@@ -268,7 +270,6 @@ def build_structured_chain(
     *,
     llm: ChatOpenAI | None = None,
     partial_variables: dict[str, Any] | None = None,
-    user_role: Literal["human", "user"] = "user",
 ) -> Runnable:
     """Build a default LLM chain with a Pydantic structured-output parser."""
     parser: PydanticOutputParser[Any] = PydanticOutputParser(pydantic_object=response_model)
@@ -278,7 +279,7 @@ def build_structured_chain(
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", f"{system_prompt}\n\n{{format_instructions}}"),
-            (user_role, user_prompt),
+            ("user", user_prompt),
         ]
     ).partial(**prompt_variables)
     return make_basic_chain(prompt, llm or get_default_llm(), parser)

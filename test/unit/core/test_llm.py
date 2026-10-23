@@ -38,6 +38,22 @@ def test_get_default_llm_explicit_none_disables_reasoning_effort(monkeypatch):
     assert "reasoning_effort" not in chat_openai.call_args.kwargs
 
 
+@pytest.mark.parametrize(
+    ("provider_order", "expected_extra_body"),
+    [
+        ([], None),
+        (["groq"], {"provider": {"order": ["groq"]}}),
+    ],
+)
+def test_get_default_llm_sends_provider_routing_only_when_configured(monkeypatch, provider_order, expected_extra_body):
+    monkeypatch.setattr(config.llm, "provider_order", provider_order)
+
+    with patch("src.core.llm.ChatOpenAI") as chat_openai:
+        get_default_llm()
+
+    assert chat_openai.call_args.kwargs.get("extra_body") == expected_extra_body
+
+
 def test_irrelevant_links_reasoning_effort_uses_medium_only_when_global_reasoning_is_enabled(monkeypatch):
     _set_reasoning_effort(monkeypatch, None)
     assert _link_filter_reasoning_effort() is None
@@ -62,7 +78,6 @@ def test_build_structured_chain_uses_provided_llm_and_partial_variables() -> Non
             _Response,
             llm=llm,
             partial_variables={"extra": "context"},
-            user_role="human",
         )
 
     get_default.assert_not_called()

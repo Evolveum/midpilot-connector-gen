@@ -27,8 +27,8 @@ class LLMSettings(BaseModel):
     model_name: str = "openai/gpt-oss-120b"
     request_timeout: int = 600
     provider_order: List[str] = Field(
-        ["groq", "wandb/fp4", "clarifai/fp4"],
-        description="List of LLM providers in order of preference",
+        [],
+        description="Optional OpenRouter provider routing order; sent only when not empty.",
     )
     reasoning_effort: ReasoningEffort | None = Field(
         None,

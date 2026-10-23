@@ -41,10 +41,12 @@ most likely to touch.
 
 | `+LLM__+` | `src/config/llm.py`
 | LLM client: any OpenAI-compatible API (`OPENAI_API_BASE`, default
-  OpenRouter), `MODEL_NAME`, `OPENAI_API_KEY`, provider preference order,
-  optional `REASONING_EFFORT`, request timeout, connection pool, transient
-  retry policy. *Shared by all modules* — there is no per-module model
-  selection.
+  OpenRouter), `MODEL_NAME`, `OPENAI_API_KEY`; switching provider needs only
+  these three. Optional `REASONING_EFFORT` (set only for models that support
+  it), optional OpenRouter `PROVIDER_ORDER` (sent only when set; the 1.0.0
+  default was `["groq","wandb/fp4","clarifai/fp4"]`), request timeout,
+  connection pool, transient retry policy. *Shared by all modules* — there is
+  no per-module model selection.
 
 | `+LANGFUSE__+` | `src/config/langfuse.py`
 | Tracing: `TRACING_ENABLED` (default off), project keys, environment name.

@@ -100,11 +100,11 @@ def get_irrelevant_filter_prompts(
     """
     Returns developer and user messages for filtering irrelevant links.
 
-    :return: Tuple of (developer_message, user_message)
+    :return: Tuple of (system_message, user_message)
     """
     normalized_integration_type = _normalize_integration_type(integration_type)
     relevance_rules = _integration_relevance_rules(normalized_integration_type)
-    developer_msg = f"""You are an expert documentation relevancy evaluator for {app} {app_version}.
+    system_msg = f"""You are an expert documentation relevancy evaluator for {app} {app_version}.
 
 Your mission: Identify links that are clearly IRRELEVANT to a developer implementing IDM (Identity Management) integration for {app} {app_version}.
 
@@ -239,7 +239,7 @@ If no links are irrelevant, return: {{"links": []}}
 
     user_msg = "Evaluate these links and return ONLY the irrelevant ones:\n\n" + "\n".join(lines)
 
-    return developer_msg, user_msg
+    return system_msg, user_msg
 
 
 def get_rank_links_prompts(
@@ -251,11 +251,11 @@ def get_rank_links_prompts(
     """
     Returns developer and user messages for ranking links by relevance.
 
-    :return: Tuple of (developer_message, user_message)
+    :return: Tuple of (system_message, user_message)
     """
     normalized_integration_type = _normalize_integration_type(integration_type)
     relevance_rules = _integration_relevance_rules(normalized_integration_type)
-    developer_msg = f"""You are an expert documentation relevancy evaluator for {app} {app_version}.
+    system_msg = f"""You are an expert documentation relevancy evaluator for {app} {app_version}.
 
 Your task: Rank the provided links from MOST relevant to LEAST relevant for a developer implementing IDM (Identity Management) integration for {app} {app_version}.
 
@@ -281,4 +281,4 @@ Return ONLY a JSON object with this format:
         lines.append(f"- url: {url}\n  title: {title}\n  snippet: {snippet}")
 
     user_msg = "Rank these links from most relevant to least relevant:\n\n" + "\n".join(lines)
-    return developer_msg, user_msg
+    return system_msg, user_msg
