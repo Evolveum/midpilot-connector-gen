@@ -60,7 +60,7 @@ async def generate_groovy(
     llm = get_default_llm()
 
     prompt = ChatPromptTemplate.from_messages(
-        [("system", system_prompt), ("human", user_prompt + "{validation_errors}")]
+        [("system", system_prompt), ("user", user_prompt + "{validation_errors}")]
     )
     chain = make_basic_chain(prompt, llm, StrOutputParser())
 

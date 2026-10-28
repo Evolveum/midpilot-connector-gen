@@ -175,20 +175,18 @@ async def rank_candidate_links(
         max_links if max_links > 0 else "all",
     )
 
-    developer_msg, user_msg = get_rank_links_prompts(
+    system_msg, user_msg = get_rank_links_prompts(
         entries,
         app,
         app_version,
         integration_type=integration_type,
     )
 
-    llm = get_default_llm(temperature=0.7)
-    developer_message = SystemMessage(content=developer_msg)
-    developer_message.additional_kwargs = {"__openai_role__": "developer"}
+    llm = get_default_llm()
+    system_message = SystemMessage(content=system_msg)
     user_message = HumanMessage(content=user_msg)
-    user_message.additional_kwargs = {"__openai_role__": "user"}
 
-    chat_prompts = ChatPromptTemplate.from_messages([developer_message, user_message])
+    chat_prompts = ChatPromptTemplate.from_messages([system_message, user_message])
     chain = make_basic_chain(
         prompt=chat_prompts,
         llm=llm,
