@@ -43,9 +43,7 @@ async def classify_irrelevant_links(prompts: tuple[str, str]) -> IrrelevantLinks
     system_prompt, user_prompt = prompts
 
     system_message = SystemMessage(content=system_prompt)
-    system_message.additional_kwargs = {"__openai_role__": "developer"}
     user_message = HumanMessage(content=user_prompt)
-    user_message.additional_kwargs = {"__openai_role__": "user"}
 
     chain = make_basic_chain(
         prompt=ChatPromptTemplate.from_messages([system_message, user_message]),

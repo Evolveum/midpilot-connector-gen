@@ -327,7 +327,7 @@ class BaseGroovyGenerator(ABC):
         try:
             logger.info("[Codegen:Generation] Running final cleanup LLM pass for %s", self.config.operation_name)
             llm = get_default_llm()
-            prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", user_prompt)])
+            prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("user", user_prompt)])
             chain = make_basic_chain(prompt, llm, StrOutputParser())
             response = await self._invoke_generation_chain(
                 chain,
@@ -532,7 +532,7 @@ class BaseGroovyGenerator(ABC):
             [
                 ("system", self.config.system_prompt),
                 # Empty unless the candidate forwarded as <result> failed validation.
-                ("human", self.config.user_prompt + "{validation_errors}"),
+                ("user", self.config.user_prompt + "{validation_errors}"),
             ]
         )
 

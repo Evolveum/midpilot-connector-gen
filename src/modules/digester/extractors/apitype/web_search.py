@@ -139,7 +139,6 @@ async def lookup_api_type_web_search(application_name: str) -> ApiTypeSignalResu
         get_api_type_web_search_system_prompt,
         get_api_type_web_search_user_prompt,
         ApiTypeSignalResult,
-        user_role="human",
     )
 
     try:
@@ -196,7 +195,6 @@ async def lookup_rest_web_search(application_name: str) -> RestSignalResult:
         get_rest_web_search_system_prompt,
         get_rest_web_search_user_prompt,
         RestSignalResult,
-        user_role="human",
     )
 
     try:

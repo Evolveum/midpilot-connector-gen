@@ -54,7 +54,6 @@ async def lookup_api_type_knowledge(application_name: str) -> ApiTypeSignalResul
         get_api_type_knowledge_system_prompt,
         get_api_type_knowledge_user_prompt,
         ApiTypeSignalResult,
-        user_role="human",
     )
 
     try:
@@ -105,7 +104,6 @@ async def lookup_rest_knowledge(application_name: str) -> RestSignalResult:
         get_rest_knowledge_system_prompt,
         get_rest_knowledge_user_prompt,
         RestSignalResult,
-        user_role="human",
     )
 
     try:

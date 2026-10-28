@@ -138,7 +138,6 @@ async def extract_endpoints(
         ExtractedEndpointResponse,
         llm=llm,
         partial_variables={"total": total_chunks},
-        user_role="human",
     )
 
     param_system_prompt = check_endpoint_params_system_prompt.replace("{object_class}", object_class)
@@ -148,7 +147,6 @@ async def extract_endpoints(
         param_user_prompt,
         EndpointParamInfo,
         llm=llm,
-        user_role="human",
     )
 
     # Process each chunk

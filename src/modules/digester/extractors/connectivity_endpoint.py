@@ -155,7 +155,6 @@ async def rank_connectivity_candidates(
         get_connectivity_endpoint_ranking_system_prompt,
         get_connectivity_endpoint_ranking_user_prompt,
         ConnectivityEndpointRankingResponse,
-        user_role="human",
     )
 
     try:

@@ -135,7 +135,6 @@ def _build_dedupe_chain() -> Any:
         attribute_deduplication_system_prompt,
         attribute_deduplication_user_prompt,
         AttributeDedupResponse,
-        user_role="human",
     )
 
 

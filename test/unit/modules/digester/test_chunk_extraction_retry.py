@@ -209,7 +209,7 @@ async def test_run_all_items_build_parallel_reuses_one_chain():
         )
 
     assert results == ["built-a", "built-b"]
-    build_chain.assert_called_once_with("system", "user", _RetryResponse, user_role="human")
+    build_chain.assert_called_once_with("system", "user", _RetryResponse)
     assert run_item.await_count == 2
     assert all(await_args.args[1] is chain for await_args in run_item.await_args_list)
 

@@ -21,7 +21,7 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
     Use LLM to generate summary, tags and category for a chunk.
 
     inputs:
-    - prompts: tuple of (developer_prompt, user_prompt)
+    - prompts: tuple of (system_prompt, user_prompt)
     - app: application name
     - app_version: application version
     returns:
@@ -29,19 +29,16 @@ async def get_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
 
     """
     logger.debug("[Documents:LLM] Starting LLM call for chunk processing")
-    llm = get_default_llm(temperature=0.7)
+    llm = get_default_llm()
 
-    developer_msg, user_msg = prompts
+    system_msg, user_msg = prompts
 
-    developer_message = SystemMessage(content=developer_msg)
-    developer_message.additional_kwargs = {"__openai_role__": "developer"}
-
+    system_message = SystemMessage(content=system_msg)
     user_message = HumanMessage(content=user_msg)
-    user_message.additional_kwargs = {"__openai_role__": "user"}
 
     prompt = ChatPromptTemplate.from_messages(
         [
-            developer_message,
+            system_message,
             user_message,
         ]
     )

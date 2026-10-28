@@ -138,7 +138,6 @@ async def _sort_bucket_by_importance(
             sort_sql_object_classes_user_prompt,
             ObjectClassNameOrderResponse,
             llm=llm_sort,
-            user_role="human",
         )
     else:
         sort_chain = build_structured_chain(
@@ -146,7 +145,6 @@ async def _sort_bucket_by_importance(
             sort_object_classes_user_prompt,
             ObjectClassesRankedResponse,
             llm=llm_sort,
-            user_role="human",
         )
 
     original_map = {obj.name.strip().lower(): obj for obj in object_classes}
@@ -288,12 +286,11 @@ async def _deduplicate_and_sort_object_classes(
         confidence_model = ObjectClassConfidenceAssignmentsResponse if sql_compact else ObjectClassesConfidenceResponse
         confidence_parser: PydanticOutputParser[Any] = PydanticOutputParser(pydantic_object=confidence_model)
 
-        developer_message = SystemMessage(
+        system_message = SystemMessage(
             content=get_object_classes_relevancy_system_prompt(compact_output=sql_compact, intent=intent)
             + "\n\n"
             + confidence_parser.get_format_instructions()
         )
-        developer_message.additional_kwargs = {"__openai_role__": "developer"}
 
         confidence_json = (
             json.dumps(items_for_confidence, separators=(",", ":")) if sql_compact else json.dumps(items_for_confidence)
@@ -305,9 +302,8 @@ async def _deduplicate_and_sort_object_classes(
                 intent=intent,
             )
         )
-        user_message.additional_kwargs = {"__openai_role__": "user"}
 
-        chat_prompts = ChatPromptTemplate.from_messages([developer_message, user_message])
+        chat_prompts = ChatPromptTemplate.from_messages([system_message, user_message])
         confidence_chain = make_basic_chain(prompt=chat_prompts, llm=llm_filter, parser=confidence_parser)
 
         confidence_result = await invoke_llm(
