@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Midpilot Connector Generator",
-    "version": "1.0.1"
+    "version": "1.0.2"
   },
   "paths": {
     "/api/v1/session/{session_id}": {
