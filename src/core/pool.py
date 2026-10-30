@@ -1,3 +1,4 @@
+import multiprocessing
 import signal
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -13,8 +14,11 @@ def init_worker():
 
 
 def create_pool(max_workers: int) -> ProcessPoolExecutor:
+    # Not Linux's default fork: a forked worker keeps the server's client sockets open, so connections the
+    # server closes never send FIN and the proxy's next request on them hangs until its timeout.
     return ProcessPoolExecutor(
         max_workers=max_workers,
+        mp_context=multiprocessing.get_context("forkserver"),
         initializer=init_worker,
     )
 

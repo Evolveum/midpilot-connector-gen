@@ -15,6 +15,71 @@ The upgrade instructions between releases are in the
 https://docs.evolveum.com/midpoint/release/[release notes] (for midPilot we will
 prepare this page).
 
+== 1.0.2
+
+=== 2026-10-30 Base image with tini as the container init process
+
+Author: Alexander Brecko
+
+Description: The application ran as PID 1 in its container and never reaped
+the Chromium processes that Playwright leaves orphaned after scraping, so
+production pods accumulated zombie `chrome-headless` processes.
+`Dockerfile.base` now installs the Debian package `tini`, and `Dockerfile`
+starts the application through it: `ENTRYPOINT ["/usr/bin/tini", "--"]` with
+the unchanged `CMD ["python", "server.py"]`. tini runs as PID 1, forwards
+signals to the server and reaps orphaned processes.
+
+The base image keeps its tag `python3.13-playwright1.63.0`, so it has to be
+rebuilt and pushed before an application image is built from this change. An
+application build on a base image without tini fails with `tini is missing
+from the base image. Rebuild Dockerfile.base.` No application configuration,
+API contract or database schema changed.
+
+Required Upgrade Steps
+
+. Build and push the base image before any application image, either with the
+Jenkins base-image job or manually:
++
+[source,bash]
+----
+docker build --pull -f Dockerfile.base \
+  -t registry.evolveum.com/public/midpilot-connector-gen-base:python3.13-playwright1.63.0 .
+docker push registry.evolveum.com/public/midpilot-connector-gen-base:python3.13-playwright1.63.0
+----
++
+For local development with `docker-compose.dev.yaml`, build the local tag
+instead:
+`docker build --pull -f Dockerfile.base -t midpilot-connector-gen-base:python3.13-playwright1.63.0 .`
+. Rebuild and restart the application:
+`docker compose build midpilot-connector-gen && docker compose up -d midpilot-connector-gen`.
+. In Kubernetes manifests, do not set `command:` on the connector-gen
+container: it replaces the image `ENTRYPOINT`, so tini would not run. Put the
+process into `args:` instead, for example `args: ["python", "-m",
+"src.jobs.runtime"]` for worker-only Deployments, or set neither for the API.
+. No database migration or configuration change is required.
+. Validate in a running container (`docker exec` or `kubectl exec`):
+`tr '\0' ' ' < /proc/1/cmdline` must print `/usr/bin/tini -- python server.py`
+(or the worker command). After a scrape job,
+`grep -l '^State:.*Z' /proc/[0-9]*/status | wc -l` must print `0`.
+
+Rollback Procedure (If Upgrade Fails)
+
+. Revert the `Dockerfile` change and rebuild the application image. The
+rebuilt base image stays compatible with the previous `Dockerfile` because
+that one never calls tini, so the base image does not have to be rolled back.
+. Manifests that moved the process from `command:` to `args:` need no revert:
+without an image `ENTRYPOINT`, the `args:` value runs as the command.
+. No database restore is needed because this change does not touch stored data.
+
+Notes & References
+
+* Related PR: Not assigned.
+* Affected files: `Dockerfile.base`, `Dockerfile`.
+* Affected configs: none.
+* The same change also moves the CPU process pool to the `forkserver` start
+method and moves the scraper's link cleanup off the event loop. Neither needs
+an upgrade step.
+
 == 0.9.0
 
 === 2026-10-14 Reject complexType and flatten SCIM complex attributes in native schemas

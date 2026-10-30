@@ -2,6 +2,7 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+import asyncio
 import logging
 from typing import Awaitable, Callable, List
 
@@ -34,6 +35,41 @@ from src.modules.scrape.prompts.prompts import get_relevant_filter_prompts
 from src.modules.scrape.schema import RelevantLinks
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_documentation_links(
+    documentation_references: DocumentationReferences, link_arr: list[str], documentation_url: str
+) -> tuple[DocumentationReferences, list[str]]:
+    """
+    Normalize the outgoing links of one scraped documentation and keep its citations in sync.
+    CPU-bound on pages with thousands of links, so scraper_loop runs it off the event loop.
+    """
+    link_arr_clean = clean_reference_list(link_arr)
+    deleted_links = list(set(link_arr) - set(link_arr_clean))
+    if deleted_links:
+        documentation_references = remove_citations(documentation_references, deleted_links)
+    link_arr_abs, map_of_links = relative_paths_to_absolute(link_arr_clean, documentation_url)
+    documentation_references = update_references(documentation_references, map_of_links)
+    deduplicate_links(documentation_references)
+    links_without_anchors, anchor_url_mapping = remove_anchor_links(link_arr_abs)
+    documentation_references = update_references(documentation_references, anchor_url_mapping)
+    deduplicate_links(documentation_references)
+    links_without_trailing_slash, map_without_trailing_slash = remove_trailing_slash(links_without_anchors)
+    documentation_references = update_references(documentation_references, map_without_trailing_slash)
+    deduplicate_links(documentation_references)
+    link_arr_valid = [link for link in links_without_trailing_slash if validate_pydantic_object(link, HttpUrl)]
+    link_arr_valid = list(set(link_arr_valid))
+    removed_invalid_links = list(set(links_without_trailing_slash) - set(link_arr_valid))
+    if removed_invalid_links:
+        documentation_references = remove_citations(documentation_references, removed_invalid_links)
+    if len(link_arr_valid) != len(documentation_references.references):
+        logger.warning(
+            "[Scrape:Loop] After cleaning and validation, there is a mismatch between references and valid links for documentation %s. Number of valid links: %s, number of references: %s",
+            documentation_url,
+            len(link_arr_valid),
+            len(documentation_references.references),
+        )
+    return documentation_references, link_arr_valid
 
 
 async def scraper_loop(
@@ -204,31 +240,9 @@ async def scraper_loop(
                 saved_documentations[str(scraped_link.url)] = documentation
                 continue
 
-            link_arr_clean = clean_reference_list(link_arr)
-            deleted_links = list(set(link_arr) - set(link_arr_clean))
-            if deleted_links:
-                documentation_references = remove_citations(documentation_references, deleted_links)
-            link_arr_abs, map_of_links = relative_paths_to_absolute(link_arr_clean, str(scraped_link.url))
-            documentation_references = update_references(documentation_references, map_of_links)
-            deduplicate_links(documentation_references)
-            links_without_anchors, anchor_url_mapping = remove_anchor_links(link_arr_abs)
-            documentation_references = update_references(documentation_references, anchor_url_mapping)
-            deduplicate_links(documentation_references)
-            links_without_trailing_slash, map_without_trailing_slash = remove_trailing_slash(links_without_anchors)
-            documentation_references = update_references(documentation_references, map_without_trailing_slash)
-            deduplicate_links(documentation_references)
-            link_arr_valid = [link for link in links_without_trailing_slash if validate_pydantic_object(link, HttpUrl)]
-            link_arr_valid = list(set(link_arr_valid))
-            removed_invalid_links = list(set(links_without_trailing_slash) - set(link_arr_valid))
-            if removed_invalid_links:
-                documentation_references = remove_citations(documentation_references, removed_invalid_links)
-            if len(link_arr_valid) != len(documentation_references.references):
-                logger.warning(
-                    "[Scrape:Loop] After cleaning and validation, there is a mismatch between references and valid links for documentation %s. Number of valid links: %s, number of references: %s",
-                    str(scraped_link.url),
-                    len(link_arr_valid),
-                    len(documentation_references.references),
-                )
+            documentation_references, link_arr_valid = await asyncio.to_thread(
+                _clean_documentation_links, documentation_references, link_arr, str(scraped_link.url)
+            )
             # Probably we dont need to return the irrelevant links arr
             new_irrelevant_links, partly_filtered_new_links = await filter_out_irrelevant_links(
                 links=link_arr_valid,
@@ -262,11 +276,13 @@ async def scraper_loop(
                 and link + "/" not in current_scraped_urls
             ]
 
-            documentation_references_saved = remove_citations(
-                documentation_references_saved, not_saved_or_current_irrelevant_links
+            documentation_references_saved = await asyncio.to_thread(
+                remove_citations, documentation_references_saved, not_saved_or_current_irrelevant_links
             )
 
-            documentation_references = remove_citations(documentation_references, new_irrelevant_links)
+            documentation_references = await asyncio.to_thread(
+                remove_citations, documentation_references, new_irrelevant_links
+            )
 
             if len(partly_filtered_new_links) != len(documentation_references.references):
                 logger.warning(
@@ -313,9 +329,11 @@ async def scraper_loop(
                     # TODO: maybe we should do this only after all documentations are processed
                     irrelevant_links.extend(llm_irrelevant_links)
                     new_links_to_scrape.extend(relevant_links)
-                    documentation_references = remove_citations(documentation_references, llm_irrelevant_links)
-                    documentation_references_saved = remove_citations(
-                        documentation_references_saved, llm_irrelevant_links
+                    documentation_references = await asyncio.to_thread(
+                        remove_citations, documentation_references, llm_irrelevant_links
+                    )
+                    documentation_references_saved = await asyncio.to_thread(
+                        remove_citations, documentation_references_saved, llm_irrelevant_links
                     )
 
                 new_links_to_scrape = list(set(new_links_to_scrape))

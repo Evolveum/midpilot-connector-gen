@@ -14,10 +14,13 @@ ENV UV_LINK_MODE=copy
 ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 
 # Apply Debian security updates published after the upstream image was built.
+# Install tini, the application image's PID 1, which reaps the Chromium
+# processes that scraping leaves orphaned.
 # Remove the system pip: the application runs from the uv-managed /app/.venv,
 # so pip is never used at runtime and would only ship its advisories.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip uninstall --yes pip
 
