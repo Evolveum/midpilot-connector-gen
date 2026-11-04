@@ -154,7 +154,9 @@ chunk once, and one reference list per attempt.
   none). A tag matches when it
   equals the class name or a regular plural of it, ignoring case, whitespace,
   `_` and `-` (`WorkPackage` matches `work packages`, `Policy` matches
-  `policies`); tags are never singularized. SCIM falls back to the
+  `policies`); tags are never singularized. Chunk processing adds the
+  object classes a chunk documents to its tags (see
+  link:scrape.adoc#_process[scrape]). SCIM falls back to the
   object-class relevance stored with `classes`.
 | `fallback`
 | The default specification set minus every primary chunk. It runs only when
@@ -170,8 +172,9 @@ chunk once, and one reference list per attempt.
   table definitions wins.
 |===
 
-A specification the scraper saved more than once (as JSON and as YAML, or from
-two URLs) is read from one copy in every attempt: of the documents with the
+A specification the scraper saved more than once (as JSON and as YAML, from
+two URLs, or from instances that each list themselves as the server) is read
+from one copy in every attempt: of the documents with the
 same `retrieval.spec.canonical_hash` (see
 link:../sessions-and-jobs.adoc#chunk-metadata[chunk metadata]) the one with the
 fewest tokens is kept. Uploaded documents carry no hash and are never dropped.

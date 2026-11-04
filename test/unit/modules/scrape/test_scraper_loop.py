@@ -3,11 +3,13 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import json
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import yaml
 
 from src.modules.scrape.core.scraper import scraper_loop
 from src.modules.scrape.schema import RelevantLinks
@@ -272,7 +274,7 @@ async def test_spec_referenced_by_a_page_is_saved_in_the_same_iteration() -> Non
         return {url: "text/html" if url == PAGE_URL else "application/json" for url in urls}
 
     async def data_documentations(urls: list[str]) -> list[tuple[str, str]]:
-        return [(url, OPENAPI_JSON) for url in urls]
+        return [(url, OPENAPI_JSON.replace('"Example"', json.dumps(url))) for url in urls]
 
     data_fetch = AsyncMock(side_effect=data_documentations)
     with (
@@ -309,3 +311,41 @@ async def test_spec_referenced_by_a_page_is_saved_in_the_same_iteration() -> Non
     assert data_fetch.await_args_list[-1].args == ([spec_url, raw_spec_url],)
     # Already saved as a referenced spec, so it is not crawled again in the next iteration.
     assert new_links == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("starter", "saved"), [(False, [DATA_URL]), (True, [DATA_URL, "https://docs.example.test/openapi.yaml"])]
+)
+async def test_second_copy_of_a_saved_api_description_is_saved_only_as_a_starter(
+    starter: bool, saved: list[str]
+) -> None:
+    yaml_url = "https://docs.example.test/openapi.yaml"
+    instance_copy = yaml.safe_dump({**json.loads(OPENAPI_JSON), "servers": [{"url": "https://tenant.example.test"}]})
+    scheduled = []
+
+    async def on_documentation_scraped(documentation) -> None:
+        scheduled.append(documentation)
+
+    with (
+        patch(
+            "src.modules.scrape.core.scraper.get_all_content_types",
+            new_callable=AsyncMock,
+            return_value={DATA_URL: "application/json", yaml_url: "application/yaml"},
+        ),
+        patch(
+            "src.modules.scrape.core.scraper.scrape_all_data_documentations",
+            new_callable=AsyncMock,
+            return_value=[(DATA_URL, OPENAPI_JSON), (yaml_url, instance_copy)],
+        ),
+        patch("src.modules.scrape.core.scraper.scrape_urls", _no_pages),
+    ):
+        await scraper_loop(
+            links_to_scrape=[DATA_URL, yaml_url],
+            app="Example",
+            app_version="1",
+            on_documentation_scraped=on_documentation_scraped,
+            starter_links=[yaml_url] if starter else [],
+        )
+
+    assert [documentation.url for documentation in scheduled] == saved

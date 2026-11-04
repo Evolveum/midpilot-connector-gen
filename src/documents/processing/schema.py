@@ -23,6 +23,18 @@ class ChunkProcessingError(BaseModel):
     error: str = Field(description="Human-readable description of the failure")
 
 
+class ObjectClassMention(BaseModel):
+    """An object class the LLM found in a chunk, with the quote that shows it."""
+
+    name: str = Field(description="Singular name of the object class as the API uses it, for example WorkPackage")
+    evidence: str = Field(default="", description="Short verbatim quote from the chunk that contains the class name")
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def normalize_evidence(cls, value: Any) -> Any:
+        return "" if value is None else value
+
+
 class LlmChunkOutput(BaseModel):
     """
     Schema for LLM output containing summary, tags and category for a chunk
@@ -37,6 +49,22 @@ class LlmChunkOutput(BaseModel):
     num_defined_object_classes: Optional[int] = Field(
         default=None, description="The number of defined object classes mentioned in the chunk, if any"
     )
+    object_classes: List[ObjectClassMention] = Field(
+        default_factory=list,
+        description="Object classes whose schema, attributes or endpoints the chunk defines, with evidence",
+    )
+
+    @field_validator("object_classes", mode="before")
+    @classmethod
+    def normalize_object_classes(cls, value: Any) -> Any:
+        """Accept a bare class name (it has no evidence, so it is dropped later) and skip unnamed entries."""
+        if not isinstance(value, list):
+            return []
+        return [
+            {"name": item} if isinstance(item, str) else item
+            for item in value
+            if isinstance(item, str) or (isinstance(item, dict) and isinstance(item.get("name"), str))
+        ]
 
     @field_validator("num_endpoints", mode="before")
     @classmethod

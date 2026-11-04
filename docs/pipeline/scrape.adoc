@@ -40,7 +40,10 @@ Module: `src/modules/scrape/` (crawling built on crawl4ai + Playwright via
    * A data file is saved when it is an API description (OpenAPI 3, Swagger 2,
      SCIM schemas or resource types, JSON Schema) or plain text such as a raw
      markdown file. Other JSON/YAML (`package.json`, translation bundles) is
-     saved only when it is a starter link.
+     saved only when it is a starter link. A copy of an API description the
+     job already saved (the same specification as JSON and YAML, or served
+     by another instance that lists itself in `servers` or `host`) is not
+     saved again, unless it is a starter link.
 3. *Fetch referenced specifications.* A page built from an API description
    (Swagger UI including `swagger-initializer.js` and `configUrl`, Redoc,
    Stoplight Elements, RapiDoc, Scalar), a `<link rel="alternate">` or a
@@ -63,22 +66,43 @@ Module: `src/modules/scrape/` (crawling built on crawl4ai + Playwright via
    (in-scope links remain) and `no-more-links`.
    Robots.txt denials and permanent 4xx responses are not retried; 408, 425,
    429 and server errors are.
-6. As each document is saved, it is *chunked* (token-based,
-   `+SCRAPE_AND_PROCESS__CHUNK_LENGTH+` tokens per chunk) and each chunk is
-   *processed by an LLM* (`src/documents/processing/`): cleaned up,
-   categorized (`spec_json`, `reference_api`, `tutorial`, …) and annotated
-   with metadata, including `retrieval` (starter link, recognized
-   specification and its canonical hash, see
-   link:../sessions-and-jobs.adoc#chunk-metadata[chunk metadata]).
-   Preserved SQL/SCIM schemas that exceed the single-schema budget are split
-   into structurally valid sub-schemas instead of naive cuts. Conndev uploads
-   are the exception: their binding is classified deterministically and the
-   chunk-processing LLM is skipped.
-7. Processed chunks are persisted as `documentation_chunks` rows with
+6. As each document is saved, it is *chunked* into pieces of at most
+   `+SCRAPE_AND_PROCESS__CHUNK_LENGTH+` tokens:
+   * An OpenAPI 3 or Swagger 2 description that fits into one chunk stays
+     whole. A larger one is split by resource (the first tag of an operation,
+     else the first resource segment of its path), and every chunk is itself
+     a valid description: the overview chunk holds `info`, servers, security
+     schemes and the tag list; a resource chunk holds the operations of one or
+     more resources under a short header (title, version, servers) with every
+     component they reference, directly or transitively; components no
+     operation references get chunks of their own. A resource that does not
+     fit is split by path, then by operation, and a component larger than a
+     chunk into valid fragments. Chunks keep the syntax and style of the
+     source (YAML, indented or minified JSON).
+   * SCIM schemas and JSON Schema documents are split into valid JSON
+     sub-schemas.
+   * Any other document is split by tokens.
+7. Each chunk is *processed by an LLM* (`src/documents/processing/`):
+   summarized, categorized (`spec_json`, `reference_api`, `tutorial`, …),
+   tagged, and annotated with metadata, including `retrieval` (starter link,
+   recognized specification and its canonical hash, see
+   link:../sessions-and-jobs.adoc#chunk-metadata[chunk metadata]). The object
+   classes a chunk documents are added to its `tags`: a class the LLM names
+   only when its evidence contains the class name and appears in the chunk,
+   as a whole or through a schema name or path in it (`UserModel`,
+   `/api/v3/users`), and for a chunk of an API description also its resources
+   and schemas. For such
+   a chunk the category (`spec_json` or `spec_yaml`) and the endpoint count
+   come from the description, not from the LLM.
+8. Processed chunks are persisted as `documentation_chunks` rows with
    `source='scraper'`.
 
 Uploaded files (see link:../sessions-and-jobs.adoc[Sessions and jobs]) go
-through steps 6–7 of the same machinery with `source='upload'`.
+through the LLM processing and persistence of steps 7–8 with
+`source='upload'`; they are split by tokens, except preserved SQL/SCIM schemas
+over the single-schema budget, which are split into structurally valid
+sub-schemas. Conndev uploads skip the chunk-processing LLM: their binding is
+classified deterministically.
 
 == Pitfalls
 

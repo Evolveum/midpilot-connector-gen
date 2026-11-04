@@ -107,10 +107,15 @@ also carry `retrieval`, which records how the scraper obtained the document:
 }
 ----
 
+Since 1.1.0 `tags` also name the object classes a chunk documents (for
+example `WorkPackage`, or the `Users` resource of an API description), which
+the digester selects chunks by.
+
 `starter` is true for a link the user picked. `spec` is present for a data file
 recognized as an API description (`format`: `openapi`, `swagger`, `scim` or
 `json_schema`); `canonical_hash` is the same for the JSON and the YAML
-serialization of one specification. The key is optional: uploads and
+serialization of one specification and for copies that differ only in where
+the API is deployed (`servers`; Swagger `host` and `schemes`). The key is optional: uploads and
 documentation scraped before 1.1.0 have none, and no selection rule excludes a
 chunk for missing it.
 
