@@ -13,7 +13,7 @@ from src.config import config
 from src.core.schema import validate_pydantic_object
 from src.documents import SavedDocumentation
 from src.integrations.web import IrrelevantLinks, classify_irrelevant_links
-from src.modules.scrape.core.links import is_forbidden_url
+from src.integrations.web.urls import is_forbidden_url
 from src.modules.scrape.prompts.prompts import get_irrelevant_filter_prompts
 
 logger = logging.getLogger(__name__)
@@ -86,11 +86,7 @@ async def filter_out_irrelevant_links(
         len(current_links) - len(current_links_past_filtered),
     )
 
-    current_links_trusted = [
-        link
-        for link in current_links_past_filtered
-        if get_base_domain(link) in trusted_domains or "netsuite" in get_base_domain(link)
-    ]
+    current_links_trusted = [link for link in current_links_past_filtered if get_base_domain(link) in trusted_domains]
     logger.debug(
         "[Scrape:Filter] Keep trusted domains only: %s -> %s (removed %s)",
         len(current_links_past_filtered),

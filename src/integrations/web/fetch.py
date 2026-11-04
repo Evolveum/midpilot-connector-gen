@@ -25,6 +25,21 @@ def _normalize_url(url: str) -> str:
     return (url or "").rstrip("/")
 
 
+# 4xx responses that can succeed on a later attempt; every other 4xx (and a robots.txt denial) is final.
+_RETRYABLE_CLIENT_ERROR_STATUSES = frozenset({408, 425, 429})
+
+
+def _is_retryable_failure(result: CrawlResult) -> bool:
+    """Return False for failures a retry cannot fix: a robots.txt denial or a permanent 4xx response."""
+    headers = getattr(result, "response_headers", None) or {}
+    if "X-Robots-Status" in headers or "robots.txt" in str(getattr(result, "error_message", "") or ""):
+        return False
+    status_code = getattr(result, "status_code", None)
+    if isinstance(status_code, int) and 400 <= status_code < 500:
+        return status_code in _RETRYABLE_CLIENT_ERROR_STATUSES
+    return True
+
+
 async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlResult]:
     """
     Scrape URLs and return successful CrawlResult objects.
@@ -50,6 +65,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
     links_to_scrape = list(links_to_scrape_orig)
     scrape_out_success_count = 0
     new_failed_links: list[str] = []
+    permanently_failed_links: list[str] = []
     last_attempt = 0
 
     for attempt in range(1, max_attempts + 1):
@@ -70,16 +86,20 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
                     if getattr(result, "success", False):
                         scrape_out_success_count += 1
                         yield result
-                    elif result_url:
+                    elif result_url and _is_retryable_failure(result):
                         new_failed_links.append(result_url.rstrip("/"))
+                    elif result_url:
+                        permanently_failed_links.append(result_url.rstrip("/"))
             else:
                 results: List[CrawlResult] = cast(List[CrawlResult], raw_results)
                 for link, result in zip(links_to_scrape, results):
                     if getattr(result, "success", False):
                         scrape_out_success_count += 1
                         yield result
-                    else:
+                    elif _is_retryable_failure(result):
                         new_failed_links.append(link.rstrip("/"))
+                    else:
+                        permanently_failed_links.append(link.rstrip("/"))
 
         if seen_links:
             for link in links_to_scrape:
@@ -90,7 +110,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
         new_failed_links = list(dict.fromkeys(new_failed_links))
 
         if not new_failed_links:
-            logger.info("[Scrape:URLs] Attempt %s: All URLs scraped successfully", attempt)
+            logger.info("[Scrape:URLs] Attempt %s: No URLs left to retry", attempt)
             break
 
         logger.warning(
@@ -109,10 +129,17 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
 
         links_to_scrape = new_failed_links
 
+    permanently_failed_links = list(dict.fromkeys(permanently_failed_links))
+    if permanently_failed_links:
+        logger.warning(
+            "[Scrape:URLs] %s URLs were not retried (robots.txt denial or permanent 4xx response): %s",
+            len(permanently_failed_links),
+            permanently_failed_links,
+        )
     logger.info(
         "[Scrape:URLs] Scraping complete: %s successful, %s failed",
         scrape_out_success_count,
-        len(new_failed_links) if last_attempt == max_attempts else 0,
+        (len(new_failed_links) if last_attempt == max_attempts else 0) + len(permanently_failed_links),
     )
     return
 

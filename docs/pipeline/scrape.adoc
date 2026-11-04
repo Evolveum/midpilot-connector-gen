@@ -29,13 +29,19 @@ Module: `src/modules/scrape/` (crawling built on crawl4ai + Playwright via
 1. *Crawl* the starter links (typically the link:discovery.adoc[discovery]
    output) with crawl4ai/Playwright and convert pages to markdown.
 2. *Collect links* found on the scraped pages; normalize them (relative →
-   absolute, strip anchors/trailing slashes) and drop URLs containing
-   configured forbidden parts (login, pricing, changelogs, non-English
+   absolute, strip anchors/trailing slashes) and drop URLs whose path segment
+   matches a configured forbidden part (login, pricing, changelogs, non-English
    locales, …).
 3. *Filter* the remaining links with an LLM to keep only
    documentation-relevant ones, then feed them into the next iteration of the
    scraper loop. The loop runs up to
-   `+SCRAPE_AND_PROCESS__MAX_SCRAPER_ITERATIONS+` (default 4) iterations.
+   `+SCRAPE_AND_PROCESS__MAX_SCRAPER_ITERATIONS+` (default 4) iterations. Links
+   found on the last iteration are never scraped, so they are not sent to the
+   LLM; they only decide between the finish reasons `max-iterations-reached`
+   (in-scope links remain) and `no-more-links`.
+   A page whose markdown is empty or a conversion error is not saved, but its
+   links are still followed. Robots.txt denials and permanent 4xx responses
+   are not retried; 408, 425, 429 and server errors are.
 4. As each page is saved, it is *chunked* (token-based,
    `+SCRAPE_AND_PROCESS__CHUNK_LENGTH+` tokens per chunk) and each chunk is
    *processed by an LLM* (`src/documents/processing/`): cleaned up,
@@ -64,7 +70,8 @@ detected version, and version mismatch heuristics
 chunks are considered current.
 
 WARNING: The forbidden-URL list (`+SCRAPE_AND_PROCESS__FORBIDDEN_URL_PARTS+`)
-filters out many locale prefixes (`de`, `fr`, `es`, …) by substring. If the
+filters out many locale prefixes (`de`, `fr`, `es`, …). An entry matches a whole
+URL path segment or file name (`/de/` or `/docs/de`, not `/developer`). If the
 documentation you need lives under such a path, adjust the setting.
 
 == Related settings

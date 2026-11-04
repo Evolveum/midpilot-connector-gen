@@ -16,6 +16,7 @@ from src.integrations.web import (
     scrape_all_data_documentations,
     scrape_urls,
 )
+from src.integrations.web.urls import is_forbidden_url
 from src.modules.scrape.core.citations import (
     deduplicate_links,
     process_citations_markdown,
@@ -25,7 +26,6 @@ from src.modules.scrape.core.citations import (
 from src.modules.scrape.core.link_filter import filter_out_irrelevant_links
 from src.modules.scrape.core.links import (
     clean_reference_list,
-    is_forbidden_url,
     relative_paths_to_absolute,
     remove_anchor_links,
     remove_trailing_slash,
@@ -35,6 +35,17 @@ from src.modules.scrape.prompts.prompts import get_relevant_filter_prompts
 from src.modules.scrape.schema import RelevantLinks
 
 logger = logging.getLogger(__name__)
+
+
+# crawl4ai reports markdown generation failures inside the markdown string itself.
+_CRAWL4AI_MARKDOWN_ERROR_PREFIXES = ("Error converting HTML to markdown", "Error generating fit markdown")
+
+
+def _is_usable_content(content: str | None) -> bool:
+    """Return False for empty content or a crawl4ai markdown error message, which must never be saved."""
+    if content is None or not content.strip():
+        return False
+    return not content.lstrip().startswith(_CRAWL4AI_MARKDOWN_ERROR_PREFIXES)
 
 
 def _clean_documentation_links(
@@ -96,7 +107,7 @@ async def scraper_loop(
         saved_documentations: dict - dictionary of already saved documentations
         trusted_domains: list - list of trusted domains
         forbidden_url_parts: list - list of URL parts to filter out
-        last_iteration: bool - flag indicating if this is the last iteration of the scraper loop, on which we dont need to filter out irrelevant links
+        last_iteration: bool - flag indicating the last iteration, whose links are reported but never selected by the LLM
         on_documentation_scraped: optional async callback called immediately after a documentation is scraped and prepared for processing
     outputs:
         new_links_to_scrape: list - list of links to scrape in the next iteration
@@ -166,6 +177,9 @@ async def scraper_loop(
                 )  # If fetching as data documentation failed, add to other links for regular scraping
                 data_fallback_to_html_count += 1
                 continue
+            if not _is_usable_content(content):
+                logger.warning("[Scrape:Loop] Data documentation %s is empty, not saving it", str(url))
+                continue
             logger.debug("[Scrape:Loop] Loading %s as data file", str(url))
             documentation = SavedDocumentation(
                 url=url,
@@ -207,7 +221,14 @@ async def scraper_loop(
                 content=content,
                 links=[],
             )
-            if on_documentation_scraped:
+            if not _is_usable_content(content):
+                # Keep following the page's links (a hub can still lead to documentation), but never save
+                # an empty page or a markdown error message as documentation.
+                logger.warning(
+                    "[Scrape:Loop] Documentation %s has no usable markdown content, not saving it",
+                    str(scraped_link.url),
+                )
+            elif on_documentation_scraped:
                 await on_documentation_scraped(documentation)
 
             documentation_references = process_citations_markdown(
@@ -292,7 +313,15 @@ async def scraper_loop(
                     str(scraped_link.url),
                 )
 
-            if len(partly_filtered_new_links) > 0 or last_iteration:
+            if partly_filtered_new_links and last_iteration:
+                # Links found on the last iteration are never scraped, so they need no LLM selection. They only
+                # tell the caller that unvisited in-scope links remain (finish reason max-iterations-reached).
+                new_links_to_scrape.extend(partly_filtered_new_links)
+                documentation.links = []
+                documentation.documentation_references = documentation_references_saved
+                saved_documentations[str(scraped_link.url)] = documentation
+
+            elif partly_filtered_new_links:
                 relevant_prompts = get_relevant_filter_prompts(
                     documentation_references.references_markdown, app, app_version
                 )

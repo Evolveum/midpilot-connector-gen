@@ -85,3 +85,84 @@ async def test_link_cleanup_does_not_block_the_event_loop() -> None:
 
     assert new_links == ["https://docs.example.test/users"]
     assert largest_gap < 0.15
+
+
+def _scrape_urls_returning(markdown: str):
+    async def _scrape(_links: list[str]):
+        yield SimpleNamespace(
+            url=PAGE_URL,
+            markdown=SimpleNamespace(
+                fit_markdown=markdown,
+                references_markdown="## References\n⟨1⟩ https://docs.example.test/users: Users\n",
+                markdown_with_citations=f"{markdown}⟨1⟩",
+            ),
+        )
+
+    return _scrape
+
+
+def _loop_patches(markdown: str, relevant_links_mock: AsyncMock):
+    return (
+        patch(
+            "src.modules.scrape.core.scraper.get_all_content_types",
+            new_callable=AsyncMock,
+            return_value={PAGE_URL: "text/html"},
+        ),
+        patch(
+            "src.modules.scrape.core.scraper.scrape_all_data_documentations",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch("src.modules.scrape.core.scraper.scrape_urls", _scrape_urls_returning(markdown)),
+        patch(
+            "src.modules.scrape.core.scraper.filter_out_irrelevant_links",
+            new_callable=AsyncMock,
+            return_value=([], ["https://docs.example.test/users"]),
+        ),
+        patch("src.modules.scrape.core.scraper.get_relevant_links_from_text", relevant_links_mock),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("markdown", ["", "   \n", "Error converting HTML to markdown: boom"])
+async def test_empty_or_error_markdown_is_not_saved_but_its_links_are_followed(markdown: str) -> None:
+    scheduled: list[str] = []
+
+    async def on_documentation_scraped(documentation) -> None:
+        scheduled.append(documentation.url)
+
+    relevant_links = AsyncMock(return_value=RelevantLinks(links=["https://docs.example.test/users"]))
+    content_types, data_docs, scrape, link_filter, select = _loop_patches(markdown, relevant_links)
+    with content_types, data_docs, scrape, link_filter, select:
+        new_links = await scraper_loop(
+            links_to_scrape=[PAGE_URL],
+            app="Example",
+            app_version="1",
+            on_documentation_scraped=on_documentation_scraped,
+        )
+
+    assert scheduled == []
+    assert new_links == ["https://docs.example.test/users"]
+
+
+@pytest.mark.asyncio
+async def test_last_iteration_reports_remaining_links_without_llm_selection() -> None:
+    scheduled: list[str] = []
+
+    async def on_documentation_scraped(documentation) -> None:
+        scheduled.append(documentation.url)
+
+    relevant_links = AsyncMock(return_value=RelevantLinks(links=[]))
+    content_types, data_docs, scrape, link_filter, select = _loop_patches("Users API", relevant_links)
+    with content_types, data_docs, scrape, link_filter, select:
+        new_links = await scraper_loop(
+            links_to_scrape=[PAGE_URL],
+            app="Example",
+            app_version="1",
+            last_iteration=True,
+            on_documentation_scraped=on_documentation_scraped,
+        )
+
+    relevant_links.assert_not_awaited()
+    assert scheduled == [PAGE_URL]
+    assert new_links == ["https://docs.example.test/users"]

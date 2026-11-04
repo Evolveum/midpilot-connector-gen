@@ -12,10 +12,29 @@ from langchain_core.prompts import ChatPromptTemplate
 from src.core.llm import get_default_llm, make_basic_chain
 from src.core.observability.langfuse import build_llm_config
 from src.integrations.web import classify_irrelevant_links
+from src.integrations.web.urls import is_forbidden_url
 from src.modules.discovery.prompts.prompts import get_irrelevant_filter_prompts, get_rank_links_prompts
 from src.modules.discovery.schema import DiscoveryIntegrationType, RankedLinks
 
 logger = logging.getLogger(__name__)
+
+DISCOVERY_FORBIDDEN_URL_PARTS: list[str] = [
+    "logout",
+    "login",
+    "signup",
+    "register",
+    "subscribe",
+    "pricing",
+    "terms",
+    "privacy",
+    "contact",
+    "about",
+    "blog",
+    "news",
+    "forum",
+    "release-notes",
+    "changelog",
+]
 
 
 def _build_prompt_entries(candidates_enriched: List[Dict[str, Any]]) -> List[Dict[str, str]]:
@@ -56,33 +75,12 @@ async def filter_candidate_links(
     if not entries:
         return [], []
 
-    forbidden_url_parts: list[str] = [
-        "logout",
-        "login",
-        "signup",
-        "register",
-        "subscribe",
-        "pricing",
-        "terms",
-        "privacy",
-        "contact",
-        "about",
-        "blog",
-        "news",
-        "forum",
-        "release-notes",
-        "changelog",
-    ]
-
-    # Filter out obviously irrelevant links by URL patterns
+    # Filter out obviously irrelevant links by whole URL path segments (``/api/contacts`` survives ``contact``)
     basic_irrelevant = []
     filtered_entries: List[Dict[str, str]] = []
 
     for entry in entries:
-        link_lower = entry["url"].lower()
-        is_irrelevant = any(part in link_lower for part in forbidden_url_parts)
-
-        if is_irrelevant:
+        if is_forbidden_url(entry["url"], DISCOVERY_FORBIDDEN_URL_PARTS):
             basic_irrelevant.append(entry["url"])
         else:
             filtered_entries.append(entry)

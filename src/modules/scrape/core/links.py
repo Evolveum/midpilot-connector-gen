@@ -26,28 +26,6 @@ def remove_anchor_links(urls: list[str]) -> Tuple[List[str], Dict[str, str]]:
     return cleaned_urls, url_mapping
 
 
-def is_forbidden_url(url: str, forbidden_url_parts: list[str]) -> bool:
-    parsed = urlparse(url)
-    path = parsed.path.lower()
-    filename = path.rsplit("/", 1)[-1]
-    path_segments = [segment for segment in path.split("/") if segment]
-
-    for forbidden_part in forbidden_url_parts:
-        normalized_part = forbidden_part.strip().lower().strip("/")
-        if not normalized_part:
-            continue
-        if (
-            normalized_part in path_segments
-            or normalized_part == filename
-            or f"/{normalized_part}/" in path
-            or path.endswith(f"/{normalized_part}")
-            or f".{normalized_part}." in path
-            or path.endswith(f".{normalized_part}")
-        ):
-            return True
-    return False
-
-
 def clean_reference_list(reference_list):
     """
     Rework this function - works for now but not good for later.
