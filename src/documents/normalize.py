@@ -10,6 +10,7 @@ documents toolkit and the feature modules.
 """
 
 import re
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 
@@ -52,6 +53,18 @@ def object_class_tag_variants(object_class: str) -> frozenset[str]:
     if len(base) > 1 and base.endswith("y"):
         variants.add(f"{base[:-1]}ies")
     return frozenset(variants)
+
+
+def merge_object_class_tags(tags: Sequence[str], object_classes: Iterable[str]) -> list[str]:
+    """``tags`` followed by the object classes no tag names yet, compared by :func:`normalize_object_class_tag`."""
+    merged = list(tags)
+    known = {normalize_object_class_tag(tag) for tag in tags}
+    for name in object_classes:
+        key = normalize_object_class_tag(name)
+        if key and key not in known:
+            known.add(key)
+            merged.append(name.strip())
+    return merged
 
 
 def canonicalize_scim_path(scim_path: Any) -> str:

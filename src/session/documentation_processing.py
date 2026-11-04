@@ -14,7 +14,7 @@ from src.config import config
 from src.core.concurrency import TaskScope
 from src.documents.processing.llms import get_llm_processed_chunk
 from src.documents.processing.persistence import publish_uploaded_documentation
-from src.documents.processing.processor import build_chunk_metadata
+from src.documents.processing.processor import build_chunk_metadata, tag_object_classes
 from src.documents.processing.prompts import get_llm_chunk_process_prompt
 from src.documents.processing.schema import LlmChunkOutput
 from src.jobs import increment_processed_documents, update_job_progress
@@ -129,6 +129,7 @@ async def process_documentation_worker(
                 async with semaphore:
                     prompts = get_llm_chunk_process_prompt(chunk_text, uploaded.filename, app, app_version)
                     data = await get_llm_processed_chunk(prompts)
+                data = tag_object_classes(data, chunk_text, document=uploaded.filename)
 
             metadata = build_chunk_metadata(
                 chunk_number=idx,

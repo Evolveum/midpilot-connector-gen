@@ -35,6 +35,21 @@ def test_json_and_yaml_serializations_of_one_spec_have_the_same_hash() -> None:
     assert canonical_hash({**OPENAPI, "info": {"title": "Other"}}) != canonical_hash(OPENAPI)
 
 
+def test_copies_that_differ_only_in_their_servers_have_the_same_hash() -> None:
+    def spec_hash(document: dict) -> str:
+        description = describe_spec(document)
+        assert description is not None
+        return description.canonical_hash
+
+    swagger = {"swagger": "2.0", "info": {"title": "Forge", "version": "1"}, "basePath": "/api/v1", "paths": {}}
+
+    assert spec_hash({**OPENAPI, "servers": [{"url": "https://tenant.example.test"}]}) == spec_hash(OPENAPI)
+    assert spec_hash({**swagger, "host": "forge.example.test", "schemes": ["https"]}) == spec_hash(swagger)
+    # The API version and the base path stay part of the identity.
+    assert spec_hash({**OPENAPI, "info": {"title": "Example API", "version": "3.0"}}) != spec_hash(OPENAPI)
+    assert spec_hash({**swagger, "basePath": "/api/v2"}) != spec_hash(swagger)
+
+
 @pytest.mark.parametrize(
     ("document", "spec_format"),
     [

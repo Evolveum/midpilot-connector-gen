@@ -17,14 +17,24 @@ from typing import Any, Literal
 import yaml
 
 SpecFormat = Literal["openapi", "swagger", "scim", "json_schema"]
+Syntax = Literal["json", "yaml"]
 
 _SCIM_URN_PREFIX = "urn:ietf:params:scim:"
+# Top-level parts that say where an API is deployed, not what it is: an instance serving its own description lists
+# itself there, so copies of one specification differ in them. ``basePath`` stays, it often carries the API version.
+_DEPLOYMENT_KEYS: dict[SpecFormat, frozenset[str]] = {
+    "openapi": frozenset({"servers"}),
+    "swagger": frozenset({"host", "schemes"}),
+}
 # The libyaml loader parses large specifications many times faster than the pure-Python one.
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 
 @dataclass(frozen=True)
 class SpecDescription:
+    """An API description; ``canonical_hash`` is equal for its JSON and YAML serializations and for copies that differ
+    only in the servers they list."""
+
     format: SpecFormat
     title: str | None
     version: str | None
@@ -33,22 +43,30 @@ class SpecDescription:
 
 def parse_structured_document(text: str) -> dict[str, Any] | list[Any] | None:
     """Parse JSON or YAML text; None for prose, a bare scalar or invalid input."""
+    loaded = load_structured_document(text)
+    return loaded[0] if loaded is not None else None
+
+
+def load_structured_document(text: str) -> tuple[dict[str, Any] | list[Any], Syntax] | None:
+    """Parse JSON or YAML text and tell which of the two it was; None for prose, a bare scalar or invalid input."""
     stripped = text.strip()
     if not stripped:
         return None
+    syntax: Syntax = "json"
     try:
         document = json.loads(stripped)
     except ValueError:
+        syntax = "yaml"
         try:
             document = yaml.load(stripped, Loader=_YAML_LOADER)
         except yaml.YAMLError:
             return None
-    return document if isinstance(document, (dict, list)) else None
+    return (document, syntax) if isinstance(document, (dict, list)) else None
 
 
 def describe_spec(document: dict[str, Any] | list[Any]) -> SpecDescription | None:
     """Identify the API-description format of a parsed document; None when it is none of them."""
-    spec_format = _detect_format(document)
+    spec_format = detect_spec_format(document)
     if spec_format is None:
         return None
     info = document.get("info") if isinstance(document, dict) else None
@@ -56,6 +74,9 @@ def describe_spec(document: dict[str, Any] | list[Any]) -> SpecDescription | Non
     if isinstance(info, dict):
         title = _optional_text(info.get("title"))
         version = _optional_text(info.get("version"))
+    deployment_keys = _DEPLOYMENT_KEYS.get(spec_format, frozenset())
+    if isinstance(document, dict) and deployment_keys:
+        document = {key: value for key, value in document.items() if key not in deployment_keys}
     return SpecDescription(format=spec_format, title=title, version=version, canonical_hash=canonical_hash(document))
 
 
@@ -65,7 +86,8 @@ def canonical_hash(document: Any) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def _detect_format(document: dict[str, Any] | list[Any]) -> SpecFormat | None:
+def detect_spec_format(document: dict[str, Any] | list[Any]) -> SpecFormat | None:
+    """Which API-description format a parsed document follows, without describing it further."""
     if isinstance(document, list):
         if document and all(isinstance(item, dict) and _is_scim_resource(item) for item in document):
             return "scim"

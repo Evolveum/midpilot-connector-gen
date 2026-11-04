@@ -61,6 +61,15 @@ def _inspect_data_documentation(content: str) -> tuple[bool, SpecDescription | N
     return True, describe_spec(document)
 
 
+def _saved_copy_of(spec: SpecDescription, saved_documentations: dict[str, SavedDocumentation]) -> str | None:
+    """URL of an already saved document that is the same API description, if any."""
+    for saved_url, saved in saved_documentations.items():
+        saved_spec = saved.retrieval.spec if saved.retrieval else None
+        if saved_spec is not None and saved_spec.canonical_hash == spec.canonical_hash:
+            return saved_url
+    return None
+
+
 async def _save_data_documentation(
     url: str,
     content: str,
@@ -73,9 +82,10 @@ async def _save_data_documentation(
 ) -> bool:
     """Save a fetched data file when it is worth keeping; return whether it was saved.
 
-    API descriptions are always kept. Other JSON/YAML files (``package.json``, translation bundles) are
-    kept only as starter links the user picked. Plain text (a raw markdown file) is kept unless the URL
-    was referenced by a page as its API description (``spec_required``).
+    API descriptions are kept unless this job already saved the same one (another format or another
+    server list of it). Other JSON/YAML files (``package.json``, translation bundles) are kept only as
+    starter links the user picked. Plain text (a raw markdown file) is kept unless the URL was referenced
+    by a page as its API description (``spec_required``). Starter links are always kept.
     """
     if not _is_usable_content(content):
         logger.warning("[Scrape:Loop] Data documentation %s is empty, not saving it", url)
@@ -83,6 +93,9 @@ async def _save_data_documentation(
     structured, spec = await asyncio.to_thread(_inspect_data_documentation, content)
     if spec is None and not starter and (structured or spec_required):
         logger.info("[Scrape:Loop] Data documentation %s is not an API description, not saving it", url)
+        return False
+    if spec is not None and not starter and (copy_url := _saved_copy_of(spec, saved_documentations)) is not None:
+        logger.info("[Scrape:Loop] %s is the same API description as %s, not saving it", url, copy_url)
         return False
     documentation = SavedDocumentation(
         url=url,
