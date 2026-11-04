@@ -125,3 +125,90 @@ def test_select_documentation_items_applies_criteria_without_loading_anything():
     ]
 
     assert [item["chunkId"] for item in select_documentation_items(items, criteria)] == ["keep"]
+
+
+def _tagged(chunk_id: str, tags, category: str = "spec_yaml"):
+    return {"chunkId": chunk_id, "@metadata": {"category": category, "tags": tags}}
+
+
+@pytest.mark.parametrize(
+    ("object_class", "tag"),
+    [
+        ("User", "Users"),
+        ("user", "USER"),
+        ("WorkPackage", "work packages"),
+        ("WorkPackage", "work_package"),
+        ("Work Package", "WorkPackages"),
+        ("Policy", "policies"),
+        ("Address", "addresses"),
+        ("Status", "status"),
+        ("Status", "statuses"),
+    ],
+)
+def test_object_class_tags_match_case_separators_and_regular_plurals(object_class: str, tag: str) -> None:
+    criteria = ChunkFilterCriteria(min_length=None, min_endpoints_num=None, object_class_tags=[object_class])
+
+    assert [item["chunkId"] for item in select_documentation_items([_tagged("hit", [tag])], criteria)] == ["hit"]
+
+
+@pytest.mark.parametrize(("object_class", "tag"), [("User", "username"), ("Status", "statu"), ("Group", "groupware")])
+def test_object_class_tags_never_singularize_or_prefix_match_tags(object_class: str, tag: str) -> None:
+    criteria = ChunkFilterCriteria(min_length=None, min_endpoints_num=None, object_class_tags=[object_class])
+
+    assert select_documentation_items([_tagged("miss", [tag])], criteria) == []
+
+
+def test_object_class_tags_exclude_untagged_chunks_and_ignore_non_string_tags() -> None:
+    criteria = ChunkFilterCriteria(min_length=None, min_endpoints_num=None, object_class_tags=["User"])
+    items = [_tagged("untagged", None), _tagged("non-string", [7, None]), _tagged("hit", [3, "users"])]
+
+    assert [item["chunkId"] for item in select_documentation_items(items, criteria)] == ["hit"]
+
+
+def test_json_and_yaml_specs_without_proof_of_equivalence_are_both_kept() -> None:
+    """Regression: any spec_yaml chunk dropped every spec_json chunk, even of another product or a conndev upload."""
+    criteria = ChunkFilterCriteria(
+        min_length=None, min_endpoints_num=None, allowed_categories=["spec_yaml", "spec_json"]
+    )
+    items = [_tagged("yaml", ["user"]), _tagged("json", ["user"], category="spec_json")]
+
+    assert [item["chunkId"] for item in select_documentation_items(items, criteria)] == ["yaml", "json"]
+
+
+def _spec_chunk(chunk_id: str, doc_id: str, *, spec_hash: str, token_count: int):
+    return {
+        "chunkId": chunk_id,
+        "docId": doc_id,
+        "@metadata": {
+            "token_count": token_count,
+            "retrieval": {"version": 1, "spec": {"format": "openapi", "canonical_hash": spec_hash}},
+        },
+    }
+
+
+def test_a_spec_scraped_twice_is_read_from_its_smaller_copy_only() -> None:
+    criteria = ChunkFilterCriteria(min_length=None, min_endpoints_num=None)
+    items = [
+        _spec_chunk("json-1", "json", spec_hash="same", token_count=900),
+        _spec_chunk("json-2", "json", spec_hash="same", token_count=900),
+        _spec_chunk("yaml-1", "yaml", spec_hash="same", token_count=1200),
+        _spec_chunk("other", "other", spec_hash="different", token_count=5000),
+        {"chunkId": "page", "docId": "page", "@metadata": {"token_count": 10, "retrieval": {"version": 1}}},
+        {"chunkId": "upload", "docId": "upload", "@metadata": {"token_count": 10}},
+    ]
+
+    selected = select_documentation_items(items, criteria)
+
+    assert [item["chunkId"] for item in selected] == ["yaml-1", "other", "page", "upload"]
+
+
+def test_spec_deduplication_compares_whole_documents_before_criteria() -> None:
+    """The kept copy is chosen by its full size, not by the chunks a criteria set happens to select."""
+    criteria = ChunkFilterCriteria(min_length=500, min_endpoints_num=None)
+    items = [
+        _spec_chunk("json-small", "json", spec_hash="same", token_count=100),
+        _spec_chunk("json-large", "json", spec_hash="same", token_count=2000),
+        _spec_chunk("yaml-1", "yaml", spec_hash="same", token_count=1500),
+    ]
+
+    assert [item["chunkId"] for item in select_documentation_items(items, criteria)] == ["yaml-1"]

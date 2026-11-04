@@ -28,6 +28,32 @@ def canonical_object_class_key(name: str) -> str:
     return "".join(normalize_object_class_name(name).split())
 
 
+_OBJECT_CLASS_TAG_SEPARATORS = re.compile(r"[\s_\-]+")
+
+
+def normalize_object_class_tag(value: str) -> str:
+    """Comparable form of a chunk tag or an object-class name: lower case without whitespace, ``_`` or ``-``.
+
+    ``"Work Packages"``, ``"work_packages"`` and ``"WorkPackages"`` all become ``"workpackages"``.
+    """
+    return _OBJECT_CLASS_TAG_SEPARATORS.sub("", value.strip().lower())
+
+
+def object_class_tag_variants(object_class: str) -> frozenset[str]:
+    """Tag forms that identify ``object_class``: its normalized name and its regular plurals.
+
+    Variants are generated from the class name only; tags are never singularized, so names that end in
+    ``s`` (``Status``, ``Address``) keep matching exactly.
+    """
+    base = normalize_object_class_tag(object_class)
+    if not base:
+        return frozenset()
+    variants = {base, f"{base}s", f"{base}es"}
+    if len(base) > 1 and base.endswith("y"):
+        variants.add(f"{base[:-1]}ies")
+    return frozenset(variants)
+
+
 def canonicalize_scim_path(scim_path: Any) -> str:
     """Convert quoted bracket property access to canonical SCIM dot notation."""
     normalized = str(scim_path or "").strip()

@@ -3,11 +3,13 @@
 # Licensed under the EUPL-1.2 or later.
 
 import uuid
+from collections.abc import Mapping
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator
 
 from src.core.schema import CamelCaseModel
+from src.documents.spec_validation import SpecDescription
 
 
 class RelevantDocumentationItem(CamelCaseModel):
@@ -96,6 +98,46 @@ class DocumentationReferences(BaseModel):
         }
 
 
+class SpecRetrievalMetadata(BaseModel):
+    """The API description a scraped data file was recognized as."""
+
+    format: str
+    title: str | None = None
+    version: str | None = None
+    canonical_hash: str
+
+    @classmethod
+    def from_description(cls, description: SpecDescription) -> "SpecRetrievalMetadata":
+        return cls(
+            format=description.format,
+            title=description.title,
+            version=description.version,
+            canonical_hash=description.canonical_hash,
+        )
+
+
+class RetrievalMetadata(BaseModel):
+    """How the scraper obtained a document; stored as ``metadata["retrieval"]`` on each of its chunks.
+
+    Chunks without it (uploads and documentation scraped before 1.1.0) are neutral: no selection rule
+    excludes them for the missing key.
+    """
+
+    version: Literal[1] = 1
+    starter: bool = False
+    spec: SpecRetrievalMetadata | None = None
+
+    @classmethod
+    def from_metadata(cls, metadata: Mapping[str, Any] | None) -> "RetrievalMetadata | None":
+        raw = (metadata or {}).get("retrieval")
+        if not isinstance(raw, Mapping):
+            return None
+        try:
+            return cls.model_validate(raw)
+        except ValidationError:
+            return None
+
+
 class SavedDocumentation(CamelCaseModel):
     """
     Scraped or uploaded documentation prepared for chunk processing.
@@ -108,6 +150,7 @@ class SavedDocumentation(CamelCaseModel):
     documentation_references: Optional[DocumentationReferences] = None
     summary: Optional[SummaryOutput] = None
     links: Optional[List[HttpUrl]] = None
+    retrieval: Optional[RetrievalMetadata] = None
 
     def to_dict(self) -> dict:
         return {

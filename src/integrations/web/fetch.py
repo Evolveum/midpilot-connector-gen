@@ -40,13 +40,18 @@ def _is_retryable_failure(result: CrawlResult) -> bool:
     return True
 
 
-async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlResult]:
+async def scrape_urls(links_to_scrape_orig: list[str], *, prune_content: bool = True) -> AsyncIterator[CrawlResult]:
     """
     Scrape URLs and return successful CrawlResult objects.
     Retries failed URLs up to `max_attempts` times.
+
+    ``prune_content`` fills ``markdown.fit_markdown`` with crawl4ai's pruned page text. The scraper turns
+    it off: it extracts the main content from ``html`` itself and needs the markdown only for links.
     """
     logger.info("[Scrape:URLs] Starting to scrape %s URLs", len(links_to_scrape_orig))
-    prune_filter = PruningContentFilter(threshold=0.42, threshold_type="dynamic", min_word_threshold=1)
+    prune_filter = (
+        PruningContentFilter(threshold=0.42, threshold_type="dynamic", min_word_threshold=1) if prune_content else None
+    )
     md_generator = DefaultMarkdownGenerator(
         content_filter=prune_filter, options={"ignore_images": True, "skip_internal_links": True}
     )
@@ -207,6 +212,21 @@ async def get_all_content_types(urls: list[str]) -> dict[str, str]:
     return dict(zip(urls, content_types))
 
 
+async def read_text_limited(response: aiohttp.ClientResponse, max_bytes: int) -> str | None:
+    """Read a response body as text, or return None when it is larger than ``max_bytes``."""
+    if response.content_length is not None and response.content_length > max_bytes:
+        return None
+    body = bytearray()
+    async for block in response.content.iter_chunked(64 * 1024):
+        body.extend(block)
+        if len(body) > max_bytes:
+            return None
+    try:
+        return body.decode(response.charset or "utf-8", errors="replace")
+    except LookupError:  # an unknown charset name in Content-Type
+        return body.decode("utf-8", errors="replace")
+
+
 async def fetch_data_documentation(url: str) -> tuple[str, str] | None:
     """
     Fetch the content of a data documentation (e.g., JSON, YAML).
@@ -223,7 +243,17 @@ async def fetch_data_documentation(url: str) -> tuple[str, str] | None:
                         or "yml" in content_type
                         or "text/plain" in content_type
                     ):
-                        return (url, await response.text())
+                        max_bytes = config.scrape_and_process.max_data_documentation_bytes
+                        text = await read_text_limited(response, max_bytes)
+                        if text is None:
+                            logger.warning(
+                                "[Scrape:DataDocumentation] Skipping %s: larger than %s bytes "
+                                "(SCRAPE_AND_PROCESS__MAX_DATA_DOCUMENTATION_BYTES)",
+                                url,
+                                max_bytes,
+                            )
+                            return None
+                        return (url, text)
 
                     logger.warning(
                         "[Scrape:DataDocumentation] URL %s has unsupported content type: %s, defaulting to crawl4ai scraping",

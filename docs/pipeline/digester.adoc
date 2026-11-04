@@ -149,8 +149,12 @@ chunk once, and one reference list per attempt.
 | Attempt | Chunks
 
 | `primary`
-| Chunks tagged with the object class (endpoints: endpoint-focused chunks, or
-  the default specification set when none are tagged). SCIM falls back to the
+| Chunks tagged with the object class (endpoints: tagged chunks that document
+  at least one endpoint, or the default specification set when there are
+  none). A tag matches when it
+  equals the class name or a regular plural of it, ignoring case, whitespace,
+  `_` and `-` (`WorkPackage` matches `work packages`, `Policy` matches
+  `policies`); tags are never singularized. SCIM falls back to the
   object-class relevance stored with `classes`.
 | `fallback`
 | The default specification set minus every primary chunk. It runs only when
@@ -165,6 +169,12 @@ chunk once, and one reference list per attempt.
   joining physical schemas and conndev exports needs; the first of conflicting
   table definitions wins.
 |===
+
+A specification the scraper saved more than once (as JSON and as YAML, or from
+two URLs) is read from one copy in every attempt: of the documents with the
+same `retrieval.spec.canonical_hash` (see
+link:../sessions-and-jobs.adoc#chunk-metadata[chunk metadata]) the one with the
+fewest tokens is kept. Uploaded documents carry no hash and are never dropped.
 
 The worker never reads the session's documentation again, so documentation
 uploaded or scraped after the `POST` does not change a queued job - post the

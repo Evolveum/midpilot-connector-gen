@@ -91,6 +91,9 @@ async def process_scraped_documentation(
         overlap_ratio=0.05,
     )
     logger.debug("[Documents:Process] Generated %s chunks for documentation: %s", len(chunks), documentation.url)
+    retrieval_metadata = (
+        {"retrieval": documentation.retrieval.model_dump(exclude_none=True)} if documentation.retrieval else None
+    )
 
     async def process_chunk(idx: int, chunk: tuple[str, int]) -> tuple[int, DocumentationItem]:
         prompts = get_llm_chunk_process_prompt(chunk[0], str(documentation.url), app, app_version)
@@ -111,6 +114,7 @@ async def process_scraped_documentation(
                 character_count=len(chunk[0]),
                 data=data,
                 content_type=documentation.content_type,
+                extra=retrieval_metadata,
             ),
             content=chunk[0],
         )

@@ -4,7 +4,8 @@
 
 from datetime import timedelta
 
-from pydantic import BaseModel, Field
+import soupsieve
+from pydantic import BaseModel, Field, field_validator
 
 
 class ScrapeAndProcessSettings(BaseModel):
@@ -79,6 +80,34 @@ class ScrapeAndProcessSettings(BaseModel):
         ],
         description="URL substrings to consider irrelevant while scraping",
     )
+    main_content_selectors: list[str] = Field(
+        ["article", "main", "[role=main]"],
+        description=(
+            "CSS selectors tried in order to locate the main content of a scraped page. A selector is used "
+            "when it matches exactly one outermost element holding most of the page text; otherwise the "
+            "page body without header, footer, sidebars and navigation is used."
+        ),
+    )
+    max_data_documentation_bytes: int = Field(
+        50 * 1024 * 1024,
+        gt=0,
+        description="Largest data file (OpenAPI, SCIM or JSON Schema document) the scraper downloads.",
+    )
+    max_spec_urls_per_page: int = Field(
+        20,
+        ge=0,
+        description=(
+            "Maximum number of API description URLs referenced by one page (Swagger UI, Redoc, spec links) "
+            "that are fetched alongside it. 0 disables fetching referenced specs."
+        ),
+    )
+
+    @field_validator("main_content_selectors")
+    @classmethod
+    def validate_main_content_selectors(cls, selectors: list[str]) -> list[str]:
+        for selector in selectors:
+            soupsieve.compile(selector)
+        return selectors
 
     # Chunking controls
     chunk_length: int = Field(

@@ -47,6 +47,14 @@ class ChunkFilterCriteria(BaseModel):
         default=None,
         description="List of excluded tags for chunk filtering, in a case of conflict with allowed_tags, exclusion takes precedence",
     )
+    object_class_tags: List[str] | None = Field(
+        default=None,
+        description=(
+            "Object-class names a chunk must be tagged with (at least one). Unlike allowed_tags the match is "
+            "tolerant: case, whitespace, '_' and '-' are ignored and regular plurals of the class name match "
+            "(User -> users, WorkPackage -> work packages, Policy -> policies). Chunks without tags are excluded."
+        ),
+    )
     allowed_content_types: List[Literal["markdown", "yaml", "yml", "json"]] | None = Field(
         default=None,
         description="List of allowed content types for chunk filtering, if None, all content types that are not excluded are allowed",
