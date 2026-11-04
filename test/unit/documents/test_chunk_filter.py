@@ -125,3 +125,51 @@ def test_select_documentation_items_applies_criteria_without_loading_anything():
     ]
 
     assert [item["chunkId"] for item in select_documentation_items(items, criteria)] == ["keep"]
+
+
+def _tagged(chunk_id: str, tags, category: str = "spec_yaml"):
+    return {"chunkId": chunk_id, "@metadata": {"category": category, "tags": tags}}
+
+
+@pytest.mark.parametrize(
+    ("object_class", "tag"),
+    [
+        ("User", "Users"),
+        ("user", "USER"),
+        ("WorkPackage", "work packages"),
+        ("WorkPackage", "work_package"),
+        ("Work Package", "WorkPackages"),
+        ("Policy", "policies"),
+        ("Address", "addresses"),
+        ("Status", "status"),
+        ("Status", "statuses"),
+    ],
+)
+def test_object_class_tags_match_case_separators_and_regular_plurals(object_class: str, tag: str) -> None:
+    criteria = ChunkFilterCriteria(min_length=None, min_endpoints_num=None, object_class_tags=[object_class])
+
+    assert [item["chunkId"] for item in select_documentation_items([_tagged("hit", [tag])], criteria)] == ["hit"]
+
+
+@pytest.mark.parametrize(("object_class", "tag"), [("User", "username"), ("Status", "statu"), ("Group", "groupware")])
+def test_object_class_tags_never_singularize_or_prefix_match_tags(object_class: str, tag: str) -> None:
+    criteria = ChunkFilterCriteria(min_length=None, min_endpoints_num=None, object_class_tags=[object_class])
+
+    assert select_documentation_items([_tagged("miss", [tag])], criteria) == []
+
+
+def test_object_class_tags_exclude_untagged_chunks_and_ignore_non_string_tags() -> None:
+    criteria = ChunkFilterCriteria(min_length=None, min_endpoints_num=None, object_class_tags=["User"])
+    items = [_tagged("untagged", None), _tagged("non-string", [7, None]), _tagged("hit", [3, "users"])]
+
+    assert [item["chunkId"] for item in select_documentation_items(items, criteria)] == ["hit"]
+
+
+def test_json_and_yaml_specs_are_both_kept() -> None:
+    """Regression: any spec_yaml chunk dropped every spec_json chunk, even of another product or a conndev upload."""
+    criteria = ChunkFilterCriteria(
+        min_length=None, min_endpoints_num=None, allowed_categories=["spec_yaml", "spec_json"]
+    )
+    items = [_tagged("yaml", ["user"]), _tagged("json", ["user"], category="spec_json")]
+
+    assert [item["chunkId"] for item in select_documentation_items(items, criteria)] == ["yaml", "json"]

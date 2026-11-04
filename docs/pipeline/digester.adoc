@@ -149,8 +149,12 @@ chunk once, and one reference list per attempt.
 | Attempt | Chunks
 
 | `primary`
-| Chunks tagged with the object class (endpoints: endpoint-focused chunks, or
-  the default specification set when none are tagged). SCIM falls back to the
+| Chunks tagged with the object class (endpoints: tagged chunks that document
+  at least one endpoint, or the default specification set when there are
+  none). A tag matches when it
+  equals the class name or a regular plural of it, ignoring case, whitespace,
+  `_` and `-` (`WorkPackage` matches `work packages`, `Policy` matches
+  `policies`); tags are never singularized. SCIM falls back to the
   object-class relevance stored with `classes`.
 | `fallback`
 | The default specification set minus every primary chunk. It runs only when
