@@ -19,6 +19,7 @@ from src.database.repositories.session_repository import SessionRepository
 from src.documents.errors import DocumentationSessionNotFoundError, NoDocumentationStoredError
 from src.documents.filtering.schema import ChunkFilterCriteria
 from src.documents.normalize import normalize_object_class_tag, object_class_tag_variants
+from src.documents.schemas import RetrievalMetadata
 
 
 async def filter_documentation_items(
@@ -79,8 +80,9 @@ def select_documentation_items(
 ) -> List[Dict[str, Any]]:
     """Keep the normalized documentation items that meet ``criteria`` (pure, no I/O).
 
-    JSON and YAML specifications are both kept: a YAML spec may come from another product, version or
-    scope than a JSON spec, so neither may be dropped without proof that both are the same document.
+    A specification scraped more than once (as JSON and as YAML, or from two URLs) is read from one
+    copy only, see :func:`_drop_duplicate_spec_documents`. Specifications without that proof of
+    equivalence are all kept.
     """
     object_class_variants: frozenset[str] | None = None
     if criteria.object_class_tags is not None:
@@ -89,7 +91,7 @@ def select_documentation_items(
         )
 
     filtered_items: List[Dict[str, Any]] = []
-    for item in doc_items:
+    for item in _drop_duplicate_spec_documents(doc_items):
         metadata = item.get("@metadata", {})
 
         # Extract relevant fields from metadata
@@ -152,3 +154,31 @@ def select_documentation_items(
         filtered_items.append(item)
 
     return filtered_items
+
+
+def _drop_duplicate_spec_documents(doc_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep one document per scraped specification, identified by its canonical hash.
+
+    Of the equivalent documents the one with the fewest tokens is kept (YAML is usually more compact
+    than JSON), the earliest on a tie. The comparison runs on whole documents before any criteria, so
+    the kept copy is never a partial selection. Documents without ``retrieval.spec`` (uploads, pages,
+    documentation scraped before 1.1.0) are never dropped.
+    """
+    tokens_by_spec: Dict[str, Dict[str, int]] = {}
+    for item in doc_items:
+        metadata = item.get("@metadata", {})
+        retrieval = RetrievalMetadata.from_metadata(metadata)
+        if retrieval is None or retrieval.spec is None:
+            continue
+        document_tokens = tokens_by_spec.setdefault(retrieval.spec.canonical_hash, {})
+        doc_id = str(item.get("docId"))
+        document_tokens[doc_id] = document_tokens.get(doc_id, 0) + int(metadata.get("token_count") or 0)
+
+    dropped_doc_ids: set[str] = set()
+    for document_tokens in tokens_by_spec.values():
+        if len(document_tokens) > 1:
+            kept_doc_id = min(document_tokens, key=document_tokens.__getitem__)
+            dropped_doc_ids.update(doc_id for doc_id in document_tokens if doc_id != kept_doc_id)
+    if not dropped_doc_ids:
+        return doc_items
+    return [item for item in doc_items if str(item.get("docId")) not in dropped_doc_ids]

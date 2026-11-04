@@ -7,7 +7,9 @@
 from src.documents.schemas import (
     DocumentationReferences,
     ReferenceItem,
+    RetrievalMetadata,
     SavedDocumentation,
+    SpecRetrievalMetadata,
     SummaryOutput,
     normalize_count,
 )
@@ -15,7 +17,9 @@ from src.documents.schemas import (
 __all__ = [
     "DocumentationReferences",
     "ReferenceItem",
+    "RetrievalMetadata",
     "SavedDocumentation",
+    "SpecRetrievalMetadata",
     "SummaryOutput",
     "normalize_count",
 ]

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.documents import SavedDocumentation
+from src.documents import RetrievalMetadata, SavedDocumentation, SpecRetrievalMetadata
 from src.documents.processing.processor import process_scraped_documentation
 from src.documents.processing.schema import LlmChunkOutput
 
@@ -82,3 +82,47 @@ async def test_scraped_documentation_chunking_failure_propagates_from_worker_thr
                 chunk_length=100,
                 source="scraper",
             )
+
+
+@pytest.mark.asyncio
+async def test_retrieval_metadata_is_stored_on_every_chunk_and_absent_without_it():
+    spec = SpecRetrievalMetadata(format="openapi", title="Example", canonical_hash="abc")
+    scraped = SavedDocumentation(
+        url="https://docs.example.com/openapi.json",
+        content="spec text",
+        retrieval=RetrievalMetadata(starter=True, spec=spec),
+    )
+    without_retrieval = SavedDocumentation(url="https://docs.example.com/page", content="page text")
+
+    with (
+        patch(
+            "src.documents.processing.processor.split_text_with_token_overlap",
+            side_effect=lambda text, **_: [(text, 2), (text, 2)],
+        ),
+        patch(
+            "src.documents.processing.processor.get_llm_processed_chunk",
+            new_callable=AsyncMock,
+            return_value=_llm_output(),
+        ),
+    ):
+        chunks, _ = await process_scraped_documentation(
+            scraped, asyncio.Semaphore(1), app="Example", app_version="1.0", chunk_length=100, source="scraper"
+        )
+        plain_chunks, _ = await process_scraped_documentation(
+            without_retrieval,
+            asyncio.Semaphore(1),
+            app="Example",
+            app_version="1.0",
+            chunk_length=100,
+            source="scraper",
+        )
+
+    expected = {
+        "version": 1,
+        "starter": True,
+        "spec": {"format": "openapi", "title": "Example", "canonical_hash": "abc"},
+    }
+    assert [chunk.metadata["retrieval"] for chunk in chunks] == [expected, expected]
+    assert RetrievalMetadata.from_metadata(chunks[0].metadata) == scraped.retrieval
+    assert "retrieval" not in plain_chunks[0].metadata
+    assert RetrievalMetadata.from_metadata(plain_chunks[0].metadata) is None

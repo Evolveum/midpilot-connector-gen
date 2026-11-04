@@ -27,34 +27,58 @@ Module: `src/modules/scrape/` (crawling built on crawl4ai + Playwright via
 == Process
 
 1. *Crawl* the starter links (typically the link:discovery.adoc[discovery]
-   output) with crawl4ai/Playwright and convert pages to markdown.
-2. *Collect links* found on the scraped pages; normalize them (relative →
+   output). A URL served as JSON, YAML or plain text is downloaded as a data
+   file (up to `+SCRAPE_AND_PROCESS__MAX_DATA_DOCUMENTATION_BYTES+`); any other
+   page is rendered with crawl4ai/Playwright.
+2. *Keep only documentation.*
+   * A rendered page is saved as the markdown of its main content: the first of
+     `+SCRAPE_AND_PROCESS__MAIN_CONTENT_SELECTORS+` (`article`, `main`,
+     `[role=main]`) that matches one element holding most of the page text,
+     otherwise the page body without header, footer and sidebars. Navigation is
+     removed; tables and code samples are kept. A page without main content is
+     not saved, but its links are still followed.
+   * A data file is saved when it is an API description (OpenAPI 3, Swagger 2,
+     SCIM schemas or resource types, JSON Schema) or plain text such as a raw
+     markdown file. Other JSON/YAML (`package.json`, translation bundles) is
+     saved only when it is a starter link.
+3. *Fetch referenced specifications.* A page built from an API description
+   (Swagger UI including `swagger-initializer.js` and `configUrl`, Redoc,
+   Stoplight Elements, RapiDoc, Scalar), a `<link rel="alternate">` or a
+   JSON/YAML download link to one, or a link whose URL names one
+   (`openapi.json`, `swagger.yaml`, `/v3/api-docs`) leads to the document
+   itself, fetched in the same iteration and never crawled further. GitHub file
+   pages are read as raw files. Only URLs on the trusted domains and raw GitHub
+   files are fetched, at most `+SCRAPE_AND_PROCESS__MAX_SPEC_URLS_PER_PAGE+` per
+   page, and only a recognized API description is saved.
+4. *Collect links* found on the scraped pages; normalize them (relative →
    absolute, strip anchors/trailing slashes) and drop URLs whose path segment
    matches a configured forbidden part (login, pricing, changelogs, non-English
    locales, …).
-3. *Filter* the remaining links with an LLM to keep only
+5. *Filter* the remaining links with an LLM to keep only
    documentation-relevant ones, then feed them into the next iteration of the
    scraper loop. The loop runs up to
    `+SCRAPE_AND_PROCESS__MAX_SCRAPER_ITERATIONS+` (default 4) iterations. Links
    found on the last iteration are never scraped, so they are not sent to the
    LLM; they only decide between the finish reasons `max-iterations-reached`
    (in-scope links remain) and `no-more-links`.
-   A page whose markdown is empty or a conversion error is not saved, but its
-   links are still followed. Robots.txt denials and permanent 4xx responses
-   are not retried; 408, 425, 429 and server errors are.
-4. As each page is saved, it is *chunked* (token-based,
+   Robots.txt denials and permanent 4xx responses are not retried; 408, 425,
+   429 and server errors are.
+6. As each document is saved, it is *chunked* (token-based,
    `+SCRAPE_AND_PROCESS__CHUNK_LENGTH+` tokens per chunk) and each chunk is
    *processed by an LLM* (`src/documents/processing/`): cleaned up,
    categorized (`spec_json`, `reference_api`, `tutorial`, …) and annotated
-   with metadata. Preserved SQL/SCIM schemas that exceed the single-schema
-   budget are split into structurally valid sub-schemas instead of naive cuts.
-   Conndev uploads are the exception: their binding is classified
-   deterministically and the chunk-processing LLM is skipped.
-5. Processed chunks are persisted as `documentation_items` rows with
-   `source='scrape'`.
+   with metadata, including `retrieval` (starter link, recognized
+   specification and its canonical hash, see
+   link:../sessions-and-jobs.adoc#chunk-metadata[chunk metadata]).
+   Preserved SQL/SCIM schemas that exceed the single-schema budget are split
+   into structurally valid sub-schemas instead of naive cuts. Conndev uploads
+   are the exception: their binding is classified deterministically and the
+   chunk-processing LLM is skipped.
+7. Processed chunks are persisted as `documentation_chunks` rows with
+   `source='scraper'`.
 
 Uploaded files (see link:../sessions-and-jobs.adoc[Sessions and jobs]) go
-through steps 4–5 of the same machinery with `source='upload'`.
+through steps 6–7 of the same machinery with `source='upload'`.
 
 == Pitfalls
 
@@ -64,10 +88,14 @@ already have good documentation (an OpenAPI spec, an exported doc bundle),
 uploading it directly to the session is faster and more reliable than
 scraping.
 
-NOTE: `applicationVersion` matters: chunk processing tags content with the
-detected version, and version mismatch heuristics
-(`latest_version_synonyms`, `unknown_version_threshold`) influence which
-chunks are considered current.
+NOTE: `applicationName` and `applicationVersion` are passed to the chunk
+processing and link selection prompts. The digester does not filter chunks by
+version.
+
+NOTE: When a site keeps its content outside `article`/`main`, add its
+container to `+SCRAPE_AND_PROCESS__MAIN_CONTENT_SELECTORS+` (CSS selectors,
+validated at startup). Without a match the page body is used, which still
+excludes header, footer and sidebars.
 
 WARNING: The forbidden-URL list (`+SCRAPE_AND_PROCESS__FORBIDDEN_URL_PARTS+`)
 filters out many locale prefixes (`de`, `fr`, `es`, …). An entry matches a whole
@@ -76,6 +104,7 @@ documentation you need lives under such a path, adjust the setting.
 
 == Related settings
 
-`+SCRAPE_AND_PROCESS__*+` — scraper loop bounds, chunking, concurrency, retry
-behavior, chunk categories. See link:../configuration.adoc[Configuration] and
+`+SCRAPE_AND_PROCESS__*+` — scraper loop bounds, main-content selectors, data
+file and referenced-spec limits, chunking, concurrency, retry behavior, chunk
+categories. See link:../configuration.adoc[Configuration] and
 `src/config/scrape.py` for the full list.

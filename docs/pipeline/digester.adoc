@@ -170,6 +170,12 @@ chunk once, and one reference list per attempt.
   table definitions wins.
 |===
 
+A specification the scraper saved more than once (as JSON and as YAML, or from
+two URLs) is read from one copy in every attempt: of the documents with the
+same `retrieval.spec.canonical_hash` (see
+link:../sessions-and-jobs.adoc#chunk-metadata[chunk metadata]) the one with the
+fewest tokens is kept. Uploaded documents carry no hash and are never dropped.
+
 The worker never reads the session's documentation again, so documentation
 uploaded or scraped after the `POST` does not change a queued job - post the
 request again to use it. The effective protocol is resolved when the job is

@@ -289,6 +289,7 @@ async def _run_scrape_async(
                 forbidden_url_parts=forbidden_url_parts,
                 last_iteration=(curr_iter == max_iters),
                 on_documentation_scraped=on_documentation_scraped,
+                starter_links=scrape_request.starter_links,
             )
             saved_docs_after_iter = len(saved_documentations)
             iter_saved_docs = max(0, saved_docs_after_iter - saved_docs_before_iter)
