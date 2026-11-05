@@ -28,15 +28,38 @@ class ScrapeAndProcessSettings(BaseModel):
     )
     max_links_per_documentation: int = Field(
         3000,
-        description="Maximum number of raw links to process from a single scraped documentation page",
+        description=(
+            "Maximum number of links a scraped page may have for them to be followed; the links of a larger "
+            "page (a site map, a generated index) are not followed. 0 disables the limit."
+        ),
     )
     irrelevant_links_parts: int = Field(
         5,
-        description="Number of parts to split links into for LLM filtering",
+        description="Deprecated since 1.1.0, no effect: links are selected by SCRAPE_AND_PROCESS__MAX_LINKS_PER_ASSESSMENT.",
+        deprecated=True,
     )
     irrelevant_links_parts_min_length: int = Field(
         5,
-        description="Minimum number of links in a part for LLM filtering",
+        description="Deprecated since 1.1.0, no effect: links are selected by SCRAPE_AND_PROCESS__MAX_LINKS_PER_ASSESSMENT.",
+        deprecated=True,
+    )
+    assessment_content_tokens: int = Field(
+        32000,
+        gt=0,
+        description=(
+            "Maximum tokens of a page's main content the page assessment reads; longer pages are cut. Only a "
+            "guard for the LLM context window, so keep it well below it."
+        ),
+    )
+    max_links_per_assessment: int = Field(
+        150,
+        gt=0,
+        description="Maximum number of candidate links one link-selection LLM call chooses from.",
+    )
+    max_concurrent_page_assessments: int = Field(
+        8,
+        gt=0,
+        description="Maximum concurrent page-assessment and link-selection LLM calls of one scrape job.",
     )
     forbidden_url_parts: list[str] = Field(
         [

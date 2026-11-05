@@ -102,7 +102,27 @@ also carry `retrieval`, which records how the scraper obtained the document:
 ----
 "retrieval": {
   "version": 1,
+  "starter": false,
+  "depth": 1,
+  "assessment": {
+    "role": "api_reference",
+    "product_match": "yes",
+    "product_evidence": "The Nextcloud OCS API",
+    "version_match": "unclear",
+    "covers": ["users", "groups", "endpoints"],
+    "object_classes": ["User", "Group"]
+  }
+}
+----
+
+or, for an API description:
+
+[source,json]
+----
+"retrieval": {
+  "version": 1,
   "starter": true,
+  "depth": 0,
   "spec": {"format": "openapi", "title": "Example API", "version": "2.1", "canonical_hash": "9f2c…"}
 }
 ----
@@ -111,7 +131,15 @@ Since 1.1.0 `tags` also name the object classes a chunk documents (for
 example `WorkPackage`, or the `Users` resource of an API description), which
 the digester selects chunks by.
 
-`starter` is true for a link the user picked. `spec` is present for a data file
+`starter` is true for a link the user picked, and `depth` counts the link hops
+from a starter link. `assessment` is present for a page the scraper assessed
+before saving it (see link:pipeline/scrape.adoc[Scrape]): its `role`, the IDM
+topics it `covers`, the `object_classes` it mentions, and whether it documents
+the application (`product_match`) and the target version (`version_match`):
+`yes`, `no` or `unclear`. An evidence is always quoted from the page, and a
+`no` always has one; only a starter link is saved with `product_match: no`.
+`version_match` is `unclear` when the scrape targets no concrete version.
+`spec` is present for a data file
 recognized as an API description (`format`: `openapi`, `swagger`, `scim` or
 `json_schema`); `canonical_hash` is the same for the JSON and the YAML
 serialization of one specification and for copies that differ only in where

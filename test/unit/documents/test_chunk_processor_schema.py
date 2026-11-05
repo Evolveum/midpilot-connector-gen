@@ -2,7 +2,6 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-from src.documents import SummaryOutput
 from src.documents.processing.schema import LlmChunkOutput
 
 
@@ -28,20 +27,6 @@ def test_llm_chunk_output_normalizes_string_null_num_endpoints_to_zero() -> None
             "tags": ["REST"],
             "category": "spec_json",
             "num_defined_object_classes": None,
-        }
-    )
-
-    assert output.num_endpoints == 0
-
-
-def test_summary_output_normalizes_null_num_endpoints_to_zero() -> None:
-    output = SummaryOutput.model_validate(
-        {
-            "summary": "This page contains API authentication guidance.",
-            "num_endpoints": None,
-            "has_authentication": True,
-            "is_overview": False,
-            "is_index": False,
         }
     )
 

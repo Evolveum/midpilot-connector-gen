@@ -2,14 +2,25 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from collections.abc import Sequence
 
-def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_version: str) -> tuple[str, str]:
+
+def get_llm_chunk_process_prompt(
+    content: str,
+    page_url: str,
+    app: str,
+    app_version: str,
+    *,
+    page_object_classes: Sequence[str] = (),
+) -> tuple[str, str]:
     """
     Generate prompts for chunk processing LLM.
     inputs:
         content: str - the text content to process
         app: str - application name
         app_version: str - application version
+        page_object_classes: object classes the scraper's page assessment found on the whole page; only a hint,
+            a class still needs evidence from the chunk
     outputs:
         tuple - (developer_prompt, user_prompt)
     """
@@ -70,11 +81,19 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
     }}
     """
 
+    page_hint = (
+        f"""
+    The page mentions these object classes (a hint only; list one only when this chunk documents it):
+    {", ".join(page_object_classes)}
+"""
+        if page_object_classes
+        else ""
+    )
     user_prompt = f"""
     Analyze the following documentation chunk for {app} {app_version}.
 
     Part of page with URL: {page_url}
-
+{page_hint}
     Content:
     {content}
     """

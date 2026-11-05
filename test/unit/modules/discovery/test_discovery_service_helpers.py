@@ -5,6 +5,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from langchain_core.messages import AIMessage
 
 import src.integrations.web.search as search
@@ -79,16 +80,38 @@ def test_generate_queries_via_preset_uses_available_templates_up_to_num_queries(
     ]
     queries, _, parsed = llm_helpers.generate_queries_via_preset(
         app="LiteLLM",
-        version="latest",
+        version="1.2",
         num_queries=8,
         templates=templates,
     )
 
     assert len(queries) == 2
     assert len(set(queries)) == 2
-    assert queries[0] == "LiteLLM REST API documentation latest"
-    assert queries[1] == "LiteLLM SCIM 2.0 documentation latest"
+    assert queries[0] == "LiteLLM REST API documentation 1.2"
+    assert queries[1] == "LiteLLM SCIM 2.0 documentation 1.2"
     assert parsed.search_prompts == queries
+
+
+@pytest.mark.parametrize("version", ["latest", "LATEST", "current", ""])
+def test_generic_version_is_left_out_of_the_queries(version):
+    queries, _, _ = llm_helpers.generate_queries_via_preset(
+        app="Nextcloud", version=version, num_queries=2, templates=["{app} {version} documentation", "{app} SCIM API"]
+    )
+
+    assert queries == ["Nextcloud documentation", "Nextcloud SCIM API"]
+
+
+def test_default_queries_ask_for_what_an_identity_connector_needs():
+    queries, _, _ = llm_helpers.generate_queries_via_preset(
+        app="Nextcloud",
+        version="31",
+        num_queries=8,
+        templates=llm_helpers.get_prioritized_fallback_templates("dummy"),
+    )
+
+    assert queries[0] == "Nextcloud 31 documentation"
+    assert "Nextcloud user provisioning API" in queries and "Nextcloud users groups REST API" in queries
+    assert len(queries) == 8 and all("31" not in query for query in queries[1:])
 
 
 def test_generate_query_via_llm_adds_fallback_templates_when_llm_returns_too_few(mock_llm, mock_llm_eval):

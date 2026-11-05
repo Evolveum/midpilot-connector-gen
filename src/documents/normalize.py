@@ -67,6 +67,21 @@ def merge_object_class_tags(tags: Sequence[str], object_classes: Iterable[str]) 
     return merged
 
 
+# Whitespace, quotes, markdown emphasis and code marks an LLM tends to change when it quotes a text.
+_QUOTE_NOISE = re.compile(r"[\s*`\\\"']+")
+
+
+def comparable_quote_text(text: str) -> str:
+    """Lower-case ``text`` without the characters an LLM changes when it quotes it, for :func:`is_quoted_from`."""
+    return _QUOTE_NOISE.sub("", text.lower())
+
+
+def is_quoted_from(quote: str, comparable_text: str) -> bool:
+    """Whether ``quote`` appears in a text given in :func:`comparable_quote_text` form."""
+    normalized = comparable_quote_text(quote.strip(" .…"))
+    return bool(normalized) and normalized in comparable_text
+
+
 def canonicalize_scim_path(scim_path: Any) -> str:
     """Convert quoted bracket property access to canonical SCIM dot notation."""
     normalized = str(scim_path or "").strip()

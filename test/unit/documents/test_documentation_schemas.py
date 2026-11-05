@@ -12,4 +12,3 @@ def test_saved_documentation_accepts_content_type_alias_and_serializes_camel_cas
 
     assert documentation.content_type == "application/json"
     assert documentation.model_dump(by_alias=True)["contentType"] == "application/json"
-    assert documentation.to_dict()["contentType"] == "application/json"

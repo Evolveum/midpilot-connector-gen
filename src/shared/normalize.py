@@ -15,6 +15,16 @@ from src.shared.json_values import to_jsonable
 logger = logging.getLogger(__name__)
 
 
+# Application versions that name no concrete release: midPoint sends "latest", the scrape request defaults to
+# "current".
+GENERIC_APPLICATION_VERSIONS = frozenset({"", "latest", "current", "newest", "any", "all", "*"})
+
+
+def is_generic_version(version: Any) -> bool:
+    """True when ``version`` names no concrete release of the application (``"latest"``, ``"current"``, empty)."""
+    return str(version or "").strip().lower() in GENERIC_APPLICATION_VERSIONS
+
+
 def normalize_url(value: Any) -> str:
     """Normalize URL-like values for reliable comparisons."""
     return str(value).rstrip("/") if value else ""

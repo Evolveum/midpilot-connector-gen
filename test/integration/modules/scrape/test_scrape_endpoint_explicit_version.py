@@ -32,6 +32,8 @@ async def test_scrape_documentation_uses_explicit_application_version():
             application_version="2.0",
         )
 
+        expected_input = {**request.model_dump(by_alias=True), "effectiveApplicationVersion": "2.0"}
+
         response = await scrape_documentation(request, session_id, db=MagicMock())
 
         assert response.jobId == job_id
@@ -40,7 +42,7 @@ async def test_scrape_documentation_uses_explicit_application_version():
         mock_schedule.assert_awaited_once_with(
             db=mock_repo.db,
             job_type="scrape.getRelevantDocumentation",
-            input_payload=request.model_dump(by_alias=True),
+            input_payload=expected_input,
             worker=ANY,
             worker_args=(job_input_reference(), session_id),
             initial_stage="queue",
@@ -52,6 +54,6 @@ async def test_scrape_documentation_uses_explicit_application_version():
             session_id,
             {
                 "scrapeJobId": str(job_id),
-                "scrapeInput": request.model_dump(by_alias=True),
+                "scrapeInput": expected_input,
             },
         )

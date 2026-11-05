@@ -5,21 +5,17 @@
 """Shared documentation schemas and helpers."""
 
 from src.documents.schemas import (
-    DocumentationReferences,
-    ReferenceItem,
+    PageAssessmentMetadata,
     RetrievalMetadata,
     SavedDocumentation,
     SpecRetrievalMetadata,
-    SummaryOutput,
     normalize_count,
 )
 
 __all__ = [
-    "DocumentationReferences",
-    "ReferenceItem",
+    "PageAssessmentMetadata",
     "RetrievalMetadata",
     "SavedDocumentation",
     "SpecRetrievalMetadata",
-    "SummaryOutput",
     "normalize_count",
 ]

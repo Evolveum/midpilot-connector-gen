@@ -2,11 +2,43 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
-"""URL helpers shared by discovery and scrape: canonical form and path-based blocklist matching."""
+"""URL helpers shared by discovery and scrape: canonical form, site identity and path-based blocklist matching."""
 
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
+from crawl4ai.utils import get_base_domain  # type: ignore
+
 _TRACKING_PARAMS = {"gclid", "fbclid", "yclid", "mc_cid", "mc_eid"}
+
+# Hosting domains whose subdomains belong to different tenants: ``vendor.github.io`` and
+# ``other.github.io`` are unrelated sites, so only the exact host identifies the site.
+MULTI_TENANT_HOST_SUFFIXES = frozenset(
+    {
+        "amazonaws.com",
+        "atlassian.net",
+        "azurewebsites.net",
+        "blogspot.com",
+        "cloudfront.net",
+        "document360.io",
+        "firebaseapp.com",
+        "freshdesk.com",
+        "gitbook.io",
+        "github.io",
+        "gitlab.io",
+        "herokuapp.com",
+        "mintlify.app",
+        "netlify.app",
+        "notion.site",
+        "pages.dev",
+        "readme.io",
+        "readthedocs.io",
+        "stoplight.io",
+        "vercel.app",
+        "web.app",
+        "wordpress.com",
+        "zendesk.com",
+    }
+)
 
 
 def canonicalize_url(url: str) -> str:
@@ -50,3 +82,24 @@ def is_forbidden_url(url: str, forbidden_url_parts: list[str]) -> bool:
         ):
             return True
     return False
+
+
+def url_host(url: str) -> str:
+    """Lowercase host of a URL without port and a leading ``www.``; empty when the URL has none."""
+    host = (urlsplit(url.strip()).hostname or "").lower()
+    return host.removeprefix("www.")
+
+
+def is_multi_tenant_host(host: str) -> bool:
+    """True for a tenant subdomain of a shared hosting domain (``vendor.github.io``)."""
+    return any(host.endswith(f".{suffix}") for suffix in MULTI_TENANT_HOST_SUFFIXES)
+
+
+def site_of(url: str) -> str:
+    """The site a URL belongs to: its registrable domain, or the exact host of a tenant of a shared hosting domain."""
+    host = url_host(url)
+    if not host:
+        return ""
+    if is_multi_tenant_host(host):
+        return host
+    return get_base_domain(url) or host
