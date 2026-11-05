@@ -29,37 +29,72 @@ Module: `src/modules/scrape/` (crawling built on crawl4ai + Playwright via
 1. *Crawl* the starter links (typically the link:discovery.adoc[discovery]
    output). A URL served as JSON, YAML or plain text is downloaded as a data
    file (up to `+SCRAPE_AND_PROCESS__MAX_DATA_DOCUMENTATION_BYTES+`); any other
-   page is rendered with crawl4ai/Playwright.
+   page is rendered with crawl4ai/Playwright. Starter links are fetched even
+   when they match a forbidden URL part.
 2. *Keep only documentation.*
-   * A rendered page is saved as the markdown of its main content: the first of
+   * A rendered page is read as the markdown of its main content: the first of
      `+SCRAPE_AND_PROCESS__MAIN_CONTENT_SELECTORS+` (`article`, `main`,
      `[role=main]`) that matches one element holding most of the page text,
      otherwise the page body without header, footer and sidebars. Navigation is
      removed; tables and code samples are kept. A page without main content is
      not saved, but its links are still followed.
+   * Each page, and each plain-text data file such as a raw markdown file, is
+     *assessed* by an LLM before it is saved (`Scrape:Pages:Assess`, up to
+     `+SCRAPE_AND_PROCESS__ASSESSMENT_CONTENT_TOKENS+` of its content): whether
+     a connector developer needs it, its role (API reference, authentication,
+     navigation, marketing, …), the topics it covers, the object classes it
+     mentions, and whether it documents the application and the target version.
+     A product or version mismatch counts only with a quote from the page as
+     evidence; without one it is `unclear`. The version is assessed only when
+     the scrape targets a concrete version (see the note below).
+   * A page is saved when the assessment keeps it and it does not document
+     another product; the links of a page of another product are not followed.
+     A page of another version is saved and its links are followed, with the
+     mismatch recorded in its chunk metadata: vendors often publish only their
+     latest documentation (Nextcloud only `/server/stable/`), which is then the
+     best there is. A starter link is always saved; a product or version
+     mismatch on one is recorded in the job `errors`. When the assessment fails,
+     the page is saved without it and the failure is recorded in the job
+     `errors`; an unreachable LLM fails the job.
    * A data file is saved when it is an API description (OpenAPI 3, Swagger 2,
-     SCIM schemas or resource types, JSON Schema) or plain text such as a raw
-     markdown file. Other JSON/YAML (`package.json`, translation bundles) is
-     saved only when it is a starter link. A copy of an API description the
-     job already saved (the same specification as JSON and YAML, or served
-     by another instance that lists itself in `servers` or `host`) is not
-     saved again, unless it is a starter link.
+     SCIM schemas or resource types, JSON Schema); API descriptions are
+     validated, not assessed. Other JSON/YAML (`package.json`, translation
+     bundles) is saved only when it is a starter link. A copy of an API
+     description the job already saved (the same specification as JSON and
+     YAML, or served by another instance that lists itself in `servers` or
+     `host`) is not saved again, unless it is a starter link.
 3. *Fetch referenced specifications.* A page built from an API description
    (Swagger UI including `swagger-initializer.js` and `configUrl`, Redoc,
    Stoplight Elements, RapiDoc, Scalar), a `<link rel="alternate">` or a
    JSON/YAML download link to one, or a link whose URL names one
    (`openapi.json`, `swagger.yaml`, `/v3/api-docs`) leads to the document
    itself, fetched in the same iteration and never crawled further. GitHub file
-   pages are read as raw files. Only URLs on the trusted domains and raw GitHub
+   pages are read as raw files. Only URLs in the crawl scope and raw GitHub
    files are fetched, at most `+SCRAPE_AND_PROCESS__MAX_SPEC_URLS_PER_PAGE+` per
    page, and only a recognized API description is saved.
-4. *Collect links* found on the scraped pages; normalize them (relative →
-   absolute, strip anchors/trailing slashes) and drop URLs whose path segment
-   matches a configured forbidden part (login, pricing, changelogs, non-English
-   locales, …).
-5. *Filter* the remaining links with an LLM to keep only
-   documentation-relevant ones, then feed them into the next iteration of the
-   scraper loop. The loop runs up to
+4. *Collect links* from the pages whose links are followed: every link of the
+   page, navigation included, made absolute and stripped of fragments,
+   tracking parameters and trailing slashes. A page with more than
+   `+SCRAPE_AND_PROCESS__MAX_LINKS_PER_DOCUMENTATION+` links (a site map) is
+   saved, but its links are not followed. Dropped are links already scraped or
+   decided, links whose path segment matches a forbidden part (login, pricing,
+   changelogs, non-English locales, …) and links outside the *crawl scope*:
+   * the hosts of the starter links, and with a lower rank the other hosts of
+     the same site (`community.example.com` next to `docs.example.com`), whose
+     pages still have to pass the assessment;
+   * on shared hosting (`vendor.github.io`, `acme.atlassian.net`,
+     `*.readthedocs.io`, …) only the exact host, and on GitHub only the owner of
+     the starter repository (`github.com/<owner>/`).
+   Links under the path of a starter link and links whose text or URL names IDM
+   topics (users, groups, roles, authentication, API reference, SCIM, OpenAPI)
+   rank first.
+5. *Select* the links to follow with an LLM (`Scrape:Links:Select`), which
+   reads all candidate links of the iteration with their link texts in batches
+   of `+SCRAPE_AND_PROCESS__MAX_LINKS_PER_ASSESSMENT+` and returns the indices of
+   those to follow; a failed batch is recorded in the job `errors`. Page
+   assessments and link selections run concurrently, at most
+   `+SCRAPE_AND_PROCESS__MAX_CONCURRENT_PAGE_ASSESSMENTS+` at a time. The
+   selected links are the next iteration of the scraper loop, which runs up to
    `+SCRAPE_AND_PROCESS__MAX_SCRAPER_ITERATIONS+` (default 4) iterations. Links
    found on the last iteration are never scraped, so they are not sent to the
    LLM; they only decide between the finish reasons `max-iterations-reached`
@@ -85,10 +120,11 @@ Module: `src/modules/scrape/` (crawling built on crawl4ai + Playwright via
 7. Each chunk is *processed by an LLM* (`src/documents/processing/`):
    summarized, categorized (`spec_json`, `reference_api`, `tutorial`, …),
    tagged, and annotated with metadata, including `retrieval` (starter link,
-   recognized specification and its canonical hash, see
-   link:../sessions-and-jobs.adoc#chunk-metadata[chunk metadata]). The object
-   classes a chunk documents are added to its `tags`: a class the LLM names
-   only when its evidence contains the class name and appears in the chunk,
+   link depth, page assessment, recognized specification and its canonical
+   hash, see link:../sessions-and-jobs.adoc#chunk-metadata[chunk metadata]).
+   The object classes a chunk documents are added to its `tags`: a class the
+   LLM names (the classes the page assessment found on the page are a hint in
+   the prompt) only when its evidence contains the class name and appears in the chunk,
    as a whole or through a schema name or path in it (`UserModel`,
    `/api/v3/users`), and for a chunk of an API description also its resources
    and schemas. For such
@@ -112,9 +148,14 @@ already have good documentation (an OpenAPI spec, an exported doc bundle),
 uploading it directly to the session is faster and more reliable than
 scraping.
 
-NOTE: `applicationName` and `applicationVersion` are passed to the chunk
-processing and link selection prompts. The digester does not filter chunks by
-version.
+NOTE: The scrape targets the first concrete version of `applicationVersion` and
+the session's `discoveryInput.applicationVersion` (midPoint always requests
+`latest` and names the version only in discovery). It is fixed when the job is
+scheduled and stored in the job input as `effectiveApplicationVersion`, so a
+scrape of another version never reuses this one. With no concrete version
+(`latest`, `current`) the version is not assessed. The application name and
+this version are passed to the assessment, link selection and chunk processing
+prompts.
 
 NOTE: When a site keeps its content outside `article`/`main`, add its
 container to `+SCRAPE_AND_PROCESS__MAIN_CONTENT_SELECTORS+` (CSS selectors,

@@ -14,32 +14,54 @@ from langchain_openai import ChatOpenAI
 
 from src.core.observability.langfuse import build_llm_config
 from src.modules.discovery.schema import DiscoveryIntegrationType, PySearchPrompts
+from src.shared.normalize import is_generic_version
 
 logger = logging.getLogger(__name__)
 
 PRIMARY_TEMPLATE_COUNT = 5
 SECONDARY_TEMPLATE_COUNT = 3
 
+# One topic per query, each something an identity connector needs. Only the queries for the documentation as a
+# whole name the version: topic pages are published for many versions, and the scraper's page assessment checks
+# the version of each page it reads. A generic version ("latest") is left out of every query.
 REST_FALLBACK_TEMPLATES: list[str] = [
-    "{app} REST API documentation {version}",
-    "{app} {version} REST API reference",
-    "{app} developer REST API docs {version}",
-    "{app} OpenAPI swagger {version}",
-    "{app} API authentication docs {version}",
+    "{app} {version} REST API documentation",
+    "{app} user provisioning API",
+    "{app} users groups REST API",
+    "{app} API authentication",
+    "{app} OpenAPI swagger",
+    "{app} REST API reference roles permissions",
+    "{app} admin guide user management",
 ]
 
 SCIM_FALLBACK_TEMPLATES: list[str] = [
-    "{app} SCIM 2.0 documentation {version}",
-    "{app} SCIM API reference {version}",
-    "{app} developer SCIM docs {version}",
-    "{app} SCIM provisioning guide {version}",
-    "{app} SCIM /Users /Groups endpoints {version}",
+    "{app} SCIM API",
+    "{app} {version} SCIM provisioning",
+    "{app} SCIM Users Groups endpoints",
+    "{app} SCIM authentication token",
+    "{app} SCIM schema attributes",
 ]
 
 DEFAULT_FALLBACK_TEMPLATES: list[str] = [
-    *REST_FALLBACK_TEMPLATES[:4],
-    *SCIM_FALLBACK_TEMPLATES[:4],
+    "{app} {version} documentation",
+    "{app} REST API reference",
+    "{app} user provisioning API",
+    "{app} users groups REST API",
+    "{app} API authentication",
+    "{app} OpenAPI swagger",
+    "{app} SCIM API",
+    "{app} admin guide user management",
 ]
+
+
+def format_query(template: str, *, app: str, version: str) -> str:
+    """A search query from a template; a generic version such as "latest" is left out, it only dilutes results."""
+    query_version = "" if is_generic_version(version) else version.strip()
+    try:
+        query = template.format(app=app, version=query_version)
+    except (IndexError, KeyError, ValueError):
+        query = template
+    return " ".join(query.split())
 
 
 def get_prioritized_fallback_templates(integration_type: DiscoveryIntegrationType) -> list[str]:
@@ -140,10 +162,7 @@ def generate_queries_via_preset(
     for tmpl in used_templates:
         if len(queries) >= num_queries:
             break
-        try:
-            q = tmpl.format(app=app, version=version).strip()
-        except Exception:
-            q = tmpl.strip()
+        q = format_query(tmpl, app=app, version=version)
         if q and q not in queries:
             queries.append(q)
 

@@ -59,7 +59,11 @@ most likely to touch.
 | `+SCRAPE_AND_PROCESS__+` | `src/config/scrape.py`
 | Scraper loop bounds (`MAX_SCRAPER_ITERATIONS`, `MAX_LINKS_PER_DOCUMENTATION`,
   `FORBIDDEN_URL_PARTS`), page main-content selectors
-  (`MAIN_CONTENT_SELECTORS`), data file and referenced-spec limits
+  (`MAIN_CONTENT_SELECTORS`), page assessment and link selection
+  (`ASSESSMENT_CONTENT_TOKENS`, default 32000; `MAX_LINKS_PER_ASSESSMENT`,
+  default 150; `MAX_CONCURRENT_PAGE_ASSESSMENTS`, default 8;
+  `IRRELEVANT_LINKS_PARTS` and `IRRELEVANT_LINKS_PARTS_MIN_LENGTH` are
+  deprecated and have no effect), data file and referenced-spec limits
   (`MAX_DATA_DOCUMENTATION_BYTES`, default 50 MiB; `MAX_SPEC_URLS_PER_PAGE`,
   default 20, 0 disables), chunking (`CHUNK_LENGTH`,
   `SINGLE_ITEM_SCHEMA_MAX_TOKENS`), chunk-processing concurrency and retries,

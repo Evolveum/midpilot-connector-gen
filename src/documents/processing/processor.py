@@ -13,7 +13,13 @@ from uuid import UUID
 from src.config import config
 from src.documents import SavedDocumentation
 from src.documents.chunking import split_api_description, split_single_item_schema, split_text_with_token_overlap
-from src.documents.normalize import merge_object_class_tags, normalize_object_class_tag, object_class_tag_variants
+from src.documents.normalize import (
+    comparable_quote_text,
+    is_quoted_from,
+    merge_object_class_tags,
+    normalize_object_class_tag,
+    object_class_tag_variants,
+)
 from src.documents.processing.llms import get_llm_processed_chunk
 from src.documents.processing.prompts import get_llm_chunk_process_prompt
 from src.documents.processing.schema import ChunkProcessingError, LlmChunkOutput
@@ -21,8 +27,6 @@ from src.session.schema import DocumentationItem
 
 logger = logging.getLogger(__name__)
 
-# Whitespace, quotes, markdown emphasis and code marks an LLM tends to change when it quotes a chunk.
-_QUOTE_NOISE = re.compile(r"[\s*`\\\"']+")
 # A schema name, path or other identifier inside the evidence, such as ``UserModel`` or ``/api/v3/users/{id}``.
 _EVIDENCE_IDENTIFIER = re.compile(r"[\w./{}$:-]{3,}")
 
@@ -48,7 +52,7 @@ def tag_object_classes(
     digester selects chunks by. ``structural_classes``, read from the structure of an API description, need no
     evidence. ``document`` (URL or filename) is for logging.
     """
-    comparable_content = _QUOTE_NOISE.sub("", content.lower())
+    comparable_content = comparable_quote_text(content)
     verified: list[str] = []
     dropped: list[str] = []
     for mention in data.object_classes:
@@ -79,8 +83,7 @@ def _is_evidenced(name: str, evidence: str, comparable_content: str) -> bool:
     def names_class(text: str) -> bool:
         return any(variant in normalize_object_class_tag(text) for variant in variants)
 
-    quote = _QUOTE_NOISE.sub("", evidence.strip(" .…").lower())
-    if quote and quote in comparable_content and names_class(evidence):
+    if names_class(evidence) and is_quoted_from(evidence, comparable_content):
         return True
     return any(
         names_class(identifier) and identifier.lower() in comparable_content
@@ -198,9 +201,13 @@ async def process_scraped_documentation(
     retrieval_metadata = (
         {"retrieval": documentation.retrieval.model_dump(exclude_none=True)} if documentation.retrieval else None
     )
+    assessment = documentation.retrieval.assessment if documentation.retrieval else None
+    page_object_classes = assessment.object_classes if assessment else []
 
     async def process_chunk(idx: int, chunk: _DocumentChunk) -> tuple[int, DocumentationItem]:
-        prompts = get_llm_chunk_process_prompt(chunk.text, str(documentation.url), app, app_version)
+        prompts = get_llm_chunk_process_prompt(
+            chunk.text, str(documentation.url), app, app_version, page_object_classes=page_object_classes
+        )
 
         # A single shared semaphore is applied at chunk level
         async with semaphore:
