@@ -25,13 +25,33 @@ def _normalize_url(url: str) -> str:
     return (url or "").rstrip("/")
 
 
-async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlResult]:
+# 4xx responses that can succeed on a later attempt; every other 4xx (and a robots.txt denial) is final.
+_RETRYABLE_CLIENT_ERROR_STATUSES = frozenset({408, 425, 429})
+
+
+def _is_retryable_failure(result: CrawlResult) -> bool:
+    """Return False for failures a retry cannot fix: a robots.txt denial or a permanent 4xx response."""
+    headers = getattr(result, "response_headers", None) or {}
+    if "X-Robots-Status" in headers or "robots.txt" in str(getattr(result, "error_message", "") or ""):
+        return False
+    status_code = getattr(result, "status_code", None)
+    if isinstance(status_code, int) and 400 <= status_code < 500:
+        return status_code in _RETRYABLE_CLIENT_ERROR_STATUSES
+    return True
+
+
+async def scrape_urls(links_to_scrape_orig: list[str], *, prune_content: bool = True) -> AsyncIterator[CrawlResult]:
     """
     Scrape URLs and return successful CrawlResult objects.
     Retries failed URLs up to `max_attempts` times.
+
+    ``prune_content`` fills ``markdown.fit_markdown`` with crawl4ai's pruned page text. The scraper turns
+    it off: it extracts the main content from ``html`` itself and needs the markdown only for links.
     """
     logger.info("[Scrape:URLs] Starting to scrape %s URLs", len(links_to_scrape_orig))
-    prune_filter = PruningContentFilter(threshold=0.42, threshold_type="dynamic", min_word_threshold=1)
+    prune_filter = (
+        PruningContentFilter(threshold=0.42, threshold_type="dynamic", min_word_threshold=1) if prune_content else None
+    )
     md_generator = DefaultMarkdownGenerator(
         content_filter=prune_filter, options={"ignore_images": True, "skip_internal_links": True}
     )
@@ -50,6 +70,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
     links_to_scrape = list(links_to_scrape_orig)
     scrape_out_success_count = 0
     new_failed_links: list[str] = []
+    permanently_failed_links: list[str] = []
     last_attempt = 0
 
     for attempt in range(1, max_attempts + 1):
@@ -70,16 +91,20 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
                     if getattr(result, "success", False):
                         scrape_out_success_count += 1
                         yield result
-                    elif result_url:
+                    elif result_url and _is_retryable_failure(result):
                         new_failed_links.append(result_url.rstrip("/"))
+                    elif result_url:
+                        permanently_failed_links.append(result_url.rstrip("/"))
             else:
                 results: List[CrawlResult] = cast(List[CrawlResult], raw_results)
                 for link, result in zip(links_to_scrape, results):
                     if getattr(result, "success", False):
                         scrape_out_success_count += 1
                         yield result
-                    else:
+                    elif _is_retryable_failure(result):
                         new_failed_links.append(link.rstrip("/"))
+                    else:
+                        permanently_failed_links.append(link.rstrip("/"))
 
         if seen_links:
             for link in links_to_scrape:
@@ -90,7 +115,7 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
         new_failed_links = list(dict.fromkeys(new_failed_links))
 
         if not new_failed_links:
-            logger.info("[Scrape:URLs] Attempt %s: All URLs scraped successfully", attempt)
+            logger.info("[Scrape:URLs] Attempt %s: No URLs left to retry", attempt)
             break
 
         logger.warning(
@@ -109,10 +134,17 @@ async def scrape_urls(links_to_scrape_orig: list[str]) -> AsyncIterator[CrawlRes
 
         links_to_scrape = new_failed_links
 
+    permanently_failed_links = list(dict.fromkeys(permanently_failed_links))
+    if permanently_failed_links:
+        logger.warning(
+            "[Scrape:URLs] %s URLs were not retried (robots.txt denial or permanent 4xx response): %s",
+            len(permanently_failed_links),
+            permanently_failed_links,
+        )
     logger.info(
         "[Scrape:URLs] Scraping complete: %s successful, %s failed",
         scrape_out_success_count,
-        len(new_failed_links) if last_attempt == max_attempts else 0,
+        (len(new_failed_links) if last_attempt == max_attempts else 0) + len(permanently_failed_links),
     )
     return
 
@@ -180,6 +212,21 @@ async def get_all_content_types(urls: list[str]) -> dict[str, str]:
     return dict(zip(urls, content_types))
 
 
+async def read_text_limited(response: aiohttp.ClientResponse, max_bytes: int) -> str | None:
+    """Read a response body as text, or return None when it is larger than ``max_bytes``."""
+    if response.content_length is not None and response.content_length > max_bytes:
+        return None
+    body = bytearray()
+    async for block in response.content.iter_chunked(64 * 1024):
+        body.extend(block)
+        if len(body) > max_bytes:
+            return None
+    try:
+        return body.decode(response.charset or "utf-8", errors="replace")
+    except LookupError:  # an unknown charset name in Content-Type
+        return body.decode("utf-8", errors="replace")
+
+
 async def fetch_data_documentation(url: str) -> tuple[str, str] | None:
     """
     Fetch the content of a data documentation (e.g., JSON, YAML).
@@ -196,7 +243,17 @@ async def fetch_data_documentation(url: str) -> tuple[str, str] | None:
                         or "yml" in content_type
                         or "text/plain" in content_type
                     ):
-                        return (url, await response.text())
+                        max_bytes = config.scrape_and_process.max_data_documentation_bytes
+                        text = await read_text_limited(response, max_bytes)
+                        if text is None:
+                            logger.warning(
+                                "[Scrape:DataDocumentation] Skipping %s: larger than %s bytes "
+                                "(SCRAPE_AND_PROCESS__MAX_DATA_DOCUMENTATION_BYTES)",
+                                url,
+                                max_bytes,
+                            )
+                            return None
+                        return (url, text)
 
                     logger.warning(
                         "[Scrape:DataDocumentation] URL %s has unsupported content type: %s, defaulting to crawl4ai scraping",

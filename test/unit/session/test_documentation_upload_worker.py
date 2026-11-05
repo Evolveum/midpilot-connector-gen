@@ -5,12 +5,12 @@
 import asyncio
 import json
 import threading
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
+from src.documents.processing.schema import LlmChunkOutput
 from src.session.documentation_processing import process_documentation_worker
 from src.session.documentation_upload import RawUploadedDocumentation, UploadedDocumentation
 
@@ -31,13 +31,13 @@ async def test_process_documentation_worker_publishes_only_complete_document_in_
         metadata={"filename": "docs.md", "content_type": "text/markdown", "parser": "text"},
     )
 
-    async def fake_llm_processed_chunk(prompts: tuple[str, str]) -> SimpleNamespace:
+    async def fake_llm_processed_chunk(prompts: tuple[str, str]) -> LlmChunkOutput:
         if prompts[1] == "first":
             await asyncio.sleep(0.01)
         elif fail_last_chunk:
             await asyncio.sleep(0.02)
             raise RuntimeError("LLM failed")
-        return SimpleNamespace(
+        return LlmChunkOutput(
             summary=f"summary {prompts[1]}",
             num_endpoints=0,
             tags=["docs"],

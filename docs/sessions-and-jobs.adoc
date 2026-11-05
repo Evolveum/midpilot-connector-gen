@@ -88,6 +88,37 @@ deterministically; they do not call the chunk-processing LLM. The application
 name/version for normal processing is taken from the session's `discoveryInput`
 or `scrapeInput` — run (or at least record) those inputs first for best results.
 
+[[chunk-metadata]]
+=== Chunk metadata
+
+Each stored chunk carries a `metadata` object, returned by the documentation
+GET endpoints and in the scrape result: the chunk-processing output
+(`category`, `tags`, `num_endpoints`; the summary is a separate field), sizes
+(`token_count`, `character_count`, `chunk_number`), `content_type`, and for
+uploads `filename` and parser details. Since 1.1.0 chunks of scraped documents
+also carry `retrieval`, which records how the scraper obtained the document:
+
+[source,json]
+----
+"retrieval": {
+  "version": 1,
+  "starter": true,
+  "spec": {"format": "openapi", "title": "Example API", "version": "2.1", "canonical_hash": "9f2c…"}
+}
+----
+
+Since 1.1.0 `tags` also name the object classes a chunk documents (for
+example `WorkPackage`, or the `Users` resource of an API description), which
+the digester selects chunks by.
+
+`starter` is true for a link the user picked. `spec` is present for a data file
+recognized as an API description (`format`: `openapi`, `swagger`, `scim` or
+`json_schema`); `canonical_hash` is the same for the JSON and the YAML
+serialization of one specification and for copies that differ only in where
+the API is deployed (`servers`; Swagger `host` and `schemes`). The key is optional: uploads and
+documentation scraped before 1.1.0 have none, and no selection rule excludes a
+chunk for missing it.
+
 == The asynchronous job pattern
 
 Every expensive operation follows the same contract:

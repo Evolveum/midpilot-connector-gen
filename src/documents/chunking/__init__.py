@@ -8,8 +8,10 @@ Single home for splitting text and schemas into LLM-sized chunks:
 
 - ``tokens``: token counting and token-budget text splitting.
 - ``schema``: structure-aware splitting that keeps each chunk valid JSON/YAML/SQL.
+- ``openapi``: splitting of OpenAPI 3 and Swagger 2 descriptions into valid sub-descriptions by resource.
 """
 
+from src.documents.chunking.openapi import ApiDescriptionChunk, ApiDescriptionSplit, split_api_description
 from src.documents.chunking.schema import split_single_item_schema
 from src.documents.chunking.tokens import (
     count_tokens,
@@ -20,10 +22,13 @@ from src.documents.chunking.tokens import (
 )
 
 __all__ = [
+    "ApiDescriptionChunk",
+    "ApiDescriptionSplit",
     "count_tokens",
     "encoding",
     "get_neighboring_tokens",
     "normalize_to_text",
     "split_text_with_token_overlap",
+    "split_api_description",
     "split_single_item_schema",
 ]

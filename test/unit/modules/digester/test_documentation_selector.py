@@ -223,3 +223,47 @@ async def test_selector_preserves_shared_class_lookup_errors_before_loading_docu
     assert error.value.status_code == status
     assert error.value.code == code
     load_corpus.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_attribute_plan_matches_tags_that_spell_the_object_class_differently():
+    """Regression: only the exact names ``workpackage``/``workpackages`` matched, so REST raised RelevantChunksNotFound."""
+    work_package = _item("WorkPackage schema", tags=["Work Packages"])
+    selector, _ = _selector([work_package])
+
+    plan = await selector.build_attribute_plan(
+        repo=_repo([{"name": "WorkPackage"}]), session_id=uuid4(), object_class="WorkPackage", protocol=ApiType.REST
+    )
+
+    assert _ids(plan.selection.documentation_items(SelectionRole.PRIMARY)) == _ids([work_package])
+
+
+@pytest.mark.asyncio
+async def test_endpoint_plan_matches_plural_object_class_tags():
+    """Regression: endpoint selection accepted only the singular class name, so ``Users`` fell back to everything."""
+    users_endpoints = _item("Users endpoints", tags=["Users", "endpoints"], num_endpoints=4)
+    groups_endpoints = _item("Groups endpoints", tags=["groups", "endpoints"], num_endpoints=3)
+    selector, _ = _selector([users_endpoints, groups_endpoints])
+
+    plan = await selector.build_endpoint_plan(
+        repo=_repo([{"name": "User"}]), session_id=uuid4(), object_class="User", protocol=ApiType.REST
+    )
+
+    assert _ids(plan.selection.documentation_items(SelectionRole.PRIMARY)) == _ids([users_endpoints])
+    assert _ids(plan.selection.documentation_items(SelectionRole.FALLBACK)) == _ids([groups_endpoints])
+
+
+@pytest.mark.asyncio
+async def test_endpoint_plan_needs_no_endpoint_tag_for_class_tagged_chunks_with_endpoints():
+    """Regression: chunk processing rarely tags ``endpoint``, so class-scoped endpoint selection never applied."""
+    users = _item("Users reference", category="reference_api", tags=["users"], num_endpoints=5)
+    users_prose = _item("Users overview", category="reference_api", tags=["users"], num_endpoints=0)
+    groups = _item("Groups reference", category="reference_api", tags=["groups"], num_endpoints=2)
+    selector, _ = _selector([users, users_prose, groups])
+
+    plan = await selector.build_endpoint_plan(
+        repo=_repo([{"name": "User"}]), session_id=uuid4(), object_class="User", protocol=ApiType.REST
+    )
+
+    assert _ids(plan.selection.documentation_items(SelectionRole.PRIMARY)) == _ids([users])
+    assert _ids(plan.selection.documentation_items(SelectionRole.FALLBACK)) == _ids([users_prose, groups])

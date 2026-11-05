@@ -99,3 +99,17 @@ CONNECTIVITY_ENDPOINT_FALLBACK_CRITERIA = ChunkFilterCriteria(
         "overview",
     ],
 )
+
+
+def attribute_object_class_criteria(object_class: str) -> ChunkFilterCriteria:
+    """Primary chunks for attribute extraction: DEFAULT_CRITERIA chunks tagged with ``object_class``."""
+    return DEFAULT_CRITERIA.model_copy(update={"object_class_tags": [object_class]})
+
+
+def endpoint_object_class_criteria(object_class: str) -> ChunkFilterCriteria:
+    """Primary chunks for endpoint extraction: ENDPOINT_CRITERIA chunks (at least one endpoint) tagged with ``object_class``.
+
+    No ``endpoint``/``endpoints`` tag is required: chunk processing rarely emits it, and ``min_endpoints_num``
+    already guarantees the chunk documents an endpoint.
+    """
+    return ENDPOINT_CRITERIA.model_copy(update={"object_class_tags": [object_class]})

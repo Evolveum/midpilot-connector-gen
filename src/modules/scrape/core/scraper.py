@@ -4,18 +4,24 @@
 
 import asyncio
 import logging
-from typing import Awaitable, Callable, List
+from collections.abc import Collection
+from typing import Any, Awaitable, Callable, List
 
+from crawl4ai.utils import get_base_domain  # type: ignore
 from pydantic import HttpUrl
 
 from src.config import config
 from src.core.schema import validate_pydantic_object
-from src.documents import DocumentationReferences, SavedDocumentation
+from src.documents import DocumentationReferences, RetrievalMetadata, SavedDocumentation, SpecRetrievalMetadata
+from src.documents.spec_validation import SpecDescription, describe_spec, parse_structured_document
 from src.integrations.web import (
     get_all_content_types,
     scrape_all_data_documentations,
     scrape_urls,
 )
+from src.integrations.web.page_content import extract_main_content
+from src.integrations.web.spec_discovery import discover_spec_urls
+from src.integrations.web.urls import is_forbidden_url
 from src.modules.scrape.core.citations import (
     deduplicate_links,
     process_citations_markdown,
@@ -25,7 +31,6 @@ from src.modules.scrape.core.citations import (
 from src.modules.scrape.core.link_filter import filter_out_irrelevant_links
 from src.modules.scrape.core.links import (
     clean_reference_list,
-    is_forbidden_url,
     relative_paths_to_absolute,
     remove_anchor_links,
     remove_trailing_slash,
@@ -35,6 +40,134 @@ from src.modules.scrape.prompts.prompts import get_relevant_filter_prompts
 from src.modules.scrape.schema import RelevantLinks
 
 logger = logging.getLogger(__name__)
+
+
+# crawl4ai reports markdown generation failures inside the markdown string itself.
+_CRAWL4AI_MARKDOWN_ERROR_PREFIXES = ("Error converting HTML to markdown", "Error generating fit markdown")
+
+
+def _is_usable_content(content: str | None) -> bool:
+    """Return False for empty content or a crawl4ai markdown error message, which must never be saved."""
+    if content is None or not content.strip():
+        return False
+    return not content.lstrip().startswith(_CRAWL4AI_MARKDOWN_ERROR_PREFIXES)
+
+
+def _inspect_data_documentation(content: str) -> tuple[bool, SpecDescription | None]:
+    """Return whether the content is JSON/YAML and which API description it is, if any. CPU-bound."""
+    document = parse_structured_document(content)
+    if document is None:
+        return False, None
+    return True, describe_spec(document)
+
+
+def _saved_copy_of(spec: SpecDescription, saved_documentations: dict[str, SavedDocumentation]) -> str | None:
+    """URL of an already saved document that is the same API description, if any."""
+    for saved_url, saved in saved_documentations.items():
+        saved_spec = saved.retrieval.spec if saved.retrieval else None
+        if saved_spec is not None and saved_spec.canonical_hash == spec.canonical_hash:
+            return saved_url
+    return None
+
+
+async def _save_data_documentation(
+    url: str,
+    content: str,
+    content_type: str,
+    *,
+    starter: bool,
+    spec_required: bool,
+    saved_documentations: dict[str, SavedDocumentation],
+    on_documentation_scraped: Callable[[SavedDocumentation], Awaitable[None]] | None,
+) -> bool:
+    """Save a fetched data file when it is worth keeping; return whether it was saved.
+
+    API descriptions are kept unless this job already saved the same one (another format or another
+    server list of it). Other JSON/YAML files (``package.json``, translation bundles) are kept only as
+    starter links the user picked. Plain text (a raw markdown file) is kept unless the URL was referenced
+    by a page as its API description (``spec_required``). Starter links are always kept.
+    """
+    if not _is_usable_content(content):
+        logger.warning("[Scrape:Loop] Data documentation %s is empty, not saving it", url)
+        return False
+    structured, spec = await asyncio.to_thread(_inspect_data_documentation, content)
+    if spec is None and not starter and (structured or spec_required):
+        logger.info("[Scrape:Loop] Data documentation %s is not an API description, not saving it", url)
+        return False
+    if spec is not None and not starter and (copy_url := _saved_copy_of(spec, saved_documentations)) is not None:
+        logger.info("[Scrape:Loop] %s is the same API description as %s, not saving it", url, copy_url)
+        return False
+    documentation = SavedDocumentation(
+        url=url,
+        content_type=content_type,
+        content=content,
+        links=[],
+        retrieval=RetrievalMetadata(
+            starter=starter, spec=SpecRetrievalMetadata.from_description(spec) if spec is not None else None
+        ),
+    )
+    if spec is not None:
+        logger.info(
+            "[Scrape:Loop] Saving %s document %s (title %r, version %r)", spec.format, url, spec.title, spec.version
+        )
+    saved_documentations[url] = documentation
+    if on_documentation_scraped:
+        await on_documentation_scraped(documentation)
+    return True
+
+
+async def _save_referenced_specs(
+    spec_urls: list[str],
+    *,
+    trusted_domains: list[str],
+    saved_documentations: dict[str, SavedDocumentation],
+    on_documentation_scraped: Callable[[SavedDocumentation], Awaitable[None]] | None,
+) -> int:
+    """Fetch the API descriptions the scraped pages reference (one hop, never crawled further).
+
+    Only specs on the trusted domains are fetched, plus raw GitHub files: vendors often publish the spec
+    in their repository and link it from their documentation. Only a recognized API description is
+    saved. Returns the number of saved specs.
+    """
+    spec_domains = {*trusted_domains, "githubusercontent.com"}
+    candidates = [url for url in dict.fromkeys(spec_urls) if url not in saved_documentations]
+    in_scope = [url for url in candidates if get_base_domain(url) in spec_domains]
+    if len(in_scope) != len(candidates):
+        logger.info(
+            "[Scrape:Loop] Skipping %s referenced API descriptions outside the trusted domains",
+            len(candidates) - len(in_scope),
+        )
+    if not in_scope:
+        return 0
+
+    content_types = await get_all_content_types(in_scope)
+    saved_count = 0
+    for url, content in await scrape_all_data_documentations(in_scope):
+        if content == "error":
+            logger.info("[Scrape:Loop] Referenced API description %s is not served as a data file, skipping it", url)
+            continue
+        if await _save_data_documentation(
+            url,
+            content,
+            content_types.get(url, ""),
+            starter=False,
+            spec_required=True,
+            saved_documentations=saved_documentations,
+            on_documentation_scraped=on_documentation_scraped,
+        ):
+            saved_count += 1
+    return saved_count
+
+
+def _page_link_urls(result: Any) -> list[str]:
+    """Absolute hrefs crawl4ai found on the page, navigation included."""
+    links = getattr(result, "links", None) or {}
+    return [
+        str(link["href"])
+        for group in ("internal", "external")
+        for link in links.get(group, [])
+        if isinstance(link, dict) and link.get("href")
+    ]
 
 
 def _clean_documentation_links(
@@ -83,6 +216,7 @@ async def scraper_loop(
     forbidden_url_parts: list[str] | None = None,
     last_iteration: bool = False,
     on_documentation_scraped: Callable[[SavedDocumentation], Awaitable[None]] | None = None,
+    starter_links: Collection[str] = (),
 ):
     """
     Main scraper loop to scrape links, filter irrelevant ones, and process html content.
@@ -96,8 +230,9 @@ async def scraper_loop(
         saved_documentations: dict - dictionary of already saved documentations
         trusted_domains: list - list of trusted domains
         forbidden_url_parts: list - list of URL parts to filter out
-        last_iteration: bool - flag indicating if this is the last iteration of the scraper loop, on which we dont need to filter out irrelevant links
+        last_iteration: bool - flag indicating the last iteration, whose links are reported but never selected by the LLM
         on_documentation_scraped: optional async callback called immediately after a documentation is scraped and prepared for processing
+        starter_links: the links the user picked; their data files are saved even when they are no API description
     outputs:
         new_links_to_scrape: list - list of links to scrape in the next iteration
     updates:
@@ -154,6 +289,7 @@ async def scraper_loop(
         len(other_links),
     )
 
+    starters = {link.rstrip("/") for link in starter_links}
     http_results = await scrape_all_data_documentations(data_links)
     data_documentations_count = 0
     data_fallback_to_html_count = 0
@@ -167,17 +303,16 @@ async def scraper_loop(
                 data_fallback_to_html_count += 1
                 continue
             logger.debug("[Scrape:Loop] Loading %s as data file", str(url))
-            documentation = SavedDocumentation(
-                url=url,
-                content_type=content_types[str(url)],
-                content=content,
-                links=[],
-            )
-            logger.debug("[Scrape:Loop] Fetched data documentation %s", str(url))
-            saved_documentations[str(url)] = documentation
-            data_documentations_count += 1
-            if on_documentation_scraped:
-                await on_documentation_scraped(documentation)
+            if await _save_data_documentation(
+                str(url),
+                content,
+                content_types[str(url)],
+                starter=str(url).rstrip("/") in starters,
+                spec_required=False,
+                saved_documentations=saved_documentations,
+                on_documentation_scraped=on_documentation_scraped,
+            ):
+                data_documentations_count += 1
 
     if data_fallback_to_html_count:
         logger.debug(
@@ -189,6 +324,8 @@ async def scraper_loop(
     new_links_to_scrape: List[str] = []
     scraped_documentations_count = 0
     current_scraped_urls = [url.rstrip("/") for url in other_links]
+    referenced_spec_urls: List[str] = []
+    max_spec_urls_per_page = config.scrape_and_process.max_spec_urls_per_page
 
     logger.info(
         "[Scrape:Loop] Iteration %s: Starting HTML scrape for %s URLs",
@@ -196,19 +333,42 @@ async def scraper_loop(
         len(other_links),
     )
 
-    async for scraped_link in scrape_urls(other_links):
+    async for scraped_link in scrape_urls(other_links, prune_content=False):
         scraped_documentations_count += 1
         if validate_pydantic_object(scraped_link.url, HttpUrl) and scraped_link.markdown is not None:
-            content = scraped_link.markdown.fit_markdown
+            page_url = scraped_link.url.rstrip("/")
+            content = await asyncio.to_thread(
+                extract_main_content, scraped_link.html, page_url, config.scrape_and_process.main_content_selectors
+            )
             content_type = "text/markdown"
             documentation = SavedDocumentation(
-                url=scraped_link.url.rstrip("/"),
+                url=page_url,
                 content_type=content_type,
                 content=content,
                 links=[],
+                retrieval=RetrievalMetadata(starter=page_url in starters),
             )
-            if on_documentation_scraped:
+            if not _is_usable_content(content):
+                # Keep following the page's links (a hub can still lead to documentation), but never save
+                # a page without main content (only navigation) or a markdown error message as documentation.
+                logger.warning(
+                    "[Scrape:Loop] Documentation %s has no usable main content, not saving it",
+                    str(scraped_link.url),
+                )
+            elif on_documentation_scraped:
                 await on_documentation_scraped(documentation)
+
+            if max_spec_urls_per_page > 0:
+                page_spec_urls = await discover_spec_urls(scraped_link.html, page_url, _page_link_urls(scraped_link))
+                if len(page_spec_urls) > max_spec_urls_per_page:
+                    logger.warning(
+                        "[Scrape:Loop] Documentation %s references %s API descriptions, fetching the first %s "
+                        "(SCRAPE_AND_PROCESS__MAX_SPEC_URLS_PER_PAGE)",
+                        page_url,
+                        len(page_spec_urls),
+                        max_spec_urls_per_page,
+                    )
+                referenced_spec_urls.extend(page_spec_urls[:max_spec_urls_per_page])
 
             documentation_references = process_citations_markdown(
                 markdown_references=scraped_link.markdown.references_markdown,
@@ -292,7 +452,15 @@ async def scraper_loop(
                     str(scraped_link.url),
                 )
 
-            if len(partly_filtered_new_links) > 0 or last_iteration:
+            if partly_filtered_new_links and last_iteration:
+                # Links found on the last iteration are never scraped, so they need no LLM selection. They only
+                # tell the caller that unvisited in-scope links remain (finish reason max-iterations-reached).
+                new_links_to_scrape.extend(partly_filtered_new_links)
+                documentation.links = []
+                documentation.documentation_references = documentation_references_saved
+                saved_documentations[str(scraped_link.url)] = documentation
+
+            elif partly_filtered_new_links:
                 relevant_prompts = get_relevant_filter_prompts(
                     documentation_references.references_markdown, app, app_version
                 )
@@ -359,10 +527,20 @@ async def scraper_loop(
                 documentation.documentation_references = documentation_references_saved
                 saved_documentations[str(scraped_link.url)] = documentation
 
+    referenced_specs_count = await _save_referenced_specs(
+        referenced_spec_urls,
+        trusted_domains=trusted_domains,
+        saved_documentations=saved_documentations,
+        on_documentation_scraped=on_documentation_scraped,
+    )
+    # A link selected for the next iteration may since have been saved, e.g. as a referenced spec.
+    new_links_to_scrape = [link for link in new_links_to_scrape if link not in saved_documentations]
+
     logger.info(
-        "[Scrape:Loop] Iteration %s: Scraped %s HTML documentations successfully",
+        "[Scrape:Loop] Iteration %s: Scraped %s HTML documentations successfully, saved %s referenced API descriptions",
         curr_iteration,
         scraped_documentations_count,
+        referenced_specs_count,
     )
     logger.info(
         "[Scrape:Loop] Iteration %s: Processed %s documentations in total (%s data-file, %s HTML)",

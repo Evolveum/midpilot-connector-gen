@@ -87,11 +87,11 @@ def _split_structured_schema(
         )
         return split_text_with_token_overlap(text, max_tokens=max_tokens, overlap_ratio=0.0)
 
-    values = _split_value(parsed, max_tokens=max_tokens, serialize=serialize)
+    values = split_structured_value(parsed, max_tokens=max_tokens, serialize=serialize)
     return _as_chunks([serialize(value) for value in values])
 
 
-def _split_value(value: Any, *, max_tokens: int, serialize: Serializer) -> list[Any]:
+def split_structured_value(value: Any, *, max_tokens: int, serialize: Serializer) -> list[Any]:
     """Split a parsed value into sub-values that each serialize within ``max_tokens``.
 
     Each returned sub-value is a valid structural fragment (list, dict or scalar),
@@ -121,7 +121,7 @@ def _split_list_value(items: list[Any], *, max_tokens: int, serialize: Serialize
                 groups.append(current)
                 current, current_tokens = [], 0
             # Keep the list wrapper around each split fragment so the shape is preserved.
-            groups.extend([sub] for sub in _split_value(item, max_tokens=max_tokens, serialize=serialize))
+            groups.extend([sub] for sub in split_structured_value(item, max_tokens=max_tokens, serialize=serialize))
             continue
         if current and current_tokens + item_tokens > max_tokens:
             groups.append(current)
@@ -162,7 +162,7 @@ def _split_dict_value(value: dict[str, Any], *, max_tokens: int, serialize: Seri
 
     fragment_budget = max(1, max_tokens - context_tokens)
     for key, val in oversized.items():
-        for sub in _split_value(val, max_tokens=fragment_budget, serialize=serialize):
+        for sub in split_structured_value(val, max_tokens=fragment_budget, serialize=serialize):
             groups.append({**scalar_context, key: sub})
 
     return groups

@@ -46,8 +46,8 @@ def get_discovery_fetch_sys_prompt() -> str:
         The queries you are asked about regard documentations of APIs for various applications.
         Your role is to find the best search query possible and to execute it using the web-search-tool given to you.
         A good search query is specific to the user request but not extremely specific - the user wants candidate links to choose from.
-        The documentation does not have to be official and the search query is never limited to a specific site. Your queries are
-        very generalistic.
+        Prefer queries that surface the vendor's official developer documentation and API reference for exactly this
+        application, not third-party aggregators, blogs or similarly named products.
     </instruction>
     """
 
