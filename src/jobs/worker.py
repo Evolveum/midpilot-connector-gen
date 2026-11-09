@@ -9,14 +9,22 @@ import logging
 import os
 import socket
 import time
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from src.config import config
 from src.core.db import async_session_maker
 from src.database.repositories.job_repository import ClaimedJob, JobRepository
+from src.database.repositories.session_repository import SessionRepository
 from src.jobs.runner import execute_claimed_job
+from src.shared.clock import utc_now
 
 logger = logging.getLogger(__name__)
+
+# Retention is configured in days, so an hourly sweep is precise enough.
+_SESSION_RETENTION_INTERVAL_SECONDS = 3600.0
+# Sessions deleted per transaction; one session can cascade to thousands of chunk rows.
+_SESSION_RETENTION_BATCH_SIZE = 20
 
 
 def build_worker_id() -> str:
@@ -31,6 +39,7 @@ class JobWorker:
         self._stop_event = asyncio.Event()
         self._coordinator: asyncio.Task[None] | None = None
         self._reaper: asyncio.Task[None] | None = None
+        self._retention: asyncio.Task[None] | None = None
         self._active: set[asyncio.Task[None]] = set()
 
     def start(self) -> None:
@@ -38,6 +47,11 @@ class JobWorker:
             raise RuntimeError("Job worker is already started")
         self._coordinator = asyncio.create_task(self._run(), name=f"job-worker:{self.worker_id}")
         self._reaper = asyncio.create_task(self._run_reaper(), name=f"job-reaper:{self.worker_id}")
+        if config.jobs.session_retention_days > 0:
+            self._retention = asyncio.create_task(
+                self._run_session_retention(),
+                name=f"session-retention:{self.worker_id}",
+            )
         logger.info(
             "Started database job worker %s with concurrency %s",
             self.worker_id,
@@ -51,6 +65,7 @@ class JobWorker:
             and not self._coordinator.done()
             and self._reaper is not None
             and not self._reaper.done()
+            and (self._retention is None or not self._retention.done())
         )
 
     async def _claim_one(self) -> ClaimedJob | None:
@@ -81,6 +96,44 @@ class JobWorker:
                 )
             except asyncio.TimeoutError:
                 pass
+
+    async def _run_session_retention(self) -> None:
+        """Delete sessions inactive for longer than ``JOBS__SESSION_RETENTION_DAYS``, once an hour."""
+        retention_days = config.jobs.session_retention_days
+        while not self._stop_event.is_set():
+            deleted = 0
+            try:
+                cutoff = utc_now() - timedelta(days=retention_days)
+                while not self._stop_event.is_set():
+                    batch = await self._delete_inactive_session_batch(cutoff)
+                    deleted += batch
+                    if batch < _SESSION_RETENTION_BATCH_SIZE:
+                        break
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[Jobs:Retention] Failed to delete inactive sessions")
+            if deleted:
+                logger.info(
+                    "[Jobs:Retention] Deleted %s sessions inactive for more than %s days",
+                    deleted,
+                    retention_days,
+                )
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=_SESSION_RETENTION_INTERVAL_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                pass
+
+    @staticmethod
+    async def _delete_inactive_session_batch(cutoff: datetime) -> int:
+        """Delete one batch in its own short transaction."""
+        async with async_session_maker() as db:
+            deleted = await SessionRepository(db).delete_inactive_sessions(cutoff, _SESSION_RETENTION_BATCH_SIZE)
+            await db.commit()
+            return deleted
 
     async def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -128,12 +181,13 @@ class JobWorker:
         self._stop_event.set()
         deadline = time.monotonic() + config.jobs.shutdown_grace_seconds
         job_deadline = deadline - config.jobs.claim_release_timeout_seconds
-        background_tasks = [task for task in (self._coordinator, self._reaper) if task is not None]
+        background_tasks = [task for task in (self._coordinator, self._reaper, self._retention) if task is not None]
         try:
             await self._drain_background_tasks(background_tasks, job_deadline)
         finally:
             self._coordinator = None
             self._reaper = None
+            self._retention = None
             await self._drain_active_jobs(deadline, job_deadline)
             self._active.clear()
             logger.info("Stopped database job worker %s", self.worker_id)

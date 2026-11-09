@@ -23,6 +23,11 @@ class JobsSettings(BaseModel):
     claim_release_timeout_seconds: float = Field(default=3.0, gt=0)
     documentation_write_batch_size: int = Field(default=20, ge=1)
     cpu_processes: int = Field(default=1, ge=1)
+    session_retention_days: int = Field(
+        default=7,
+        ge=0,
+        description="Delete sessions without a write for this many days; 0 disables the cleanup.",
+    )
 
     @model_validator(mode="after")
     def validate_claim_timing(self) -> "JobsSettings":

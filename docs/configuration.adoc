@@ -31,7 +31,8 @@ most likely to touch.
 | `+JOBS__+` | `src/config/jobs.py`
 | Durable PostgreSQL worker: enable/disable consumption, concurrent jobs per
   process, queue polling, claim/heartbeat timing, crash attempts, graceful
-  shutdown, and the per-process CPU helper-pool size.
+  shutdown, the per-process CPU helper-pool size, and the optional session
+  retention.
 
 | `+LOGGING__+` | `src/config/logging.py`
 | Log level and formatting.
@@ -124,6 +125,15 @@ toggle.
   writes in one transaction during scrape/cache persistence.
 | `+JOBS__CPU_PROCESSES+` | `1` | CPU helper processes created by each enabled
   job worker. Keep this small when `APP__WORKERS` or pod replicas are increased.
+| `+JOBS__SESSION_RETENTION_DAYS+` | `7` | Delete whole sessions, with all
+  their documentation, jobs and results, whose last write is older than this
+  many days. `0` disables the cleanup and keeps sessions until they are
+  deleted. Sessions with a queued or running job are kept. Every job consumer
+  checks once an hour; see
+  link:sessions-and-jobs.adoc#session-retention[Session retention]. A value
+  below 28 days, the default included, also shortens the 4-week
+  `+*_INPUT_CHECK_INTERVAL+` cache windows, because a deleted session no
+  longer provides cached results.
 | `+BRAVE__API_KEY+` | empty | Better discovery/web-search results than the
   ddgs fallback.
 | `+LANGFUSE__TRACING_ENABLED+` | `false` | Turn on request/LLM tracing during
