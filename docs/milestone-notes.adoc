@@ -15,6 +15,74 @@ The upgrade instructions between releases are in the
 https://docs.evolveum.com/midpoint/release/[release notes] (for midPilot we will
 prepare this page).
 
+== 1.1.0
+
+=== 2026-11-09 Automatic deletion of inactive sessions after 7 days
+
+Author: Alexander Brecko
+
+Description: Sessions used to be kept until they were deleted through
+`DELETE /api/v1/session/{sessionId}`. The new setting
+`JOBS__SESSION_RETENTION_DAYS` defaults to `7`: every job consumer (the API
+process with `JOBS__ENABLED=true` and every `python -m src.jobs.runtime`
+process) now deletes, once an hour, each session whose last write
+(`sessions.updated_at`) is older than 7 days, together with its documentation,
+jobs and results. Reads and status polling do not count as writes. Sessions
+with a queued or running job are kept. The first check runs as soon as the
+consumer starts, so an upgraded deployment immediately deletes every session
+that has been inactive for more than 7 days. midPoint receives `404` for such
+a session, as for any unknown session, and has to create a new one. Because
+deleted sessions no longer provide cached results, the 4-week
+`+*_INPUT_CHECK_INTERVAL+` cache windows effectively shrink to the retention.
+No endpoint, request or response model, or database schema changed.
+
+Required Upgrade Steps
+
+. Decide on the retention before the first start of 1.1.0. To keep every
+session as before, set `JOBS__SESSION_RETENTION_DAYS=0` in the environment of
+every process that consumes jobs. To keep sessions longer, set the number of
+days instead, for example `JOBS__SESSION_RETENTION_DAYS=30`.
+. If sessions older than the retention may still be needed, back up the
+database before the upgrade:
+`pg_dump --format=custom --file=midpilot-before-1.1.0.dump --host=<host> --port=<port> --username=<user> <database>`.
+. Optionally preview how many sessions the first check deletes (replace `7`
+with the configured retention):
++
+[source,sql]
+----
+SELECT count(*) FROM sessions s
+WHERE s.updated_at < now() - interval '7 days'
+  AND NOT EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.session_id = s.session_id AND j.status IN ('queued', 'running')
+  );
+----
+. Deploy 1.1.0 and restart. No database migration is required.
+. Validate: when sessions were deleted, the log of a job consumer contains
+`[Jobs:Retention] Deleted <n> sessions inactive for more than <days> days`,
+and the query above returns `0`. With `JOBS__SESSION_RETENTION_DAYS=0`, no
+such line appears and the session count is unchanged.
+
+Rollback Procedure (If Upgrade Fails)
+
+. To stop further deletion, set `JOBS__SESSION_RETENTION_DAYS=0` and restart
+every job consumer. Deployments rolled back to 1.0.2 ignore the variable, so it
+can stay in place.
+. Deleted sessions cannot be recovered without the backup. To restore them,
+stop all processes and run
+`pg_restore --clean --if-exists --host=<host> --port=<port> --username=<user> --dbname=<database> midpilot-before-1.1.0.dump`.
+Sessions created after the backup are lost by the restore.
+. Restart the application and check that `GET /api/v1/session/{sessionId}`
+returns the restored session.
+
+Notes & References
+
+* Related PR: Not assigned.
+* Docs: `docs/configuration.adoc`, `docs/sessions-and-jobs.adoc` (Session
+retention).
+* Affected configs: `JOBS__SESSION_RETENTION_DAYS` (new, default `7`, `0`
+disables the cleanup).
+
 == 1.0.2
 
 === 2026-10-30 Base image with tini as the container init process

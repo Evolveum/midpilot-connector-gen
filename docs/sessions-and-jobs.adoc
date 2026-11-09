@@ -31,6 +31,21 @@ exist before any pipeline endpoint is called.
 | Delete the session and all associated data.
 |===
 
+[[session-retention]]
+=== Session retention
+
+Sessions are deleted automatically once their last write is older than
+`+JOBS__SESSION_RETENTION_DAYS+` (default `7` days); `0` disables the cleanup
+and keeps sessions until they are deleted. Every job consumer, embedded or
+started with `python -m src.jobs.runtime`, checks once an hour and deletes
+each session whose last write (`sessions.updated_at`: a new job, a published
+result, changed metadata) is older than the retention. The delete takes the whole
+session with it, as `DELETE /api/session/{sessionId}` does. Reads and status
+polling do not count as activity. A session with a queued or running job is
+kept until the job ends. A deleted session answers `404` like any unknown
+session. Concurrent consumers skip each other's rows, so running the check
+in several processes is safe.
+
 === Documentation in a session
 
 Documentation can enter a session two ways: via the

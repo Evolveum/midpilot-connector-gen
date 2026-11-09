@@ -4,15 +4,17 @@
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, TypeVar, Union
 from uuid import UUID
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, delete, exists, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import Session, SessionData
+from src.database.models import Job, Session, SessionData
 from src.shared.clock import utc_now
+from src.shared.enums import JobStatus
 from src.shared.session_keys import job_pointer_key_for_output
 
 logger = logging.getLogger(__name__)
@@ -325,6 +327,38 @@ class SessionRepository:
         await self.db.flush()
         logger.info("Deleted session: %s", session_id)
         return True
+
+    async def delete_inactive_sessions(self, cutoff: datetime, limit: int) -> int:
+        """
+        Delete up to ``limit`` sessions last written before ``cutoff``.
+
+        A session with a queued or running job is kept. ``SKIP LOCKED`` passes over sessions a
+        request or another process holds, so concurrent sweeps neither wait nor collide. The rows
+        that hang off a session go with it through the ``ON DELETE CASCADE`` foreign keys; a Core
+        delete keeps them out of the ORM, which would otherwise load every child row first.
+
+        :param cutoff: Sessions with ``updated_at`` before this instant are inactive
+        :param limit: Maximum number of sessions deleted by this call
+        :return: Number of deleted sessions
+        """
+        has_active_job = exists().where(
+            Job.session_id == Session.session_id,
+            Job.status.in_((JobStatus.queued.value, JobStatus.running.value)),
+        )
+        inactive = (
+            select(Session.session_id)
+            .where(Session.updated_at < cutoff, ~has_active_job)
+            .order_by(Session.updated_at)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        result = await self.db.execute(
+            delete(Session)
+            .where(Session.session_id.in_(inactive))
+            .returning(Session.session_id)
+            .execution_options(synchronize_session=False)
+        )
+        return len(result.scalars().all())
 
     async def get_session_owner(self, session_id: UUID) -> Optional[SessionOwner]:
         """

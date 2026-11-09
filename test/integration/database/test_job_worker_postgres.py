@@ -20,7 +20,7 @@ from src.core.job_execution import (
     reset_current_execution,
     set_current_execution,
 )
-from src.database.models import Base, DocumentationChunk, Job, JobProgress, Session
+from src.database.models import Base, Document, DocumentationChunk, Job, JobProgress, Session, SessionData
 from src.database.repositories.documentation_repository import DocumentationRepository
 from src.database.repositories.job_repository import ClaimedJob, JobRepository
 from src.database.repositories.session_repository import SessionRepository
@@ -714,6 +714,73 @@ async def test_a_job_failed_by_the_reaper_also_reports_the_failed_stage(
     stage, message = await _progress_stage(postgres_session_factory, invalid_job_id)
     assert stage == "failed"
     assert message == "Queued job has no valid durable execution payload and cannot be executed."
+
+
+@pytest.mark.asyncio
+async def test_retention_deletes_inactive_sessions_with_their_data_and_keeps_busy_and_recent_ones(
+    postgres_session_factory: SessionFactory,
+) -> None:
+    long_ago = datetime.now(timezone.utc) - timedelta(days=40)
+    inactive_id, busy_id, recent_id = uuid4(), uuid4(), uuid4()
+    finished_job_id, running_job_id, doc_id = uuid4(), uuid4(), uuid4()
+
+    def job(job_id: UUID, session_id: UUID, status: str) -> Job:
+        return Job(
+            job_id=job_id,
+            session_id=session_id,
+            job_type=JobType.CODEGEN_FIX_CONNECTOR,
+            status=status,
+            input={},
+            normalized_input_hash=normalized_input_fingerprint({}),
+            execution_payload=None,
+        )
+
+    async with postgres_session_factory() as db:
+        db.add_all(
+            [
+                Session(session_id=inactive_id, created_at=long_ago, updated_at=long_ago),
+                Session(session_id=busy_id, created_at=long_ago, updated_at=long_ago),
+                Session(session_id=recent_id),
+            ]
+        )
+        await db.flush()
+        db.add_all(
+            [
+                SessionData(session_id=inactive_id, key="metadataOutput", value={}),
+                job(finished_job_id, inactive_id, "finished"),
+                job(running_job_id, busy_id, "running"),
+                Document(session_id=inactive_id, doc_id=doc_id, source="upload"),
+            ]
+        )
+        await db.flush()
+        db.add_all(
+            [
+                JobProgress(job_id=finished_job_id, stage=JobStage.finished.value),
+                DocumentationChunk(
+                    chunk_id=uuid4(),
+                    session_id=inactive_id,
+                    doc_id=doc_id,
+                    content="chunk",
+                    origin_job_id=finished_job_id,
+                ),
+            ]
+        )
+        await db.commit()
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    async with postgres_session_factory() as db:
+        assert await SessionRepository(db).delete_inactive_sessions(cutoff, limit=20) == 1
+        await db.commit()
+
+    async with postgres_session_factory() as db:
+        remaining = set((await db.execute(select(Session.session_id))).scalars())
+        assert remaining == {busy_id, recent_id}
+        for model in (SessionData, Document, DocumentationChunk):
+            orphans = await db.execute(select(func.count()).select_from(model).where(model.session_id == inactive_id))
+            assert orphans.scalar_one() == 0
+        jobs = set((await db.execute(select(Job.job_id))).scalars())
+        assert jobs == {running_job_id}
+        assert (await db.execute(select(func.count()).select_from(JobProgress))).scalar_one() == 0
 
 
 @pytest.mark.asyncio

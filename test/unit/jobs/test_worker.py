@@ -3,12 +3,68 @@
 # Licensed under the EUPL-1.2 or later.
 
 import asyncio
+import logging
 from contextlib import suppress
+from datetime import datetime
 
 import pytest
 
 from src.config import config
 from src.jobs.worker import JobWorker
+
+
+def _idle_background_loops(monkeypatch: pytest.MonkeyPatch, worker: JobWorker) -> None:
+    async def idle() -> None:
+        await worker._stop_event.wait()
+
+    monkeypatch.setattr(worker, "_run", idle)
+    monkeypatch.setattr(worker, "_run_reaper", idle)
+
+
+@pytest.mark.asyncio
+async def test_session_retention_is_not_started_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    worker = JobWorker(worker_id="test-worker")
+    monkeypatch.setattr(config.jobs, "session_retention_days", 0)
+    _idle_background_loops(monkeypatch, worker)
+
+    worker.start()
+    assert worker._retention is None
+    assert worker.is_running
+
+    await asyncio.wait_for(worker.stop(), timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_session_retention_deletes_in_batches_until_a_short_batch_and_stops_with_the_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    worker = JobWorker(worker_id="test-worker")
+    monkeypatch.setattr(config.jobs, "session_retention_days", 30)
+    _idle_background_loops(monkeypatch, worker)
+    batches = iter([20, 3])
+    cutoffs: list[datetime] = []
+    swept = asyncio.Event()
+
+    async def delete_batch(cutoff: datetime) -> int:
+        cutoffs.append(cutoff)
+        deleted = next(batches, 0)
+        if deleted < 20:
+            swept.set()
+        return deleted
+
+    monkeypatch.setattr(worker, "_delete_inactive_session_batch", delete_batch)
+
+    with caplog.at_level(logging.INFO, logger="src.jobs.worker"):
+        worker.start()
+        await asyncio.wait_for(swept.wait(), timeout=5)
+        assert worker.is_running
+        await asyncio.wait_for(worker.stop(), timeout=5)
+
+    assert len(cutoffs) == 2
+    assert cutoffs[0] == cutoffs[1]
+    assert worker._retention is None
+    assert "[Jobs:Retention] Deleted 23 sessions inactive for more than 30 days" in caplog.text
 
 
 @pytest.mark.asyncio
