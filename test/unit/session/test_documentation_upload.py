@@ -241,6 +241,23 @@ async def test_corrupted_binary_upload_is_rejected_as_invalid_content(filename, 
 
 
 @pytest.mark.asyncio
+async def test_parse_uploaded_documentation_strips_nul_characters():
+    raw_upload = RawUploadedDocumentation(
+        data=b"pdf-bytes",
+        filename="manual.pdf",
+        content_type="application/pdf",
+        content_hash="hash",
+    )
+
+    with patch("src.session.documentation_upload.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+        mock_to_thread.return_value = ("Advanced\x00 Deploy\x00Options", {"pdf_pages": 1})
+
+        uploaded = await upload_utils.parse_uploaded_documentation(raw_upload)
+
+    assert uploaded.text == "Advanced DeployOptions"
+
+
+@pytest.mark.asyncio
 async def test_whitespace_only_upload_is_rejected_as_producing_no_text():
     with pytest.raises(InvalidDocumentationContentError) as exc_info:
         await read_uploaded_documentation(_upload("blank.txt", "text/plain", b"   \n\t"))
