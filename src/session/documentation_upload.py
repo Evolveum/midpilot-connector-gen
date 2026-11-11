@@ -285,7 +285,8 @@ async def parse_uploaded_documentation(raw_upload: RawUploadedDocumentation) -> 
     else:
         raise UnsupportedDocumentationFormatError(content_type, filename)
 
-    text = text.strip()
+    # PostgreSQL text and JSONB values cannot hold NUL; pypdf emits it for glyphs without a Unicode mapping.
+    text = text.replace("\x00", "").strip()
     if not text:
         raise InvalidDocumentationContentError(f"Uploaded documentation {filename} did not produce any text.")
 
