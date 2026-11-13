@@ -10,6 +10,7 @@ documents toolkit and the feature modules.
 """
 
 import re
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 
@@ -26,6 +27,59 @@ def canonical_object_class_key(name: str) -> str:
     e.g. ``"Service Account"`` and ``"ServiceAccount"`` collapse to the same dedup key.
     """
     return "".join(normalize_object_class_name(name).split())
+
+
+_OBJECT_CLASS_TAG_SEPARATORS = re.compile(r"[\s_\-]+")
+
+
+def normalize_object_class_tag(value: str) -> str:
+    """Comparable form of a chunk tag or an object-class name: lower case without whitespace, ``_`` or ``-``.
+
+    ``"Work Packages"``, ``"work_packages"`` and ``"WorkPackages"`` all become ``"workpackages"``.
+    """
+    return _OBJECT_CLASS_TAG_SEPARATORS.sub("", value.strip().lower())
+
+
+def object_class_tag_variants(object_class: str) -> frozenset[str]:
+    """Tag forms that identify ``object_class``: its normalized name and its regular plurals.
+
+    Variants are generated from the class name only; tags are never singularized, so names that end in
+    ``s`` (``Status``, ``Address``) keep matching exactly.
+    """
+    base = normalize_object_class_tag(object_class)
+    if not base:
+        return frozenset()
+    variants = {base, f"{base}s", f"{base}es"}
+    if len(base) > 1 and base.endswith("y"):
+        variants.add(f"{base[:-1]}ies")
+    return frozenset(variants)
+
+
+def merge_object_class_tags(tags: Sequence[str], object_classes: Iterable[str]) -> list[str]:
+    """``tags`` followed by the object classes no tag names yet, compared by :func:`normalize_object_class_tag`."""
+    merged = list(tags)
+    known = {normalize_object_class_tag(tag) for tag in tags}
+    for name in object_classes:
+        key = normalize_object_class_tag(name)
+        if key and key not in known:
+            known.add(key)
+            merged.append(name.strip())
+    return merged
+
+
+# Whitespace, quotes, markdown emphasis and code marks an LLM tends to change when it quotes a text.
+_QUOTE_NOISE = re.compile(r"[\s*`\\\"']+")
+
+
+def comparable_quote_text(text: str) -> str:
+    """Lower-case ``text`` without the characters an LLM changes when it quotes it, for :func:`is_quoted_from`."""
+    return _QUOTE_NOISE.sub("", text.lower())
+
+
+def is_quoted_from(quote: str, comparable_text: str) -> bool:
+    """Whether ``quote`` appears in a text given in :func:`comparable_quote_text` form."""
+    normalized = comparable_quote_text(quote.strip(" .…"))
+    return bool(normalized) and normalized in comparable_text
 
 
 def canonicalize_scim_path(scim_path: Any) -> str:

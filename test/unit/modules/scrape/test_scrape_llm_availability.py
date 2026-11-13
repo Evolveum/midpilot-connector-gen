@@ -10,7 +10,8 @@ from langchain_core.runnables import RunnableConfig
 from src.config import config
 from src.core.errors import LLMUnavailableError
 from src.core.observability.langfuse import langfuse_handler
-from src.modules.scrape.core.llms import get_relevant_links_from_text
+from src.integrations.web.page_links import PageLink
+from src.modules.scrape.core.assessment import assess_page, select_links
 
 
 # PyCharm's monkeypatch inspection does not resolve pydantic model fields as attribute names
@@ -33,36 +34,47 @@ class _FailingChain:
         raise self._exc
 
 
+def _assess():
+    return assess_page(
+        url="https://docs.example.test/users", title="Users", content="Users", app="Example", version=None
+    )
+
+
+def _select():
+    return select_links([PageLink("https://docs.example.test/groups", "Groups")], app="Example", version=None)
+
+
 @pytest.mark.asyncio
-async def test_relevant_links_raises_when_llm_unreachable(monkeypatch):
-    """A connection outage during link extraction must fail the scrape, not silently return None."""
+@pytest.mark.parametrize(("call", "run_name"), [(_assess, "Scrape:Pages:Assess"), (_select, "Scrape:Links:Select")])
+async def test_scrape_decisions_raise_when_llm_unreachable(monkeypatch, call, run_name):
+    """A connection outage during a scrape decision must fail the scrape, not be recorded as a page error."""
     _set_chunk_llm_retry(monkeypatch, attempts=2, base_delay_seconds=0)
 
     chain = _FailingChain(Exception("Connection error."))
     with (
-        patch("src.modules.scrape.core.llms.get_default_llm"),
-        patch("src.modules.scrape.core.llms.make_basic_chain", return_value=chain),
+        patch("src.modules.scrape.core.assessment.get_default_llm"),
+        patch("src.modules.scrape.core.assessment.make_basic_chain", return_value=chain),
     ):
         with pytest.raises(LLMUnavailableError):
-            await get_relevant_links_from_text(("developer {parser_instructions}", "user"))
+            await call()
 
     assert chain.calls == 2  # retried before failing
-    assert [item["run_name"] for item in chain.configs] == ["Scrape:Links:SelectRelevant"] * 2
+    assert [item["run_name"] for item in chain.configs] == [run_name] * 2
     assert all(item["callbacks"] == [langfuse_handler] for item in chain.configs)
 
 
 @pytest.mark.asyncio
-async def test_relevant_links_returns_none_on_non_outage_error(monkeypatch):
-    """A one-off, non-connectivity error skips the page's link suggestions without failing the job."""
+@pytest.mark.parametrize("call", [_assess, _select])
+async def test_scrape_decisions_raise_other_errors_unchanged_without_retry(monkeypatch, call):
+    """The scraper records a non-outage failure on the job; it is neither retried nor hidden here."""
     _set_chunk_llm_retry(monkeypatch, attempts=2, base_delay_seconds=0)
 
     chain = _FailingChain(ValueError("unparseable output"))
     with (
-        patch("src.modules.scrape.core.llms.get_default_llm"),
-        patch("src.modules.scrape.core.llms.make_basic_chain", return_value=chain),
+        patch("src.modules.scrape.core.assessment.get_default_llm"),
+        patch("src.modules.scrape.core.assessment.make_basic_chain", return_value=chain),
     ):
-        result = await get_relevant_links_from_text(("developer {parser_instructions}", "user"))
+        with pytest.raises(ValueError, match="unparseable output"):
+            await call()
 
-    assert result is None
-    assert chain.calls == 1  # non-transient errors are not retried
-    assert chain.configs[0]["run_name"] == "Scrape:Links:SelectRelevant"
+    assert chain.calls == 1

@@ -7,8 +7,6 @@ import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from crawl4ai.utils import get_base_domain  # type: ignore
-
 from src.config import config
 from src.core.concurrency import TaskScope
 from src.core.db import async_session_maker
@@ -19,20 +17,21 @@ from src.documents import SavedDocumentation
 from src.documents.processing.processor import process_all_documentations
 from src.documents.processing.schema import ChunkProcessingError
 from src.jobs import append_job_error, update_job_progress
-from src.modules.scrape.core.scraper import scraper_loop
-from src.modules.scrape.schema import ScrapeRequest, ScrapeResult
+from src.modules.scrape.core.candidates import CrawlScope
+from src.modules.scrape.core.scraper import ScrapeRun, scraper_loop
+from src.modules.scrape.schema import ScrapeJobInput, ScrapeResult
 from src.session.schema import DocumentationItem
 from src.session.service import build_group_documentation_response
 from src.shared.clock import utc_now
 from src.shared.enums import JobStage
 from src.shared.job_types import JobType
-from src.shared.normalize import normalize_url
+from src.shared.normalize import is_generic_version, normalize_url
 
 logger = logging.getLogger(__name__)
 
 
 async def _run_scrape_async(
-    scrape_request: ScrapeRequest, job_id: UUID, session_id: Optional[UUID] = None
+    scrape_request: ScrapeJobInput, job_id: UUID, session_id: Optional[UUID] = None
 ) -> ScrapeResult:
     if not scrape_request.skip_cache and session_id:
         logger.info(
@@ -172,15 +171,10 @@ async def _run_scrape_async(
             saved_documentations=[],
         )
 
-    # Trusted domains
-    trusted_domains = list({get_base_domain(u) for u in scrape_request.starter_links})
-    logger.info("[Scrape] Trusted domains for job %s: %s", job_id, trusted_domains)
-
-    forbidden_url_parts = config.scrape_and_process.forbidden_url_parts
-
-    # Main scrape loop
-    saved_documentations: Dict[str, SavedDocumentation] = {}
-    irrelevant_links: List[str] = []
+    # Jobs queued before 1.1.0 have no effective version; their application version is the closest match.
+    app_version = scrape_request.effective_application_version or scrape_request.application_version
+    scope = CrawlScope.from_starter_links(scrape_request.starter_links)
+    logger.info("[Scrape] Crawl scope: %s; target version: %s", scope.describe(), app_version)
     links = list(scrape_request.starter_links)
 
     existing_documentation_chunks: List[Dict[str, Any]] = []
@@ -223,7 +217,7 @@ async def _run_scrape_async(
                         process_all_documentations(
                             [documentation],
                             app=scrape_request.application_name,
-                            app_version=scrape_request.application_version,
+                            app_version=app_version,
                             source="scraper",
                             semaphore=processing_semaphore,
                             chunk_length=config.scrape_and_process.chunk_length,
@@ -247,7 +241,20 @@ async def _run_scrape_async(
                 saved_documentations=[],
             )
 
-        logger.info("[Scrape] Starting scraper loop for job %s with max %s iterations", job_id, max_iters)
+        async def report_error(message: str) -> None:
+            await append_job_error(job_id, message)
+
+        run = ScrapeRun(
+            app=scrape_request.application_name,
+            version=None if is_generic_version(app_version) else app_version,
+            scope=scope,
+            starter_links=scrape_request.starter_links,
+            forbidden_url_parts=list(config.scrape_and_process.forbidden_url_parts),
+            on_documentation_scraped=on_documentation_scraped,
+            report_error=report_error,
+        )
+        saved_documentations: Dict[str, SavedDocumentation] = run.saved_documentations
+        logger.info("[Scrape] Starting scraper loop with max %s iterations", max_iters)
 
         finish_reason = "max-iterations-reached"
 
@@ -267,28 +274,9 @@ async def _run_scrape_async(
                 message=f"running iteration {curr_iter}/{max_iters}",
             )
 
-            logger.debug(
-                "[Scrape:Filter] Job %s: Iteration %s/%s context: %s links to scrape, %s saved documentations, %s tracked irrelevant links",
-                job_id,
-                curr_iter,
-                max_iters,
-                len(links),
-                len(saved_documentations),
-                len(irrelevant_links),
-            )
-
             saved_docs_before_iter = len(saved_documentations)
             new_links = await scraper_loop(
-                links_to_scrape=links,
-                app=scrape_request.application_name,
-                app_version=scrape_request.application_version,
-                curr_iteration=curr_iter,
-                irrelevant_links=irrelevant_links,
-                saved_documentations=saved_documentations,
-                trusted_domains=trusted_domains,
-                forbidden_url_parts=forbidden_url_parts,
-                last_iteration=(curr_iter == max_iters),
-                on_documentation_scraped=on_documentation_scraped,
+                links, run, curr_iteration=curr_iter, last_iteration=(curr_iter == max_iters)
             )
             saved_docs_after_iter = len(saved_documentations)
             iter_saved_docs = max(0, saved_docs_after_iter - saved_docs_before_iter)
@@ -436,18 +424,13 @@ async def _run_scrape_async(
         saved_documentations=grouped_documentations,
     )
 
-    logger.info(
-        "[Scrape] Job %s completed with reason '%s' with %s irrelevant links",
-        job_id,
-        finish_reason,
-        len(irrelevant_links),
-    )
+    logger.info("[Scrape] Completed with reason '%s'", finish_reason)
 
     return result
 
 
 async def fetch_relevant_documentation(
-    scrape_request: ScrapeRequest,
+    scrape_request: ScrapeJobInput,
     session_id: Optional[UUID] = None,
     *,
     job_id: UUID,

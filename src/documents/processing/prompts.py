@@ -2,14 +2,25 @@
 #
 # Licensed under the EUPL-1.2 or later.
 
+from collections.abc import Sequence
 
-def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_version: str) -> tuple[str, str]:
+
+def get_llm_chunk_process_prompt(
+    content: str,
+    page_url: str,
+    app: str,
+    app_version: str,
+    *,
+    page_object_classes: Sequence[str] = (),
+) -> tuple[str, str]:
     """
     Generate prompts for chunk processing LLM.
     inputs:
         content: str - the text content to process
         app: str - application name
         app_version: str - application version
+        page_object_classes: object classes the scraper's page assessment found on the whole page; only a hint,
+            a class still needs evidence from the chunk
     outputs:
         tuple - (developer_prompt, user_prompt)
     """
@@ -24,12 +35,22 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
     - tags: list of strings - relevant tags describing the content
     - category: string - one of "spec_yaml", "spec_json", "reference_api", "reference_other", "overview", "index", "tutorial", "non-technical", "other"
     - num_defined_object_classes: Optional[int] - number of clearly defined object classes, otherwise null
+    - object_classes: list of objects with "name" and "evidence" - the object classes this chunk documents
 
     TAGGING RULES:
     - Add protocol/context tags only when explicitly supported by the chunk content.
     - If SCIM evidence exists (e.g., "/scim", RFC7643/RFC7644, SCIM Users/Groups, SCIM URNs), include tag "SCIM".
     - If REST/OpenAPI/Swagger evidence exists, include tag "REST".
     - Keep tags concise and deduplicated.
+
+    OBJECT CLASS RULES:
+    - An object class is a kind of record the API manages, such as User, Group, Role, Project or WorkPackage.
+    - List a class only when this chunk defines its schema or attributes, or documents an endpoint that reads or
+      changes it. Skip classes that are only mentioned in passing.
+    - name: the singular name the API uses (for example "WorkPackage" for /work_packages).
+    - evidence: a short verbatim quote (at most 20 words) copied from the chunk that contains the class name,
+      such as a schema name, a heading or an endpoint path.
+    - Return an empty list when the chunk documents no object class.
 
     IMPORTANT:
     - Do not invent values.
@@ -42,7 +63,11 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
       "num_endpoints": 2,
       "tags": ["SCIM", "provisioning", "User", "Group"],
       "category": "reference_api",
-      "num_defined_object_classes": 2
+      "num_defined_object_classes": 2,
+      "object_classes": [
+        {{"name": "User", "evidence": "GET /scim/v2/Users"}},
+        {{"name": "Group", "evidence": "urn:ietf:params:scim:schemas:core:2.0:Group"}}
+      ]
     }}
 
     EXAMPLE OUTPUT:
@@ -51,15 +76,24 @@ def get_llm_chunk_process_prompt(content: str, page_url: str, app: str, app_vers
       "num_endpoints": 5,
       "tags": ["REST", "endpoints", "user management", "provisioning", "User", "Group"],
       "category": "reference_api",
-      "num_defined_object_classes": null
+      "num_defined_object_classes": null,
+      "object_classes": [{{"name": "User", "evidence": "## Create a user"}}]
     }}
     """
 
+    page_hint = (
+        f"""
+    The page mentions these object classes (a hint only; list one only when this chunk documents it):
+    {", ".join(page_object_classes)}
+"""
+        if page_object_classes
+        else ""
+    )
     user_prompt = f"""
     Analyze the following documentation chunk for {app} {app_version}.
 
     Part of page with URL: {page_url}
-
+{page_hint}
     Content:
     {content}
     """

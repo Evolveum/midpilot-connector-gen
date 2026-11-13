@@ -4,12 +4,13 @@
 
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from langchain_openai import ChatOpenAI
 
 from src.core.llm import get_default_llm
 from src.integrations.web import search_web
+from src.integrations.web.robots import robots_allowed
+from src.integrations.web.urls import canonicalize_url
 from src.modules.discovery.schema import (
     CandidateLinksInput,
     DiscoveryIntegrationType,
@@ -17,31 +18,13 @@ from src.modules.discovery.schema import (
     PySearchPrompts,
 )
 from src.modules.discovery.utils.llm_helpers import (
+    format_query,
     generate_queries_via_llm,
     generate_queries_via_preset,
     get_prioritized_fallback_templates,
 )
 
 logger = logging.getLogger(__name__)
-
-_TRACKING_PARAMS = {"gclid", "fbclid", "yclid", "mc_cid", "mc_eid"}
-
-
-def canonicalize_url(url: str) -> str:
-    """Canonicalize URL for deduplication."""
-    try:
-        parts = urlsplit(url.strip())
-        keep_params: list[tuple[str, str]] = []
-        for k, v in parse_qsl(parts.query, keep_blank_values=True):
-            lk = k.lower()
-            if lk.startswith("utm_") or lk in _TRACKING_PARAMS:
-                continue
-            keep_params.append((k, v))
-
-        new_query = urlencode(keep_params, doseq=True)
-        return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, ""))
-    except Exception:
-        return url.strip()
 
 
 def dedupe_enriched_results(batches: Sequence[DiscoverySearchBatch]) -> List[Dict[str, Any]]:
@@ -65,6 +48,19 @@ def dedupe_enriched_results(batches: Sequence[DiscoverySearchBatch]) -> List[Dic
             out.append(d)
 
     return out
+
+
+async def drop_robots_denied(candidates_enriched: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Candidates without those whose robots.txt forbids the scraper to fetch them: they are no starter links."""
+    allowed = await robots_allowed([str(item["href"]) for item in candidates_enriched if item.get("href")])
+    kept = [item for item in candidates_enriched if allowed.get(str(item.get("href")), True)]
+    if len(kept) != len(candidates_enriched):
+        logger.info(
+            "[Discovery:Search] Dropped %s candidate links that robots.txt forbids the scraper to fetch: %s",
+            len(candidates_enriched) - len(kept),
+            [item.get("href") for item in candidates_enriched if item not in kept],
+        )
+    return kept
 
 
 def extract_links(enriched: Sequence[Dict[str, Any]]) -> List[str]:
@@ -208,13 +204,7 @@ def query_and_search_candidates_llm(
 
     patched_queries: List[str] = []
     for q in queries:
-        q = (q or "").strip()
-        if not q:
-            continue
-        try:
-            q = q.format(app=app, version=version)
-        except Exception:
-            pass
+        q = format_query((q or "").strip(), app=app, version=version)
         if q and q not in patched_queries:
             patched_queries.append(q)
 

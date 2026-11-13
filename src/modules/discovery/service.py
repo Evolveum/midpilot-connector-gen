@@ -18,6 +18,7 @@ from src.modules.discovery.schema import (
     CandidateLinksOutput,
 )
 from src.modules.discovery.utils.discovery_helpers import (
+    drop_robots_denied,
     extract_links,
     fetch_candidate_links_simplified,
     filter_enriched_by_links,
@@ -84,6 +85,8 @@ async def discover_candidate_links(
         num_queries=app_data.num_queries,
         max_results_per_query=app_data.max_results_per_query,
     )
+    if enable_filtering and candidates_enriched:
+        candidates_enriched = await drop_robots_denied(candidates_enriched)
     candidate_links = extract_links(candidates_enriched)
 
     irrelevant_links: list[str] = []

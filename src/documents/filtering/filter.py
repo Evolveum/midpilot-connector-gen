@@ -18,6 +18,8 @@ from src.database.repositories.documentation_repository import DocumentationRepo
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.errors import DocumentationSessionNotFoundError, NoDocumentationStoredError
 from src.documents.filtering.schema import ChunkFilterCriteria
+from src.documents.normalize import normalize_object_class_tag, object_class_tag_variants
+from src.documents.schemas import RetrievalMetadata
 
 
 async def filter_documentation_items(
@@ -76,9 +78,20 @@ def select_documentation_items(
     doc_items: List[Dict[str, Any]],
     criteria: ChunkFilterCriteria,
 ) -> List[Dict[str, Any]]:
-    """Keep the normalized documentation items that meet ``criteria`` (pure, no I/O)."""
+    """Keep the normalized documentation items that meet ``criteria`` (pure, no I/O).
+
+    A specification scraped more than once (as JSON and as YAML, or from two URLs) is read from one
+    copy only, see :func:`_drop_duplicate_spec_documents`. Specifications without that proof of
+    equivalence are all kept.
+    """
+    object_class_variants: frozenset[str] | None = None
+    if criteria.object_class_tags is not None:
+        object_class_variants = frozenset().union(
+            *(object_class_tag_variants(name) for name in criteria.object_class_tags)
+        )
+
     filtered_items: List[Dict[str, Any]] = []
-    for item in doc_items:
+    for item in _drop_duplicate_spec_documents(doc_items):
         metadata = item.get("@metadata", {})
 
         # Extract relevant fields from metadata
@@ -120,6 +133,11 @@ def select_documentation_items(
         if criteria.excluded_tags is not None:
             if tags is not None and any(tag.lower().strip() in criteria.excluded_tags for tag in tags):
                 continue
+        if object_class_variants is not None:
+            if tags is None or not any(
+                isinstance(tag, str) and normalize_object_class_tag(tag) in object_class_variants for tag in tags
+            ):
+                continue
         if criteria.allowed_content_types is not None and (
             content_type is None or content_type not in criteria.allowed_content_types
         ):
@@ -135,27 +153,32 @@ def select_documentation_items(
 
         filtered_items.append(item)
 
-    # Post-filtering: If both spec_yaml and spec_json exist, keep only spec_yaml
-    return _prioritize_yaml_over_json(filtered_items)
+    return filtered_items
 
 
-def _prioritize_yaml_over_json(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _drop_duplicate_spec_documents(doc_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep one document per scraped specification, identified by its canonical hash.
+
+    Of the equivalent documents the one with the fewest tokens is kept (YAML is usually more compact
+    than JSON), the earliest on a tie. The comparison runs on whole documents before any criteria, so
+    the kept copy is never a partial selection. Documents without ``retrieval.spec`` (uploads, pages,
+    documentation scraped before 1.1.0) are never dropped.
     """
-    If both spec_yaml and spec_json categories exist in the items, remove spec_json items.
+    tokens_by_spec: Dict[str, Dict[str, int]] = {}
+    for item in doc_items:
+        metadata = item.get("@metadata", {})
+        retrieval = RetrievalMetadata.from_metadata(metadata)
+        if retrieval is None or retrieval.spec is None:
+            continue
+        document_tokens = tokens_by_spec.setdefault(retrieval.spec.canonical_hash, {})
+        doc_id = str(item.get("docId"))
+        document_tokens[doc_id] = document_tokens.get(doc_id, 0) + int(metadata.get("token_count") or 0)
 
-    Args:
-        items: List of documentation items
-
-    Returns:
-        Filtered list with spec_json removed if spec_yaml exists
-    """
-    # Check if both categories exist
-    categories = {item.get("@metadata", {}).get("category") for item in items}
-    has_spec_yaml = "spec_yaml" in categories
-    has_spec_json = "spec_json" in categories
-
-    # If both exist, filter out spec_json
-    if has_spec_yaml and has_spec_json:
-        return [item for item in items if item.get("@metadata", {}).get("category") != "spec_json"]
-
-    return items
+    dropped_doc_ids: set[str] = set()
+    for document_tokens in tokens_by_spec.values():
+        if len(document_tokens) > 1:
+            kept_doc_id = min(document_tokens, key=document_tokens.__getitem__)
+            dropped_doc_ids.update(doc_id for doc_id in document_tokens if doc_id != kept_doc_id)
+    if not dropped_doc_ids:
+        return doc_items
+    return [item for item in doc_items if str(item.get("docId")) not in dropped_doc_ids]

@@ -26,7 +26,11 @@ from src.modules.digester.entities.object_classes import resolve_object_class
 from src.modules.digester.errors import RelevantChunksNotFoundError
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, tables_for_object_class
 from src.modules.digester.schemas.common import ChunkReference
-from src.modules.digester.selection.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
+from src.modules.digester.selection.criteria import (
+    DEFAULT_CRITERIA,
+    attribute_object_class_criteria,
+    endpoint_object_class_criteria,
+)
 from src.modules.digester.selection.doc_chunk import (
     build_chunk_references_from_doc_items,
     build_chunk_references_from_mappings,
@@ -88,10 +92,9 @@ class DocumentationSelector:
             )
 
         is_scim = protocol == ApiType.SCIM
-        criteria = DEFAULT_CRITERIA.model_copy()
-        normalized_name = normalize_object_class_name(object_class)
-        criteria.allowed_tags = [[normalized_name, f"{normalized_name}s"]]
-        primary_refs = build_chunk_references_from_doc_items(select_documentation_items(corpus, criteria))
+        primary_refs = build_chunk_references_from_doc_items(
+            select_documentation_items(corpus, attribute_object_class_criteria(object_class))
+        )
 
         if not primary_refs and is_scim:
             primary_refs = await self._load_scim_object_class_chunk_refs(
@@ -128,10 +131,10 @@ class DocumentationSelector:
         is_scim = protocol == ApiType.SCIM
         object_class_flags = _endpoint_object_class_flags(target_object_class) if is_scim else {}
 
-        criteria = ENDPOINT_CRITERIA.model_copy()
-        criteria.allowed_tags = [[normalize_object_class_name(object_class)], ["endpoint", "endpoints"]]
         default_items = select_documentation_items(corpus, DEFAULT_CRITERIA)
-        primary_items = select_documentation_items(corpus, criteria) or default_items
+        primary_items = (
+            select_documentation_items(corpus, endpoint_object_class_criteria(object_class)) or default_items
+        )
 
         primary_refs = build_chunk_references_from_doc_items(primary_items)
         if not primary_refs and is_scim:

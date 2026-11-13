@@ -26,12 +26,22 @@ Module: `src/modules/discovery/`
 == Process
 
 1. Build web-search queries for the application name/version — either from
-   templates or LLM-generated (`llmGeneratedSearchQuery`).
-2. Run the queries against the configured search backend (Brave when
-   `+BRAVE__API_KEY+` is set, ddgs otherwise; shared backend in
-   `src/integrations/web/search.py`).
-3. Optionally filter out irrelevant links with an LLM
-   (`enableLinkFiltering`).
+   templates or LLM-generated (`llmGeneratedSearchQuery`). Each template asks
+   for one thing an identity connector needs: the documentation as a whole,
+   the REST API reference, the user provisioning API, the users and groups API,
+   API authentication, the OpenAPI/Swagger description, SCIM, and the admin
+   guide for user management (`integrationType` puts the REST or the SCIM
+   topics first). Only the queries for the documentation as a whole name the
+   version; a generic version such as `latest` is left out of every query.
+2. Run the queries against the search backend selected by
+   `+SEARCH__METHOD_NAME+` (`brave` or `ddgs`; any other value returns no
+   results). The shared backend is in `src/integrations/web/search.py`.
+3. Optionally filter out irrelevant links (`enableLinkFiltering`): first drop
+   links the site's robots.txt forbids the scraper to fetch (checked with the
+   scraper's crawler and user agent: Nextcloud, for example, allows only
+   `/server/stable/`), then URLs whose path segment matches a fixed blocklist
+   (`login`, `pricing`, `blog`, `contact`, … — `/api/contacts` is kept), then
+   let an LLM remove the remaining off-topic links.
 4. Optionally rank the remaining links by relevance with an LLM
    (`enableLinkRanking`).
 5. Store the top `maxCandidateLinks` links in the session as the discovery
@@ -47,7 +57,7 @@ The most important request fields (full model:
 | Field | Default | Meaning
 
 | `applicationName` | — | Target application (required).
-| `applicationVersion` | `latest` | Version string used in queries.
+| `applicationVersion` | `latest` | Version string used in queries (a generic one such as `latest` is left out).
 | `integrationType` | `dummy` | Discovery protocol priority: `scim`, `rest`,
   or `dummy` (no preference). Biases the search queries only — it is *not* the
   digester's link:../api-type.adoc[apiType].
@@ -71,8 +81,9 @@ NOTE: There is no `sql` integration type — a database integration is not
 discoverable by web search. For a SQL connector skip this stage entirely and
 upload the database schema or the midPoint conndev export to the session.
 
-NOTE: Discovery quality depends on the search backend. Without a Brave API key
-the ddgs fallback is used, which may return noticeably weaker results.
+NOTE: Discovery quality depends on the search backend. The ddgs backend
+(`+SEARCH__METHOD_NAME=ddgs+`) needs no key but may return noticeably weaker
+results than Brave (`+SEARCH__METHOD_NAME=brave+` with `+BRAVE__API_KEY+`).
 
 == Related settings
 

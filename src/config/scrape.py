@@ -4,7 +4,8 @@
 
 from datetime import timedelta
 
-from pydantic import BaseModel, Field
+import soupsieve
+from pydantic import BaseModel, Field, field_validator
 
 
 class ScrapeAndProcessSettings(BaseModel):
@@ -27,15 +28,38 @@ class ScrapeAndProcessSettings(BaseModel):
     )
     max_links_per_documentation: int = Field(
         3000,
-        description="Maximum number of raw links to process from a single scraped documentation page",
+        description=(
+            "Maximum number of links a scraped page may have for them to be followed; the links of a larger "
+            "page (a site map, a generated index) are not followed. 0 disables the limit."
+        ),
     )
     irrelevant_links_parts: int = Field(
         5,
-        description="Number of parts to split links into for LLM filtering",
+        description="Deprecated since 1.1.0, no effect: links are selected by SCRAPE_AND_PROCESS__MAX_LINKS_PER_ASSESSMENT.",
+        deprecated=True,
     )
     irrelevant_links_parts_min_length: int = Field(
         5,
-        description="Minimum number of links in a part for LLM filtering",
+        description="Deprecated since 1.1.0, no effect: links are selected by SCRAPE_AND_PROCESS__MAX_LINKS_PER_ASSESSMENT.",
+        deprecated=True,
+    )
+    assessment_content_tokens: int = Field(
+        32000,
+        gt=0,
+        description=(
+            "Maximum tokens of a page's main content the page assessment reads; longer pages are cut. Only a "
+            "guard for the LLM context window, so keep it well below it."
+        ),
+    )
+    max_links_per_assessment: int = Field(
+        150,
+        gt=0,
+        description="Maximum number of candidate links one link-selection LLM call chooses from.",
+    )
+    max_concurrent_page_assessments: int = Field(
+        8,
+        gt=0,
+        description="Maximum concurrent page-assessment and link-selection LLM calls of one scrape job.",
     )
     forbidden_url_parts: list[str] = Field(
         [
@@ -79,6 +103,34 @@ class ScrapeAndProcessSettings(BaseModel):
         ],
         description="URL substrings to consider irrelevant while scraping",
     )
+    main_content_selectors: list[str] = Field(
+        ["article", "main", "[role=main]"],
+        description=(
+            "CSS selectors tried in order to locate the main content of a scraped page. A selector is used "
+            "when it matches exactly one outermost element holding most of the page text; otherwise the "
+            "page body without header, footer, sidebars and navigation is used."
+        ),
+    )
+    max_data_documentation_bytes: int = Field(
+        50 * 1024 * 1024,
+        gt=0,
+        description="Largest data file (OpenAPI, SCIM or JSON Schema document) the scraper downloads.",
+    )
+    max_spec_urls_per_page: int = Field(
+        20,
+        ge=0,
+        description=(
+            "Maximum number of API description URLs referenced by one page (Swagger UI, Redoc, spec links) "
+            "that are fetched alongside it. 0 disables fetching referenced specs."
+        ),
+    )
+
+    @field_validator("main_content_selectors")
+    @classmethod
+    def validate_main_content_selectors(cls, selectors: list[str]) -> list[str]:
+        for selector in selectors:
+            soupsieve.compile(selector)
+        return selectors
 
     # Chunking controls
     chunk_length: int = Field(
