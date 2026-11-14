@@ -49,6 +49,7 @@ async def test_generate_create():
 
         mock_repo_instance = mock_relevant_chunk_repository.return_value
         mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value={})
+        mock_repo_instance.get_relevant_chunks_grouped_by_entity = AsyncMock(return_value={})
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_create_generator_class.return_value
@@ -91,6 +92,7 @@ async def test_generate_create_uses_sql_assets_for_sql_api_type():
             return_value=("", ""),
         ) as mock_get_connection_target,
         patch("src.modules.codegen.generation._collect_relevant_chunks", new_callable=AsyncMock, return_value=None),
+        patch("src.modules.codegen.generation._collect_object_class_chunks", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.generation.CreateGenerator") as mock_create_generator_class,
     ):
         mock_generator_instance = mock_create_generator_class.return_value
@@ -144,6 +146,7 @@ async def test_generate_update():
 
         mock_repo_instance = mock_relevant_chunk_repository.return_value
         mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value={})
+        mock_repo_instance.get_relevant_chunks_grouped_by_entity = AsyncMock(return_value={})
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_update_generator_class.return_value
@@ -198,6 +201,7 @@ async def test_generate_delete():
 
         mock_repo_instance = mock_relevant_chunk_repository.return_value
         mock_repo_instance.get_relevant_chunks_map = AsyncMock(return_value={})
+        mock_repo_instance.get_relevant_chunks_grouped_by_entity = AsyncMock(return_value={})
 
         # Mock the generator instance and its generate method (must be async)
         mock_generator_instance = mock_delete_generator_class.return_value

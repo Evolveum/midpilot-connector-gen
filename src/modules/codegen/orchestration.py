@@ -47,6 +47,7 @@ from src.modules.codegen.schema import (
 from src.modules.codegen.selection.artifact_catalog import ConnectorArtifact, load_connector_artifacts
 from src.modules.codegen.selection.authorization import enrich_preferred_authorizations
 from src.modules.codegen.utils.postprocess import strip_markdown_fences
+from src.modules.codegen.utils.prompt_records import has_extracted_attributes
 from src.modules.digester.errors import (
     AttributesNotFoundError,
     InvalidRelationsOutputError,
@@ -284,7 +285,8 @@ async def schedule_native_schema_job(
         raise AttributesNotFoundError(object_class, session_id)
 
     protocol = await resolve_effective_api_type(session_id, api_type)
-    if protocol == ApiType.SQL:
+    # Empty attributes (no relevant documentation) are scheduled; the worker finishes with empty code.
+    if protocol == ApiType.SQL and has_extracted_attributes(attrs):
         sql_context = attrs.get("sqlContext")
         if not isinstance(sql_context, Mapping) or not isinstance(sql_context.get("physicalTable"), Mapping):
             raise SqlPhysicalSchemaNotFoundError(object_class, stale_payload=True)

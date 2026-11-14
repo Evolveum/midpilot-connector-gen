@@ -10,8 +10,7 @@ import pytest
 
 from src.core.errors import AppError
 from src.documents.selection import SelectionRole
-from src.modules.digester.errors import RelevantChunksNotFoundError
-from src.modules.digester.selection import DocumentationSelector
+from src.modules.digester.selection import DocumentationSelectionPlan, DocumentationSelector
 from src.shared.enums import ApiType
 
 CONNDEV = "application/com.evolveum.conndev+json"
@@ -149,14 +148,60 @@ async def test_sql_attribute_plan_keeps_the_whole_corpus_for_schema_joins():
     assert plan.relevant_chunk_count == 1
 
 
+def _assert_plan_without_relevant_chunks(plan: DocumentationSelectionPlan, object_class: str, target: str) -> None:
+    # The extraction is scheduled anyway: an empty selection makes the worker return an empty
+    # result without an LLM call, and the error travels on the job instead of a 400.
+    assert plan.selection.chunks == ()
+    assert plan.relevant_chunk_count == 0
+    assert plan.relevant_chunks_error == (
+        f"No relevant chunks found for object class '{object_class}'. Cannot extract {target}."
+    )
+
+
 @pytest.mark.asyncio
-async def test_rest_attribute_plan_without_relevant_chunks_is_rejected():
+async def test_rest_attribute_plan_without_relevant_chunks_is_empty_and_carries_the_error():
     selector, _ = _selector([_item("Group schema", tags=["group"])])
 
-    with pytest.raises(RelevantChunksNotFoundError):
-        await selector.build_attribute_plan(
-            repo=_repo([{"name": "User"}]), session_id=uuid4(), object_class="user", protocol=ApiType.REST
-        )
+    plan = await selector.build_attribute_plan(
+        repo=_repo([{"name": "User"}]), session_id=uuid4(), object_class="user", protocol=ApiType.REST
+    )
+
+    _assert_plan_without_relevant_chunks(plan, "user", "attributes")
+
+
+@pytest.mark.asyncio
+async def test_sql_attribute_plan_without_object_class_evidence_is_empty_and_carries_the_error():
+    selector, _ = _selector([_item("Unrelated overview", category="overview")])
+
+    plan = await selector.build_attribute_plan(
+        repo=_repo([{"name": "Role", "superclass": ""}]), session_id=uuid4(), object_class="Role", protocol=ApiType.SQL
+    )
+
+    _assert_plan_without_relevant_chunks(plan, "Role", "attributes")
+
+
+@pytest.mark.asyncio
+async def test_rest_endpoint_plan_without_relevant_chunks_keeps_request_context_and_carries_the_error():
+    selector, _ = _selector([_item("Product overview", category="overview")], base_url="https://api.example.com")
+
+    plan = await selector.build_endpoint_plan(
+        repo=_repo([{"name": "Role", "superclass": ""}]), session_id=uuid4(), object_class="role", protocol=ApiType.REST
+    )
+
+    _assert_plan_without_relevant_chunks(plan, "role", "endpoints")
+    assert plan.base_api_url == "https://api.example.com"
+    assert plan.object_class_flags == {}
+
+
+@pytest.mark.asyncio
+async def test_plans_with_relevant_chunks_carry_no_error():
+    selector, _ = _selector([_item("User schema", tags=["user"])])
+
+    plan = await selector.build_attribute_plan(
+        repo=_repo([{"name": "User"}]), session_id=uuid4(), object_class="user", protocol=ApiType.REST
+    )
+
+    assert plan.relevant_chunks_error is None
 
 
 @pytest.mark.asyncio

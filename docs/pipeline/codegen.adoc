@@ -217,6 +217,37 @@ These artifacts add no executable handler and no extra LLM call. Customizations 
 comments about unmet requirements remain intact. Stored artifacts and manual overrides are
 not rewritten.
 
+[[empty-inputs]]
+==== Codegen without attributes or endpoints
+
+When the digester finds no relevant documentation for an object class, its attribute and
+endpoint jobs finish with an empty result and say so in `errors` (see
+link:digester.adoc#documentation-captured[Documentation captured for attributes and endpoints]).
+Codegen still tries with what it knows about the class.
+
+Search, create, update and delete pick their documentation chunks in this order:
+
+. the chunks the class's attributes and endpoints were extracted from (the most precise
+  selection);
+. otherwise the chunks the `classes` extraction marked relevant for the object class, so
+  generation runs on everything known about the class;
+. otherwise, if there are also no attributes, no endpoints and no `preferredEndpoints`,
+  no chunk. The operation returns the fallback artifact above without an LLM call:
+  framework defaults for SQL and SCIM, and for REST the TODO placeholder with its job
+  error. A class that has attributes or endpoints but no relevance anywhere, for example
+  after a manual override, still reads all documentation.
+
+A repair request without chunks still runs its single repair pass.
+
+The native schema does not read documentation chunks; it generates from the attribute
+list. Without attributes the job therefore finishes with `{"format": null, "code": ""}`
+and no LLM call. The `errors` array then contains "No attributes were extracted for this
+object class, so no native schema was generated. Provide the object class attributes
+(extract or override them) and retry." This also applies to SQL: an empty attribute
+result is scheduled instead of being rejected with `sql_physical_schema_not_found`. That
+error remains only for stored attributes without a `sqlContext`. A native-schema repair
+without attributes still runs, for SQL with an empty SQL context.
+
 This contract covers authorization, native schema, every search intent, create,
 update, delete, and relations. Single-operation repairs report the
 format of the returned code, including the original artifact if no repair was accepted.

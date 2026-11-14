@@ -69,16 +69,13 @@ class ObjectClassNotFoundError(AppError):
         super().__init__(f"Object class '{object_class}' not found in session {session_id}")
 
 
-class RelevantChunksNotFoundError(AppError):
-    """Raised when an extraction cannot proceed because no relevant chunks were selected."""
+def relevant_chunks_not_found_message(object_class: str, extraction_target: str) -> str:
+    """Non-fatal job error for an extraction that found no relevant chunks.
 
-    status_code = 400
-    code = "relevant_chunks_not_found"
-
-    def __init__(self, object_class: str, extraction_target: str):
-        super().__init__(
-            f"No relevant chunks found for object class '{object_class}'. Cannot extract {extraction_target}."
-        )
+    The extraction is not rejected: its job finishes with an empty result and carries this
+    message in ``errors``, so midPoint can continue configuring the object class.
+    """
+    return f"No relevant chunks found for object class '{object_class}'. Cannot extract {extraction_target}."
 
 
 class AttributesNotFoundError(AppError):

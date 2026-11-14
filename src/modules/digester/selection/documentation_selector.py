@@ -10,9 +10,13 @@ never repeats a primary chunk) and, for SCIM, the conndev documents the baseline
 built from. The result is stored in the job input as a
 :class:`~src.documents.selection.DocumentationSelection`, so the worker never reads
 the session's documentation again.
+
+When no relevant chunks exist the extraction is not rejected: the plan carries an empty
+selection plus a non-fatal error, so the job finishes with an empty result and midPoint
+can continue configuring the object class.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Sequence
 from uuid import UUID
 
@@ -23,7 +27,7 @@ from src.documents.filtering.filter import load_documentation_items, select_docu
 from src.documents.normalize import normalize_object_class_name
 from src.documents.selection import DocumentationSelection, SelectionRole
 from src.modules.digester.entities.object_classes import resolve_object_class
-from src.modules.digester.errors import RelevantChunksNotFoundError
+from src.modules.digester.errors import relevant_chunks_not_found_message
 from src.modules.digester.extractors.sql.schema import collect_sql_tables, tables_for_object_class
 from src.modules.digester.schemas.common import ChunkReference
 from src.modules.digester.selection.criteria import DEFAULT_CRITERIA, ENDPOINT_CRITERIA
@@ -48,6 +52,8 @@ class DocumentationSelectionPlan:
     """Chunks the first attempt reads (for SQL: the chunks evidencing the object class)."""
     base_api_url: str = ""
     object_class_flags: Dict[str, bool] = field(default_factory=dict)
+    relevant_chunks_error: str | None = None
+    """Non-fatal job error when no relevant chunks exist; the selection is then empty."""
 
 
 class DocumentationSelector:
@@ -81,7 +87,7 @@ class DocumentationSelector:
             # so it keeps reading all of it; the object-class evidence only gates the job.
             sql_refs = await self._load_sql_object_class_chunk_refs(session_id, object_class, corpus)
             if not sql_refs:
-                raise RelevantChunksNotFoundError(object_class, "attributes")
+                return self._plan_without_relevant_chunks(corpus, object_class, "attributes")
             return DocumentationSelectionPlan(
                 selection=DocumentationSelection.from_corpus(corpus, {SelectionRole.SQL_SCHEMA: corpus}),
                 relevant_chunk_count=len(sql_refs),
@@ -102,7 +108,7 @@ class DocumentationSelector:
             )
 
         if not primary_refs and not is_scim:
-            raise RelevantChunksNotFoundError(object_class, "attributes")
+            return self._plan_without_relevant_chunks(corpus, object_class, "attributes")
 
         fallback_items = select_documentation_items(corpus, DEFAULT_CRITERIA)
         return self._plan(corpus, primary_refs, fallback_items, is_scim=is_scim)
@@ -143,7 +149,11 @@ class DocumentationSelector:
             )
 
         if not primary_refs and not is_scim:
-            raise RelevantChunksNotFoundError(object_class, "endpoints")
+            return replace(
+                self._plan_without_relevant_chunks(corpus, object_class, "endpoints"),
+                base_api_url=base_api_url,
+                object_class_flags=object_class_flags,
+            )
 
         # The SCIM documentation fallback reads scraped documentation only; the conndev
         # contracts are already covered by deterministic pregeneration.
@@ -156,6 +166,19 @@ class DocumentationSelector:
             relevant_chunk_count=plan.relevant_chunk_count,
             base_api_url=base_api_url,
             object_class_flags=object_class_flags,
+        )
+
+    @staticmethod
+    def _plan_without_relevant_chunks(
+        corpus: List[Dict[str, Any]],
+        object_class: str,
+        extraction_target: str,
+    ) -> DocumentationSelectionPlan:
+        """An empty selection: the worker returns an empty result without an LLM call."""
+        return DocumentationSelectionPlan(
+            selection=DocumentationSelection.from_corpus(corpus, {}),
+            relevant_chunk_count=0,
+            relevant_chunks_error=relevant_chunks_not_found_message(object_class, extraction_target),
         )
 
     @staticmethod
