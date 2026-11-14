@@ -44,3 +44,7 @@ NO_DOCUMENTED_BEHAVIOR = (
     "No documented behavior was found for this operation; a TODO placeholder was returned. "
     "Review the application documentation for this operation and retry with skipCache=true."
 )
+NO_ATTRIBUTES_EXTRACTED = (
+    "No attributes were extracted for this object class, so no native schema was generated. "
+    "Provide the object class attributes (extract or override them) and retry."
+)

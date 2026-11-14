@@ -278,3 +278,56 @@ def test_finished_empty_codegen_status_http_contract(kind):
     assert response.json()["status"] == "finished"
     assert response.json()["result"] == {"format": None, "code": ""}
     assert response.json()["errors"] == [NO_CODE_GENERATED]
+
+
+@pytest.mark.parametrize(
+    ("attributes", "expected_status"),
+    [({"attributes": {}}, 200), ({"attributes": {"login": {"type": "string"}}}, 422)],
+    ids=["empty-attributes-schedule-a-job", "stale-payload-is-rejected"],
+)
+def test_sql_native_schema_without_attributes_http_contract(attributes, expected_status):
+    """Empty SQL attributes (no relevant documentation) schedule a job; only a stale payload is a 422."""
+    from fastapi import Request
+    from fastapi.testclient import TestClient
+
+    from src.app import create_api
+    from src.auth.context import AuthContext, AuthMode
+    from src.auth.dependencies import authenticate_request
+    from src.config import config
+    from src.core.db import get_db
+
+    async def authenticate(request: Request):
+        request.state.auth = AuthContext(AuthMode.dev)
+
+    app = create_api()
+    app.dependency_overrides[authenticate_request] = authenticate
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+    session_id = uuid4()
+    job_id = uuid4()
+    repo = MagicMock()
+    repo.session_exists = AsyncMock(return_value=True)
+    repo.get_session_data = AsyncMock(return_value=attributes)
+    repo.update_session = AsyncMock()
+
+    with (
+        patch("src.modules.codegen.routes.native_schema.SessionRepository", return_value=repo),
+        patch(
+            "src.modules.codegen.orchestration.resolve_effective_api_type",
+            new_callable=AsyncMock,
+            return_value=ApiType.SQL,
+        ),
+        patch(
+            "src.modules.codegen.orchestration.schedule_coroutine_job",
+            new_callable=AsyncMock,
+            return_value=job_id,
+        ) as schedule,
+    ):
+        response = TestClient(app).post(f"{config.app.api_base_url}/v1/codegen/{session_id}/classes/role/native-schema")
+
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        assert response.json() == {"jobId": str(job_id)}
+        schedule.assert_awaited_once()
+    else:
+        assert response.json()["error"]["code"] == "sql_physical_schema_not_found"
+        schedule.assert_not_awaited()

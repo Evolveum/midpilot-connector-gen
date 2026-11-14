@@ -33,6 +33,7 @@ from src.modules.digester.extractors.object_class import extract_object_classes
 from src.modules.digester.extractors.rest.relations import extract_relations
 from src.modules.digester.selection import (
     DEFAULT_CRITERIA,
+    DocumentationSelectionPlan,
     DocumentationSelector,
     auth_input,
     build_object_class_extraction_input,
@@ -54,6 +55,11 @@ from src.shared.session_keys import (
 )
 
 _DOCUMENTATION_WAIT_TIMEOUT_SECONDS = 750
+
+
+def _plan_errors(plan: DocumentationSelectionPlan) -> list[str]:
+    """A missing-documentation plan still schedules its job; the error travels on the job instead."""
+    return [plan.relevant_chunks_error] if plan.relevant_chunks_error else []
 
 
 async def schedule_object_class_extraction(
@@ -149,6 +155,7 @@ async def schedule_attribute_extraction(
         initial_message=f"Processing {plan.relevant_chunk_count} relevant chunks for {object_class}",
         session_id=session_id,
         session_result_key=keys.output,
+        initial_errors=_plan_errors(plan),
     )
 
     await persist_job_pointer(
@@ -214,6 +221,7 @@ async def schedule_endpoint_extraction(
         initial_message=f"Processing {plan.relevant_chunk_count} relevant chunks for {object_class}",
         session_id=session_id,
         session_result_key=keys.output,
+        initial_errors=_plan_errors(plan),
     )
 
     await persist_job_pointer(

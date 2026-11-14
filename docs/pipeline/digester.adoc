@@ -137,6 +137,7 @@ responses and the database schema are unchanged; no database recreation is neede
 Progress of the multi-phase jobs is reported through `JobStage` values
 (discovery, deduplication, building, sorting, …).
 
+[[documentation-captured]]
 === Documentation captured for attributes and endpoints
 
 An attribute or endpoint request loads the session's documentation once and
@@ -171,6 +172,17 @@ uploaded or scraped after the `POST` does not change a queued job - post the
 request again to use it. The effective protocol is resolved when the job is
 scheduled and stored with it. A stored selection that references a chunk it
 does not contain is rejected before any LLM call.
+
+When no relevant chunks exist for the object class (REST attributes or
+endpoints, or SQL attributes with no table evidence), the request is not
+rejected. The `POST` returns a job like any other, the job stores an empty
+selection, and it finishes without an LLM call with an empty result
+(`{"attributes": {}}` / `{"endpoints": []}`). The reason is recorded in the
+job's `errors` from the moment the job is scheduled, for example
+`No relevant chunks found for object class 'role'. Cannot extract attributes.`
+midPoint can therefore continue configuring the object class. SCIM never takes
+this path, because it falls back to the object-class relevance and the SCIM
+baseline.
 
 === What each step does per protocol
 
@@ -432,8 +444,13 @@ extraction.
 
 NOTE: An empty `{"attributes": {}}` result is not treated as a failure by the
 codegen guard, which only checks that the result exists. Check the attribute
-count before generating: for SQL it usually means the schema source was not
-recognized, and the generated operations will be empty scaffolds.
+count and the job's `errors` before generating: an empty result usually means
+no relevant documentation was found (for SQL, that the schema source was not
+recognized). Codegen operations then generate from the chunks the `classes`
+extraction marked relevant for the object class. Only when the class has no
+relevant chunks either do they return their fallback artifact without an LLM
+call. The native schema finishes with empty code. See
+link:codegen.adoc#empty-inputs[Codegen without attributes or endpoints].
 
 == Related settings
 

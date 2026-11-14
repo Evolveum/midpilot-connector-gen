@@ -4,7 +4,7 @@
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 import pytest
@@ -68,6 +68,50 @@ async def test_schedule_coroutine_job_persists_versioned_execution_payload_in_ca
     assert execution_payload["args"] == ["hello"]
     assert execution_payload["sessionResultKey"] == "testOutput"
     repo.update_job_progress.assert_awaited_once_with(job_id, stage="queue", message="Queued")
+
+
+@pytest.mark.asyncio
+async def test_schedule_coroutine_job_records_initial_errors_on_the_new_job_in_caller_transaction():
+    job_id = uuid4()
+    repo = MagicMock()
+    repo.create_job = AsyncMock(return_value=job_id)
+    repo.update_job_progress = AsyncMock()
+    repo.append_job_error = AsyncMock()
+    db = MagicMock()
+
+    with patch("src.jobs.runner.JobRepository", return_value=repo) as repository:
+        await schedule_coroutine_job(
+            db=db,
+            job_type=JobType.DIGESTER_AUTH,
+            input_payload={"skipCache": True},
+            worker=durable_test_worker,
+            worker_args=("hello",),
+            session_id=uuid4(),
+            initial_errors=["first", "second"],
+        )
+
+    repository.assert_called_once_with(db)
+    assert repo.append_job_error.await_args_list == [call(job_id, "first"), call(job_id, "second")]
+
+
+@pytest.mark.asyncio
+async def test_schedule_coroutine_job_without_initial_errors_records_none():
+    repo = MagicMock()
+    repo.create_job = AsyncMock(return_value=uuid4())
+    repo.update_job_progress = AsyncMock()
+    repo.append_job_error = AsyncMock()
+
+    with patch("src.jobs.runner.JobRepository", return_value=repo):
+        await schedule_coroutine_job(
+            db=MagicMock(),
+            job_type=JobType.DIGESTER_AUTH,
+            input_payload={"skipCache": True},
+            worker=durable_test_worker,
+            worker_args=("hello",),
+            session_id=uuid4(),
+        )
+
+    repo.append_job_error.assert_not_awaited()
 
 
 @pytest.mark.asyncio

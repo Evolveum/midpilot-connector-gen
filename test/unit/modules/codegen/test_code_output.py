@@ -70,7 +70,8 @@ async def test_output_preserves_code_and_classifies_off_event_loop(code, expecte
 async def test_every_generation_worker_reports_final_format(operation, code, expected_format):
     kwargs = {"job_id": uuid4(), "session_id": uuid4(), "protocol": ApiType.REST}
     if operation == "native_schema":
-        kwargs.update(attributes_payload={}, object_class="user")
+        # Empty attributes finish without a model call; that path is covered in test_codegen_empty_inputs.
+        kwargs.update(attributes_payload={"attributes": {"userName": {"type": "string"}}}, object_class="user")
         model_target = "generate_groovy"
     elif operation == "authorization":
         kwargs.update(auth_payload={"auth": []})

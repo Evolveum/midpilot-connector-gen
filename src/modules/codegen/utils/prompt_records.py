@@ -41,6 +41,15 @@ def _attribute_items(payload: AttributesPayload) -> Iterator[tuple[str, Any]]:
     yield from payload.items()
 
 
+def has_extracted_attributes(payload: AttributesPayload) -> bool:
+    """Whether the payload holds at least one attribute.
+
+    An extraction that found no relevant documentation stores ``{"attributes": {}}``; the
+    codegen steps then skip the LLM and return their empty outcome instead of guessing.
+    """
+    return next(_attribute_items(payload), None) is not None
+
+
 def _attribute_data(info: Any) -> Mapping[str, Any]:
     if hasattr(info, "model_dump"):
         return as_mapping(info.model_dump())

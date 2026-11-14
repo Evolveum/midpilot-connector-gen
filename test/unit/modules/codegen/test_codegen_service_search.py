@@ -40,6 +40,7 @@ async def test_generate_search():
             return_value=("", ""),
         ) as mock_get_connection_target,
         patch("src.modules.codegen.generation._collect_relevant_chunks", new_callable=AsyncMock, return_value=None),
+        patch("src.modules.codegen.generation._collect_object_class_chunks", new_callable=AsyncMock, return_value=[]),
         patch("src.modules.codegen.generation.SearchGenerator") as mock_search_generator_class,
     ):
         # Mock the generator instance and its generate method (must be async)
@@ -83,6 +84,7 @@ async def test_search_invocations_preserve_protocol_intent_and_repair_names(prot
     with (
         patch("src.modules.codegen.generation.get_session_connection_target", new=AsyncMock(return_value=("", ""))),
         patch("src.modules.codegen.generation._collect_relevant_chunks", new=AsyncMock(return_value=None)),
+        patch("src.modules.codegen.generation._collect_object_class_chunks", new=AsyncMock(return_value=[])),
         patch.object(BaseGroovyGenerator, "_load_documentation_items", new=AsyncMock(return_value=[])),
         patch.object(BaseGroovyGenerator, "_build_chunks", return_value=(["doc"], [], {}, [])),
         patch.object(BaseGroovyGenerator, "_initialize_progress", new_callable=AsyncMock),

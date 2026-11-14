@@ -26,7 +26,7 @@ from src.database.repositories.job_repository import ClaimedJob, JobRepository
 from src.database.repositories.session_repository import SessionRepository
 from src.documents.errors import NoDocumentationStoredError
 from src.jobs.payload import build_execution_payload
-from src.jobs.runner import execute_claimed_job
+from src.jobs.runner import execute_claimed_job, schedule_coroutine_job
 from src.jobs.session_persistence import persist_job_pointer
 from src.shared.enums import JobStage
 from src.shared.job_types import JobType, UnknownJobTypeError
@@ -125,6 +125,45 @@ async def test_persisted_job_and_pointer_commit_together_for_status_requests(
     assert visible_job is not None
     assert visible_pointer == str(job_id)
     assert visible_input == {"value": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_initial_errors_are_visible_from_scheduling_and_kept_when_the_job_finishes(
+    postgres_session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-fatal error known at scheduling reaches the client while queued and after finishing."""
+    session_id = await _create_session(postgres_session_factory)
+    message = "No relevant chunks found for object class 'role'. Cannot extract attributes."
+    async with postgres_session_factory() as db:
+        job_id = await schedule_coroutine_job(
+            db=db,
+            job_type=JobType.CODEGEN_FIX_CONNECTOR,
+            input_payload={"value": "hello", "skipCache": True},
+            worker=durable_echo_worker,
+            worker_args=("hello",),
+            session_id=session_id,
+            initial_errors=[message],
+        )
+        await db.commit()
+
+    async with postgres_session_factory() as db:
+        queued_status = await JobRepository(db).get_job_status(job_id)
+    assert queued_status["status"] == "queued"
+    assert queued_status["errors"] == [message]
+
+    claim = await _claim(postgres_session_factory, worker_id="worker-initial-errors")
+    assert claim is not None
+    monkeypatch.setattr("src.jobs.runner.async_session_maker", postgres_session_factory)
+    monkeypatch.setattr("src.jobs.lifecycle.async_session_maker", postgres_session_factory)
+    monkeypatch.setattr("src.jobs.session_persistence.async_session_maker", postgres_session_factory)
+    await execute_claimed_job(claim)
+
+    async with postgres_session_factory() as db:
+        finished_status = await JobRepository(db).get_job_status(job_id)
+    assert finished_status["status"] == "finished"
+    assert finished_status["result"] == {"value": "hello", "jobId": str(job_id)}
+    assert finished_status["errors"] == [message]
 
 
 @pytest.mark.asyncio

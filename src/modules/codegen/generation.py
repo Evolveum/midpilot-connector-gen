@@ -8,6 +8,8 @@ import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
+from src.jobs import append_job_error
+from src.modules.codegen.core.base import endpoints_to_records
 from src.modules.codegen.core.generate_groovy import generate_groovy
 from src.modules.codegen.core.operations import (
     AuthorizationGenerator,
@@ -19,6 +21,7 @@ from src.modules.codegen.core.operations import (
     build_other_authorization_scaffold,
 )
 from src.modules.codegen.enums import SearchIntent
+from src.modules.codegen.repair import NO_ATTRIBUTES_EXTRACTED
 from src.modules.codegen.schema import (
     AttributesPayload,
     AuthPayload,
@@ -38,6 +41,7 @@ from src.modules.codegen.selection.protocol_selectors import (
 )
 from src.modules.codegen.selection.relevant_chunks import (
     _collect_authorization_relevant_chunks,
+    _collect_object_class_chunks,
     _collect_relation_object_class_pairs,
     _collect_relevant_chunks,
 )
@@ -49,6 +53,7 @@ from src.modules.codegen.utils.prompt_records import (
     build_scim_flatten_candidates,
     build_sql_context_prompt_vars,
     extract_sql_context,
+    has_extracted_attributes,
 )
 from src.modules.digester.errors import SqlPhysicalSchemaNotFoundError
 from src.modules.digester.schemas import RelationsResponse
@@ -67,6 +72,53 @@ def _uses_deterministic_context(protocol: ApiType) -> bool:
     return protocol in _DETERMINISTIC_CONTEXT_PROTOCOLS
 
 
+async def _operation_chunk_pairs(
+    session_id: UUID,
+    object_class: str,
+    operation_name: str,
+    *,
+    attributes: AttributesPayload,
+    endpoints: Optional[EndpointsPayload],
+    preferred_endpoints: Optional[List[Dict[str, Any]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """
+    Relevant chunks for a CRUD/search operation, from the most to the least specific source.
+
+    1. The chunks the class's attributes and endpoints were extracted from.
+    2. Otherwise the chunks the object-class extraction marked relevant for the class, so
+       generation still tries with what is known about it.
+    3. Otherwise, with no attributes, endpoints or preferred endpoints either, nothing is
+       known: ``[]`` makes the generator return its fallback artifact without an LLM call.
+       With data but no relevance anywhere (e.g. a manually added class), ``None`` keeps
+       reading all documentation.
+    """
+    attribute_and_endpoint_chunks = await _collect_relevant_chunks(session_id, object_class, operation_name)
+    if attribute_and_endpoint_chunks is not None:
+        return attribute_and_endpoint_chunks
+
+    object_class_chunks = await _collect_object_class_chunks(session_id, object_class)
+    if object_class_chunks:
+        logger.info(
+            "[Codegen:Generation] No attribute or endpoint chunks for %s; %s uses %d chunks relevant to the class",
+            object_class,
+            operation_name,
+            len(object_class_chunks),
+        )
+        return object_class_chunks
+
+    has_endpoints = endpoints is not None and bool(endpoints_to_records(endpoints))
+    if has_extracted_attributes(attributes) or has_endpoints or preferred_endpoints:
+        return None
+
+    logger.warning(
+        "[Codegen:Generation] No attributes, endpoints or relevant chunks for %s; %s returns its fallback "
+        "without LLM calls",
+        object_class,
+        operation_name,
+    )
+    return []
+
+
 async def generate_native_schema_code(
     attributes_payload: AttributesPayload,
     object_class: str,
@@ -82,7 +134,18 @@ async def generate_native_schema_code(
     One script carries both: the attribute definitions written against the protocol's
     schema DSL, and the ConnID built-in mapping. They used to be generated separately
     and had to agree on every native attribute name or the connector was rejected.
+
+    Without attributes (the digester found no relevant documentation) there is nothing to
+    define: the job finishes with empty code and an explanatory error, without an LLM call.
+    A repair still runs, because it works from the code midPoint supplied.
     """
+    if repair_context is None and not has_extracted_attributes(attributes_payload):
+        logger.warning(
+            "[Codegen:NativeSchema] No attributes for %s; returning no native schema without LLM calls",
+            object_class,
+        )
+        await append_job_error(job_id, NO_ATTRIBUTES_EXTRACTED)
+        return await build_connector_code_output("")
 
     assets = get_operation_assets("native_schema", protocol)
     if assets.connid_docs_path is None:
@@ -105,7 +168,10 @@ async def generate_native_schema_code(
         )
 
     if protocol == ApiType.SQL:
-        if not extract_sql_context(attributes_payload).get("physicalTable"):
+        # Only stored attributes can be stale; a repair without attributes runs with an empty SQL context.
+        if has_extracted_attributes(attributes_payload) and not extract_sql_context(attributes_payload).get(
+            "physicalTable"
+        ):
             raise SqlPhysicalSchemaNotFoundError(object_class, stale_payload=True)
         extra_prompt_vars.update(build_sql_context_prompt_vars(attributes_payload))
 
@@ -216,7 +282,14 @@ async def generate_search_code(
     )
 
     # Collect relevant chunks
-    relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Search")
+    relevant_pairs = await _operation_chunk_pairs(
+        session_id,
+        object_class,
+        "Search",
+        attributes=attributes,
+        endpoints=endpoints,
+        preferred_endpoints=preferred_endpoints,
+    )
 
     # Generate code
     code = await generator.generate(
@@ -264,7 +337,14 @@ async def generate_create_code(
     )
 
     # Collect relevant chunks
-    relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Create")
+    relevant_pairs = await _operation_chunk_pairs(
+        session_id,
+        object_class,
+        "Create",
+        attributes=attributes,
+        endpoints=endpoints,
+        preferred_endpoints=preferred_endpoints,
+    )
 
     # Generate code
     code = await generator.generate(
@@ -312,7 +392,14 @@ async def generate_update_code(
     )
 
     # Collect relevant chunks
-    relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Update")
+    relevant_pairs = await _operation_chunk_pairs(
+        session_id,
+        object_class,
+        "Update",
+        attributes=attributes,
+        endpoints=endpoints,
+        preferred_endpoints=preferred_endpoints,
+    )
 
     # Generate code
     code = await generator.generate(
@@ -360,7 +447,14 @@ async def generate_delete_code(
     )
 
     # Collect relevant chunks
-    relevant_pairs = await _collect_relevant_chunks(session_id, object_class, "Delete")
+    relevant_pairs = await _operation_chunk_pairs(
+        session_id,
+        object_class,
+        "Delete",
+        attributes=attributes,
+        endpoints=endpoints,
+        preferred_endpoints=preferred_endpoints,
+    )
 
     # Generate code
     code = await generator.generate(

@@ -11,10 +11,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.api.exception_handlers import register_exception_handlers
+from src.documents.errors import NoDocumentationStoredError
 from src.modules.digester.errors import (
     InvalidObjectClassesOutputError,
     ObjectClassesNotFoundError,
-    RelevantChunksNotFoundError,
 )
 from src.session.errors import InvalidDocumentationImportError
 
@@ -30,7 +30,7 @@ def client() -> TestClient:
 
     @app.get("/app-400")
     async def _app_400():
-        raise RelevantChunksNotFoundError("User", "attributes")
+        raise NoDocumentationStoredError(uuid4())
 
     @app.get("/app-422")
     async def _app_422():
@@ -59,7 +59,7 @@ def test_app_error_maps_to_status_and_structured_body(client: TestClient) -> Non
 
 
 def test_app_error_status_codes_follow_the_exception(client: TestClient) -> None:
-    assert client.get("/app-400").json()["error"]["code"] == "relevant_chunks_not_found"
+    assert client.get("/app-400").json()["error"]["code"] == "no_documentation_stored"
     assert client.get("/app-400").status_code == 400
     assert client.get("/app-422").json()["error"]["code"] == "invalid_object_classes_output"
     assert client.get("/app-422").status_code == 422

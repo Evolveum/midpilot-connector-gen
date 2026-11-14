@@ -8,7 +8,7 @@ import asyncio
 import inspect
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, Union
 from uuid import UUID
 
@@ -57,12 +57,17 @@ async def schedule_coroutine_job(
     await_documentation: bool = False,
     await_documentation_timeout: Optional[float] = None,
     binary_artifacts: Mapping[str, bytes] | None = None,
+    initial_errors: Sequence[str] = (),
 ) -> UUID:
     """Persist a queued job in the caller's database transaction.
 
     The API transaction also writes the session's job pointer. A worker can see
     the job only after both records commit, which removes the schedule/pointer
     race present in the former process-local task implementation.
+
+    ``initial_errors`` are non-fatal errors already known when the job is scheduled. They
+    are recorded on the job immediately, so they survive both a worker run and a cache
+    reuse that does not carry the source job's errors.
     """
     job_type_policy(job_type)  # Reject a type without a declared policy before anything is persisted.
     if dynamic_input_enabled and dynamic_input_provider is None:
@@ -88,6 +93,8 @@ async def schedule_coroutine_job(
         documentation_wait_timeout_seconds=await_documentation_timeout if await_documentation else None,
         max_attempts=config.jobs.max_attempts,
     )
+    for message in initial_errors:
+        await repo.append_job_error(job_id, message)
     if await_documentation:
         await repo.update_job_progress(
             job_id,

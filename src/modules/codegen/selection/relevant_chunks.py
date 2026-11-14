@@ -117,6 +117,26 @@ def _select_chunk_refs(*ref_groups: Sequence[Any]) -> List[Dict[str, Any]]:
     return selected
 
 
+async def _load_object_class_chunk_map(session_id: UUID) -> Dict[str, List[Dict[str, Any]]]:
+    """Relevant chunks the object-class extraction stored, keyed by normalized class name."""
+    async with async_session_maker() as db:
+        return await RelevantChunkRepository(db).get_relevant_chunks_grouped_by_entity(
+            session_id=session_id,
+            result_key=OBJECT_CLASSES.output,
+        )
+
+
+async def _collect_object_class_chunks(session_id: UUID, object_class: str) -> List[Dict[str, Any]]:
+    """
+    Select the chunks the object-class extraction marked relevant for one object class.
+
+    Broader than the attribute and endpoint selection, and the fallback when the class
+    has neither: generation still reads what is known about the class.
+    """
+    chunk_map = await _load_object_class_chunk_map(session_id)
+    return _select_chunk_refs(chunk_map.get(normalize_object_class_name(object_class), []))
+
+
 async def _collect_relation_object_class_pairs(
     relations: RelationsResponse,
     session_id: UUID,
@@ -127,12 +147,7 @@ async def _collect_relation_object_class_pairs(
     if not relations.relations:
         return []
 
-    async with async_session_maker() as db:
-        repo = RelevantChunkRepository(db)
-        chunk_map = await repo.get_relevant_chunks_grouped_by_entity(
-            session_id=session_id,
-            result_key=OBJECT_CLASSES.output,
-        )
+    chunk_map = await _load_object_class_chunk_map(session_id)
 
     selected_relation = relations.relations[0]
     ref_groups: List[Sequence[Any]] = []
